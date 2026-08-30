@@ -10,10 +10,13 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { Agent } from '../../../src/agent/Agent.js';
+import { drainLoop, type LoopEvent } from '../../../src/agent/loop/index.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { AgentSessionStore } from '../../../src/agent/subagents/AgentSessionStore.js';
 import { buildBackgroundSubagentCompletion } from '../../../src/agent/subagents/BackgroundSubagentCompletion.js';
+import type { ChatContext } from '../../../src/agent/types.js';
 import { runHeadless } from '../../../src/commands/headless.js';
 import { HeadlessJsonlEventSchema } from '../../../src/commands/headlessEvents.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
@@ -21,6 +24,7 @@ import { PersistentStore } from '../../../src/context/storage/PersistentStore.js
 import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
+import { Bus } from '../../../src/server/bus.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
@@ -74,15 +78,18 @@ function modelMarker(value: string): string {
 async function prepareFixture(
   model: (typeof models)[number],
   surface: 'headless' | 'acp' | 'pty' | 'web',
-  options: { providerRequestPendingBytes?: number } = {}
+  options: {
+    providerRequestConcurrency?: number;
+    providerRequestPendingBytes?: number;
+    proxyOptions?: Parameters<typeof startRecordingProviderProxy>[1];
+  } = {}
 ): Promise<PreparedFixture> {
   if (!model.baseURL) throw new Error(`Missing Provider base URL for ${model.model}`);
   const root = await mkdtemp(path.join(os.tmpdir(), `blade-bg-completion-${surface}-`));
   const workspace = path.join(root, 'project');
   const storageRoot = path.join(root, 'storage');
   const home = path.join(root, 'home');
-  const proxy = await startRecordingProviderProxy(
-    model.baseURL,
+  const defaultProxyOptions =
     surface === 'acp'
       ? {}
       : options.providerRequestPendingBytes !== undefined
@@ -93,14 +100,27 @@ async function prepareFixture(
         : {
             holdBodyIncludes: 'Call Read exactly once on the requested marker file.',
             holdMs: 10_000,
-          }
-  );
-  const config = {
-    ...buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseUrl }),
+          };
+  const proxy = await startRecordingProviderProxy(model.baseURL, {
+    ...defaultProxyOptions,
+    ...(options.proxyOptions ?? {}),
+  });
+  const providerRequestConcurrency = options.providerRequestConcurrency ?? 1;
+  const baseConfig = buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseUrl });
+  const config: RuntimeConfig = {
+    ...baseConfig,
+    models: baseConfig.models.map((entry) => ({
+      ...entry,
+      overrides: {
+        ...entry.overrides,
+        maxRetries: 0,
+      },
+    })),
     permissionMode: PermissionMode.YOLO,
     maxTurns: 12,
-    providerRequestConcurrency: 1,
+    providerRequestConcurrency,
     providerRequestAdmissionMs: 120_000,
+    providerForegroundRecoveryMs: 0,
     ...(options.providerRequestPendingBytes !== undefined
       ? { providerRequestPendingBytes: options.providerRequestPendingBytes }
       : {}),
@@ -120,8 +140,9 @@ async function prepareFixture(
         modelProviders: config.modelProviders,
         permissionMode: PermissionMode.YOLO,
         maxTurns: 12,
-        providerRequestConcurrency: 1,
+        providerRequestConcurrency,
         providerRequestAdmissionMs: 120_000,
+        providerForegroundRecoveryMs: 0,
         ...(options.providerRequestPendingBytes !== undefined
           ? { providerRequestPendingBytes: options.providerRequestPendingBytes }
           : {}),
@@ -200,6 +221,53 @@ function toolResultEvents(events: readonly SessionEvent[], name: string) {
   );
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function loadChatContext(
+  sessionId: string,
+  workspaceRoot: string,
+  signal?: AbortSignal
+): Promise<ChatContext> {
+  return {
+    messages: await SessionService.loadSession(sessionId, workspaceRoot),
+    userId: 'real-background-subagent-completion',
+    sessionId,
+    workspaceRoot,
+    permissionMode: PermissionMode.YOLO,
+    ...(signal ? { signal } : {}),
+  };
+}
+
+function getChildSidecarPath(input: PreparedFixture, childSessionId: string): string {
+  return path.join(input.storageRoot, 'agents', 'sessions', `${childSessionId}.json`);
+}
+
 async function collectFailureDiagnostic(input: PreparedFixture): Promise<string> {
   await new Promise((resolve) => setTimeout(resolve, 500));
   const events =
@@ -262,16 +330,32 @@ async function collectFailureDiagnostic(input: PreparedFixture): Promise<string>
   return JSON.stringify(diagnostic).replaceAll(input.secret, '[REDACTED]');
 }
 
-async function assertBackgroundCompletion(input: PreparedFixture): Promise<void> {
+async function assertBackgroundCompletion(
+  input: PreparedFixture,
+  options: {
+    expectedMaxInFlight?: number | null;
+    minHeldRequestDurationMs?: number | null;
+  } = {}
+): Promise<void> {
   expect(input.proxy.requestBodies.length).toBeGreaterThanOrEqual(3);
   if (input.surface !== 'acp') {
-    expect(input.proxy.maxInFlight).toBe(1);
+    const expectedMaxInFlight =
+      options.expectedMaxInFlight === undefined ? 1 : options.expectedMaxInFlight;
+    if (expectedMaxInFlight !== null) {
+      expect(input.proxy.maxInFlight).toBe(expectedMaxInFlight);
+    }
     expect(input.proxy.heldRequestNumbers).toHaveLength(1);
     const heldRequestIndex = (input.proxy.heldRequestNumbers[0] ?? 0) - 1;
-    expect(
-      (input.proxy.requestFinishedAt[heldRequestIndex] ?? 0) -
-        (input.proxy.requestStartedAt[heldRequestIndex] ?? 0)
-    ).toBeGreaterThanOrEqual(9_500);
+    const minHeldRequestDurationMs =
+      options.minHeldRequestDurationMs === undefined
+        ? 9_500
+        : options.minHeldRequestDurationMs;
+    if (minHeldRequestDurationMs !== null) {
+      expect(
+        (input.proxy.requestFinishedAt[heldRequestIndex] ?? 0) -
+          (input.proxy.requestStartedAt[heldRequestIndex] ?? 0)
+      ).toBeGreaterThanOrEqual(minHeldRequestDurationMs);
+    }
   }
   await expect(
     access(getSessionInboxFilePath(input.workspace, input.sessionId))
@@ -566,6 +650,412 @@ describe
           await cleanupFixture(prepared);
         }
       }, 300_000);
+
+      it(`${model.model} transfers a running background completion across Runtime replacement`, {
+        retry: 0,
+        timeout: 300_000,
+      }, async () => {
+        const childProviderHoldMarker =
+          'Return only its exact trimmed text and no explanation.';
+        const childProviderHeld = createDeferred<number>();
+        const releaseParentWait = createDeferred<boolean>();
+        const prepared = await prepareFixture(model, 'headless', {
+          providerRequestConcurrency: 2,
+          proxyOptions: {
+            holdBodyIncludes: childProviderHoldMarker,
+            holdMs: 120_000,
+            onHold: async (requestNumber) => {
+              childProviderHeld.resolve(requestNumber);
+            },
+          },
+        });
+        let runtimeA: SessionRuntime | undefined;
+        let runtimeB: SessionRuntime | undefined;
+        let agentA: Agent | undefined;
+        let agentB: Agent | undefined;
+        let busUnsubscribe: (() => void) | undefined;
+        let parentWaitSpy: { mockRestore(): void } | undefined;
+        try {
+          runtimeA = await runWithCwdOverride(prepared.workspace, () =>
+            SessionRuntime.create({
+              sessionId: prepared.sessionId,
+              workspaceRoot: prepared.workspace,
+            })
+          );
+          agentA = await Agent.createWithRuntime(runtimeA, {
+            sessionId: runtimeA.sessionId,
+            toolWhitelist: ['Task', 'Read'],
+            permissionMode: PermissionMode.YOLO,
+            maxTurns: 8,
+          });
+          const runningTaskResult = createDeferred<{ childSessionId: string }>();
+          const parentWaitEntered = createDeferred<void>();
+          const parentEvents: LoopEvent[] = [];
+          let observedChildSessionId: string | undefined;
+          parentWaitSpy = vi
+            .spyOn(runtimeA, 'waitForBackgroundSubagentFollowUp')
+            .mockImplementation(async () => {
+              parentWaitEntered.resolve();
+              return releaseParentWait.promise;
+            });
+
+          const parentRunPromise = drainLoop(
+            agentA.chatStream(
+              '',
+              await loadChatContext(prepared.sessionId, prepared.workspace),
+              {
+                stream: true,
+                pendingInputOnly: true,
+              }
+            ),
+            async (event) => {
+              parentEvents.push(event);
+              if (event.kind !== 'tool_result') return;
+              const metadata = event.result.metadata;
+              if (
+                metadata === null ||
+                typeof metadata !== 'object' ||
+                Array.isArray(metadata) ||
+                metadata.background !== true ||
+                typeof metadata.subagentSessionId !== 'string'
+              ) {
+                return;
+              }
+              observedChildSessionId = metadata.subagentSessionId;
+              runningTaskResult.resolve({
+                childSessionId: metadata.subagentSessionId,
+              });
+            }
+          );
+
+          let reachedParentWait: boolean;
+          try {
+            reachedParentWait = await withTimeout(
+              Promise.race([
+                parentWaitEntered.promise.then(() => true),
+                parentRunPromise.then(() => false),
+              ]),
+              60_000,
+              'Runtime A did not reach a terminal model-loop boundary'
+            );
+          } catch {
+            throw new Error(
+              `Runtime A did not reach the background wait boundary: ${await collectFailureDiagnostic(
+                prepared
+              )}; loopEvents=${JSON.stringify(
+                parentEvents.map((event) => event.kind)
+              )}; providerLifecycle=${JSON.stringify(prepared.proxy.requestLifecycle)}`
+            );
+          }
+          if (!reachedParentWait) {
+            const earlyResult = await parentRunPromise;
+            const earlyFailure = {
+              success: earlyResult.success,
+              finalMessage: earlyResult.finalMessage,
+              errorType: earlyResult.error?.type,
+              errorMessage: earlyResult.error?.message,
+              metadata: earlyResult.metadata,
+            };
+            throw new Error(
+              `Runtime A settled before the background wait boundary: ${await collectFailureDiagnostic(
+                prepared
+              )}; loopEvents=${JSON.stringify(
+                parentEvents.map((event) => event.kind)
+              )}; providerLifecycle=${JSON.stringify(prepared.proxy.requestLifecycle)}; result=${JSON.stringify(
+                earlyFailure
+              ).replaceAll(prepared.secret, '[REDACTED]')}`
+            );
+          }
+          if (!observedChildSessionId) {
+            throw new Error(
+              `Runtime A completed its model loop without a background Task result: ${await collectFailureDiagnostic(
+                prepared
+              )}; loopEvents=${JSON.stringify(
+                parentEvents.map((event) => event.kind)
+              )}; providerLifecycle=${JSON.stringify(prepared.proxy.requestLifecycle)}`
+            );
+          }
+          const heldRequestNumber = await withTimeout(
+            childProviderHeld.promise,
+            60_000,
+            'Background child Provider request never reached the hold barrier'
+          );
+          if (heldRequestNumber === 1) {
+            throw new Error(
+              'Background child hold marker matched the parent Provider request'
+            );
+          }
+          const [{ childSessionId }] = await Promise.all([
+            withTimeout(
+              runningTaskResult.promise,
+              60_000,
+              'Background Task running result did not arrive before replacement'
+            ),
+          ]);
+          const completionInboxId = `background-subagent-completion:${childSessionId}`;
+          const childSidecarPath = getChildSidecarPath(prepared, childSessionId);
+          const childSidecarWhileHeld = JSON.parse(
+            await readFile(childSidecarPath, 'utf8')
+          ) as Record<string, unknown>;
+          const eventsBeforeReplacement =
+            (await new PersistentStore(prepared.workspace).loadEvents(
+              prepared.sessionId
+            )) ?? [];
+
+          expect(parentWaitSpy).toHaveBeenCalledTimes(1);
+          expect(
+            SessionService.convertJSONLToMessages(eventsBeforeReplacement)
+          ).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                role: 'assistant',
+                content: 'WAITING_FOR_BACKGROUND_COMPLETION',
+              }),
+            ])
+          );
+          expect(
+            eventsBeforeReplacement.filter((event) => event.type === 'turn_completed')
+          ).toHaveLength(0);
+          expect(
+            eventsBeforeReplacement.filter((event) => event.type === 'turn_aborted')
+          ).toHaveLength(0);
+          expect(JSON.stringify(eventsBeforeReplacement)).not.toContain(
+            `BACKGROUND_PARENT_FINAL:${prepared.fixture.childMarker}`
+          );
+          expect(childSidecarWhileHeld).toMatchObject({
+            id: childSessionId,
+            status: 'running',
+            background: true,
+            rootAgentId: childSessionId,
+            resumeDepth: 0,
+          });
+          expect(parentEvents).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                kind: 'tool_result',
+              }),
+            ])
+          );
+          expect(prepared.proxy.requestLifecycle).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                requestNumber: heldRequestNumber,
+                phase: 'hold_entered',
+              }),
+            ])
+          );
+          expect(
+            parentEvents.filter(
+              (event) =>
+                event.kind === 'tool_start' &&
+                event.toolCall.function.name === 'TaskOutput'
+            )
+          ).toHaveLength(0);
+          expect(
+            prepared.proxy.requestLifecycle.some(
+              (entry) =>
+                entry.requestNumber === heldRequestNumber &&
+                ['release_observed', 'body_completed', 'downstream_ended'].includes(
+                  entry.phase
+                )
+            )
+          ).toBe(false);
+          expect(
+            prepared.proxy.requestBodies.filter((body) =>
+              body.includes(childProviderHoldMarker)
+            )
+          ).toHaveLength(1);
+
+          releaseParentWait.resolve(false);
+          const parentRunResult = await withTimeout(
+            parentRunPromise,
+            60_000,
+            'Runtime A pending parent loop did not finish after replacement gate release'
+          );
+          parentWaitSpy.mockRestore();
+          parentWaitSpy = undefined;
+
+          expect(parentRunResult.success).toBe(true);
+          expect(parentRunResult.finalMessage).toBe(
+            'WAITING_FOR_BACKGROUND_COMPLETION'
+          );
+
+          const eventsAfterTurnCompletion =
+            (await new PersistentStore(prepared.workspace).loadEvents(
+              prepared.sessionId
+            )) ?? [];
+          expect(
+            eventsAfterTurnCompletion.filter((event) => event.type === 'turn_completed')
+          ).toHaveLength(1);
+          expect(
+            eventsAfterTurnCompletion.filter((event) => event.type === 'turn_aborted')
+          ).toHaveLength(0);
+          expect(
+            SessionService.convertJSONLToMessages(eventsAfterTurnCompletion)
+          ).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                role: 'assistant',
+                content: 'WAITING_FOR_BACKGROUND_COMPLETION',
+              }),
+            ])
+          );
+          expect(JSON.stringify(eventsAfterTurnCompletion)).not.toContain(
+            `BACKGROUND_PARENT_FINAL:${prepared.fixture.childMarker}`
+          );
+
+          await agentA.destroy();
+          agentA = undefined;
+          await runtimeA.dispose();
+          runtimeA = undefined;
+
+          runtimeB = await runWithCwdOverride(prepared.workspace, () =>
+            SessionRuntime.create({
+              sessionId: prepared.sessionId,
+              workspaceRoot: prepared.workspace,
+            })
+          );
+          agentB = await Agent.createWithRuntime(runtimeB, {
+            sessionId: runtimeB.sessionId,
+            toolWhitelist: ['Task', 'Read'],
+            permissionMode: PermissionMode.YOLO,
+            maxTurns: 8,
+          });
+          expect(runtimeB.getTurnRecoveryAssessment()).toEqual({ state: 'none' });
+
+          const busEvents: Array<Record<string, unknown>> = [];
+          const busWakePromise = withTimeout(
+            new Promise<void>((resolve) => {
+              busUnsubscribe = Bus.subscribe((event) => {
+                if (
+                  event.sessionId !== prepared.sessionId ||
+                  event.projectPath !== prepared.workspace ||
+                  event.type !== 'subagent.completion.queued' ||
+                  event.properties.childSessionId !== childSessionId
+                ) {
+                  return;
+                }
+                busEvents.push(event.properties);
+                busUnsubscribe?.();
+                busUnsubscribe = undefined;
+                resolve();
+              });
+            }),
+            60_000,
+            'Runtime B never received the queued background completion bus wake'
+          );
+
+          expect(runtimeB.getPendingSteeringCount()).toBe(0);
+          expect(
+            runtimeB.getPendingSteeringMessages().map((message) => message.id)
+          ).not.toContain(completionInboxId);
+
+          prepared.proxy.releaseHeld();
+          await busWakePromise;
+
+          expect(busEvents).toEqual([
+            expect.objectContaining({
+              childSessionId,
+              queued: 1,
+              status: 'completed',
+              rootAgentId: childSessionId,
+              resumeDepth: 0,
+            }),
+          ]);
+          expect(
+            runtimeB
+              .getPendingSteeringMessages()
+              .filter((message) => message.id === completionInboxId)
+          ).toEqual([
+            expect.objectContaining({
+              id: completionInboxId,
+              origin: 'background_subagent',
+              persisted: true,
+              content: expect.stringContaining(prepared.fixture.childMarker),
+              metadata: expect.objectContaining({
+                clientVisible: false,
+                backgroundSubagentCompletion: expect.objectContaining({
+                  childSessionId,
+                }),
+              }),
+            }),
+          ]);
+
+          const followUpEvents: LoopEvent[] = [];
+          const contentDeltas: string[] = [];
+          const runtimeBResult = await drainLoop(
+            agentB.chatStream(
+              '',
+              await loadChatContext(prepared.sessionId, prepared.workspace),
+              {
+                stream: true,
+                pendingInputOnly: true,
+              }
+            ),
+            async (event) => {
+              followUpEvents.push(event);
+              if (event.kind === 'content_delta') {
+                contentDeltas.push(event.delta);
+              }
+            }
+          );
+
+          expect(runtimeBResult.success).toBe(true);
+          expect(runtimeBResult.finalMessage).toContain(
+            `BACKGROUND_PARENT_FINAL:${prepared.fixture.childMarker}`
+          );
+          expect(contentDeltas.join('')).toContain(
+            `BACKGROUND_PARENT_FINAL:${prepared.fixture.childMarker}`
+          );
+          expect(
+            followUpEvents.filter(
+              (event) =>
+                event.kind === 'tool_start' &&
+                event.toolCall.function.name === 'TaskOutput'
+            )
+          ).toHaveLength(0);
+          expect(runtimeB.getPendingSteeringCount()).toBe(0);
+
+          const childSidecarAfterCompletion = JSON.parse(
+            await readFile(childSidecarPath, 'utf8')
+          ) as Record<string, unknown>;
+          expect(childSidecarAfterCompletion).toMatchObject({
+            id: childSessionId,
+            status: 'completed',
+            background: true,
+            rootAgentId: childSessionId,
+            resumeDepth: 0,
+            result: {
+              success: true,
+              message: expect.stringContaining(prepared.fixture.childMarker),
+            },
+          });
+          expect(prepared.proxy.heldRequestNumbers).toHaveLength(1);
+          expect(
+            prepared.proxy.requestBodies.filter((body) =>
+              body.includes(childProviderHoldMarker)
+            )
+          ).toHaveLength(2);
+
+          await agentB.destroy();
+          agentB = undefined;
+          await runtimeB.dispose();
+          runtimeB = undefined;
+
+          await assertBackgroundCompletion(prepared, {
+            expectedMaxInFlight: 2,
+            minHeldRequestDurationMs: null,
+          });
+        } finally {
+          releaseParentWait.resolve(false);
+          parentWaitSpy?.mockRestore();
+          busUnsubscribe?.();
+          prepared.proxy.releaseHeld();
+          await Promise.allSettled([agentA?.destroy(), agentB?.destroy()]);
+          await Promise.allSettled([runtimeA?.dispose(), runtimeB?.dispose()]);
+          await cleanupFixture(prepared);
+        }
+      });
 
       it(`${model.model} wakes the ACP parent without a fake user chunk`, async () => {
         const prepared = await prepareFixture(model, 'acp');
