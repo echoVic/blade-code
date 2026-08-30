@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import * as acp from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AcpRemoteFileBoundaryError } from '../../src/acp/AcpFileRequestCoordinator.js';
@@ -12,23 +13,31 @@ import {
   isAcpMode,
   isAcpRemoteFileSystem,
 } from '../../src/acp/AcpServiceContext.js';
+import { PermissionMode } from '../../src/config/types.js';
 import { editTool } from '../../src/tools/builtin/file/edit.js';
 import { FileAccessTracker } from '../../src/tools/builtin/file/FileAccessTracker.js';
 import { readTool } from '../../src/tools/builtin/file/read.js';
 import { writeTool } from '../../src/tools/builtin/file/write.js';
+import { FileLockManager } from '../../src/tools/execution/FileLockManager.js';
+import { ToolExecutor } from '../../src/tools/execution/ToolExecutor.js';
+import { ToolRegistry } from '../../src/tools/registry/ToolRegistry.js';
+import type { Tool } from '../../src/tools/types/ToolTypes.js';
 import { ControlledFileClient } from '../support/acp/ControlledFileClient.js';
 import {
+  createPairedAcpAppHarness,
   createPairedAcpHarness,
+  type PairedAcpAppHarness,
   type PairedAcpHarness,
 } from '../support/acp/createPairedAcpHarness.js';
 
 describe('ACP remote Read builtin tool', () => {
-  const harnesses: PairedAcpHarness[] = [];
+  const harnesses: Array<PairedAcpHarness | PairedAcpAppHarness> = [];
   const sessionIds = new Set<string>();
   const tempRoots: string[] = [];
 
   beforeEach(() => {
     FileAccessTracker.resetInstance();
+    FileLockManager.resetInstance();
   });
 
   afterEach(async () => {
@@ -41,6 +50,7 @@ describe('ACP remote Read builtin tool', () => {
     await Promise.all(
       tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))
     );
+    FileLockManager.resetInstance();
   });
 
   async function createTempRoot(prefix: string): Promise<string> {
@@ -55,6 +65,22 @@ describe('ACP remote Read builtin tool', () => {
     cwd: string
   ): void {
     const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    sessionIds.add(sessionId);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      sessionId,
+      { fs: { readTextFile: true } },
+      cwd
+    );
+  }
+
+  function initializeRemoteAppSession(
+    clientApp: acp.ClientApp,
+    sessionId: string,
+    cwd: string
+  ): void {
+    const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
     sessionIds.add(sessionId);
     AcpServiceContext.initializeSession(
@@ -83,6 +109,31 @@ describe('ACP remote Read builtin tool', () => {
       },
       undefined,
       { sessionId }
+    );
+  }
+
+  async function executeReadViaToolExecutor(
+    filePath: string,
+    sessionId: string,
+    options?: {
+      signal?: AbortSignal;
+    }
+  ) {
+    const registry = new ToolRegistry();
+    registry.register(readTool as Tool);
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    });
+    return executor.execute(
+      'Read',
+      {
+        file_path: filePath,
+        encoding: 'utf8',
+      },
+      {
+        sessionId,
+        signal: options?.signal,
+      }
     );
   }
 
@@ -208,6 +259,80 @@ describe('ACP remote Read builtin tool', () => {
     expect(recordSpy).toHaveBeenCalledWith(filePath, remoteContent, 'read');
     expect(service.checkRemoteAccess(filePath, remoteContent)).toBe('current');
     recordSpy.mockRestore();
+  });
+
+  it('remote Read releases the opaque lock after a local deadline timeout even while the client handler is still pending', async () => {
+    const root = await createTempRoot('blade-acp-remote-timeout-lock-release-');
+    const filePath = path.join(root, 'shared.txt');
+    await fs.writeFile(filePath, 'host canary\n', 'utf8');
+
+    const firstObserved = Promise.withResolvers<AbortSignal>();
+    const firstGate = Promise.withResolvers<void>();
+    const secondGate = Promise.withResolvers<void>();
+    let dispatchCount = 0;
+    const clientApp = acp
+      .client({ name: 'remote-read-timeout-lock-release-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_read_text_file, async (ctx) => {
+        dispatchCount += 1;
+        if (dispatchCount === 1) {
+          firstObserved.resolve(ctx.signal);
+          await firstGate.promise;
+          return { content: 'late first content' };
+        }
+        await secondGate.promise;
+        return { content: 'second content' };
+      });
+    const sessionId = 'remote-read-timeout-lock-release';
+    initializeRemoteAppSession(clientApp, sessionId, root);
+
+    const service = getAcpFileSystemService(sessionId);
+    expect(service).toBeInstanceOf(AcpFileSystemService);
+    if (!(service instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    const lockManager = FileLockManager.getInstance();
+    const opaqueKey = service.createOpaqueLockKey(filePath);
+    const originalReadTextFileForUser = service.readTextFileForUser.bind(service);
+    const readForUserSpy = vi
+      .spyOn(service, 'readTextFileForUser')
+      .mockImplementation((targetPath, options) =>
+        originalReadTextFileForUser(targetPath, {
+          ...options,
+          deadlineAt: Date.now() + 25,
+        })
+      );
+
+    vi.useFakeTimers({ now: 100_000 });
+    try {
+      const firstRead = executeReadViaToolExecutor(filePath, sessionId);
+      const handlerSignal = await firstObserved.promise;
+      await Promise.resolve();
+      expect(lockManager.getLockedFiles()).toContain(opaqueKey);
+
+      vi.advanceTimersByTime(26);
+      await Promise.resolve();
+      await expect(firstRead).resolves.toMatchObject({
+        success: false,
+        llmContent: 'Remote file read timed out',
+        error: {
+          type: 'execution_error',
+          message: 'Remote file read timed out',
+        },
+      });
+      expect(handlerSignal.aborted).toBe(true);
+      expect(lockManager.getLockedFiles()).not.toContain(opaqueKey);
+      expect(dispatchCount).toBe(1);
+      expect(firstGate.promise).toBeDefined();
+
+      firstGate.resolve();
+      secondGate.resolve();
+      vi.runAllTimers();
+      await Promise.resolve();
+      expect(lockManager.getLockedFiles()).not.toContain(opaqueKey);
+    } finally {
+      readForUserSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it('remote Read maps ACP resourceNotFound to File not found without host fallback', async () => {
@@ -489,6 +614,52 @@ describe('ACP remote Read builtin tool', () => {
       },
     });
     expect(client.requests).toEqual([]);
+  });
+
+  it('ACP-local Read calls do not use opaque remote serialization and can run concurrently', async () => {
+    const root = await createTempRoot('blade-acp-local-read-concurrency-');
+    const filePath = path.join(root, 'local.txt');
+    await fs.writeFile(filePath, 'local text\n', 'utf8');
+
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const sessionId = 'local-acp-read-concurrency';
+    sessionIds.add(sessionId);
+    AcpServiceContext.initializeSession(harness.agentConnection, sessionId, {}, root);
+
+    expect(isAcpMode(sessionId)).toBe(true);
+    expect(isAcpRemoteFileSystem(sessionId)).toBe(false);
+
+    const opaqueSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+    const [resultA, resultB] = await Promise.all([
+      executeReadViaToolExecutor(filePath, sessionId),
+      executeReadViaToolExecutor(filePath, sessionId),
+    ]);
+
+    expect(resultA).toMatchObject({
+      success: true,
+      llmContent: 'local text\n',
+      metadata: {
+        file_path: filePath,
+        acp_mode: true,
+        encoding: 'utf8',
+        file_type: '.txt',
+      },
+    });
+    expect(resultB).toMatchObject({
+      success: true,
+      llmContent: 'local text\n',
+      metadata: {
+        file_path: filePath,
+        acp_mode: true,
+        encoding: 'utf8',
+        file_type: '.txt',
+      },
+    });
+    expect(opaqueSpy).not.toHaveBeenCalled();
+    expect(client.requests).toEqual([]);
+    opaqueSpy.mockRestore();
   });
 });
 

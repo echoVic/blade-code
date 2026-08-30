@@ -200,7 +200,8 @@ describe('AcpFileRequestCoordinator', () => {
 
     await expect(requestPromise).rejects.toBeInstanceOf(AcpRemoteFileBoundaryError);
     clientGate.resolve();
-    await vi.runAllTimersAsync();
+    vi.runAllTimers();
+    await Promise.resolve();
     expect(unhandled).toEqual([]);
   });
 
@@ -251,13 +252,15 @@ describe('AcpFileRequestCoordinator', () => {
         ),
     });
 
-    await vi.advanceTimersByTimeAsync(51);
+    vi.advanceTimersByTime(51);
+    await Promise.resolve();
     await expect(fulfillPromise).rejects.toBeInstanceOf(AcpRemoteFileBoundaryError);
     await expect(rejectPromise).rejects.toBeInstanceOf(AcpRemoteFileBoundaryError);
 
     fulfillGate.resolve();
     rejectGate.resolve();
-    await vi.runAllTimersAsync();
+    vi.runAllTimers();
+    await Promise.resolve();
     expect(unhandled).toEqual([]);
   });
 
@@ -364,7 +367,8 @@ describe('AcpFileRequestCoordinator', () => {
           { cancellationSignal }
         ),
     });
-    await vi.advanceTimersByTimeAsync(26);
+    vi.advanceTimersByTime(26);
+    await Promise.resolve();
     await expect(timeoutPromise).rejects.toBeInstanceOf(AcpRemoteFileBoundaryError);
     const closePromise = coordinator.runRequest({
       operation: 'read',
@@ -384,7 +388,8 @@ describe('AcpFileRequestCoordinator', () => {
     await expect(closePromise).rejects.toBeInstanceOf(AcpRemoteFileBoundaryError);
 
     blocked.resolve();
-    await vi.runAllTimersAsync();
+    vi.runAllTimers();
+    await Promise.resolve();
     expect(addSpy.mock.calls.length).toBe(removeSpy.mock.calls.length);
     expect(connectionRemoveSpy.mock.calls.length).toBe(6);
     expect(vi.getTimerCount()).toBe(0);
@@ -518,7 +523,8 @@ describe('AcpFileRequestCoordinator', () => {
     const mutationLease = coordinator.tryAcquireMutationLease([path], 'session-a');
     expect(mutationLease.pathIdentities).toEqual([makeIdentity(path)]);
 
-    await vi.advanceTimersByTimeAsync(26);
+    vi.advanceTimersByTime(26);
+    await Promise.resolve();
     await expect(firstRead).rejects.toMatchObject({
       reason: 'timeout',
       dispatched: true,
@@ -542,7 +548,8 @@ describe('AcpFileRequestCoordinator', () => {
 
     mutationLease.release();
     blocked.resolve();
-    await vi.runAllTimersAsync();
+    vi.runAllTimers();
+    await Promise.resolve();
     expect(unhandled).toEqual([]);
   });
 
@@ -650,7 +657,8 @@ describe('AcpFileRequestCoordinator', () => {
         ),
     });
 
-    await vi.advanceTimersByTimeAsync(26);
+    vi.advanceTimersByTime(26);
+    await Promise.resolve();
     await expect(writePromise).rejects.toMatchObject({
       reason: 'timeout',
       operation: 'write',
@@ -663,10 +671,12 @@ describe('AcpFileRequestCoordinator', () => {
     });
 
     blocked.resolve();
-    await vi.runAllTimersAsync();
-    expect(coordinator.getStatsForTests()).toMatchObject({
-      pendingWrites: 0,
-      needsRead: 1,
+    vi.runAllTimers();
+    await expectEventually(() => {
+      expect(coordinator.getStatsForTests()).toMatchObject({
+        pendingWrites: 0,
+        needsRead: 1,
+      });
     });
   });
 
@@ -783,7 +793,8 @@ describe('AcpFileRequestCoordinator', () => {
     ).resolves.toEqual({ content: 'late' });
     expect(dispatchCount).toBe(2);
 
-    await vi.runAllTimersAsync();
+    vi.runAllTimers();
+    await Promise.resolve();
     expect(coordinator.getStatsForTests()).toMatchObject({
       pendingNormal: 0,
       pendingRecovery: 0,
@@ -944,7 +955,8 @@ describe('AcpFileRequestCoordinator', () => {
         ),
     });
 
-    await vi.advanceTimersByTimeAsync(26);
+    vi.advanceTimersByTime(26);
+    await Promise.resolve();
     await expect(detachedRead).rejects.toMatchObject({
       reason: 'timeout',
       dispatched: true,
@@ -990,7 +1002,8 @@ describe('AcpFileRequestCoordinator', () => {
     expect(readDispatchCount).toBe(2);
 
     detachedReadGate.resolve();
-    await vi.runAllTimersAsync();
+    vi.runAllTimers();
+    await Promise.resolve();
 
     const blockedWrite = deferred<void>();
     const pendingWriteHarness = trackHarness(
@@ -1026,7 +1039,8 @@ describe('AcpFileRequestCoordinator', () => {
         ),
     });
 
-    await vi.advanceTimersByTimeAsync(26);
+    vi.advanceTimersByTime(26);
+    await Promise.resolve();
     await expect(pendingWrite).rejects.toMatchObject({
       reason: 'timeout',
       dispatched: true,
@@ -1043,7 +1057,8 @@ describe('AcpFileRequestCoordinator', () => {
     });
 
     blockedWrite.resolve();
-    await vi.runAllTimersAsync();
+    vi.runAllTimers();
+    await Promise.resolve();
   });
 
   it('does not let a late detached normal read clear the active recovery token', async () => {
@@ -1083,7 +1098,8 @@ describe('AcpFileRequestCoordinator', () => {
         ),
     });
 
-    await vi.advanceTimersByTimeAsync(26);
+    vi.advanceTimersByTime(26);
+    await Promise.resolve();
     await expect(detachedRead).rejects.toMatchObject({
       reason: 'timeout',
       dispatched: true,
@@ -1148,7 +1164,8 @@ describe('AcpFileRequestCoordinator', () => {
 
     recoveryGate.resolve();
     await expect(recoveryRead).resolves.toEqual({ content: 'late recovery content' });
-    await vi.runAllTimersAsync();
+    vi.runAllTimers();
+    await Promise.resolve();
     expect(readDispatchCount).toBe(2);
   });
 
@@ -1193,7 +1210,8 @@ describe('AcpFileRequestCoordinator', () => {
         ),
     });
 
-    await vi.advanceTimersByTimeAsync(26);
+    vi.advanceTimersByTime(26);
+    await Promise.resolve();
     await expect(uncertainWrite).rejects.toBeInstanceOf(AcpRemoteFileBoundaryError);
     expect(coordinator.getStatsForTests()).toMatchObject({
       pendingWrites: 1,
@@ -1201,10 +1219,12 @@ describe('AcpFileRequestCoordinator', () => {
     });
 
     blocked.resolve();
-    await vi.runAllTimersAsync();
-    expect(coordinator.getStatsForTests()).toMatchObject({
-      pendingWrites: 0,
-      needsRead: 1,
+    vi.runAllTimers();
+    await expectEventually(() => {
+      expect(coordinator.getStatsForTests()).toMatchObject({
+        pendingWrites: 0,
+        needsRead: 1,
+      });
     });
     writeLease.release();
     writeLease.release();
@@ -1260,7 +1280,8 @@ describe('AcpFileRequestCoordinator', () => {
       dispatched: true,
     });
     blocked.resolve();
-    await vi.runAllTimersAsync();
+    vi.runAllTimers();
+    await Promise.resolve();
 
     expect(coordinator.getStatsForTests()).toMatchObject({
       closed: true,

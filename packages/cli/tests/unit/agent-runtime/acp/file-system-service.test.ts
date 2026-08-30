@@ -800,6 +800,74 @@ describe('AcpFileSystemService remote ownership', () => {
     acquireLeaseSpy.mockRestore();
   });
 
+  it('does not mark a no-options write as uncertain when aborted before dispatch', async () => {
+    const clientApp = acp
+      .client({ name: 'file-system-write-pre-dispatch-abort-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      writeTextFile: true,
+    });
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const requestSpy = vi.spyOn(harness.agentConnection, 'request');
+    const controller = new AbortController();
+    controller.abort(new DOMException('Aborted before dispatch', 'AbortError'));
+
+    await expect(
+      service.writeTextFile('/workspace/pre-dispatch-abort.ts', 'alpha', {
+        signal: controller.signal,
+      })
+    ).rejects.toMatchObject({
+      name: 'AcpRemoteFileBoundaryError',
+      reason: 'aborted',
+      operation: 'write',
+      dispatched: false,
+      requestPending: false,
+    });
+    expect(requestSpy).not.toHaveBeenCalled();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+    requestSpy.mockRestore();
+  });
+
+  it('does not mark a no-options write as uncertain when the deadline is already expired before dispatch', async () => {
+    const clientApp = acp
+      .client({ name: 'file-system-write-expired-deadline-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      writeTextFile: true,
+    });
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const requestSpy = vi.spyOn(harness.agentConnection, 'request');
+
+    await expect(
+      service.writeTextFile('/workspace/expired-deadline.ts', 'alpha', {
+        deadlineAt: Date.now() - 1,
+      })
+    ).rejects.toMatchObject({
+      name: 'AcpRemoteFileBoundaryError',
+      reason: 'timeout',
+      operation: 'write',
+      dispatched: false,
+      requestPending: false,
+    });
+    expect(requestSpy).not.toHaveBeenCalled();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+    requestSpy.mockRestore();
+  });
+
   it('does not log remote raw paths or payloads for task2 adapter operations', async () => {
     const clientApp = acp
       .client({ name: 'file-system-log-sanitize-client' })
