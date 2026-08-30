@@ -303,6 +303,19 @@ Session-local 配置不能覆盖。CLI/TUI/print/Headless 的单 root Runtime �
 multiplexed registry。完整契约见
 [Session Runtime Residency](../reference/session-runtime-residency.md)。
 
+`maxResidentSessionProjections` 限制长运行 Web/ACP 进程中驻留的 Session projection
+条目总数，默认 `256`，必须为 `1-4096` 的安全整数。projection 保存 Web/ACP 恢复所需的
+轻量快照，不包含 fully initialized Runtime graph；容量不足时会优先回收 idle 且未固定的
+LRU projection，并使用 `sessionProjectionIdleMs` 做 TTL 回收。该 TTL 默认 `1800000`
+（30 分钟），必须为 `30000-86400000ms` 的安全整数。
+
+这两项 projection 驻留设置只允许出现在用户级 `~/.blade/settings.json` 或显式
+CLI `--settings` / `additionalSettings` 中。project `.blade/settings.json` 与
+`.blade/settings.local.json` 中若出现它们，会在启动时被忽略，并按 offending file
+打印一次告警；Web `PUT /configs` 和 `ConfigService.save()` 在 `project` / `local`
+scope 下会以 typed 400 / 抛错拒绝持久化。它们同样属于进程启动冻结的全局设置，不能被
+project 或 Session-local 配置覆盖。
+
 Provider 请求默认不经过进程内并发准入，直接由上游真实 `429`、`retry-after` 重试和
 共享熔断器提供背压。需要主动限流时，可显式设置 `providerRequestConcurrency`
 （单一 failure domain，`1-16`）、`providerGlobalConcurrency`（全进程）或

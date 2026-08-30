@@ -393,6 +393,82 @@ describe('ConfigManager 集成', () => {
     );
   });
 
+  describe('Session projection residency', () => {
+    it('global settings should persist session projection residency', async () => {
+      await ConfigService.getInstance().save(
+        {
+          maxResidentSessionProjections: 256,
+          sessionProjectionIdleMs: 1_800_000,
+        },
+        { scope: 'global', immediate: true }
+      );
+
+      const settingsPath = path.join(tempHome, '.blade', 'settings.json');
+      expect(JSON.parse(readFileSync(settingsPath, 'utf8'))).toMatchObject({
+        maxResidentSessionProjections: 256,
+        sessionProjectionIdleMs: 1_800_000,
+      });
+    });
+
+    it('project scope should reject global-only session projection residency settings', async () => {
+      await expect(
+        ConfigService.getInstance().save(
+          {
+            maxResidentSessionProjections: 256,
+          },
+          { scope: 'project', immediate: true }
+        )
+      ).rejects.toThrow('maxResidentSessionProjections');
+    });
+
+    it('应忽略项目与本地 settings 中的全局专属驻留设置并按文件各警告一次', async () => {
+      const projectSettingsPath = path.join(tempProject, '.blade', 'settings.json');
+      const localSettingsPath = path.join(tempProject, '.blade', 'settings.local.json');
+      mkdirSync(path.dirname(projectSettingsPath), { recursive: true });
+      writeFileSync(
+        projectSettingsPath,
+        JSON.stringify({
+          maxResidentSessionProjections: 1024,
+          sessionProjectionIdleMs: 3_600_000,
+        })
+      );
+      writeFileSync(
+        localSettingsPath,
+        JSON.stringify({
+          maxResidentSessionProjections: 2048,
+          sessionProjectionIdleMs: 7_200_000,
+        })
+      );
+
+      await WorkspaceTrustService.getInstance().trust(tempProject);
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const loaded = await ConfigManager.getInstance().initialize();
+
+      expect(loaded.maxResidentSessionProjections).toBe(256);
+      expect(loaded.sessionProjectionIdleMs).toBe(1_800_000);
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+      expect(warnSpy.mock.calls).toEqual(
+        expect.arrayContaining([
+          [
+            expect.stringContaining(
+              'Ignoring global-only session projection residency settings in'
+            ),
+            projectSettingsPath,
+          ],
+          [
+            expect.stringContaining(
+              'Ignoring global-only session projection residency settings in'
+            ),
+            localSettingsPath,
+          ],
+        ])
+      );
+
+      warnSpy.mockRestore();
+    });
+  });
+
   it('应维护 settings.local.json 并忽略重复记录', async () => {
     const manager = ConfigManager.getInstance();
     await manager.initialize();

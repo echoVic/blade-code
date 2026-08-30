@@ -19,10 +19,11 @@ environment variables, change permissions, or change turn limits. It may set
 `disableAllHooks: true` so hook execution can fail closed.
 
 Project configuration does not control `maxConcurrentTasks`,
-`maxQueuedTasks`, `maxQueuedTaskBytes`, `maxResidentSessionRuntimes`, or
-`sessionRuntimeIdleMs`. Those values configure process-wide task admission and
-[Session Runtime residency](session-runtime-residency.md) from the startup
-configuration.
+`maxQueuedTasks`, `maxQueuedTaskBytes`, `maxResidentSessionRuntimes`,
+`sessionRuntimeIdleMs`, `maxResidentSessionProjections`, or
+`sessionProjectionIdleMs`. Those values configure process-wide task admission,
+[Session Runtime residency](session-runtime-residency.md), and Session
+projection residency from the startup configuration.
 
 ## Environment lifecycle
 

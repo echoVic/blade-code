@@ -152,6 +152,20 @@ export const globalOptions = {
     group: 'AI Options:',
     default: undefined,
   },
+  'max-resident-session-projections': {
+    alias: ['maxResidentSessionProjections'],
+    type: 'number',
+    describe: 'Maximum resident Session projections retained in this process',
+    group: 'AI Options:',
+    default: undefined,
+  },
+  'session-projection-idle-ms': {
+    alias: ['sessionProjectionIdleMs'],
+    type: 'number',
+    describe: 'Idle time before an evictable Session projection is disposed',
+    group: 'AI Options:',
+    default: undefined,
+  },
   'permission-mode': {
     alias: ['permissionMode'],
     type: 'string',

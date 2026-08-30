@@ -73,6 +73,8 @@ export const createDefaultMockConfig = (
   maxQueuedTaskBytes: overrides?.maxQueuedTaskBytes ?? 64 * 1024 * 1024,
   maxResidentSessionRuntimes: overrides?.maxResidentSessionRuntimes ?? 32,
   sessionRuntimeIdleMs: overrides?.sessionRuntimeIdleMs ?? 5 * 60 * 1000,
+  maxResidentSessionProjections: overrides?.maxResidentSessionProjections ?? 256,
+  sessionProjectionIdleMs: overrides?.sessionProjectionIdleMs ?? 1_800_000,
 });
 
 export class MockConfigManager {

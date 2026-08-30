@@ -429,6 +429,8 @@ function createMockDeps(overrides: TestLoopDependencyOverrides = {}): LoopDepend
       maxQueuedTaskBytes: 64 * 1024 * 1024,
       maxResidentSessionRuntimes: 32,
       sessionRuntimeIdleMs: 5 * 60 * 1000,
+      maxResidentSessionProjections: 256,
+      sessionProjectionIdleMs: 1_800_000,
     },
     runtimeOptions: {},
     currentModelMaxContextTokens: 100_000,

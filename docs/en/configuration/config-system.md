@@ -303,6 +303,22 @@ Session-local config cannot override them. The single-root Runtime of CLI/TUI/pr
 multiplexed registry. For the full contract, see
 [Session Runtime Residency](/en/reference/session-runtime-residency.md).
 
+`maxResidentSessionProjections` limits the total number of resident Session
+projection entries in a long-running Web/ACP process, defaulting to `256`, and
+must be a safe integer in `1-4096`. A projection stores the lightweight snapshot
+needed for Web/ACP restoration and does not include a fully initialized Runtime
+graph. When capacity is tight, Blade reclaims idle, unpinned LRU projections
+first and uses `sessionProjectionIdleMs` for TTL reclamation. That TTL defaults
+to `1800000` (30 minutes) and must be a safe integer in `30000-86400000ms`.
+
+These two projection-residency settings are only valid in the user-level
+`~/.blade/settings.json` or explicit CLI `--settings` / `additionalSettings`.
+If project `.blade/settings.json` or `.blade/settings.local.json` contains
+them, Blade ignores them at startup and emits one warning per offending file.
+Web `PUT /configs` and `ConfigService.save()` reject `project` / `local` scope
+updates with a typed 400 / thrown error. They are also frozen process-startup
+settings and cannot be overridden by project or Session-local configuration.
+
 Provider requests bypass in-process concurrency admission by default. Real upstream
 `429` responses, `retry-after` backoff, and the shared circuit breaker provide
 backpressure. To opt into proactive limits, set `providerRequestConcurrency`

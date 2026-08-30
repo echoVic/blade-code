@@ -35,6 +35,7 @@ interface FieldRouting {
   defaultScope: ConfigScope;
   mergeStrategy: MergeStrategy;
   persistable: boolean;
+  allowedScopes?: readonly ConfigScope[];
 }
 
 // ============================================
@@ -290,6 +291,20 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: true,
   },
+  maxResidentSessionProjections: {
+    target: 'settings',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+    allowedScopes: ['global'],
+  },
+  sessionProjectionIdleMs: {
+    target: 'settings',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+    allowedScopes: ['global'],
+  },
   mcpServers: {
     target: 'config',
     defaultScope: 'global', // MCP 服务器配置存储在用户全局配置中
@@ -539,6 +554,7 @@ export class ConfigService {
   async save(updates: Partial<BladeConfig>, options: SaveOptions = {}): Promise<void> {
     // 1. 验证字段可持久化性
     this.validatePersistableFields(updates);
+    this.validateAllowedScopes(updates, options.scope);
 
     // 2. 按 target 和 scope 分组
     const grouped = this.groupUpdatesByTarget(
@@ -713,6 +729,22 @@ export class ConfigService {
         throw new Error(
           `Field "${key}" is non-persistable and cannot be saved to config files. ` +
             `Non-persistable fields are runtime-only and only valid for the current session.`
+        );
+      }
+    }
+  }
+
+  private validateAllowedScopes(
+    updates: Partial<BladeConfig>,
+    scopeOverride?: ConfigScope
+  ): void {
+    for (const key of Object.keys(updates)) {
+      const routing = FIELD_ROUTING_TABLE[key];
+      if (!routing?.allowedScopes) continue;
+      const scope = scopeOverride ?? routing.defaultScope;
+      if (!routing.allowedScopes.includes(scope)) {
+        throw new Error(
+          `Field "${key}" only supports scopes: ${routing.allowedScopes.join(', ')}`
         );
       }
     }

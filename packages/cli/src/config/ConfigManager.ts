@@ -75,6 +75,14 @@ import {
 } from './providerRequestAdmission.js';
 import { normalizeRuntimeEnvironment } from './runtimeEnvironment.js';
 import {
+  isValidResidentSessionProjectionLimit,
+  isValidSessionProjectionIdleMs,
+  MAX_RESIDENT_SESSION_PROJECTIONS,
+  MAX_SESSION_PROJECTION_IDLE_MS,
+  MIN_RESIDENT_SESSION_PROJECTIONS,
+  MIN_SESSION_PROJECTION_IDLE_MS,
+} from './sessionProjectionResidency.js';
+import {
   isValidResidentSessionRuntimeLimit,
   isValidSessionRuntimeIdleMs,
   MAX_RESIDENT_SESSION_RUNTIMES,
@@ -132,6 +140,7 @@ export class ConfigManager {
   private static instance: ConfigManager | null = null;
   private runtimePermissionOverrides?: PermissionConfig;
   private lastAdditionalSettings?: Partial<RuntimeConfig>;
+  private warnedGlobalOnlyProjectionResidencyFiles = new Set<string>();
 
   /**
    * 私有构造函数，防止外部直接实例化
@@ -377,7 +386,11 @@ export class ConfigManager {
     }
 
     // 2. 加载项目共享配置
-    const projectSettings = await this.loadJsonFile(projectSettingsPath);
+    const projectSettings = this.stripGlobalOnlyProjectionResidencyFromLayer(
+      await this.loadJsonFile(projectSettingsPath),
+      projectSettingsPath,
+      'project'
+    );
     if (projectSettings && projectTrusted) {
       settings = this.mergeSettings(settings, projectSettings);
     } else if (projectSettings?.hooks) {
@@ -387,7 +400,11 @@ export class ConfigManager {
     }
 
     // 3. 加载项目本地配置
-    const localSettings = await this.loadJsonFile(localSettingsPath);
+    const localSettings = this.stripGlobalOnlyProjectionResidencyFromLayer(
+      await this.loadJsonFile(localSettingsPath),
+      localSettingsPath,
+      'local'
+    );
     if (localSettings && projectTrusted) {
       settings = this.mergeSettings(settings, localSettings);
     } else if (localSettings?.hooks) {
@@ -397,6 +414,45 @@ export class ConfigManager {
     }
 
     return settings;
+  }
+
+  private stripGlobalOnlyProjectionResidencyFromLayer(
+    layer: Partial<BladeConfig> | null,
+    filePath: string,
+    scope: 'project' | 'local'
+  ): Partial<BladeConfig> | null {
+    if (!layer) {
+      return layer;
+    }
+
+    const hasMaxResidentSessionProjections =
+      layer.maxResidentSessionProjections !== undefined;
+    const hasSessionProjectionIdleMs = layer.sessionProjectionIdleMs !== undefined;
+
+    if (!hasMaxResidentSessionProjections && !hasSessionProjectionIdleMs) {
+      return layer;
+    }
+
+    this.warnGlobalOnlyProjectionResidencyOnce(filePath, scope);
+
+    const sanitized = { ...layer };
+    delete sanitized.maxResidentSessionProjections;
+    delete sanitized.sessionProjectionIdleMs;
+    return sanitized;
+  }
+
+  private warnGlobalOnlyProjectionResidencyOnce(
+    filePath: string,
+    scope: 'project' | 'local'
+  ): void {
+    if (this.warnedGlobalOnlyProjectionResidencyFiles.has(filePath)) {
+      return;
+    }
+    this.warnedGlobalOnlyProjectionResidencyFiles.add(filePath);
+    console.warn(
+      `[ConfigManager] Ignoring global-only session projection residency settings in ${scope} settings file:`,
+      filePath
+    );
   }
 
   /**
@@ -1270,6 +1326,17 @@ export class ConfigManager {
         `sessionRuntimeIdleMs 必须是 ${MIN_SESSION_RUNTIME_IDLE_MS}-${MAX_SESSION_RUNTIME_IDLE_MS} 之间的整数`
       );
     }
+    if (!isValidResidentSessionProjectionLimit(config.maxResidentSessionProjections)) {
+      errors.push(
+        'maxResidentSessionProjections 必须是 ' +
+          `${MIN_RESIDENT_SESSION_PROJECTIONS}-${MAX_RESIDENT_SESSION_PROJECTIONS} 之间的整数`
+      );
+    }
+    if (!isValidSessionProjectionIdleMs(config.sessionProjectionIdleMs)) {
+      errors.push(
+        `sessionProjectionIdleMs 必须是 ${MIN_SESSION_PROJECTION_IDLE_MS}-${MAX_SESSION_PROJECTION_IDLE_MS} 之间的整数`
+      );
+    }
     if (
       config.bashForegroundHandoffMs !== undefined &&
       !isValidForegroundCommandHandoffMs(config.bashForegroundHandoffMs)
@@ -1474,6 +1541,12 @@ export function mergeRuntimeConfig(
   }
   if (cliOptions.sessionRuntimeIdleMs !== undefined) {
     result.sessionRuntimeIdleMs = cliOptions.sessionRuntimeIdleMs;
+  }
+  if (cliOptions.maxResidentSessionProjections !== undefined) {
+    result.maxResidentSessionProjections = cliOptions.maxResidentSessionProjections;
+  }
+  if (cliOptions.sessionProjectionIdleMs !== undefined) {
+    result.sessionProjectionIdleMs = cliOptions.sessionProjectionIdleMs;
   }
 
   // 4. CLI 专属字段 - 系统提示

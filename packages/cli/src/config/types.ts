@@ -224,6 +224,8 @@ export interface BladeConfig {
   maxQueuedTaskBytes: number; // 等待 admission 的顶层任务 retained-byte 上限
   maxResidentSessionRuntimes: number; // 长运行进程内 fully initialized Session Runtime 上限
   sessionRuntimeIdleMs: number; // Web Session Runtime idle eviction TTL
+  maxResidentSessionProjections: number; // 长运行进程内 resident Session projection 上限
+  sessionProjectionIdleMs: number; // Session projection idle eviction TTL
 }
 
 /**

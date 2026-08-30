@@ -35,6 +35,8 @@ export interface GlobalOptions {
   maxQueuedTaskBytes?: number;
   maxResidentSessionRuntimes?: number;
   sessionRuntimeIdleMs?: number;
+  maxResidentSessionProjections?: number;
+  sessionProjectionIdleMs?: number;
   pluginDir?: string[];
   trustWorkspace?: boolean;
 }

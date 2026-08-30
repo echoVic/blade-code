@@ -24,6 +24,12 @@ import {
   MIN_PROVIDER_REQUEST_PENDING_BYTES,
 } from '../config/providerRequestAdmission.js';
 import {
+  MAX_RESIDENT_SESSION_PROJECTIONS,
+  MAX_SESSION_PROJECTION_IDLE_MS,
+  MIN_RESIDENT_SESSION_PROJECTIONS,
+  MIN_SESSION_PROJECTION_IDLE_MS,
+} from '../config/sessionProjectionResidency.js';
+import {
   MAX_RESIDENT_SESSION_RUNTIMES,
   MAX_SESSION_RUNTIME_IDLE_MS,
   MIN_RESIDENT_SESSION_RUNTIMES,
@@ -252,6 +258,18 @@ const RuntimeSettingsSchema = Type.Object({
       maximum: MAX_SESSION_RUNTIME_IDLE_MS,
     })
   ),
+  maxResidentSessionProjections: Type.Optional(
+    Type.Integer({
+      minimum: MIN_RESIDENT_SESSION_PROJECTIONS,
+      maximum: MAX_RESIDENT_SESSION_PROJECTIONS,
+    })
+  ),
+  sessionProjectionIdleMs: Type.Optional(
+    Type.Integer({
+      minimum: MIN_SESSION_PROJECTION_IDLE_MS,
+      maximum: MAX_SESSION_PROJECTION_IDLE_MS,
+    })
+  ),
   systemPrompt: Type.Optional(Type.String()),
   appendSystemPrompt: Type.Optional(Type.String()),
   initialMessage: Type.Optional(Type.String()),
@@ -318,6 +336,8 @@ const ARGUMENT_MAPPINGS = [
   ['maxQueuedTaskBytes', 'maxQueuedTaskBytes'],
   ['maxResidentSessionRuntimes', 'maxResidentSessionRuntimes'],
   ['sessionRuntimeIdleMs', 'sessionRuntimeIdleMs'],
+  ['maxResidentSessionProjections', 'maxResidentSessionProjections'],
+  ['sessionProjectionIdleMs', 'sessionProjectionIdleMs'],
 ] as const;
 
 function parseSettingsJson(content: string, source: string): Partial<RuntimeConfig> {

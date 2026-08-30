@@ -10,6 +10,10 @@ import {
   DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
 } from './providerRequestAdmission.js';
 import {
+  DEFAULT_MAX_RESIDENT_SESSION_PROJECTIONS,
+  DEFAULT_SESSION_PROJECTION_IDLE_MS,
+} from './sessionProjectionResidency.js';
+import {
   DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
   DEFAULT_SESSION_RUNTIME_IDLE_MS,
 } from './sessionRuntimeResidency.js';
@@ -264,4 +268,6 @@ export const DEFAULT_CONFIG: BladeConfig = {
   maxQueuedTaskBytes: DEFAULT_MAX_QUEUED_TASK_BYTES,
   maxResidentSessionRuntimes: DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
   sessionRuntimeIdleMs: DEFAULT_SESSION_RUNTIME_IDLE_MS,
+  maxResidentSessionProjections: DEFAULT_MAX_RESIDENT_SESSION_PROJECTIONS,
+  sessionProjectionIdleMs: DEFAULT_SESSION_PROJECTION_IDLE_MS,
 };

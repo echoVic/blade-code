@@ -37,6 +37,8 @@ export function projectPublicConfig(config: BladeConfig) {
     maxQueuedTaskBytes: config.maxQueuedTaskBytes,
     maxResidentSessionRuntimes: config.maxResidentSessionRuntimes,
     sessionRuntimeIdleMs: config.sessionRuntimeIdleMs,
+    maxResidentSessionProjections: config.maxResidentSessionProjections,
+    sessionProjectionIdleMs: config.sessionProjectionIdleMs,
   };
 }
 
@@ -67,6 +69,12 @@ export const ConfigRoutes = () => {
 
       return c.json({ success: true, updates });
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes('only supports scopes: global')
+      ) {
+        throw new BadRequestError(error.message);
+      }
       logger.error('[ConfigRoutes] Failed to update config:', error);
       throw error;
     }
