@@ -59,7 +59,7 @@ const worktreeState = vi.hoisted(() => ({
       originalWorkspaceRoot: '/repo',
       worktreeRoot: '/tmp/agent-worktree',
       workspaceRoot: '/tmp/agent-worktree',
-      sourceHadChanges: false,
+      sourceHadChanges: true,
     },
   })),
 }));
@@ -462,12 +462,17 @@ describe('BackgroundAgentManager', () => {
           originalWorkspaceRoot: '/repo',
           worktreeRoot: '/tmp/agent-worktree',
           workspaceRoot: '/tmp/agent-worktree',
-          sourceHadChanges: false,
+          sourceHadChanges: true,
         },
       };
       const mockStore = AgentSessionStore.getInstance();
-      vi.mocked(mockStore.updateSession).mockImplementation(() => {
-        callOrder.push('updateSession');
+      vi.mocked(mockStore.updateSession).mockImplementation((_agentId, updates) => {
+        const worktree = updates.worktree;
+        callOrder.push(
+          worktree?.sourceHadChanges === true
+            ? 'persistFinalizedWorktree'
+            : 'persistPreparedWorktree'
+        );
         return undefined;
       });
       vi.mocked(mockStore.markCompleted).mockImplementation(() => {
@@ -493,9 +498,10 @@ describe('BackgroundAgentManager', () => {
 
       await manager.waitForCompletion(agentId, 0);
 
-      expect(callOrder.indexOf('updateSession')).toBeGreaterThanOrEqual(0);
+      expect(callOrder).toContain('persistPreparedWorktree');
+      expect(callOrder).toContain('persistFinalizedWorktree');
       expect(callOrder.indexOf('markCompleted')).toBeGreaterThan(
-        callOrder.indexOf('updateSession')
+        callOrder.indexOf('persistFinalizedWorktree')
       );
       expect(callOrder.indexOf('onCompleted')).toBeGreaterThan(
         callOrder.indexOf('markCompleted')
