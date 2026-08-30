@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
 import {
   AcpServiceContext,
   getAcpFileSystemService,
 } from '../../src/acp/AcpServiceContext.js';
+import { LocalFileSystemService } from '../../src/services/FileSystemService.js';
 import { applyPatchTool } from '../../src/tools/builtin/file/applyPatch.js';
 import { FileAccessTracker } from '../../src/tools/builtin/file/FileAccessTracker.js';
 import { createRemotePatchWorkspaceIdentity } from '../../src/tools/builtin/file/PatchTransactionCoordinator.js';
@@ -41,6 +42,7 @@ describe('ApplyPatch builtin tool', () => {
       AcpServiceContext.destroySession(sessionId);
     }
     sessionIds.clear();
+    vi.restoreAllMocks();
     await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
     FileAccessTracker.resetInstance();
     if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
@@ -316,6 +318,50 @@ describe('ApplyPatch builtin tool', () => {
     expect(Object.hasOwn(result.metadata ?? {}, 'sideEffectsUncertain')).toBe(false);
     expect(Object.hasOwn(result.metadata ?? {}, 'write_verified')).toBe(false);
     await expect(fs.readFile(filePath, 'utf8')).resolves.toBe('const value = false;\n');
+  });
+
+  it('fails closed when frozen remote ownership disagrees with the resolved ACP filesystem service', async () => {
+    const sessionId = 'acp-remote-mismatch';
+    const remoteFiles = new Map([
+      ['C:\\workspace\\source.ts', 'const value = false;\n'],
+    ]);
+    createRemotePatchSession({
+      sessionId,
+      workspaceRoot: 'C:\\workspace',
+      files: remoteFiles,
+    });
+    const sessionServices = AcpServiceContext.getSessionServices(sessionId);
+    expect(sessionServices).not.toBeNull();
+    if (!sessionServices) {
+      throw new Error('expected ACP session services');
+    }
+    sessionServices.fileSystemService = new LocalFileSystemService();
+
+    const result = await applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: source.ts
+@@
+-const value = false;
++const value = true;
+*** End Patch`,
+      },
+      undefined,
+      {
+        sessionId,
+        messageId: 'acp-remote-mismatch-message',
+        workspaceRoot: 'C:\\workspace',
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('execution_error');
+    expect(result.llmContent).toContain('ACP remote ApplyPatch requires');
+    expect(result.metadata).toMatchObject({
+      sideEffectsUncertain: false,
+      write_verified: false,
+    });
+    expect(remoteFiles.get('C:\\workspace\\source.ts')).toBe('const value = false;\n');
   });
 
   it('updates ACP-owned files without touching a same-named local path or local recovery state', async () => {

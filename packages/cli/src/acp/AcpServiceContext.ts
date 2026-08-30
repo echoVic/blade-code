@@ -655,6 +655,15 @@ export class AcpServiceContext {
     cwd: string,
     sendUpdate?: (update: SessionNotification['update']) => Promise<void>
   ): void {
+    const existingSession = AcpServiceContext.sessions.get(sessionId);
+    if (existingSession) {
+      AcpServiceContext.currentSessionId = sessionId;
+      logger.debug(
+        `[AcpServiceContext:${sessionId}] initializeSession ignored because the session already exists`
+      );
+      return;
+    }
+
     const usesRemoteFileSystem =
       clientCapabilities?.fs?.readTextFile === true ||
       clientCapabilities?.fs?.writeTextFile === true;

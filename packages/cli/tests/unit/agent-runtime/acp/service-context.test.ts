@@ -177,6 +177,68 @@ describe('AcpServiceContext session isolation', () => {
     expect(isAcpMode('session-a')).toBe(true);
   });
 
+  it('ignores duplicate initializeSession calls so frozen filesystem ownership stays intact', async () => {
+    const remoteClient = new ControlledFileClient();
+    remoteClient.files.set('/workspace/a/file.ts', 'remote content');
+    const replacementClient = new ControlledFileClient();
+    const remoteHarness = createPairedAcpHarness(remoteClient);
+    const replacementHarness = createPairedAcpHarness(replacementClient);
+    harnesses.push(remoteHarness, replacementHarness);
+    const initialCapabilities: acp.ClientCapabilities = {
+      fs: { readTextFile: true, writeTextFile: true },
+      terminal: false,
+    };
+
+    AcpServiceContext.initializeSession(
+      remoteHarness.agentConnection,
+      'session-a',
+      initialCapabilities,
+      '/workspace/a'
+    );
+
+    const initialServices = AcpServiceContext.getSessionServices('session-a');
+    expect(initialServices).not.toBeNull();
+    expect(initialServices?.fileSystemService).toBeInstanceOf(AcpFileSystemService);
+    if (!(initialServices?.fileSystemService instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    initialServices.fileSystemService.recordRemoteAccess(
+      '/workspace/a/file.ts',
+      'alpha',
+      'read'
+    );
+
+    AcpServiceContext.initializeSession(
+      replacementHarness.agentConnection,
+      'session-a',
+      { terminal: true },
+      '/workspace/b'
+    );
+
+    const currentServices = AcpServiceContext.getSessionServices('session-a');
+    expect(currentServices).toBe(initialServices);
+    expect(currentServices?.connection).toBe(remoteHarness.agentConnection);
+    expect(currentServices?.cwd).toBe('/workspace/a');
+    expect(currentServices?.clientCapabilities).toEqual(initialCapabilities);
+    expect(isAcpRemoteFileSystem('session-a')).toBe(true);
+    expect(
+      initialServices.fileSystemService.getRemoteAccessRecord('/workspace/a/file.ts')
+    ).toBeDefined();
+    await expect(
+      getAcpFileSystemService('session-a').readTextFile('/workspace/a/file.ts')
+    ).resolves.toBe('remote content');
+    expect(remoteClient.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: '/workspace/a/file.ts',
+          sessionId: 'session-a',
+        },
+      },
+    ]);
+    expect(replacementClient.requests).toEqual([]);
+  });
+
   it('reports false for unknown or undefined remote filesystem queries', () => {
     expect(isAcpRemoteFileSystem()).toBe(false);
     expect(isAcpRemoteFileSystem('unknown-session')).toBe(false);

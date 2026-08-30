@@ -7,7 +7,11 @@ import {
   AcpFileSystemService,
   normalizeAcpRemotePath,
 } from '../../../acp/AcpFileSystemService.js';
-import { getAcpFileSystemService, isAcpMode } from '../../../acp/AcpServiceContext.js';
+import {
+  getAcpFileSystemService,
+  isAcpMode,
+  isAcpRemoteFileSystem,
+} from '../../../acp/AcpServiceContext.js';
 import { Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
@@ -110,17 +114,29 @@ export const applyPatchTool = createTool({
     try {
       const operations = parseApplyPatch(params.patch);
       const acpMode = isAcpMode(context.sessionId);
+      const remote = isAcpRemoteFileSystem(context.sessionId);
       const fileSystem = acpMode
         ? getAcpFileSystemService(context.sessionId)
         : getFileSystemService();
-      const remote =
-        acpMode &&
-        fileSystem instanceof AcpFileSystemService &&
-        fileSystem.usesRemoteFiles();
+      let remoteFileSystem: AcpFileSystemService | null = null;
       remoteOwnership = remote;
       if (remote) {
+        if (
+          !(fileSystem instanceof AcpFileSystemService) ||
+          !fileSystem.usesRemoteFiles()
+        ) {
+          return failure(
+            'ACP remote ApplyPatch requires a frozen ACP remote filesystem owner',
+            ToolErrorType.EXECUTION_ERROR,
+            {
+              sideEffectsUncertain: false,
+              write_verified: false,
+            }
+          );
+        }
+        remoteFileSystem = fileSystem;
         try {
-          fileSystem.assertTextMutationCapabilities();
+          remoteFileSystem.assertTextMutationCapabilities();
         } catch (error) {
           if (error instanceof AcpFileSystemCapabilityError) {
             return failure(
@@ -141,7 +157,9 @@ export const applyPatchTool = createTool({
           : await fs.realpath(workspaceRoot);
       const lockPaths = remote
         ? safePatchPaths(params.patch).map((filePath) =>
-            fileSystem.createOpaqueLockKey(resolveLockPath(workspaceRoot, filePath))
+            remoteFileSystem!.createOpaqueLockKey(
+              resolveLockPath(workspaceRoot, filePath)
+            )
           )
         : safePatchPaths(params.patch).map((filePath) =>
             resolveLockPath(workspaceIdentity, filePath)
@@ -165,7 +183,7 @@ export const applyPatchTool = createTool({
             plan = await planRemotePatchTransaction(
               operations,
               workspaceRoot,
-              fileSystem,
+              remoteFileSystem!,
               signal
             );
           } else {
@@ -198,7 +216,7 @@ export const applyPatchTool = createTool({
               }...`
             );
             if (remote) {
-              await commitRemotePatchTransaction(plan, fileSystem, signal);
+              await commitRemotePatchTransaction(plan, remoteFileSystem!, signal);
             } else {
               await commitLocalPatchTransaction(plan, signal);
             }
