@@ -1,5 +1,27 @@
 import { RequestError } from '@agentclientprotocol/sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+interface LoggerSpy {
+  info: ReturnType<typeof vi.fn>;
+  debug: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+}
+
+const loggerSpy = vi.hoisted<LoggerSpy>(() => ({
+  info: vi.fn(),
+  debug: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock('../../../../src/logging/Logger.js', () => ({
+  createLogger: vi.fn(() => loggerSpy),
+  LogCategory: {
+    AGENT: 'AGENT',
+  },
+}));
+
 import {
   AcpFileSystemCapabilityError,
   AcpFileSystemService,
@@ -15,8 +37,16 @@ describe('AcpFileSystemService remote ownership', () => {
   const harnesses: PairedAcpHarness[] = [];
 
   afterEach(async () => {
+    loggerSpy.info.mockReset();
+    loggerSpy.debug.mockReset();
+    loggerSpy.warn.mockReset();
+    loggerSpy.error.mockReset();
     await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
   });
+
+  function serializeWarnCalls(): string {
+    return JSON.stringify(loggerSpy.warn.mock.calls);
+  }
 
   it('fails closed instead of writing locally after an advertised remote failure', async () => {
     const client = new ControlledFileClient();
@@ -210,7 +240,7 @@ describe('AcpFileSystemService remote ownership', () => {
 
   it('recognizes bounded not-found errors and rejects unrelated errors', () => {
     expect(
-      isAcpResourceNotFoundError(RequestError.resourceNotFound('/secret/path'))
+      isAcpResourceNotFoundError(RequestError.resourceNotFound('/fixture/missing.txt'))
     ).toBe(true);
     expect(
       isAcpResourceNotFoundError(new RequestError(-32002, 'resource missing'))
@@ -230,6 +260,72 @@ describe('AcpFileSystemService remote ownership', () => {
     expect(error.name).toBe('AcpFileSystemCapabilityError');
     expect(error.message).toBe('ACP remote filesystem does not support mkdir');
     expect(error.operation).toBe('mkdir');
+  });
+
+  it('redacts sensitive remote read errors from logs while rethrowing them', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const sentinel = 'SENTINEL_PRIVATE_REMOTE_READ';
+    const remoteError = new RequestError(-32030, sentinel, {
+      secret: sentinel,
+      path: '/remote/private.txt',
+    });
+    vi.spyOn(client, 'readTextFile').mockRejectedValueOnce(remoteError);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      readTextFile: true,
+    });
+
+    await expect(service.readTextFile('/remote/private.txt')).rejects.toMatchObject({
+      name: 'RequestError',
+      code: -32030,
+      message: sentinel,
+      data: {
+        secret: sentinel,
+        path: '/remote/private.txt',
+      },
+    });
+
+    expect(loggerSpy.warn).toHaveBeenCalledWith(
+      '[AcpFileSystem] readTextFile ACP request failed'
+    );
+    expect(serializeWarnCalls()).not.toContain(sentinel);
+    expect(serializeWarnCalls()).not.toContain('/remote/private.txt');
+    expect(serializeWarnCalls()).not.toContain('"secret"');
+  });
+
+  it('redacts sensitive remote write errors from logs while rethrowing them', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const sentinel = 'SENTINEL_PRIVATE_REMOTE_WRITE';
+    const remoteError = new RequestError(-32031, sentinel, {
+      secret: sentinel,
+      path: '/remote/private.txt',
+    });
+    vi.spyOn(client, 'writeTextFile').mockRejectedValueOnce(remoteError);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      writeTextFile: true,
+    });
+
+    await expect(
+      service.writeTextFile('/remote/private.txt', 'payload')
+    ).rejects.toMatchObject({
+      name: 'RequestError',
+      code: -32031,
+      message: sentinel,
+      data: {
+        secret: sentinel,
+        path: '/remote/private.txt',
+      },
+    });
+
+    expect(loggerSpy.warn).toHaveBeenCalledWith(
+      '[AcpFileSystem] writeTextFile ACP request failed'
+    );
+    expect(serializeWarnCalls()).not.toContain(sentinel);
+    expect(serializeWarnCalls()).not.toContain('/remote/private.txt');
+    expect(serializeWarnCalls()).not.toContain('"secret"');
   });
 
   it('snapshots constructor capabilities instead of sharing the caller reference', async () => {

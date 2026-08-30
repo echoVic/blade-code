@@ -78,7 +78,7 @@ export class AcpFileSystemService implements FileSystemService {
       });
       return response.content;
     } catch (error) {
-      logger.warn(`[AcpFileSystem] readTextFile ACP failed: ${error}`);
+      logger.warn('[AcpFileSystem] readTextFile ACP request failed');
       throw error;
     }
   }
@@ -101,7 +101,7 @@ export class AcpFileSystemService implements FileSystemService {
         sessionId: this.sessionId,
       });
     } catch (error) {
-      logger.warn(`[AcpFileSystem] writeTextFile ACP failed: ${error}`);
+      logger.warn('[AcpFileSystem] writeTextFile ACP request failed');
       throw error;
     }
   }
@@ -159,9 +159,8 @@ export class AcpFileSystemService implements FileSystemService {
    */
   async mkdir(
     dirPath: string,
-    options?: { recursive?: boolean; mode?: number }
+    _options?: { recursive?: boolean; mode?: number }
   ): Promise<void> {
-    void options;
     logger.debug(`[AcpFileSystem] mkdir unsupported: ${dirPath}`);
     throw new AcpFileSystemCapabilityError('mkdir');
   }
