@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AcpFileSystemService } from '../../../../../src/acp/AcpFileSystemService.js';
 import { FileLockManager } from '../../../../../src/tools/execution/FileLockManager.js';
 
 describe('FileLockManager', () => {
@@ -208,6 +209,95 @@ describe('FileLockManager', () => {
       } finally {
         await rm(root, { recursive: true, force: true });
       }
+    });
+
+    it('应该为 remote alias path 生成同一个 opaque lock key，并按 FIFO 串行化', async () => {
+      const serviceA = new AcpFileSystemService({} as never, 'session-a', {
+        readTextFile: true,
+        writeTextFile: true,
+      });
+      const serviceB = new AcpFileSystemService({} as never, 'session-b', {
+        readTextFile: true,
+        writeTextFile: true,
+      });
+
+      const firstKey = serviceA.createOpaqueLockKey('c:/workspace/src/../file.ts');
+      const aliasKey = serviceA.createOpaqueLockKey('C:\\workspace\\file.ts');
+      const otherSessionKey = serviceB.createOpaqueLockKey('C:\\workspace\\file.ts');
+
+      expect(firstKey).toBe(aliasKey);
+      expect(firstKey).toMatch(/^acp-remote:[a-f0-9]{64}$/);
+      expect(otherSessionKey).not.toBe(firstKey);
+
+      const events: string[] = [];
+      let releaseFirst!: () => void;
+      const firstBlocked = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const first = lockManager.acquireOpaqueLock(firstKey, async () => {
+        events.push('first:start');
+        expect(lockManager.getLockedFiles()).toEqual([firstKey]);
+        await firstBlocked;
+        events.push('first:end');
+      });
+      await Promise.resolve();
+      const second = lockManager.acquireOpaqueLock(aliasKey, async () => {
+        events.push('second:start');
+        events.push('second:end');
+      });
+      await Promise.resolve();
+
+      expect(events).toEqual(['first:start']);
+      expect(lockManager.getLockedFiles()).toEqual([firstKey]);
+      expect(lockManager.getLockedFiles().join('\n')).not.toContain('workspace');
+      expect(lockManager.getLockedFiles().join('\n')).not.toContain('file.ts');
+
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(events).toEqual([
+        'first:start',
+        'first:end',
+        'second:start',
+        'second:end',
+      ]);
+      expect(lockManager.getLockedFileCount()).toBe(0);
+    });
+
+    it('应该为 opaque lock 集合去重排序并串行化重叠事务', async () => {
+      const service = new AcpFileSystemService({} as never, 'session-a', {
+        readTextFile: true,
+        writeTextFile: true,
+      });
+      const keyA = service.createOpaqueLockKey('C:\\workspace\\b.ts');
+      const keyB = service.createOpaqueLockKey('C:\\workspace\\a.ts');
+
+      const events: string[] = [];
+      let releaseFirst!: () => void;
+      const firstBlocked = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const first = lockManager.acquireOpaqueLocks([keyA, keyB, keyA], async () => {
+        events.push('first:start');
+        expect(lockManager.getLockedFiles()).toEqual([keyB, keyA].sort());
+        await firstBlocked;
+        events.push('first:end');
+      });
+      await Promise.resolve();
+      const second = lockManager.acquireOpaqueLocks([keyB, keyA], async () => {
+        events.push('second:start');
+        events.push('second:end');
+      });
+
+      await Promise.resolve();
+      expect(events).toEqual(['first:start']);
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(events).toEqual([
+        'first:start',
+        'first:end',
+        'second:start',
+        'second:end',
+      ]);
     });
   });
 

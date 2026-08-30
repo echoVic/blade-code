@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { AcpFileSystemService } from '../../acp/AcpFileSystemService.js';
+import {
+  getAcpFileSystemService,
+  isAcpRemoteFileSystem,
+} from '../../acp/AcpServiceContext.js';
 import type { PermissionConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
@@ -324,13 +329,27 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
           return executeToolInvocation(invocation, context);
         };
         const lockPath = params.file_path ?? params.notebook_path;
+        const remoteFileSystem = isAcpRemoteFileSystem(context.sessionId);
         const executeWithLock =
           !tool.isConcurrencySafe && lockPath
-            ? () =>
-                FileLockManager.getInstance().acquireLock(
-                  String(lockPath),
-                  executeInvocation
-                )
+            ? remoteFileSystem
+              ? () => {
+                  const service = getAcpFileSystemService(context.sessionId);
+                  if (!(service instanceof AcpFileSystemService)) {
+                    throw new Error(
+                      'ACP remote filesystem service is unavailable for file lock routing'
+                    );
+                  }
+                  return FileLockManager.getInstance().acquireOpaqueLock(
+                    service.createOpaqueLockKey(String(lockPath)),
+                    executeInvocation
+                  );
+                }
+              : () =>
+                  FileLockManager.getInstance().acquireLock(
+                    String(lockPath),
+                    executeInvocation
+                  )
             : executeInvocation;
         const result = await this.scheduler.schedule(
           {

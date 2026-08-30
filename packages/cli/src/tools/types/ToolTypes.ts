@@ -123,6 +123,8 @@ interface ApplyPatchMetadataFields extends BaseMetadataFields {
   snapshot_created?: boolean;
   session_id?: string;
   message_id?: string;
+  write_verified?: boolean;
+  sideEffectsUncertain?: boolean;
 }
 
 /**

@@ -12,6 +12,7 @@ import path from 'node:path';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 
 const logger = createLogger(LogCategory.EXECUTION);
+const OPAQUE_LOCK_KEY_PATTERN = /^acp-remote:[a-f0-9]{64}$/;
 
 export class FileLockManager {
   // 全局单例实例
@@ -74,6 +75,46 @@ export class FileLockManager {
       index >= paths.length
         ? operation()
         : this.acquireLock(paths[index], () => acquire(index + 1));
+    return acquire(0);
+  }
+
+  acquireOpaqueLock<T>(lockKey: string, operation: () => Promise<T>): Promise<T> {
+    assertOpaqueLockKey(lockKey);
+    const previousLock = this.locks.get(lockKey);
+    let release!: () => void;
+    const reservation = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.locks.set(lockKey, reservation);
+
+    const execute = async (): Promise<T> => {
+      if (previousLock) await previousLock;
+      try {
+        return await this.executeWithLock(lockKey, operation);
+      } finally {
+        release();
+        if (this.locks.get(lockKey) === reservation) {
+          this.locks.delete(lockKey);
+        }
+      }
+    };
+
+    return execute();
+  }
+
+  acquireOpaqueLocks<T>(
+    lockKeys: readonly string[],
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const keys = [...new Set(lockKeys)];
+    for (const key of keys) {
+      assertOpaqueLockKey(key);
+    }
+    keys.sort((left, right) => left.localeCompare(right));
+    const acquire = (index: number): Promise<T> =>
+      index >= keys.length
+        ? operation()
+        : this.acquireOpaqueLock(keys[index], () => acquire(index + 1));
     return acquire(0);
   }
 
@@ -158,5 +199,11 @@ function normalizeLockKey(filePath: string): string {
     if (parent === current) return resolved;
     missing.push(path.basename(current));
     current = parent;
+  }
+}
+
+function assertOpaqueLockKey(lockKey: string): void {
+  if (!OPAQUE_LOCK_KEY_PATTERN.test(lockKey)) {
+    throw new Error('Opaque file lock key must match ^acp-remote:[a-f0-9]{64}$');
   }
 }

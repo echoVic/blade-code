@@ -3,6 +3,7 @@ import { constants, promises as fs } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
+import { normalizeAcpRemotePath } from '../../../acp/AcpFileSystemService.js';
 import { getBladeStorageRoot } from '../../../context/storage/pathUtils.js';
 import { PathSecurity } from '../../../utils/pathSecurity.js';
 import { FileLockManager } from '../../execution/FileLockManager.js';
@@ -34,6 +35,17 @@ interface PatchJournal {
 export interface PatchJournalHandle {
   filePath: string;
   journal: PatchJournal;
+}
+
+export function createRemotePatchWorkspaceIdentity(
+  sessionId: string,
+  workspaceRoot: string
+): string {
+  return `acp-remote-workspace:${createHash('sha256')
+    .update(sessionId)
+    .update('\0')
+    .update(normalizeAcpRemotePath(workspaceRoot))
+    .digest('hex')}`;
 }
 
 export async function withPatchWorkspaceLock<T>(

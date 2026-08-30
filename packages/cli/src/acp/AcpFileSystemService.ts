@@ -235,6 +235,15 @@ export class AcpFileSystemService implements FileSystemService {
     return this.canReadTextFile() || this.canWriteTextFile();
   }
 
+  createOpaqueLockKey(filePath: string): string {
+    const normalizedPath = normalizeAcpRemotePath(filePath);
+    return `acp-remote:${createHash('sha256')
+      .update(this.sessionId)
+      .update('\0')
+      .update(normalizedPath)
+      .digest('hex')}`;
+  }
+
   async readTextFileIfExists(
     filePath: string
   ): Promise<{ exists: false } | { exists: true; content: string }> {

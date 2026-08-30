@@ -1,7 +1,12 @@
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import * as Diff from 'diff';
-import { AcpFileSystemService } from '../../../acp/AcpFileSystemService.js';
+import {
+  AcpFileSystemCapabilityError,
+  AcpFileSystemService,
+  normalizeAcpRemotePath,
+} from '../../../acp/AcpFileSystemService.js';
 import { getAcpFileSystemService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
@@ -15,6 +20,7 @@ import type {
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { extractApplyPatchPaths, parseApplyPatch } from './applyPatchParser.js';
 import {
+  AcpRemotePatchTransactionError,
   commitLocalPatchTransaction,
   commitRemotePatchTransaction,
   type PatchTransactionPlan,
@@ -23,6 +29,7 @@ import {
 } from './applyPatchTransaction.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 import {
+  createRemotePatchWorkspaceIdentity,
   recoverWorkspacePatchTransactionsUnderLock,
   withPatchWorkspaceLock,
 } from './PatchTransactionCoordinator.js';
@@ -109,29 +116,53 @@ export const applyPatchTool = createTool({
         acpMode &&
         fileSystem instanceof AcpFileSystemService &&
         fileSystem.usesRemoteFiles();
-      const workspaceIdentity = remote
-        ? workspaceRoot
-        : await fs.realpath(workspaceRoot);
-      const lockPaths = safePatchPaths(params.patch).map((filePath) =>
-        resolveLockPath(workspaceIdentity, filePath)
-      );
+      if (remote) {
+        try {
+          fileSystem.assertTextMutationCapabilities();
+        } catch (error) {
+          if (error instanceof AcpFileSystemCapabilityError) {
+            return failure(
+              `ACP remote ApplyPatch requires ${error.operation} capability`,
+              ToolErrorType.VALIDATION_ERROR,
+              {
+                sideEffectsUncertain: false,
+                write_verified: false,
+              }
+            );
+          }
+          throw error;
+        }
+      }
+      const workspaceIdentity =
+        remote && context.sessionId
+          ? createRemotePatchWorkspaceIdentity(context.sessionId, workspaceRoot)
+          : await fs.realpath(workspaceRoot);
+      const lockPaths = remote
+        ? safePatchPaths(params.patch).map((filePath) =>
+            fileSystem.createOpaqueLockKey(resolveLockPath(workspaceRoot, filePath))
+          )
+        : safePatchPaths(params.patch).map((filePath) =>
+            resolveLockPath(workspaceIdentity, filePath)
+          );
       return await withPatchWorkspaceLock(workspaceIdentity, async () => {
         signal.throwIfAborted();
         if (!remote) {
           await recoverWorkspacePatchTransactionsUnderLock(workspaceIdentity);
         }
-        return FileLockManager.getInstance().acquireLocks(lockPaths, async () => {
+        const runWithLocks = remote
+          ? FileLockManager.getInstance().acquireOpaqueLocks.bind(
+              FileLockManager.getInstance()
+            )
+          : FileLockManager.getInstance().acquireLocks.bind(
+              FileLockManager.getInstance()
+            );
+        return runWithLocks(lockPaths, async () => {
           let plan: PatchTransactionPlan;
           if (remote) {
-            if (!fileSystem.canReadTextFile() || !fileSystem.canWriteTextFile()) {
-              return failure(
-                'ACP remote ApplyPatch requires both readTextFile and writeTextFile capabilities'
-              );
-            }
             context.updateOutput?.('Preflighting remote patch...');
             plan = await planRemotePatchTransaction(
               operations,
-              workspaceIdentity,
+              workspaceRoot,
               fileSystem,
               signal
             );
@@ -179,7 +210,9 @@ export const applyPatchTool = createTool({
             context,
             workspaceIdentity
           );
-          await updateFileAccess(plan, context.sessionId);
+          if (!remote) {
+            await updateFileAccess(plan, context.sessionId);
+          }
           const metadata: ApplyPatchMetadata = {
             kind: 'patch',
             changes: plan.changes.map((change) => ({
@@ -202,15 +235,23 @@ export const applyPatchTool = createTool({
             session_id: context.sessionId,
             message_id: context.messageId,
             summary: summarizePlan(plan, workspaceIdentity),
+            write_verified: remote ? true : undefined,
+            sideEffectsUncertain: remote ? false : undefined,
           };
           return {
             success: true,
-            llmContent: renderPlan(plan, workspaceIdentity),
+            llmContent: renderPlan(plan, remote ? workspaceRoot : workspaceIdentity),
             metadata,
           };
         });
       });
     } catch (error) {
+      if (error instanceof AcpRemotePatchTransactionError) {
+        return failure(error.message, ToolErrorType.EXECUTION_ERROR, {
+          sideEffectsUncertain: error.sideEffectsUncertain,
+          write_verified: false,
+        });
+      }
       return failure(
         error instanceof Error ? error.message : String(error),
         ToolErrorType.EXECUTION_ERROR
@@ -366,12 +407,16 @@ function renderPlan(plan: PatchTransactionPlan, workspaceRoot: string): string {
 
 function failure(
   message: string,
-  type: ToolErrorType = ToolErrorType.EXECUTION_ERROR
+  type: ToolErrorType = ToolErrorType.EXECUTION_ERROR,
+  metadata?: Partial<ApplyPatchMetadata>
 ): ToolResult {
   return {
     success: false,
     llmContent: message,
     error: { type, message },
-    metadata: { summary: 'ApplyPatch failed; no partial patch was accepted' },
+    metadata: {
+      summary: 'ApplyPatch failed; no partial patch was accepted',
+      ...metadata,
+    },
   };
 }

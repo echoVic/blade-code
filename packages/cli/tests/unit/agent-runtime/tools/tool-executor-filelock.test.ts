@@ -6,10 +6,19 @@
  * - 默认 / 显式 isConcurrencySafe: false 的写工具加锁
  * - 无 file_path 不触发文件锁
  * - 带 file_path 的读工具不被误串行
+ * - ACP remote 文件使用 opaque lock，且不同 session 不共享 in-process key
  */
 
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AcpServiceContext } from '../../../../src/acp/AcpServiceContext.js';
+import { PermissionMode } from '../../../../src/config/types.js';
+import { Type } from '../../../../src/schema/index.js';
+import { createTool } from '../../../../src/tools/core/createTool.js';
 import { FileLockManager } from '../../../../src/tools/execution/FileLockManager.js';
+import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
+import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
+import { type Tool, ToolKind } from '../../../../src/tools/types/ToolTypes.js';
 
 /**
  * 模拟 ToolExecutor.execute() 的文件锁判断逻辑。
@@ -40,8 +49,34 @@ describe('ToolExecutor — file lock logic', () => {
   });
 
   afterEach(() => {
+    AcpServiceContext.destroySession('remote-lock-session-a');
+    AcpServiceContext.destroySession('remote-lock-session-b');
     FileLockManager.resetInstance();
   });
+
+  function createWriteExecutor(execute: () => Promise<void>): ToolExecutor {
+    const registry = new ToolRegistry();
+    registry.register(
+      createTool({
+        name: 'Write',
+        displayName: 'Write',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({
+          file_path: Type.String(),
+        }),
+        description: { short: 'write for file lock coverage' },
+        async execute() {
+          await execute();
+          return { success: true, llmContent: 'ok' };
+        },
+      }) as Tool
+    );
+    return new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    });
+  }
 
   // ----------------------------------------------------------------
   // isConcurrencySafe: true 的读工具不加锁
@@ -214,6 +249,111 @@ describe('ToolExecutor — file lock logic', () => {
       // Both should start before either ends (concurrent)
       expect(executionOrder[0]).toBe('a-start');
       expect(executionOrder[1]).toBe('b-start');
+    });
+
+    it('ACP remote 等价 Windows 路径应共享 opaque lock，且不触发 host path resolution', async () => {
+      const root = 'C:\\workspace';
+      const acquireLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireLock');
+      const opaqueSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const realpathSpy = vi.spyOn(path, 'resolve');
+      const executionOrder: string[] = [];
+      let releaseFirst!: () => void;
+      const firstBlocked = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+
+      AcpServiceContext.initializeSession(
+        {} as never,
+        'remote-lock-session-a',
+        {
+          fs: { readTextFile: true, writeTextFile: true },
+        } as never,
+        root
+      );
+
+      const executor = createWriteExecutor(async () => {
+        if (executionOrder.length === 0) {
+          executionOrder.push('first:start');
+          await firstBlocked;
+          executionOrder.push('first:end');
+          return;
+        }
+        executionOrder.push('second:start');
+        executionOrder.push('second:end');
+      });
+
+      const first = executor.execute(
+        'Write',
+        { file_path: 'c:/workspace/src/../file.ts' },
+        { sessionId: 'remote-lock-session-a' }
+      );
+      await Promise.resolve();
+      const second = executor.execute(
+        'Write',
+        { file_path: 'C:\\workspace\\file.ts' },
+        { sessionId: 'remote-lock-session-a' }
+      );
+
+      await expect.poll(() => executionOrder).toEqual(['first:start']);
+      expect(acquireLockSpy).not.toHaveBeenCalled();
+      expect(opaqueSpy).toHaveBeenCalledTimes(2);
+      expect(opaqueSpy.mock.calls[0]?.[0]).toBe(opaqueSpy.mock.calls[1]?.[0]);
+      expect(opaqueSpy.mock.calls[0]?.[0]).toMatch(/^acp-remote:[a-f0-9]{64}$/);
+      expect(realpathSpy).not.toHaveBeenCalledWith('c:/workspace/src/../file.ts');
+      expect(realpathSpy).not.toHaveBeenCalledWith('C:\\workspace\\file.ts');
+
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(executionOrder).toEqual([
+        'first:start',
+        'first:end',
+        'second:start',
+        'second:end',
+      ]);
+    });
+
+    it('不同 ACP session 的 remote Write 不共享同一个 opaque key', async () => {
+      const acquireLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireLock');
+      const opaqueSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const root = 'C:\\workspace';
+
+      AcpServiceContext.initializeSession(
+        {} as never,
+        'remote-lock-session-a',
+        {
+          fs: { readTextFile: true, writeTextFile: true },
+        } as never,
+        root
+      );
+      AcpServiceContext.initializeSession(
+        {} as never,
+        'remote-lock-session-b',
+        {
+          fs: { readTextFile: true, writeTextFile: true },
+        } as never,
+        root
+      );
+
+      const executor = createWriteExecutor(async () => undefined);
+
+      const [resultA, resultB] = await Promise.all([
+        executor.execute(
+          'Write',
+          { file_path: 'C:\\workspace\\shared.ts' },
+          { sessionId: 'remote-lock-session-a' }
+        ),
+        executor.execute(
+          'Write',
+          { file_path: 'C:\\workspace\\shared.ts' },
+          { sessionId: 'remote-lock-session-b' }
+        ),
+      ]);
+
+      expect(resultA.success).toBe(true);
+      expect(resultB.success).toBe(true);
+      expect(acquireLockSpy).not.toHaveBeenCalled();
+      expect(opaqueSpy).toHaveBeenCalledTimes(2);
+      expect(opaqueSpy.mock.calls[0]?.[0]).not.toBe(opaqueSpy.mock.calls[1]?.[0]);
     });
   });
 

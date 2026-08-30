@@ -2,6 +2,11 @@ import { isUtf8 } from 'node:buffer';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
+import {
+  AcpFileSystemService,
+  isAcpResourceNotFoundError,
+} from '../../../acp/AcpFileSystemService.js';
+import { commitVerifiedRemoteTextMutation } from '../../../acp/RemoteTextMutation.js';
 import type { FileSystemService } from '../../../services/FileSystemService.js';
 import { PathSecurity } from '../../../utils/pathSecurity.js';
 import { applyUpdateChunks } from './applyPatchEngine.js';
@@ -54,6 +59,22 @@ export interface LocalPatchFileSystem {
   rmdir(dirPath: string): Promise<void>;
   syncFile(filePath: string): Promise<void>;
   syncDirectory(dirPath: string): Promise<void>;
+}
+
+export class AcpRemotePatchTransactionError extends AggregateError {
+  readonly name = 'AcpRemotePatchTransactionError';
+
+  constructor(
+    errors: Iterable<unknown>,
+    readonly sideEffectsUncertain: boolean
+  ) {
+    super(
+      [...errors],
+      sideEffectsUncertain
+        ? 'ApplyPatch failed and the ACP remote transaction outcome is uncertain'
+        : 'ApplyPatch failed but the ACP remote transaction was rolled back'
+    );
+  }
 }
 
 const localFileSystem: LocalPatchFileSystem = {
@@ -205,7 +226,15 @@ export async function planRemotePatchTransaction(
     const operation = operations[index];
     if (operation.kind !== 'update') continue;
     const filePath = paths[index];
-    const oldContent = await fileSystem.readTextFile(filePath);
+    let oldContent: string;
+    try {
+      oldContent = await fileSystem.readTextFile(filePath);
+    } catch (error) {
+      if (isAcpResourceNotFoundError(error)) {
+        throw new Error(`Remote file not found: ${filePath}`);
+      }
+      throw error;
+    }
     assertTextSize(oldContent, operation.path);
     const newContent = applyUpdateChunks(oldContent, operation.chunks, operation.path);
     if (newContent === oldContent) {
@@ -334,6 +363,8 @@ export async function commitRemotePatchTransaction(
   signal?: AbortSignal
 ): Promise<void> {
   const attempted: PatchFileChange[] = [];
+  const remoteService =
+    fileSystem instanceof AcpFileSystemService ? fileSystem : undefined;
   try {
     for (const change of plan.changes) {
       signal?.throwIfAborted();
@@ -345,32 +376,60 @@ export async function commitRemotePatchTransaction(
         throw new Error(`Remote file changed after patch preflight: ${change.path}`);
       }
       attempted.push(change);
-      await fileSystem.writeTextFile(change.path, change.newContent);
-      const written = await fileSystem.readTextFile(change.path);
-      if (written !== change.newContent) {
-        throw new Error(`Remote write verification failed: ${change.path}`);
+      if (remoteService) {
+        await commitVerifiedRemoteTextMutation({
+          service: remoteService,
+          filePath: change.path,
+          previous: { exists: true, content: change.oldContent },
+          intendedContent: change.newContent,
+          operation: 'edit',
+          signal,
+          recordAccess: false,
+        });
+      } else {
+        await fileSystem.writeTextFile(change.path, change.newContent);
+        const written = await fileSystem.readTextFile(change.path);
+        if (written !== change.newContent) {
+          throw new Error(`Remote write verification failed: ${change.path}`);
+        }
+      }
+    }
+    if (remoteService) {
+      for (const change of plan.changes) {
+        if (change.newContent !== null) {
+          remoteService.recordRemoteAccess(change.path, change.newContent, 'edit');
+        }
       }
     }
   } catch (error) {
     const rollbackErrors: unknown[] = [];
     for (const change of attempted.reverse()) {
       try {
-        await fileSystem.writeTextFile(change.path, change.oldContent!);
-        const restored = await fileSystem.readTextFile(change.path);
-        if (restored !== change.oldContent) {
-          throw new Error(`Remote rollback verification failed: ${change.path}`);
+        if (remoteService) {
+          await commitVerifiedRemoteTextMutation({
+            service: remoteService,
+            filePath: change.path,
+            previous: { exists: true, content: change.newContent! },
+            intendedContent: change.oldContent!,
+            operation: 'edit',
+            signal,
+            recordAccess: false,
+          });
+        } else {
+          await fileSystem.writeTextFile(change.path, change.oldContent!);
+          const restored = await fileSystem.readTextFile(change.path);
+          if (restored !== change.oldContent) {
+            throw new Error(`Remote rollback verification failed: ${change.path}`);
+          }
         }
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
       }
     }
     if (rollbackErrors.length > 0) {
-      throw new AggregateError(
-        [error, ...rollbackErrors],
-        'ApplyPatch failed and the ACP remote transaction could not be fully rolled back'
-      );
+      throw new AcpRemotePatchTransactionError([error, ...rollbackErrors], true);
     }
-    throw error;
+    throw new AcpRemotePatchTransactionError([error], false);
   }
 }
 

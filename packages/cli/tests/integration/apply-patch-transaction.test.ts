@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
 import type {
   FileStat,
   FileSystemService,
@@ -208,6 +209,61 @@ describe('ApplyPatch local transaction', () => {
 });
 
 describe('ApplyPatch ACP remote transaction', () => {
+  it('detects preflight content races before publishing any remote write', async () => {
+    const files = new Map([
+      ['/remote/first.ts', 'const first = false;\n'],
+      ['/remote/second.ts', 'const second = false;\n'],
+    ]);
+    const requests: Array<{ kind: 'read' | 'write'; path: string; content?: string }> =
+      [];
+    const remote = createRemoteFileSystem(
+      files,
+      async (filePath, content) => {
+        requests.push({ kind: 'write', path: filePath, content });
+        files.set(filePath, content);
+      },
+      async (filePath) => {
+        requests.push({ kind: 'read', path: filePath });
+        if (filePath === '/remote/first.ts' && requests.length >= 3) {
+          return 'const first = externally changed;\n';
+        }
+        const content = files.get(filePath);
+        if (content === undefined) {
+          throw new Error(`not found: ${filePath}`);
+        }
+        return content;
+      }
+    );
+    const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+
+    const plan = await planRemotePatchTransaction(operations, '/remote', remote);
+    await expect(commitRemotePatchTransaction(plan, remote)).rejects.toMatchObject({
+      name: 'AcpRemotePatchTransactionError',
+      sideEffectsUncertain: false,
+      errors: [
+        expect.objectContaining({
+          message: 'Remote file changed after patch preflight: /remote/first.ts',
+        }),
+      ],
+    });
+    expect(requests).toEqual([
+      { kind: 'read', path: '/remote/first.ts' },
+      { kind: 'read', path: '/remote/second.ts' },
+      { kind: 'read', path: '/remote/first.ts' },
+    ]);
+    expect(files.get('/remote/first.ts')).toBe('const first = false;\n');
+    expect(files.get('/remote/second.ts')).toBe('const second = false;\n');
+  });
+
   it('rolls back prior remote writes when a later write fails', async () => {
     const files = new Map([
       ['/remote/first.ts', 'const first = false;\n'],
@@ -234,11 +290,131 @@ describe('ApplyPatch ACP remote transaction', () => {
 *** End Patch`);
     const plan = await planRemotePatchTransaction(operations, '/remote', remote);
 
-    await expect(commitRemotePatchTransaction(plan, remote)).rejects.toThrow(
-      'remote write failed'
-    );
+    await expect(commitRemotePatchTransaction(plan, remote)).rejects.toMatchObject({
+      name: 'AcpRemotePatchTransactionError',
+      sideEffectsUncertain: false,
+      errors: [
+        expect.objectContaining({
+          message: 'remote write failed',
+        }),
+      ],
+    });
     expect(files.get('/remote/first.ts')).toBe('const first = false;\n');
     expect(files.get('/remote/second.ts')).toBe('const second = false;\n');
+  });
+
+  it('verifies rollback and reports sideEffectsUncertain=false after restoring prior writes', async () => {
+    const files = new Map([
+      ['/remote/first.ts', 'const first = false;\n'],
+      ['/remote/second.ts', 'const second = false;\n'],
+    ]);
+    const remote = createRemoteFileSystem(files, async (filePath, content) => {
+      if (filePath.endsWith('second.ts') && content.includes('true')) {
+        throw new Error('remote write failed');
+      }
+      files.set(filePath, content);
+    });
+    const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+    const plan = await planRemotePatchTransaction(operations, '/remote', remote);
+
+    await expect(commitRemotePatchTransaction(plan, remote)).rejects.toMatchObject({
+      name: 'AcpRemotePatchTransactionError',
+      sideEffectsUncertain: false,
+    });
+    expect(files.get('/remote/first.ts')).toBe('const first = false;\n');
+    expect(files.get('/remote/second.ts')).toBe('const second = false;\n');
+  });
+
+  it('marks sideEffectsUncertain=true when rollback verification mismatches', async () => {
+    const files = new Map([
+      ['/remote/first.ts', 'const first = false;\n'],
+      ['/remote/second.ts', 'const second = false;\n'],
+    ]);
+    const writes: string[] = [];
+    const remote = createRemoteFileSystem(files, async (filePath, content) => {
+      writes.push(`${filePath}:${content.trim()}`);
+      if (filePath.endsWith('second.ts') && content.includes('true')) {
+        throw new Error('remote write failed');
+      }
+      if (filePath.endsWith('first.ts') && content.includes('false')) {
+        files.set(filePath, 'const first = rollback mismatch;\n');
+        return;
+      }
+      files.set(filePath, content);
+    });
+    const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+    const plan = await planRemotePatchTransaction(operations, '/remote', remote);
+
+    await expect(commitRemotePatchTransaction(plan, remote)).rejects.toMatchObject({
+      name: 'AcpRemotePatchTransactionError',
+      sideEffectsUncertain: true,
+    });
+    expect(writes).toContain('/remote/first.ts:const first = false;');
+    expect(files.get('/remote/first.ts')).toBe('const first = rollback mismatch;\n');
+  });
+
+  it('marks sideEffectsUncertain=true when rollback readback itself fails', async () => {
+    const files = new Map([
+      ['/remote/first.ts', 'const first = false;\n'],
+      ['/remote/second.ts', 'const second = false;\n'],
+    ]);
+    let rollbackReadFails = false;
+    const remote = createRemoteFileSystem(
+      files,
+      async (filePath, content) => {
+        if (filePath.endsWith('second.ts') && content.includes('true')) {
+          throw new Error('remote write failed');
+        }
+        if (filePath.endsWith('first.ts') && content.includes('false')) {
+          rollbackReadFails = true;
+        }
+        files.set(filePath, content);
+      },
+      async (filePath) => {
+        if (rollbackReadFails && filePath.endsWith('first.ts')) {
+          throw new Error('rollback read failed');
+        }
+        const content = files.get(filePath);
+        if (content === undefined) {
+          throw new Error(`not found: ${filePath}`);
+        }
+        return content;
+      }
+    );
+    const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+    const plan = await planRemotePatchTransaction(operations, '/remote', remote);
+
+    await expect(commitRemotePatchTransaction(plan, remote)).rejects.toMatchObject({
+      name: 'AcpRemotePatchTransactionError',
+      sideEffectsUncertain: true,
+    });
   });
 
   it('fails closed for remote add, delete, and move operations', async () => {
@@ -263,14 +439,15 @@ function createRemoteFileSystem(
     content
   ) => {
     files.set(filePath, content);
+  },
+  readFile: (filePath: string) => Promise<string> = async (filePath) => {
+    const content = files.get(filePath);
+    if (content === undefined) throw new Error(`not found: ${filePath}`);
+    return content;
   }
 ): FileSystemService {
   return {
-    readTextFile: async (filePath) => {
-      const content = files.get(filePath);
-      if (content === undefined) throw new Error(`not found: ${filePath}`);
-      return content;
-    },
+    readTextFile: readFile,
     writeTextFile: writeFile,
     exists: async (filePath) => files.has(filePath),
     readBinaryFile: async (filePath) => Buffer.from(files.get(filePath) ?? '', 'utf8'),
