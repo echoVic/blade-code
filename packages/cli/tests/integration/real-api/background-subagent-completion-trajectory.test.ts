@@ -926,6 +926,15 @@ describe
             maxTurns: 8,
           });
           expect(runtimeB.getTurnRecoveryAssessment()).toEqual({ state: 'none' });
+          expect(runtimeB.listSubagents()).toEqual([
+            expect.objectContaining({
+              id: childSessionId,
+              parentSessionId: prepared.sessionId,
+              parentProjectPath: prepared.workspace,
+              background: true,
+              status: 'running',
+            }),
+          ]);
 
           expect(await readFile(childSidecarPath, 'utf8')).toBe(
             childSidecarBeforeReplacement
