@@ -6,6 +6,7 @@ import type {
 } from '../../../../src/agent/runtime/BackgroundSubagentCompletionDispatcher.js';
 import {
   BackgroundSubagentCompletionDispatcher,
+  BackgroundSubagentCompletionReentrancyError,
   backgroundSubagentCompletionDispatcher,
 } from '../../../../src/agent/runtime/BackgroundSubagentCompletionDispatcher.js';
 
@@ -15,6 +16,11 @@ interface Deferred<T> {
   reject: (reason?: unknown) => void;
 }
 
+type PromiseObservation<T> =
+  | { status: 'fulfilled'; value: T }
+  | { status: 'rejected'; reason: unknown }
+  | { status: 'pending' };
+
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -23,6 +29,31 @@ function deferred<T>(): Deferred<T> {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+async function observePromise<T>(promise: Promise<T>): Promise<PromiseObservation<T>> {
+  let observation: PromiseObservation<T> = { status: 'pending' };
+  promise.then(
+    (value) => {
+      observation = { status: 'fulfilled', value };
+    },
+    (reason) => {
+      observation = { status: 'rejected', reason };
+    }
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  return observation;
+}
+
+function expectReentrancyRejection<T>(observation: PromiseObservation<T>): void {
+  expect(observation).toMatchObject({ status: 'rejected' });
+  if (observation.status !== 'rejected') {
+    return;
+  }
+  expect(observation.reason).toBeInstanceOf(
+    BackgroundSubagentCompletionReentrancyError
+  );
 }
 
 function createOwner(
@@ -302,5 +333,148 @@ describe('BackgroundSubagentCompletionDispatcher', () => {
       registrations: 0,
       activeOwnerOperations: 0,
     });
+  });
+
+  it('rejects same-owner dispatch reentered during initial reconcile', async () => {
+    const dispatcher = new BackgroundSubagentCompletionDispatcher();
+    const owner = createOwner();
+    let nestedDispatch: PromiseObservation<BackgroundSubagentCompletionDispatchResult> =
+      { status: 'pending' };
+
+    const registration = await dispatcher.attach(owner, {
+      reconcile: async () => {
+        nestedDispatch = await observePromise(
+          dispatcher.dispatch(owner, 'child-session')
+        );
+      },
+    });
+
+    expectReentrancyRejection(nestedDispatch);
+    expect(dispatcher.getStats()).toEqual({
+      registrations: 1,
+      activeOwnerOperations: 0,
+    });
+
+    await registration.dispose();
+  });
+
+  it('rejects same-owner fire-and-forget dispatch derived from initial reconcile', async () => {
+    const dispatcher = new BackgroundSubagentCompletionDispatcher();
+    const owner = createOwner();
+    let nestedDispatch: PromiseObservation<BackgroundSubagentCompletionDispatchResult> =
+      { status: 'pending' };
+
+    const registration = await dispatcher.attach(owner, {
+      reconcile: async () => {
+        const nestedPromise = dispatcher.dispatch(owner, 'child-session');
+        nestedDispatch = await observePromise(nestedPromise);
+      },
+    });
+
+    expectReentrancyRejection(nestedDispatch);
+    await registration.dispose();
+  });
+
+  it('rejects same-owner attach reentered during initial reconcile', async () => {
+    const dispatcher = new BackgroundSubagentCompletionDispatcher();
+    const owner = createOwner();
+    let nestedAttach: PromiseObservation<BackgroundSubagentCompletionRegistration> = {
+      status: 'pending',
+    };
+
+    const registration = await dispatcher.attach(owner, {
+      reconcile: async () => {
+        nestedAttach = await observePromise(dispatcher.attach(owner, createSink([])));
+      },
+    });
+
+    expectReentrancyRejection(nestedAttach);
+    expect(dispatcher.getStats()).toEqual({
+      registrations: 1,
+      activeOwnerOperations: 0,
+    });
+
+    await registration.dispose();
+  });
+
+  it('rejects same-owner dispose reentered during dispatch reconcile and still completes dispatch', async () => {
+    const dispatcher = new BackgroundSubagentCompletionDispatcher();
+    const owner = createOwner();
+    let registration: BackgroundSubagentCompletionRegistration | undefined;
+    let nestedDispose: PromiseObservation<void> = { status: 'pending' };
+
+    registration = await dispatcher.attach(owner, {
+      reconcile: async (agentId?: string) => {
+        if (!agentId || !registration) {
+          return;
+        }
+        nestedDispose = await observePromise(registration.dispose());
+      },
+    });
+
+    await expect(dispatcher.dispatch(owner, 'child-session')).resolves.toBe(
+      'delivered'
+    );
+    expectReentrancyRejection(nestedDispose);
+    expect(dispatcher.getStats()).toEqual({
+      registrations: 1,
+      activeOwnerOperations: 0,
+    });
+
+    await registration.dispose();
+  });
+
+  it('rejects indirect same-owner reentry through a different owner reconcile', async () => {
+    const dispatcher = new BackgroundSubagentCompletionDispatcher();
+    const ownerA = createOwner('owner-a', '/workspace-a');
+    const ownerB = createOwner('owner-b', '/workspace-b');
+    let nestedDispatch: PromiseObservation<BackgroundSubagentCompletionDispatchResult> =
+      { status: 'pending' };
+
+    const registrationB = await dispatcher.attach(ownerB, {
+      reconcile: async (agentId?: string) => {
+        if (!agentId) {
+          return;
+        }
+        nestedDispatch = await observePromise(
+          dispatcher.dispatch(ownerA, 'child-a-session')
+        );
+      },
+    });
+
+    const registrationA = await dispatcher.attach(ownerA, {
+      reconcile: async () => {
+        await expect(dispatcher.dispatch(ownerB, 'child-b-session')).resolves.toBe(
+          'delivered'
+        );
+      },
+    });
+
+    expectReentrancyRejection(nestedDispatch);
+    expect(dispatcher.getStats()).toEqual({
+      registrations: 2,
+      activeOwnerOperations: 0,
+    });
+
+    await Promise.all([registrationA.dispose(), registrationB.dispose()]);
+  });
+
+  it('allows nested dispatch for a different owner', async () => {
+    const dispatcher = new BackgroundSubagentCompletionDispatcher();
+    const ownerA = createOwner('owner-a', '/workspace-a');
+    const ownerB = createOwner('owner-b', '/workspace-b');
+    const callsB: Array<string | undefined> = [];
+
+    const registrationB = await dispatcher.attach(ownerB, createSink(callsB));
+    const registrationA = await dispatcher.attach(ownerA, {
+      reconcile: async () => {
+        await expect(dispatcher.dispatch(ownerB, 'child-b-session')).resolves.toBe(
+          'delivered'
+        );
+      },
+    });
+
+    expect(callsB).toEqual([undefined, 'child-b-session']);
+    await Promise.all([registrationA.dispose(), registrationB.dispose()]);
   });
 });
