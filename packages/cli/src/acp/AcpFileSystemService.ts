@@ -12,11 +12,19 @@ import type {
   FileSystemCapabilities,
   RequestError,
 } from '@agentclientprotocol/sdk';
+import * as acp from '@agentclientprotocol/sdk';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import {
   type FileStat,
   type FileSystemService,
 } from '../services/FileSystemService.js';
+import {
+  ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+  type AcpRemoteFileRequestPurpose,
+  type AcpRemoteUserReadPermit,
+  createAcpRemoteConnectionPathIdentity,
+  getAcpFileRequestCoordinator,
+} from './AcpFileRequestCoordinator.js';
 
 const logger = createLogger(LogCategory.AGENT);
 const MAX_REMOTE_ACCESS_RECORDS = 1024;
@@ -84,6 +92,7 @@ export function isAcpResourceNotFoundError(error: unknown): boolean {
 export class AcpFileSystemService implements FileSystemService {
   private readonly capabilities: FileSystemCapabilities;
   private readonly remoteAccessLedger = new Map<string, RemoteFileAccessRecord>();
+  private readonly disposeController = new AbortController();
 
   constructor(
     private readonly connection: AgentSideConnection,
@@ -102,19 +111,41 @@ export class AcpFileSystemService implements FileSystemService {
    * 如果 IDE 不支持 readTextFile，则 fail-closed。
    */
   async readTextFile(filePath: string): Promise<string> {
-    if (!this.capabilities.readTextFile) {
-      throw new AcpFileSystemCapabilityError('readTextFile');
+    return this.runBoundedTextRead(filePath, {
+      purpose: 'preflight',
+    });
+  }
+
+  async readTextFileForUser(
+    filePath: string,
+    options?: {
+      signal?: AbortSignal;
+      deadlineAt?: number;
     }
+  ): Promise<string> {
+    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const coordinator = getAcpFileRequestCoordinator(this.connection);
+    const permit = coordinator.beginUserRead(normalizedPath, this.sessionId);
 
     try {
-      logger.debug(`[AcpFileSystem] readTextFile via ACP: ${filePath}`);
-      const response = await this.connection.readTextFile({
-        path: filePath,
-        sessionId: this.sessionId,
+      const content = await this.runBoundedTextRead(normalizedPath, {
+        signal: options?.signal,
+        deadlineAt: options?.deadlineAt,
+        purpose: 'user-read',
+        userReadPermit: permit,
       });
-      return response.content;
+      permit.complete('content', () => {
+        this.recordRemoteAccess(normalizedPath, content, 'read');
+      });
+      return content;
     } catch (error) {
-      logger.warn('[AcpFileSystem] readTextFile ACP request failed');
+      if (isAcpResourceNotFoundError(error)) {
+        permit.complete('not-found', () => {
+          this.deleteRemoteAccessRecord(normalizedPath);
+        });
+        throw error;
+      }
+      permit.fail();
       throw error;
     }
   }
@@ -153,15 +184,12 @@ export class AcpFileSystemService implements FileSystemService {
     }
 
     try {
-      await this.connection.readTextFile({
-        path: filePath,
-        sessionId: this.sessionId,
+      await this.runBoundedTextRead(filePath, {
+        purpose: 'preflight',
       });
-      logger.debug(`[AcpFileSystem] exists(${filePath}): true (ACP read success)`);
       return true;
     } catch (error) {
       if (isAcpResourceNotFoundError(error)) {
-        logger.debug(`[AcpFileSystem] exists(${filePath}): false (ACP: not found)`);
         return false;
       }
       throw error;
@@ -248,7 +276,9 @@ export class AcpFileSystemService implements FileSystemService {
     filePath: string
   ): Promise<{ exists: false } | { exists: true; content: string }> {
     try {
-      const content = await this.readTextFile(filePath);
+      const content = await this.runBoundedTextRead(filePath, {
+        purpose: 'preflight',
+      });
       return { exists: true, content };
     } catch (error) {
       if (isAcpResourceNotFoundError(error)) {
@@ -309,7 +339,64 @@ export class AcpFileSystemService implements FileSystemService {
   }
 
   dispose(): void {
+    this.disposeController.abort();
     this.remoteAccessLedger.clear();
+  }
+
+  private async runBoundedTextRead(
+    filePath: string,
+    options: {
+      signal?: AbortSignal;
+      deadlineAt?: number;
+      purpose: AcpRemoteFileRequestPurpose;
+      userReadPermit?: AcpRemoteUserReadPermit;
+    }
+  ): Promise<string> {
+    if (!this.capabilities.readTextFile) {
+      throw new AcpFileSystemCapabilityError('readTextFile');
+    }
+
+    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const combinedSignal = createCombinedAbortSignal(
+      this.disposeController.signal,
+      options.signal
+    );
+    const coordinator = getAcpFileRequestCoordinator(this.connection);
+    const deadlineAt =
+      options.deadlineAt ?? Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS;
+
+    try {
+      const response = await coordinator.runRequest({
+        operation: 'read',
+        purpose: options.purpose,
+        sessionId: this.sessionId,
+        pathIdentity: createAcpRemoteConnectionPathIdentity(normalizedPath),
+        deadlineAt,
+        signal: combinedSignal.signal,
+        userReadPermit: options.userReadPermit,
+        dispatch: (cancellationSignal) =>
+          this.connection.request(
+            acp.CLIENT_METHODS.fs_read_text_file,
+            {
+              path: normalizedPath,
+              sessionId: this.sessionId,
+            },
+            {
+              cancellationSignal,
+            }
+          ),
+      });
+      return response.content;
+    } catch (error) {
+      logger.warn('[AcpFileSystem] readTextFile ACP request failed');
+      throw error;
+    } finally {
+      combinedSignal.cleanup();
+    }
+  }
+
+  private deleteRemoteAccessRecord(filePath: string): void {
+    this.remoteAccessLedger.delete(normalizeAcpRemotePath(filePath));
   }
 }
 
@@ -322,4 +409,61 @@ function isRequestErrorWithCode(
 
 function sha256(content: string): string {
   return createHash('sha256').update(content).digest('hex');
+}
+
+function createCombinedAbortSignal(...signals: Array<AbortSignal | undefined>): {
+  signal: AbortSignal;
+  cleanup: () => void;
+} {
+  const activeSignals = signals.filter(
+    (signal): signal is AbortSignal => signal !== undefined
+  );
+  if (activeSignals.length === 0) {
+    return {
+      signal: new AbortController().signal,
+      cleanup: noop,
+    };
+  }
+  if (activeSignals.length === 1) {
+    return {
+      signal: activeSignals[0],
+      cleanup: noop,
+    };
+  }
+
+  const controller = new AbortController();
+  const listeners = new Map<AbortSignal, () => void>();
+  const abortFrom = (source: AbortSignal) => {
+    if (!controller.signal.aborted) {
+      controller.abort(source.reason);
+    }
+  };
+
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      abortFrom(signal);
+      return {
+        signal: controller.signal,
+        cleanup: noop,
+      };
+    }
+    const listener = () => {
+      abortFrom(signal);
+    };
+    listeners.set(signal, listener);
+    signal.addEventListener('abort', listener, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      for (const [signal, listener] of listeners) {
+        signal.removeEventListener('abort', listener);
+      }
+    },
+  };
+}
+
+function noop(): void {
+  /* intentionally empty */
 }

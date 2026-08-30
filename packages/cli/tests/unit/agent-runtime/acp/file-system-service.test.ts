@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import * as acp from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -23,6 +24,7 @@ vi.mock('../../../../src/logging/Logger.js', () => ({
   },
 }));
 
+import { ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS } from '../../../../src/acp/AcpFileRequestCoordinator.js';
 import {
   AcpFileSystemCapabilityError,
   AcpFileSystemService,
@@ -31,12 +33,14 @@ import {
 } from '../../../../src/acp/AcpFileSystemService.js';
 import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
 import {
+  createPairedAcpAppHarness,
   createPairedAcpHarness,
+  type PairedAcpAppHarness,
   type PairedAcpHarness,
 } from '../../../support/acp/createPairedAcpHarness.js';
 
 describe('AcpFileSystemService remote ownership', () => {
-  const harnesses: PairedAcpHarness[] = [];
+  const harnesses: Array<PairedAcpHarness | PairedAcpAppHarness> = [];
 
   afterEach(async () => {
     loggerSpy.info.mockReset();
@@ -555,5 +559,103 @@ describe('AcpFileSystemService remote ownership', () => {
     expect(service.getRemoteAccessRecord('/workspace/file-0.ts')).toBeDefined();
     expect(service.getRemoteAccessRecord('/workspace/file-1.ts')).toBeUndefined();
     expect(service.getRemoteAccessRecord('/workspace/file-1024.ts')).toBeDefined();
+  });
+
+  it('readTextFileForUser dispatches via request() with cancellationSignal and records the ledger on success', async () => {
+    const clientApp = acp
+      .client({ name: 'file-system-user-read-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_read_text_file, async ({ params, signal }) => {
+        expect(params).toEqual({
+          path: '/workspace/user-read.ts',
+          sessionId: 'session-a',
+        });
+        expect(signal).toBeInstanceOf(AbortSignal);
+        expect(signal.aborted).toBe(false);
+        return { content: 'user read content' };
+      });
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      readTextFile: true,
+    });
+    const requestSpy = vi.spyOn(harness.agentConnection, 'request');
+
+    await expect(service.readTextFileForUser('/workspace/user-read.ts')).resolves.toBe(
+      'user read content'
+    );
+
+    expect(requestSpy).toHaveBeenCalledWith(
+      acp.CLIENT_METHODS.fs_read_text_file,
+      {
+        path: '/workspace/user-read.ts',
+        sessionId: 'session-a',
+      },
+      expect.objectContaining({
+        cancellationSignal: expect.any(AbortSignal),
+      })
+    );
+    expect(
+      service.checkRemoteAccess('/workspace/user-read.ts', 'user read content')
+    ).toBe('current');
+  });
+
+  it('readTextFileForUser clears the current session ledger on explicit not-found', async () => {
+    const clientApp = acp
+      .client({ name: 'file-system-user-read-not-found-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_read_text_file, async ({ params }) => {
+        throw RequestError.resourceNotFound(params.path);
+      });
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      readTextFile: true,
+    });
+    service.recordRemoteAccess('/workspace/user-read.ts', 'stale content', 'read');
+
+    await expect(
+      service.readTextFileForUser('/workspace/user-read.ts')
+    ).rejects.toMatchObject({
+      name: 'RequestError',
+      code: -32002,
+    });
+    expect(service.getRemoteAccessRecord('/workspace/user-read.ts')).toBeUndefined();
+  });
+
+  it('readTextFileForUser uses the default absolute deadline and settles locally on timeout', async () => {
+    const releaseBlockedRead = Promise.withResolvers<void>();
+    const clientApp = acp
+      .client({ name: 'file-system-user-read-timeout-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_read_text_file, async ({ signal }) => {
+        expect(signal).toBeInstanceOf(AbortSignal);
+        await releaseBlockedRead.promise;
+        return { content: 'late content' };
+      });
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      readTextFile: true,
+    });
+    vi.useFakeTimers({ now: 10_000 });
+    try {
+      const requestPromise = service.readTextFileForUser(
+        '/workspace/user-read-timeout.ts'
+      );
+      const rejection = expect(requestPromise).rejects.toMatchObject({
+        name: 'AcpRemoteFileBoundaryError',
+        reason: 'timeout',
+        operation: 'read',
+      });
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS + 1);
+      await rejection;
+      expect(
+        service.getRemoteAccessRecord('/workspace/user-read-timeout.ts')
+      ).toBeUndefined();
+
+      releaseBlockedRead.resolve();
+      await vi.runAllTimersAsync();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

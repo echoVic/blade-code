@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { RequestError } from '@agentclientprotocol/sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AcpRemoteFileBoundaryError } from '../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
 import {
   AcpServiceContext,
@@ -316,6 +317,44 @@ describe('ACP remote Read builtin tool', () => {
         },
       },
     ]);
+    expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
+  });
+
+  it('remote Read maps boundary errors from readTextFileForUser to stable tool messages', async () => {
+    const root = await createTempRoot('blade-acp-remote-read-boundary-');
+    const filePath = path.join(root, 'boundary.txt');
+    const hostCanary = 'host should remain untouched\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    client.files.set(filePath, 'remote text should not be returned');
+    const sessionId = 'remote-read-boundary';
+    initializeRemoteSession(client, sessionId, root);
+
+    const service = getAcpFileSystemService(sessionId);
+    expect(service).toBeInstanceOf(AcpFileSystemService);
+    if (!(service instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+
+    Object.assign(service, {
+      async readTextFileForUser(_path: string): Promise<string> {
+        throw new AcpRemoteFileBoundaryError('timeout', 'read', true, true);
+      },
+    });
+
+    const result = await executeRead(filePath, sessionId);
+
+    expect(result).toMatchObject({
+      success: false,
+      llmContent: 'Remote file read timed out',
+      error: {
+        type: 'execution_error',
+        message: 'Remote file read timed out',
+      },
+    });
+    expect(client.requests).toEqual([]);
     expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
     await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
   });

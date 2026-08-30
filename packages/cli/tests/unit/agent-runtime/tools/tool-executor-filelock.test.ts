@@ -108,6 +108,30 @@ describe('ToolExecutor — file lock logic', () => {
     });
   }
 
+  function createReadExecutor(execute: () => Promise<void>): ToolExecutor {
+    const registry = new ToolRegistry();
+    registry.register(
+      createTool({
+        name: 'Read',
+        displayName: 'Read',
+        kind: ToolKind.ReadOnly,
+        isConcurrencySafe: true,
+        parallelism: 'shared',
+        schema: Type.Object({
+          file_path: Type.String(),
+        }),
+        description: { short: 'read for file lock coverage' },
+        async execute() {
+          await execute();
+          return { success: true, llmContent: 'ok' };
+        },
+      }) as Tool
+    );
+    return new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    });
+  }
+
   // ----------------------------------------------------------------
   // isConcurrencySafe: true 的读工具不加锁
   // ----------------------------------------------------------------
@@ -367,6 +391,78 @@ describe('ToolExecutor — file lock logic', () => {
       expect(acquireLockSpy).not.toHaveBeenCalled();
       expect(opaqueSpy).toHaveBeenCalledTimes(2);
       expect(opaqueSpy.mock.calls[0]?.[0]).not.toBe(opaqueSpy.mock.calls[1]?.[0]);
+      acquireLockSpy.mockRestore();
+      opaqueSpy.mockRestore();
+    });
+
+    it('同一 ACP session 的 remote Read 使用 opaque lock 串行，但 local Read 不使用 opaque lock', async () => {
+      const root = 'C:\\workspace';
+      const acquireLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireLock');
+      const opaqueSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const executionOrder: string[] = [];
+      let releaseFirst!: () => void;
+      const firstBlocked = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+
+      initializeRemoteSession('remote-lock-session-a', root);
+
+      const remoteExecutor = createReadExecutor(async () => {
+        if (executionOrder.length === 0) {
+          executionOrder.push('remote-first:start');
+          await firstBlocked;
+          executionOrder.push('remote-first:end');
+          return;
+        }
+        executionOrder.push('remote-second:start');
+        executionOrder.push('remote-second:end');
+      });
+
+      const first = remoteExecutor.execute(
+        'Read',
+        { file_path: 'C:\\workspace\\shared.ts' },
+        { sessionId: 'remote-lock-session-a' }
+      );
+      await Promise.resolve();
+      const second = remoteExecutor.execute(
+        'Read',
+        { file_path: 'c:/workspace/src/../shared.ts' },
+        { sessionId: 'remote-lock-session-a' }
+      );
+
+      await waitFor(() => executionOrder.length === 1);
+      expect(executionOrder).toEqual(['remote-first:start']);
+      expect(acquireLockSpy).not.toHaveBeenCalled();
+      expect(opaqueSpy).toHaveBeenCalledTimes(2);
+      expect(opaqueSpy.mock.calls[0]?.[0]).toBe(opaqueSpy.mock.calls[1]?.[0]);
+
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(executionOrder).toEqual([
+        'remote-first:start',
+        'remote-first:end',
+        'remote-second:start',
+        'remote-second:end',
+      ]);
+
+      opaqueSpy.mockClear();
+      const localExecutor = createReadExecutor(async () => undefined);
+      const [localA, localB] = await Promise.all([
+        localExecutor.execute(
+          'Read',
+          { file_path: path.join(process.cwd(), 'package.json') },
+          { sessionId: 'local-read-session-a' }
+        ),
+        localExecutor.execute(
+          'Read',
+          { file_path: path.join(process.cwd(), 'README.md') },
+          { sessionId: 'local-read-session-b' }
+        ),
+      ]);
+
+      expect(localA.success).toBe(true);
+      expect(localB.success).toBe(true);
+      expect(opaqueSpy).not.toHaveBeenCalled();
       acquireLockSpy.mockRestore();
       opaqueSpy.mockRestore();
     });

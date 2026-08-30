@@ -1,4 +1,5 @@
 import { basename, extname } from 'path';
+import { AcpRemoteFileBoundaryError } from '../../../acp/AcpFileRequestCoordinator.js';
 import {
   AcpFileSystemService,
   isAcpResourceNotFoundError,
@@ -151,10 +152,21 @@ export const readTool = createTool({
         let fullContent: string;
         try {
           updateOutput?.('通过 IDE 读取文件...');
-          fullContent = await fsService.readTextFile(file_path);
+          fullContent = await fsService.readTextFileForUser(file_path, { signal });
         } catch (error) {
           if (isAcpResourceNotFoundError(error)) {
             const message = `File not found: ${file_path}`;
+            return {
+              success: false,
+              llmContent: message,
+              error: {
+                type: ToolErrorType.EXECUTION_ERROR,
+                message,
+              },
+            };
+          }
+          if (error instanceof AcpRemoteFileBoundaryError) {
+            const message = mapRemoteReadBoundaryMessage(error);
             return {
               success: false,
               llmContent: message,
@@ -381,6 +393,22 @@ function sanitizedRemoteReadFailure(): ToolResult {
       message: 'Unable to read remote file',
     },
   };
+}
+
+function mapRemoteReadBoundaryMessage(error: AcpRemoteFileBoundaryError): string {
+  switch (error.reason) {
+    case 'aborted':
+      return 'File read aborted';
+    case 'timeout':
+      return 'Remote file read timed out';
+    case 'busy':
+    case 'capacity':
+    case 'closed':
+    case 'stale-reconciliation':
+      return 'Remote file read is temporarily unavailable';
+    default:
+      return 'Remote file read is temporarily unavailable';
+  }
 }
 
 /**
