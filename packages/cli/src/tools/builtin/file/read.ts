@@ -270,6 +270,9 @@ export const readTool = createTool({
 
       // 处理二进制文件
       if (isBinaryFile && encoding === 'utf8') {
+        if (acpMode) {
+          metadata.acp_fallback = true;
+        }
         updateOutput?.('检测到二进制文件，使用 base64 编码...');
         const buffer = await fsService.readBinaryFile(file_path);
         content = buffer.toString('base64');
@@ -280,6 +283,9 @@ export const readTool = createTool({
         content = await fsService.readTextFile(file_path);
       } else {
         // 其他文件：使用二进制读取
+        if (acpMode) {
+          metadata.acp_fallback = true;
+        }
         const buffer = await fsService.readBinaryFile(file_path);
 
         if (encoding === 'base64') {

@@ -299,8 +299,11 @@ describe('ACP remote Read builtin tool', () => {
     const root = await createTempRoot('blade-acp-local-read-');
     const textPath = path.join(root, 'local.txt');
     const binaryPath = path.join(root, 'local.png');
+    const unknownPath = path.join(root, 'local.unknown');
+    const unknownContent = 'unknown extension still reads as utf8';
     await fs.writeFile(textPath, 'local text\n', 'utf8');
     await fs.writeFile(binaryPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await fs.writeFile(unknownPath, unknownContent, 'utf8');
 
     const client = new ControlledFileClient();
     const harness = createPairedAcpHarness(client);
@@ -330,10 +333,24 @@ describe('ACP remote Read builtin tool', () => {
       llmContent: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'),
       metadata: {
         file_path: binaryPath,
+        acp_fallback: true,
         encoding: 'base64',
         acp_mode: true,
         is_binary: true,
         file_type: '.png',
+      },
+    });
+
+    const unknownResult = await executeRead(unknownPath, sessionId);
+    expect(unknownResult).toMatchObject({
+      success: true,
+      llmContent: unknownContent,
+      metadata: {
+        file_path: unknownPath,
+        acp_fallback: true,
+        encoding: 'utf8',
+        acp_mode: true,
+        file_type: '.unknown',
       },
     });
     expect(client.requests).toEqual([]);
