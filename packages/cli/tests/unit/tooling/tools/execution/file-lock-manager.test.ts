@@ -4,18 +4,43 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AcpFileSystemService } from '../../../../../src/acp/AcpFileSystemService.js';
 import { FileLockManager } from '../../../../../src/tools/execution/FileLockManager.js';
+import { ControlledFileClient } from '../../../../support/acp/ControlledFileClient.js';
+import {
+  createPairedAcpHarness,
+  type PairedAcpHarness,
+} from '../../../../support/acp/createPairedAcpHarness.js';
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Condition not met within ${timeoutMs}ms`);
+}
 
 describe('FileLockManager', () => {
   let lockManager: FileLockManager;
+  const harnesses: PairedAcpHarness[] = [];
 
   beforeEach(() => {
     lockManager = FileLockManager.getInstance();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
     lockManager.clearAll();
     FileLockManager.resetInstance();
   });
+
+  function createRemoteFileSystemService(sessionId: string): AcpFileSystemService {
+    const harness = createPairedAcpHarness(new ControlledFileClient());
+    harnesses.push(harness);
+    return new AcpFileSystemService(harness.agentConnection, sessionId, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+  }
 
   describe('单例模式', () => {
     it('应该返回全局唯一实例', () => {
@@ -194,7 +219,8 @@ describe('FileLockManager', () => {
             await blocked;
           }
         );
-        await expect.poll(() => events).toEqual(['alias']);
+        await waitFor(() => events.length === 1);
+        expect(events).toEqual(['alias']);
         const second = lockManager.acquireLock(
           path.join(realDir, 'source.ts'),
           async () => {
@@ -212,14 +238,8 @@ describe('FileLockManager', () => {
     });
 
     it('应该为 remote alias path 生成同一个 opaque lock key，并按 FIFO 串行化', async () => {
-      const serviceA = new AcpFileSystemService({} as never, 'session-a', {
-        readTextFile: true,
-        writeTextFile: true,
-      });
-      const serviceB = new AcpFileSystemService({} as never, 'session-b', {
-        readTextFile: true,
-        writeTextFile: true,
-      });
+      const serviceA = createRemoteFileSystemService('session-a');
+      const serviceB = createRemoteFileSystemService('session-b');
 
       const firstKey = serviceA.createOpaqueLockKey('c:/workspace/src/../file.ts');
       const aliasKey = serviceA.createOpaqueLockKey('C:\\workspace\\file.ts');
@@ -264,10 +284,7 @@ describe('FileLockManager', () => {
     });
 
     it('应该为 opaque lock 集合去重排序并串行化重叠事务', async () => {
-      const service = new AcpFileSystemService({} as never, 'session-a', {
-        readTextFile: true,
-        writeTextFile: true,
-      });
+      const service = createRemoteFileSystemService('session-a');
       const keyA = service.createOpaqueLockKey('C:\\workspace\\b.ts');
       const keyB = service.createOpaqueLockKey('C:\\workspace\\a.ts');
 
@@ -333,7 +350,10 @@ describe('FileLockManager', () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await waitFor(() => {
+        const lockedFiles = lockManager.getLockedFiles();
+        return lockedFiles.includes(file1) && lockedFiles.includes(file2);
+      });
 
       const lockedFiles = lockManager.getLockedFiles();
       expect(lockedFiles).toContain(file1);

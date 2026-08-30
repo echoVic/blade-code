@@ -15,8 +15,14 @@ import {
   planLocalPatchTransaction,
   planRemotePatchTransaction,
 } from '../../src/tools/builtin/file/applyPatchTransaction.js';
+import { ControlledFileClient } from '../support/acp/ControlledFileClient.js';
+import {
+  createPairedAcpHarness,
+  type PairedAcpHarness,
+} from '../support/acp/createPairedAcpHarness.js';
 
 const roots: string[] = [];
+const harnesses: PairedAcpHarness[] = [];
 let previousStorageRoot: string | undefined;
 
 async function workspace(name: string): Promise<string> {
@@ -65,6 +71,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true })));
+  await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
   if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
   else process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
 });
@@ -430,7 +437,164 @@ describe('ApplyPatch ACP remote transaction', () => {
       ).rejects.toThrow('Update File operations only');
     }
   });
+
+  it('does not advance the ACP remote ledger when a later write fails after an earlier verified edit', async () => {
+    const { client, service } = createAcpRemoteFileSystem(
+      new Map([
+        ['/remote/first.ts', 'const first = false;\n'],
+        ['/remote/second.ts', 'const second = false;\n'],
+      ]),
+      'ledger-barrier-failure'
+    );
+    service.recordRemoteAccess('/remote/first.ts', 'const first = false;\n', 'read');
+    service.recordRemoteAccess('/remote/second.ts', 'const second = false;\n', 'read');
+    client.enqueueWriteBehavior({ kind: 'apply-and-ack' });
+    client.enqueueWriteBehavior({
+      kind: 'leave-old-and-throw',
+      error: new Error('remote write failed'),
+    });
+    const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+    const plan = await planRemotePatchTransaction(operations, '/remote', service);
+
+    await expect(commitRemotePatchTransaction(plan, service)).rejects.toMatchObject({
+      name: 'AcpRemotePatchTransactionError',
+      sideEffectsUncertain: false,
+    });
+    expect(client.files.get('/remote/first.ts')).toBe('const first = false;\n');
+    expect(client.files.get('/remote/second.ts')).toBe('const second = false;\n');
+    expect(service.getRemoteAccessRecord('/remote/first.ts')?.lastOperation).toBe(
+      'read'
+    );
+    expect(service.getRemoteAccessRecord('/remote/second.ts')?.lastOperation).toBe(
+      'read'
+    );
+    expect(
+      service.checkRemoteAccess('/remote/first.ts', 'const first = false;\n')
+    ).toBe('current');
+    expect(service.checkRemoteAccess('/remote/first.ts', 'const first = true;\n')).toBe(
+      'modified'
+    );
+    expect(
+      service.checkRemoteAccess('/remote/second.ts', 'const second = false;\n')
+    ).toBe('current');
+  });
+
+  it('does not pollute the ACP remote ledger when rollback verification becomes uncertain', async () => {
+    const { client, service } = createAcpRemoteFileSystem(
+      new Map([
+        ['/remote/first.ts', 'const first = false;\n'],
+        ['/remote/second.ts', 'const second = false;\n'],
+      ]),
+      'ledger-barrier-uncertain'
+    );
+    service.recordRemoteAccess('/remote/first.ts', 'const first = false;\n', 'read');
+    service.recordRemoteAccess('/remote/second.ts', 'const second = false;\n', 'read');
+    client.enqueueWriteBehavior({ kind: 'apply-and-ack' });
+    client.enqueueWriteBehavior({
+      kind: 'leave-old-and-throw',
+      error: new Error('remote write failed'),
+    });
+    client.enqueueWriteBehavior({
+      kind: 'replace-and-throw',
+      content: 'const first = rollback mismatch;\n',
+      error: new Error('remote rollback mismatch'),
+    });
+    const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+    const plan = await planRemotePatchTransaction(operations, '/remote', service);
+
+    await expect(commitRemotePatchTransaction(plan, service)).rejects.toMatchObject({
+      name: 'AcpRemotePatchTransactionError',
+      sideEffectsUncertain: true,
+    });
+    expect(client.files.get('/remote/first.ts')).toBe('const first = false;\n');
+    expect(client.files.get('/remote/second.ts')).toBe(
+      'const first = rollback mismatch;\n'
+    );
+    expect(service.getRemoteAccessRecord('/remote/first.ts')?.lastOperation).toBe(
+      'read'
+    );
+    expect(service.getRemoteAccessRecord('/remote/second.ts')?.lastOperation).toBe(
+      'read'
+    );
+  });
+
+  it('records ACP remote edits only after the whole transaction commits successfully', async () => {
+    const { service } = createAcpRemoteFileSystem(
+      new Map([
+        ['/remote/first.ts', 'const first = false;\n'],
+        ['/remote/second.ts', 'const second = false;\n'],
+      ]),
+      'ledger-barrier-success'
+    );
+    service.recordRemoteAccess('/remote/first.ts', 'const first = false;\n', 'read');
+    service.recordRemoteAccess('/remote/second.ts', 'const second = false;\n', 'read');
+    const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+    const plan = await planRemotePatchTransaction(operations, '/remote', service);
+
+    await expect(commitRemotePatchTransaction(plan, service)).resolves.toBeUndefined();
+    expect(service.getRemoteAccessRecord('/remote/first.ts')?.lastOperation).toBe(
+      'edit'
+    );
+    expect(service.getRemoteAccessRecord('/remote/second.ts')?.lastOperation).toBe(
+      'edit'
+    );
+    expect(service.checkRemoteAccess('/remote/first.ts', 'const first = true;\n')).toBe(
+      'current'
+    );
+    expect(
+      service.checkRemoteAccess('/remote/second.ts', 'const second = true;\n')
+    ).toBe('current');
+  });
 });
+
+function createAcpRemoteFileSystem(
+  files: Map<string, string>,
+  sessionId: string
+): {
+  client: ControlledFileClient;
+  service: AcpFileSystemService;
+} {
+  const client = new ControlledFileClient();
+  for (const [filePath, content] of files) {
+    client.files.set(filePath, content);
+  }
+  const harness = createPairedAcpHarness(client);
+  harnesses.push(harness);
+  return {
+    client,
+    service: new AcpFileSystemService(harness.agentConnection, sessionId, {
+      readTextFile: true,
+      writeTextFile: true,
+    }),
+  };
+}
 
 function createRemoteFileSystem(
   files: Map<string, string>,

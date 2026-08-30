@@ -19,6 +19,11 @@ import { FileLockManager } from '../../../../src/tools/execution/FileLockManager
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
 import { type Tool, ToolKind } from '../../../../src/tools/types/ToolTypes.js';
+import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
+import {
+  createPairedAcpHarness,
+  type PairedAcpHarness,
+} from '../../../support/acp/createPairedAcpHarness.js';
 
 /**
  * 模拟 ToolExecutor.execute() 的文件锁判断逻辑。
@@ -43,16 +48,41 @@ function needsFileLock(
   };
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Condition not met within ${timeoutMs}ms`);
+}
+
 describe('ToolExecutor — file lock logic', () => {
+  const harnesses: PairedAcpHarness[] = [];
+
   beforeEach(() => {
     FileLockManager.resetInstance();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     AcpServiceContext.destroySession('remote-lock-session-a');
     AcpServiceContext.destroySession('remote-lock-session-b');
+    await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
     FileLockManager.resetInstance();
   });
+
+  function initializeRemoteSession(sessionId: string, root: string): void {
+    const harness = createPairedAcpHarness(new ControlledFileClient());
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      sessionId,
+      {
+        fs: { readTextFile: true, writeTextFile: true },
+      },
+      root
+    );
+  }
 
   function createWriteExecutor(execute: () => Promise<void>): ToolExecutor {
     const registry = new ToolRegistry();
@@ -262,14 +292,7 @@ describe('ToolExecutor — file lock logic', () => {
         releaseFirst = resolve;
       });
 
-      AcpServiceContext.initializeSession(
-        {} as never,
-        'remote-lock-session-a',
-        {
-          fs: { readTextFile: true, writeTextFile: true },
-        } as never,
-        root
-      );
+      initializeRemoteSession('remote-lock-session-a', root);
 
       const executor = createWriteExecutor(async () => {
         if (executionOrder.length === 0) {
@@ -294,7 +317,8 @@ describe('ToolExecutor — file lock logic', () => {
         { sessionId: 'remote-lock-session-a' }
       );
 
-      await expect.poll(() => executionOrder).toEqual(['first:start']);
+      await waitFor(() => executionOrder.length === 1);
+      expect(executionOrder).toEqual(['first:start']);
       expect(acquireLockSpy).not.toHaveBeenCalled();
       expect(opaqueSpy).toHaveBeenCalledTimes(2);
       expect(opaqueSpy.mock.calls[0]?.[0]).toBe(opaqueSpy.mock.calls[1]?.[0]);
@@ -310,6 +334,9 @@ describe('ToolExecutor — file lock logic', () => {
         'second:start',
         'second:end',
       ]);
+      acquireLockSpy.mockRestore();
+      opaqueSpy.mockRestore();
+      realpathSpy.mockRestore();
     });
 
     it('不同 ACP session 的 remote Write 不共享同一个 opaque key', async () => {
@@ -317,22 +344,8 @@ describe('ToolExecutor — file lock logic', () => {
       const opaqueSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
       const root = 'C:\\workspace';
 
-      AcpServiceContext.initializeSession(
-        {} as never,
-        'remote-lock-session-a',
-        {
-          fs: { readTextFile: true, writeTextFile: true },
-        } as never,
-        root
-      );
-      AcpServiceContext.initializeSession(
-        {} as never,
-        'remote-lock-session-b',
-        {
-          fs: { readTextFile: true, writeTextFile: true },
-        } as never,
-        root
-      );
+      initializeRemoteSession('remote-lock-session-a', root);
+      initializeRemoteSession('remote-lock-session-b', root);
 
       const executor = createWriteExecutor(async () => undefined);
 
@@ -354,6 +367,8 @@ describe('ToolExecutor — file lock logic', () => {
       expect(acquireLockSpy).not.toHaveBeenCalled();
       expect(opaqueSpy).toHaveBeenCalledTimes(2);
       expect(opaqueSpy.mock.calls[0]?.[0]).not.toBe(opaqueSpy.mock.calls[1]?.[0]);
+      acquireLockSpy.mockRestore();
+      opaqueSpy.mockRestore();
     });
   });
 

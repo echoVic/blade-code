@@ -252,9 +252,16 @@ export const applyPatchTool = createTool({
           write_verified: false,
         });
       }
+      const remoteFailureMetadata = isAcpMode(context.sessionId)
+        ? {
+            sideEffectsUncertain: false,
+            write_verified: false,
+          }
+        : undefined;
       return failure(
         error instanceof Error ? error.message : String(error),
-        ToolErrorType.EXECUTION_ERROR
+        ToolErrorType.EXECUTION_ERROR,
+        remoteFailureMetadata
       );
     }
   },

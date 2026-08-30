@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,13 +10,23 @@ import {
 } from '../../src/acp/AcpServiceContext.js';
 import { applyPatchTool } from '../../src/tools/builtin/file/applyPatch.js';
 import { FileAccessTracker } from '../../src/tools/builtin/file/FileAccessTracker.js';
+import { createRemotePatchWorkspaceIdentity } from '../../src/tools/builtin/file/PatchTransactionCoordinator.js';
 import { SnapshotManager } from '../../src/tools/builtin/file/SnapshotManager.js';
+import {
+  ControlledFileClient,
+  type ControlledWriteBehavior,
+} from '../support/acp/ControlledFileClient.js';
+import {
+  createPairedAcpHarness,
+  type PairedAcpHarness,
+} from '../support/acp/createPairedAcpHarness.js';
 
 describe('ApplyPatch builtin tool', () => {
   let root: string;
   let workspace: string;
   let previousStorageRoot: string | undefined;
   const sessionIds = new Set<string>();
+  const harnesses: PairedAcpHarness[] = [];
 
   beforeEach(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'blade-apply-patch-tool-'));
@@ -30,6 +41,7 @@ describe('ApplyPatch builtin tool', () => {
       AcpServiceContext.destroySession(sessionId);
     }
     sessionIds.clear();
+    await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
     FileAccessTracker.resetInstance();
     if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
     else process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
@@ -42,76 +54,87 @@ describe('ApplyPatch builtin tool', () => {
     content?: string;
   }
 
-  type RemoteWriteBehavior =
-    | { kind: 'apply-and-ack' }
-    | { kind: 'apply-and-throw'; error: Error }
-    | { kind: 'leave-old-and-throw'; error: Error }
-    | { kind: 'ack-with-replacement'; content: string };
-
   function createRemotePatchSession(options: {
     sessionId: string;
     workspaceRoot: string;
     files: Map<string, string>;
     capabilities?: { readTextFile?: boolean; writeTextFile?: boolean };
-    writeBehaviors?: RemoteWriteBehavior[];
+    writeBehaviors?: ControlledWriteBehavior[];
+    onReadRequest?: (
+      filePath: string,
+      requestCount: number
+    ) => string | Error | undefined;
   }): {
     requests: RemotePatchRequest[];
   } {
     const requests: RemotePatchRequest[] = [];
-    const writeBehaviors = [...(options.writeBehaviors ?? [])];
-    const connection = {
-      readTextFile: async ({ path: filePath }: { path: string }) => {
-        requests.push({ kind: 'read', path: filePath });
-        const content = options.files.get(filePath);
-        if (content === undefined) {
-          throw new Error(`remote file not found: ${filePath}`);
-        }
-        return { content };
-      },
-      writeTextFile: async ({
-        path: filePath,
-        content,
-      }: {
-        path: string;
-        content: string;
-      }) => {
-        requests.push({ kind: 'write', path: filePath, content });
-        const behavior = writeBehaviors.shift() ?? { kind: 'apply-and-ack' };
-        if (behavior.kind === 'apply-and-ack') {
-          options.files.set(filePath, content);
-          return {};
-        }
-        if (behavior.kind === 'apply-and-throw') {
-          options.files.set(filePath, content);
-          throw behavior.error;
-        }
-        if (behavior.kind === 'leave-old-and-throw') {
-          throw behavior.error;
-        }
-        options.files.set(filePath, behavior.content);
-        return {};
-      },
+    const client = new ControlledFileClient();
+    const syncFilesToSource = () => {
+      options.files.clear();
+      for (const [filePath, content] of client.files) {
+        options.files.set(filePath, content);
+      }
     };
+    for (const [filePath, content] of options.files) {
+      client.files.set(filePath, content);
+    }
+    for (const behavior of options.writeBehaviors ?? []) {
+      client.enqueueWriteBehavior(behavior);
+    }
+    const originalReadTextFile = client.readTextFile.bind(client);
+    let readRequestCount = 0;
+    client.readTextFile = async (params) => {
+      requests.push({ kind: 'read', path: params.path });
+      readRequestCount += 1;
+      const override = options.onReadRequest?.(params.path, readRequestCount);
+      if (typeof override === 'string') {
+        return { content: override };
+      }
+      if (override instanceof Error) {
+        throw override;
+      }
+      return originalReadTextFile(params);
+    };
+    const originalWriteTextFile = client.writeTextFile.bind(client);
+    client.writeTextFile = async (params) => {
+      requests.push({ kind: 'write', path: params.path, content: params.content });
+      try {
+        return await originalWriteTextFile(params);
+      } finally {
+        syncFilesToSource();
+      }
+    };
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
 
     sessionIds.add(options.sessionId);
     AcpServiceContext.initializeSession(
-      connection as never,
+      harness.agentConnection,
       options.sessionId,
       {
         fs: {
           readTextFile: options.capabilities?.readTextFile ?? true,
           writeTextFile: options.capabilities?.writeTextFile ?? true,
         },
-      } as never,
+      },
       options.workspaceRoot
     );
     return { requests };
   }
 
-  async function listPatchStateEntries(): Promise<string[]> {
-    const patchRoot = path.join(root, '.storage', 'patch-transactions');
+  function patchStateDirForWorkspaceIdentity(workspaceIdentity: string): string {
+    return path.join(
+      root,
+      '.storage',
+      'patch-transactions',
+      createHash('sha256').update(workspaceIdentity).digest('hex').slice(0, 32)
+    );
+  }
+
+  async function listPatchStateEntries(patchRoot?: string): Promise<string[]> {
+    const stateRoot = patchRoot ?? path.join(root, '.storage', 'patch-transactions');
     try {
-      const entries = await fs.readdir(patchRoot, {
+      const entries = await fs.readdir(stateRoot, {
         recursive: true,
       });
       return entries.map((entry) => String(entry)).sort();
@@ -247,12 +270,25 @@ describe('ApplyPatch builtin tool', () => {
     await expect(snapshots.listAllSnapshots()).resolves.toEqual([]);
   });
 
-  it('updates ACP-owned files without touching a same-named local path', async () => {
+  it('updates ACP-owned files without touching a same-named local path or local recovery state', async () => {
+    const sessionId = 'remote-patch-session';
+    const localCanaryPath = path.join(workspace, 'source.ts');
+    const localOnlyDir = path.join(workspace, 'nested');
+    const localSnapshots = new SnapshotManager({
+      sessionId,
+      workspaceRoot: workspace,
+    });
+    const localPatchStateDir = patchStateDirForWorkspaceIdentity(workspace);
+    const localRecoveryCanary = path.join(localPatchStateDir, 'pending-local.json');
+    await fs.mkdir(localPatchStateDir, { recursive: true });
+    await fs.writeFile(localRecoveryCanary, '{"scope":"local-canary"}\n');
+    await fs.writeFile(localCanaryPath, 'const value = "local canary";\n');
     const remoteFiles = new Map([
       ['C:\\workspace\\source.ts', 'const value = false;\n'],
+      ['C:\\workspace\\nested\\existing.ts', 'export const nested = false;\n'],
     ]);
     createRemotePatchSession({
-      sessionId: 'remote-patch-session',
+      sessionId,
       workspaceRoot: 'C:\\workspace',
       files: remoteFiles,
     });
@@ -264,11 +300,15 @@ describe('ApplyPatch builtin tool', () => {
 @@
 -const value = false;
 +const value = true;
+*** Update File: nested/existing.ts
+@@
+-export const nested = false;
++export const nested = true;
 *** End Patch`,
       },
       undefined,
       {
-        sessionId: 'remote-patch-session',
+        sessionId,
         messageId: 'remote-message',
         workspaceRoot: 'C:\\workspace',
       }
@@ -276,6 +316,33 @@ describe('ApplyPatch builtin tool', () => {
 
     expect(result.success).toBe(true);
     expect(remoteFiles.get('C:\\workspace\\source.ts')).toBe('const value = true;\n');
+    expect(remoteFiles.get('C:\\workspace\\nested\\existing.ts')).toBe(
+      'export const nested = true;\n'
+    );
+    await expect(fs.readFile(localCanaryPath, 'utf8')).resolves.toBe(
+      'const value = "local canary";\n'
+    );
+    await expect(fs.stat(localOnlyDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await localSnapshots.initialize();
+    await expect(localSnapshots.listAllSnapshots()).resolves.toEqual([]);
+    expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
+    await expect(fs.readFile(localRecoveryCanary, 'utf8')).resolves.toContain(
+      'local-canary'
+    );
+    const remotePatchStateEntries = await listPatchStateEntries(
+      patchStateDirForWorkspaceIdentity(
+        createRemotePatchWorkspaceIdentity(sessionId, 'C:\\workspace')
+      )
+    );
+    expect(
+      remotePatchStateEntries.some((entry) => entry.endsWith('.operation.lock'))
+    ).toBe(false);
+    expect(remotePatchStateEntries.some((entry) => entry.endsWith('.json'))).toBe(
+      false
+    );
+    expect(remotePatchStateEntries.join('\n')).not.toContain('workspace');
+    expect(remotePatchStateEntries.join('\n')).not.toContain('source.ts');
+    expect(remotePatchStateEntries.join('\n')).not.toContain('existing.ts');
     expect(result.metadata).toMatchObject({
       kind: 'patch',
       snapshot_created: false,
@@ -325,6 +392,10 @@ describe('ApplyPatch builtin tool', () => {
       expect(result.success).toBe(false);
       expect(result.error?.type).toBe('validation_error');
       expect(result.llmContent).toContain(expectedMessage);
+      expect(result.metadata).toMatchObject({
+        sideEffectsUncertain: false,
+        write_verified: false,
+      });
       expect(requests).toEqual([]);
       expect(await listPatchStateEntries()).toEqual([]);
       expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
@@ -357,6 +428,10 @@ describe('ApplyPatch builtin tool', () => {
 
     expect(result.success).toBe(false);
     expect(result.llmContent).toContain('Update File operations only');
+    expect(result.metadata).toMatchObject({
+      sideEffectsUncertain: false,
+      write_verified: false,
+    });
     expect(requests).toEqual([]);
     expect(remoteFiles.has('C:\\workspace\\source.ts')).toBe(false);
   });
@@ -389,6 +464,10 @@ describe('ApplyPatch builtin tool', () => {
 
     expect(result.success).toBe(false);
     expect(String(result.llmContent).toLowerCase()).toContain('not found');
+    expect(result.metadata).toMatchObject({
+      sideEffectsUncertain: false,
+      write_verified: false,
+    });
     expect(requests).toEqual([
       {
         kind: 'read',
@@ -396,6 +475,62 @@ describe('ApplyPatch builtin tool', () => {
       },
     ]);
     expect(remoteFiles.has('C:\\workspace\\missing.ts')).toBe(false);
+  });
+
+  it('remote ApplyPatch 在 preflight compare 发现远端内容漂移时返回确定性失败 metadata', async () => {
+    const sessionId = 'remote-patch-preflight-race';
+    const remoteFiles = new Map([
+      ['C:\\workspace\\first.ts', 'const first = false;\n'],
+      ['C:\\workspace\\second.ts', 'const second = false;\n'],
+    ]);
+    const readsPerPath = new Map<string, number>();
+    const { requests } = createRemotePatchSession({
+      sessionId,
+      workspaceRoot: 'C:\\workspace',
+      files: remoteFiles,
+      onReadRequest: (filePath) => {
+        const nextCount = (readsPerPath.get(filePath) ?? 0) + 1;
+        readsPerPath.set(filePath, nextCount);
+        if (filePath === 'C:\\workspace\\first.ts' && nextCount === 2) {
+          return 'const first = externally changed;\n';
+        }
+        return undefined;
+      },
+    });
+
+    const result = await applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`,
+      },
+      undefined,
+      {
+        sessionId,
+        messageId: 'remote-preflight-race',
+        workspaceRoot: 'C:\\workspace',
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.metadata).toMatchObject({
+      sideEffectsUncertain: false,
+      write_verified: false,
+    });
+    expect(requests).toEqual([
+      { kind: 'read', path: 'C:\\workspace\\first.ts' },
+      { kind: 'read', path: 'C:\\workspace\\second.ts' },
+      { kind: 'read', path: 'C:\\workspace\\first.ts' },
+    ]);
+    expect(remoteFiles.get('C:\\workspace\\first.ts')).toBe('const first = false;\n');
+    expect(remoteFiles.get('C:\\workspace\\second.ts')).toBe('const second = false;\n');
   });
 
   it('remote ApplyPatch 成功时按 preflight/read-compare/write/readback 顺序请求，并在整体成功后记录 remote edit digest', async () => {
@@ -524,5 +659,70 @@ describe('ApplyPatch builtin tool', () => {
       sideEffectsUncertain: false,
     });
     expect(remoteFiles.get('C:\\workspace\\source.ts')).toBe('const value = true;\n');
+  });
+
+  it('remote ApplyPatch 在 classified rollback uncertainty 下返回 sideEffectsUncertain=true metadata', async () => {
+    const sessionId = 'remote-patch-rollback-uncertain';
+    const remoteFiles = new Map([
+      ['C:\\workspace\\first.ts', 'const first = false;\n'],
+      ['C:\\workspace\\second.ts', 'const second = false;\n'],
+    ]);
+    createRemotePatchSession({
+      sessionId,
+      workspaceRoot: 'C:\\workspace',
+      files: remoteFiles,
+      writeBehaviors: [
+        { kind: 'apply-and-ack' },
+        {
+          kind: 'leave-old-and-throw',
+          error: new Error('remote write failed'),
+        },
+        {
+          kind: 'replace-and-throw',
+          content: 'const first = rollback mismatch;\n',
+          error: new Error('remote rollback mismatch'),
+        },
+      ],
+    });
+
+    const result = await applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`,
+      },
+      undefined,
+      {
+        sessionId,
+        messageId: 'remote-rollback-uncertain',
+        workspaceRoot: 'C:\\workspace',
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('execution_error');
+    expect(result.metadata).toMatchObject({
+      sideEffectsUncertain: true,
+      write_verified: false,
+    });
+    expect(remoteFiles.get('C:\\workspace\\first.ts')).toBe('const first = false;\n');
+    expect(remoteFiles.get('C:\\workspace\\second.ts')).toBe(
+      'const first = rollback mismatch;\n'
+    );
+    expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
+    const service = getAcpFileSystemService(sessionId);
+    expect(service).toBeInstanceOf(AcpFileSystemService);
+    if (!(service instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    expect(service.getRemoteAccessRecord('C:\\workspace\\first.ts')).toBeUndefined();
+    expect(service.getRemoteAccessRecord('C:\\workspace\\second.ts')).toBeUndefined();
   });
 });

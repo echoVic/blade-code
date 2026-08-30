@@ -21,6 +21,21 @@ import {
   type PairedAcpHarness,
 } from '../support/acp/createPairedAcpHarness.js';
 
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+async function advanceTimersByTimeCompat(ms: number): Promise<void> {
+  if (typeof vi.advanceTimersByTimeAsync === 'function') {
+    await vi.advanceTimersByTimeAsync(ms);
+    return;
+  }
+  vi.advanceTimersByTime(ms);
+  await flushMicrotasks();
+}
+
 describe('ACP remote Read builtin tool', () => {
   const harnesses: PairedAcpHarness[] = [];
   const sessionIds = new Set<string>();
@@ -1309,8 +1324,31 @@ describe('ACP remote Write/Edit builtin tools', () => {
   });
 
   it('remote Write times out readback after exactly 5s and does not replay the write', async () => {
-    vi.useFakeTimers();
     let releaseBlockedRead: (() => void) | undefined;
+    const originalSetTimeout = globalThis.setTimeout.bind(globalThis);
+    const originalClearTimeout = globalThis.clearTimeout.bind(globalThis);
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    setTimeoutSpy.mockImplementation((handler, timeout, ...args) => {
+      const invokeHandler = () => {
+        if (typeof handler === 'function') {
+          handler(...args);
+          return;
+        }
+        throw new Error('unexpected string timer handler');
+      };
+
+      if (timeout === 5_000) {
+        const handle = originalSetTimeout(() => undefined, 60_000);
+        queueMicrotask(() => {
+          originalClearTimeout(handle);
+          invokeHandler();
+        });
+        return handle;
+      }
+
+      return originalSetTimeout(invokeHandler, timeout);
+    });
+
     try {
       const root = await createTempRoot('blade-acp-remote-write-readback-timeout-');
       const filePath = path.join(root, 'timeout.txt');
@@ -1324,20 +1362,7 @@ describe('ACP remote Write/Edit builtin tools', () => {
         writeTextFile: true,
       });
 
-      const resultPromise = executeWrite(filePath, 'created remotely\n', sessionId);
-      await Promise.resolve();
-
-      let settled = false;
-      void resultPromise.finally(() => {
-        settled = true;
-      });
-
-      await vi.advanceTimersByTimeAsync(4_999);
-      await Promise.resolve();
-      expect(settled).toBe(false);
-
-      await vi.advanceTimersByTimeAsync(1);
-      const result = await resultPromise;
+      const result = await executeWrite(filePath, 'created remotely\n', sessionId);
 
       expect(result).toMatchObject({
         success: false,
@@ -1358,9 +1383,10 @@ describe('ACP remote Write/Edit builtin tools', () => {
         'write',
         'read',
       ]);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5_000);
     } finally {
+      setTimeoutSpy.mockRestore();
       releaseBlockedRead?.();
-      vi.useRealTimers();
     }
   });
 
