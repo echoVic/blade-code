@@ -102,6 +102,7 @@ export const applyPatchTool = createTool({
     context: ExecutionContext
   ): Promise<ToolResult> {
     const workspaceRoot = context.workspaceRoot;
+    let remoteOwnership = false;
     if (!workspaceRoot) {
       return failure('ApplyPatch requires a Session workspace root');
     }
@@ -116,6 +117,7 @@ export const applyPatchTool = createTool({
         acpMode &&
         fileSystem instanceof AcpFileSystemService &&
         fileSystem.usesRemoteFiles();
+      remoteOwnership = remote;
       if (remote) {
         try {
           fileSystem.assertTextMutationCapabilities();
@@ -252,7 +254,7 @@ export const applyPatchTool = createTool({
           write_verified: false,
         });
       }
-      const remoteFailureMetadata = isAcpMode(context.sessionId)
+      const remoteFailureMetadata = remoteOwnership
         ? {
             sideEffectsUncertain: false,
             write_verified: false,

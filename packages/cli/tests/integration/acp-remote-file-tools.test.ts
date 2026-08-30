@@ -21,21 +21,6 @@ import {
   type PairedAcpHarness,
 } from '../support/acp/createPairedAcpHarness.js';
 
-async function flushMicrotasks(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-async function advanceTimersByTimeCompat(ms: number): Promise<void> {
-  if (typeof vi.advanceTimersByTimeAsync === 'function') {
-    await vi.advanceTimersByTimeAsync(ms);
-    return;
-  }
-  vi.advanceTimersByTime(ms);
-  await flushMicrotasks();
-}
-
 describe('ACP remote Read builtin tool', () => {
   const harnesses: PairedAcpHarness[] = [];
   const sessionIds = new Set<string>();

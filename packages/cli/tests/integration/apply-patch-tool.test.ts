@@ -54,6 +54,21 @@ describe('ApplyPatch builtin tool', () => {
     content?: string;
   }
 
+  function createAcpLocalSession(options: {
+    sessionId: string;
+    workspaceRoot: string;
+  }): void {
+    const harness = createPairedAcpHarness(new ControlledFileClient());
+    harnesses.push(harness);
+    sessionIds.add(options.sessionId);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      options.sessionId,
+      {},
+      options.workspaceRoot
+    );
+  }
+
   function createRemotePatchSession(options: {
     sessionId: string;
     workspaceRoot: string;
@@ -268,6 +283,39 @@ describe('ApplyPatch builtin tool', () => {
     });
     await snapshots.initialize();
     await expect(snapshots.listAllSnapshots()).resolves.toEqual([]);
+  });
+
+  it('keeps local failure metadata when ACP mode is active but filesystem ownership is still local', async () => {
+    const sessionId = 'acp-local-apply-patch';
+    const filePath = path.join(workspace, 'source.ts');
+    await fs.writeFile(filePath, 'const value = false;\n');
+    createAcpLocalSession({
+      sessionId,
+      workspaceRoot: workspace,
+    });
+
+    const result = await applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: source.ts
+-const value = true;
+*** End Patch`,
+      },
+      undefined,
+      {
+        sessionId,
+        messageId: 'acp-local-unread-message',
+        workspaceRoot: workspace,
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('execution_error');
+    expect(result.llmContent).toContain('Update File content must begin with "@@"');
+    expect(result.metadata).toBeDefined();
+    expect(Object.hasOwn(result.metadata ?? {}, 'sideEffectsUncertain')).toBe(false);
+    expect(Object.hasOwn(result.metadata ?? {}, 'write_verified')).toBe(false);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe('const value = false;\n');
   });
 
   it('updates ACP-owned files without touching a same-named local path or local recovery state', async () => {
