@@ -1667,10 +1667,31 @@ describe('ACP remote Write/Edit builtin tools', () => {
       );
       expect(applyPatchWhilePending).toMatchObject({
         success: false,
+        llmContent:
+          'Remote file state is uncertain for this path. Use Read on the same file to refresh remote state before retrying ApplyPatch.',
         error: {
           type: 'execution_error',
+          message: 'Remote file state requires a fresh Read before mutation',
+        },
+        metadata: {
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
+          requiresRead: true,
         },
       });
+      expect(
+        Object.hasOwn(applyPatchWhilePending.metadata ?? {}, 'write_acknowledged')
+      ).toBe(true);
+      expect(
+        Object.hasOwn(applyPatchWhilePending.metadata ?? {}, 'write_verified')
+      ).toBe(true);
+      expect(
+        Object.hasOwn(applyPatchWhilePending.metadata ?? {}, 'sideEffectsUncertain')
+      ).toBe(true);
+      expect(Object.hasOwn(applyPatchWhilePending.metadata ?? {}, 'requiresRead')).toBe(
+        true
+      );
 
       blockedWrite.release();
       await vi.runAllTimersAsync();
@@ -1695,6 +1716,47 @@ describe('ACP remote Write/Edit builtin tools', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('remote Write releases a verified path after success so the same connection can mutate it again immediately', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-success-release-');
+    const filePath = path.join(root, 'verified.txt');
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-success-release';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const firstResult = await executeWrite(filePath, 'alpha\n', sessionId);
+    expect(firstResult).toMatchObject({
+      success: true,
+      metadata: {
+        write_acknowledged: true,
+        write_verified: true,
+        sideEffectsUncertain: false,
+      },
+    });
+
+    const secondResult = await executeWrite(filePath, 'beta\n', sessionId);
+    expect(secondResult).toMatchObject({
+      success: true,
+      metadata: {
+        write_acknowledged: true,
+        write_verified: true,
+        sideEffectsUncertain: false,
+      },
+    });
+
+    expect(client.files.get(filePath)).toBe('beta\n');
+    expect(client.requests.map((request) => request.kind)).toEqual([
+      'read',
+      'write',
+      'read',
+      'read',
+      'write',
+      'read',
+    ]);
   });
 
   it.each([

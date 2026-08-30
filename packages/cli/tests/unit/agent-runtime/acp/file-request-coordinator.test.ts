@@ -680,6 +680,55 @@ describe('AcpFileRequestCoordinator', () => {
     });
   });
 
+  it('keeps a forward-verified lease fenced until commitVerified plus release, then clears the path', async () => {
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp.client({ name: 'coordinator-forward-verified-release-client' })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const path = '/repo/verified.txt';
+    const lease = coordinator.tryAcquireMutationLease([path], 'session-a');
+
+    lease.markForwardVerified(path);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      needsRead: 1,
+      activeMutations: 0,
+      pendingWrites: 0,
+    });
+
+    await expect(
+      Promise.resolve().then(() =>
+        coordinator.tryAcquireMutationLease([path], 'session-b')
+      )
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+
+    lease.commitVerified();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      needsRead: 1,
+      activeMutations: 0,
+      pendingWrites: 0,
+    });
+
+    lease.release();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+      needsRead: 0,
+      activeMutations: 0,
+      pendingWrites: 0,
+    });
+
+    const nextLease = coordinator.tryAcquireMutationLease([path], 'session-b');
+    expect(nextLease.isCurrent(path)).toBe(true);
+    nextLease.release();
+  });
+
   it('cleans up reserved but never dispatched expired normal and recovery requests', async () => {
     let dispatchCount = 0;
     const harness = trackHarness(

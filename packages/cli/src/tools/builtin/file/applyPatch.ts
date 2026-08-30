@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import * as Diff from 'diff';
+import { AcpRemoteFileBoundaryError } from '../../../acp/AcpFileRequestCoordinator.js';
 import {
   AcpFileSystemCapabilityError,
   AcpFileSystemService,
@@ -269,12 +270,32 @@ export const applyPatchTool = createTool({
       if (error instanceof AcpRemotePatchTransactionError) {
         return failure(error.message, ToolErrorType.EXECUTION_ERROR, {
           sideEffectsUncertain: error.sideEffectsUncertain,
+          write_acknowledged: false,
           write_verified: false,
         });
+      }
+      const boundaryRequiresRead =
+        error instanceof AcpRemoteFileBoundaryError &&
+        Boolean(
+          (error as AcpRemoteFileBoundaryError & { requiresRead?: boolean })
+            .requiresRead
+        );
+      if (remoteOwnership && boundaryRequiresRead) {
+        return failure(
+          'Remote file state requires a fresh Read before mutation',
+          ToolErrorType.EXECUTION_ERROR,
+          {
+            sideEffectsUncertain: true,
+            write_acknowledged: false,
+            write_verified: false,
+            requiresRead: true,
+          }
+        );
       }
       const remoteFailureMetadata = remoteOwnership
         ? {
             sideEffectsUncertain: false,
+            write_acknowledged: false,
             write_verified: false,
           }
         : undefined;
@@ -441,9 +462,13 @@ function failure(
     metadata?.sideEffectsUncertain === true
       ? 'ApplyPatch failed; final remote state is uncertain, re-read affected files before retrying'
       : 'ApplyPatch failed; no partial patch was accepted';
+  const llmContent =
+    metadata?.requiresRead === true
+      ? 'Remote file state is uncertain for this path. Use Read on the same file to refresh remote state before retrying ApplyPatch.'
+      : message;
   return {
     success: false,
-    llmContent: message,
+    llmContent,
     error: { type, message },
     metadata: {
       summary,

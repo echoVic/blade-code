@@ -27,6 +27,7 @@ export interface MutationPathState {
   kind: MutationPathStateKind;
   leaseKind: MutationLeaseKind;
   leaseId: symbol;
+  forwardVerified?: boolean;
   retiredGenerations?: Set<number>;
 }
 
@@ -298,6 +299,7 @@ export function boundaryRejectToken<T>(
       mutationState.leaseKind === token.writeLeaseSnapshot.leaseKind
     ) {
       mutationState.kind = 'pending-write';
+      mutationState.forwardVerified = false;
     }
   }
   token.settled = true;
@@ -392,6 +394,7 @@ export function createMutationLease(
       kind: 'active-mutation',
       leaseKind: 'active',
       leaseId: activeLeaseId,
+      forwardVerified: false,
       retiredGenerations,
     });
   }
@@ -414,7 +417,6 @@ export function createMutationLease(
       );
     },
     markForwardVerified(filePath: string): void {
-      verified = true;
       const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
       const mutationState = state.mutationStates.get(pathIdentity);
       if (
@@ -423,6 +425,7 @@ export function createMutationLease(
         mutationState.generation === generations.get(pathIdentity)
       ) {
         mutationState.kind = 'needs-read';
+        mutationState.forwardVerified = true;
       }
     },
     markDefinite(filePath: string): void {
@@ -445,6 +448,7 @@ export function createMutationLease(
         mutationState.generation === generations.get(pathIdentity)
       ) {
         mutationState.kind = 'needs-read';
+        mutationState.forwardVerified = false;
       }
     },
     beginRecovery(filePath: string): AcpRemoteMutationRecoveryLease {
@@ -474,6 +478,7 @@ export function createMutationLease(
       mutationState.kind = 'active-mutation';
       mutationState.leaseKind = 'recovery';
       mutationState.leaseId = recoveryLeaseId;
+      mutationState.forwardVerified = false;
       mutationState.retiredGenerations = retiredGenerations;
       const recoveryLease: AcpRemoteMutationRecoveryLease = {
         generation: nextGeneration,
@@ -492,6 +497,7 @@ export function createMutationLease(
             state.mutationStates.delete(pathIdentity);
           } else {
             current.kind = 'needs-read';
+            current.forwardVerified = false;
           }
         },
       };
@@ -527,10 +533,13 @@ export function createMutationLease(
           state.mutationStates.delete(pathIdentity);
           continue;
         }
-        if (
-          mutationState.kind === 'needs-read' ||
-          mutationState.kind === 'pending-write'
-        ) {
+        if (mutationState.kind === 'pending-write') {
+          continue;
+        }
+        if (mutationState.kind === 'needs-read') {
+          if (verified && mutationState.forwardVerified) {
+            state.mutationStates.delete(pathIdentity);
+          }
           continue;
         }
         if (verified) {
