@@ -1,5 +1,13 @@
 import { basename, extname } from 'path';
-import { getAcpFileSystemService, isAcpMode } from '../../../acp/AcpServiceContext.js';
+import {
+  AcpFileSystemService,
+  isAcpResourceNotFoundError,
+} from '../../../acp/AcpFileSystemService.js';
+import {
+  getAcpFileSystemService,
+  isAcpMode,
+  isAcpRemoteFileSystem,
+} from '../../../acp/AcpServiceContext.js';
 import { Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
@@ -86,15 +94,115 @@ export const readTool = createTool({
     const { file_path, offset, limit, encoding = 'utf8' } = params;
     const { updateOutput, sessionId } = context;
     const signal = context.signal ?? new AbortController().signal;
+    const ext = extname(file_path).toLowerCase();
+    const isTextFile = checkIsTextFile(ext);
+    const isBinaryFile = checkIsBinaryFile(ext);
 
     try {
       updateOutput?.('Starting file read...');
 
       // 获取文件系统服务（ACP 或本地）
-      const useAcp = isAcpMode(sessionId);
-      const fsService = useAcp
+      const acpMode = isAcpMode(sessionId);
+      const remoteFileSystem = isAcpRemoteFileSystem(sessionId);
+      const fsService = acpMode
         ? getAcpFileSystemService(sessionId)
         : getFileSystemService();
+
+      if (remoteFileSystem) {
+        if (!(fsService instanceof AcpFileSystemService)) {
+          return {
+            success: false,
+            llmContent: 'File read failed: internal ACP remote filesystem mismatch',
+            error: {
+              type: ToolErrorType.EXECUTION_ERROR,
+              message: 'ACP remote filesystem mismatch',
+            },
+          };
+        }
+
+        if (!fsService.canReadTextFile()) {
+          return {
+            success: false,
+            llmContent:
+              'ACP remote Read requires readTextFile capability from the client.',
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'ACP remote Read requires readTextFile capability',
+            },
+          };
+        }
+
+        if (isBinaryFile || encoding !== 'utf8') {
+          return {
+            success: false,
+            llmContent:
+              'ACP remote Read only supports UTF-8 text reads. Binary files and non-utf8 encodings are not supported.',
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'ACP remote Read only supports UTF-8 text reads',
+            },
+          };
+        }
+
+        if (typeof signal.throwIfAborted === 'function') {
+          signal.throwIfAborted();
+        }
+
+        let fullContent: string;
+        try {
+          updateOutput?.('通过 IDE 读取文件...');
+          fullContent = await fsService.readTextFile(file_path);
+        } catch (error) {
+          if (isAcpResourceNotFoundError(error)) {
+            const message = `File not found: ${file_path}`;
+            return {
+              success: false,
+              llmContent: message,
+              error: {
+                type: ToolErrorType.EXECUTION_ERROR,
+                message,
+              },
+            };
+          }
+          throw error;
+        }
+
+        if (typeof signal.throwIfAborted === 'function') {
+          signal.throwIfAborted();
+        }
+
+        fsService.recordRemoteAccess(file_path, fullContent, 'read');
+
+        let content = fullContent;
+        const metadata: ReadMetadata = {
+          file_path,
+          file_size: Buffer.byteLength(fullContent, 'utf8'),
+          file_type: ext,
+          encoding,
+          acp_mode: acpMode,
+        };
+
+        if (offset !== undefined || limit !== undefined) {
+          const sliced = sliceTextContent(fullContent, offset, limit);
+          content = sliced.content;
+          metadata.lines_read = sliced.metadata.lines_read;
+          metadata.total_lines = sliced.metadata.total_lines;
+          metadata.start_line = sliced.metadata.start_line;
+          metadata.end_line = sliced.metadata.end_line;
+        }
+
+        const fileName = basename(file_path);
+        const linesRead = metadata.lines_read || metadata.total_lines;
+        metadata.summary = linesRead
+          ? `读取 ${linesRead} 行从 ${fileName}`
+          : `读取 ${fileName}`;
+
+        return {
+          success: true,
+          llmContent: content,
+          metadata,
+        };
+      }
 
       // 检查文件是否存在（统一使用 FileSystemService）
       try {
@@ -149,11 +257,6 @@ export const readTool = createTool({
         };
       }
 
-      // 获取文件扩展名
-      const ext = extname(file_path).toLowerCase();
-      const isTextFile = checkIsTextFile(ext);
-      const isBinaryFile = checkIsBinaryFile(ext);
-
       let content: string;
       const metadata: ReadMetadata = {
         file_path,
@@ -162,34 +265,21 @@ export const readTool = createTool({
         last_modified:
           stats?.mtime instanceof Date ? stats.mtime.toISOString() : undefined,
         encoding: encoding,
-        acp_mode: useAcp,
+        acp_mode: acpMode,
       };
 
       // 处理二进制文件
       if (isBinaryFile && encoding === 'utf8') {
-        // [WARN] ACP 模式下二进制读取会 fallback 到本地
-        if (useAcp) {
-          updateOutput?.('[WARN] 二进制文件通过本地读取（ACP 不支持）...');
-          metadata.acp_fallback = true;
-        } else {
-          updateOutput?.('检测到二进制文件，使用 base64 编码...');
-        }
+        updateOutput?.('检测到二进制文件，使用 base64 编码...');
         const buffer = await fsService.readBinaryFile(file_path);
         content = buffer.toString('base64');
         metadata.encoding = 'base64';
         metadata.is_binary = true;
       } else if (isTextFile) {
         // 文本文件：使用 FileSystemService 读取
-        if (useAcp) {
-          updateOutput?.('通过 IDE 读取文件...');
-        }
         content = await fsService.readTextFile(file_path);
       } else {
         // 其他文件：使用二进制读取
-        // [WARN] ACP 模式下会 fallback 到本地
-        if (useAcp) {
-          metadata.acp_fallback = true;
-        }
         const buffer = await fsService.readBinaryFile(file_path);
 
         if (encoding === 'base64') {
@@ -211,25 +301,12 @@ export const readTool = createTool({
         encoding === 'utf8' &&
         isTextFile
       ) {
-        const lines = content.split('\n');
-        const startLine = offset || 0;
-        const endLine = limit !== undefined ? startLine + limit : lines.length;
-
-        const selectedLines = lines.slice(startLine, endLine);
-        content = selectedLines
-          .map((line, index) => {
-            const lineNumber = startLine + index + 1;
-            // 截断过长的行
-            const truncatedLine =
-              line.length > 2000 ? `${line.substring(0, 2000)}...` : line;
-            return `${lineNumber.toString().padStart(6)}|${truncatedLine}`;
-          })
-          .join('\n');
-
-        metadata.lines_read = selectedLines.length;
-        metadata.total_lines = lines.length;
-        metadata.start_line = startLine + 1;
-        metadata.end_line = Math.min(endLine, lines.length);
+        const sliced = sliceTextContent(content, offset, limit);
+        content = sliced.content;
+        metadata.lines_read = sliced.metadata.lines_read;
+        metadata.total_lines = sliced.metadata.total_lines;
+        metadata.start_line = sliced.metadata.start_line;
+        metadata.end_line = sliced.metadata.end_line;
       }
 
       // 生成 summary 用于流式显示
@@ -340,6 +417,40 @@ function checkIsTextFile(ext: string): boolean {
     '.env',
   ];
   return textExtensions.includes(ext) || ext === '';
+}
+
+function sliceTextContent(
+  content: string,
+  offset?: number,
+  limit?: number
+): {
+  content: string;
+  metadata: Pick<
+    ReadMetadata,
+    'lines_read' | 'total_lines' | 'start_line' | 'end_line'
+  >;
+} {
+  const lines = content.split('\n');
+  const startLine = offset || 0;
+  const endLine = limit !== undefined ? startLine + limit : lines.length;
+
+  const selectedLines = lines.slice(startLine, endLine);
+  return {
+    content: selectedLines
+      .map((line, index) => {
+        const lineNumber = startLine + index + 1;
+        const truncatedLine =
+          line.length > 2000 ? `${line.substring(0, 2000)}...` : line;
+        return `${lineNumber.toString().padStart(6)}|${truncatedLine}`;
+      })
+      .join('\n'),
+    metadata: {
+      lines_read: selectedLines.length,
+      total_lines: lines.length,
+      start_line: startLine + 1,
+      end_line: Math.min(endLine, lines.length),
+    },
+  };
 }
 
 /**
