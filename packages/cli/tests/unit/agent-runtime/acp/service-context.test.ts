@@ -11,7 +11,10 @@ import {
   AcpServiceContext,
   getAcpFileSystemService,
   getTerminalService,
+  isAcpMode,
+  isAcpRemoteFileSystem,
 } from '../../../../src/acp/AcpServiceContext.js';
+import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
 import { ControlledTerminalClient } from '../../../support/acp/ControlledTerminalClient.js';
 import {
   createPairedAcpHarness,
@@ -76,6 +79,107 @@ describe('AcpServiceContext session isolation', () => {
         cwd: '/workspace/a',
       }),
     ]);
+  });
+
+  it('uses the local filesystem when fs capability is missing and preserves ACP mode', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { terminal: true },
+      '/workspace/a'
+    );
+
+    const fileSystem = getAcpFileSystemService('session-a');
+    await expect(fileSystem.exists('/definitely/missing')).resolves.toBe(false);
+    expect(client.requests).toEqual([]);
+    expect(isAcpMode('session-a')).toBe(true);
+    expect(isAcpRemoteFileSystem('session-a')).toBe(false);
+  });
+
+  it('uses the local filesystem when fs capabilities are all false', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: false, writeTextFile: false } },
+      '/workspace/a'
+    );
+
+    const fileSystem = getAcpFileSystemService('session-a');
+    await expect(fileSystem.exists('/definitely/missing')).resolves.toBe(false);
+    expect(client.requests).toEqual([]);
+    expect(isAcpMode('session-a')).toBe(true);
+    expect(isAcpRemoteFileSystem('session-a')).toBe(false);
+  });
+
+  it.each([
+    {
+      label: 'read-only',
+      fs: { readTextFile: true, writeTextFile: false },
+    },
+    {
+      label: 'write-only',
+      fs: { readTextFile: false, writeTextFile: true },
+    },
+    {
+      label: 'read-write',
+      fs: { readTextFile: true, writeTextFile: true },
+    },
+  ])('uses the ACP filesystem when capabilities are $label', async ({ fs }) => {
+    const client = new ControlledFileClient();
+    client.files.set('/workspace/a/file.ts', 'remote content');
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs },
+      '/workspace/a'
+    );
+
+    const fileSystem = getAcpFileSystemService('session-a');
+    if (fs.readTextFile) {
+      await expect(fileSystem.readTextFile('/workspace/a/file.ts')).resolves.toBe(
+        'remote content'
+      );
+      expect(client.requests).toEqual([
+        {
+          kind: 'read',
+          request: {
+            path: '/workspace/a/file.ts',
+            sessionId: 'session-a',
+          },
+        },
+      ]);
+    } else {
+      await expect(
+        fileSystem.writeTextFile('/workspace/a/file.ts', 'remote write')
+      ).resolves.toBeUndefined();
+      expect(client.requests).toEqual([
+        {
+          kind: 'write',
+          request: {
+            path: '/workspace/a/file.ts',
+            content: 'remote write',
+            sessionId: 'session-a',
+          },
+        },
+      ]);
+    }
+
+    expect(isAcpRemoteFileSystem('session-a')).toBe(true);
+    expect(isAcpMode('session-a')).toBe(true);
+  });
+
+  it('reports false for unknown or undefined remote filesystem queries', () => {
+    expect(isAcpRemoteFileSystem()).toBe(false);
+    expect(isAcpRemoteFileSystem('unknown-session')).toBe(false);
+    expect(isAcpMode('unknown-session')).toBe(false);
   });
 
   it('binds a local terminal to the Session cwd when capability is absent', async () => {

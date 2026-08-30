@@ -615,6 +615,7 @@ interface SessionServices {
   sendUpdate?: (update: SessionNotification['update']) => Promise<void>;
   clientCapabilities: ClientCapabilities | null;
   cwd: string;
+  remoteFileSystem: boolean;
 }
 
 /**
@@ -654,12 +655,14 @@ export class AcpServiceContext {
     cwd: string,
     sendUpdate?: (update: SessionNotification['update']) => Promise<void>
   ): void {
-    // 根据 IDE 能力创建文件系统服务
-    const fileSystemService: FileSystemService = clientCapabilities?.fs
+    const usesRemoteFileSystem =
+      clientCapabilities?.fs?.readTextFile === true ||
+      clientCapabilities?.fs?.writeTextFile === true;
+    const fileSystemService: FileSystemService = usesRemoteFileSystem
       ? new AcpFileSystemService(connection, sessionId, clientCapabilities.fs)
       : new LocalFileSystemService();
 
-    if (clientCapabilities?.fs) {
+    if (usesRemoteFileSystem) {
       logger.debug(`[AcpServiceContext:${sessionId}] Using ACP file system service`);
     }
 
@@ -681,6 +684,7 @@ export class AcpServiceContext {
       sendUpdate,
       clientCapabilities: clientCapabilities || null,
       cwd,
+      remoteFileSystem: usesRemoteFileSystem,
     });
 
     // 设置当前会话（用于便捷函数）
@@ -733,6 +737,10 @@ export class AcpServiceContext {
    */
   static getCurrentSessionId(): string | null {
     return AcpServiceContext.currentSessionId;
+  }
+
+  static isRemoteFileSystem(sessionId: string): boolean {
+    return AcpServiceContext.sessions.get(sessionId)?.remoteFileSystem ?? false;
   }
 
   // ==================== 兼容旧 API（实例方法）====================
@@ -880,4 +888,11 @@ export function isAcpMode(sessionId?: string): boolean {
   return sessionId
     ? AcpServiceContext.getSessionServices(sessionId) !== null
     : AcpServiceContext.getInstance().isAcpMode();
+}
+
+export function isAcpRemoteFileSystem(sessionId?: string): boolean {
+  if (!sessionId) {
+    return false;
+  }
+  return AcpServiceContext.isRemoteFileSystem(sessionId);
 }

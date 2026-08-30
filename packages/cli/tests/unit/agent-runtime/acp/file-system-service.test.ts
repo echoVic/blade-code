@@ -1,74 +1,234 @@
-import { describe, expect, it, vi } from 'vitest';
-import { AcpFileSystemService } from '../../../../src/acp/AcpFileSystemService.js';
-import type { FileSystemService } from '../../../../src/services/FileSystemService.js';
-
-function fallback(): FileSystemService {
-  return {
-    readTextFile: vi.fn(async () => 'local fallback'),
-    writeTextFile: vi.fn(async () => undefined),
-    exists: vi.fn(async () => true),
-    readBinaryFile: vi.fn(async () => Buffer.alloc(0)),
-    stat: vi.fn(async () => null),
-    mkdir: vi.fn(async () => undefined),
-  };
-}
+import { RequestError } from '@agentclientprotocol/sdk';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  AcpFileSystemCapabilityError,
+  AcpFileSystemService,
+  isAcpResourceNotFoundError,
+} from '../../../../src/acp/AcpFileSystemService.js';
+import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
+import {
+  createPairedAcpHarness,
+  type PairedAcpHarness,
+} from '../../../support/acp/createPairedAcpHarness.js';
 
 describe('AcpFileSystemService remote ownership', () => {
-  it('fails closed instead of writing locally after an advertised remote failure', async () => {
-    const local = fallback();
-    const connection = {
-      writeTextFile: vi.fn(async () => {
-        throw new Error('remote write rejected');
-      }),
-    };
-    const service = new AcpFileSystemService(
-      connection as never,
-      'session-a',
-      { writeTextFile: true } as never,
-      local
-    );
+  const harnesses: PairedAcpHarness[] = [];
 
-    await expect(service.writeTextFile('/remote/file.ts', 'new')).rejects.toThrow(
-      'remote write rejected'
+  afterEach(async () => {
+    await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
+  });
+
+  it('fails closed instead of writing locally after an advertised remote failure', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const remoteWriteRejected = new RequestError(-32010, 'remote write rejected');
+    const writeSpy = vi
+      .spyOn(client, 'writeTextFile')
+      .mockRejectedValueOnce(remoteWriteRejected);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      writeTextFile: true,
+    });
+
+    await expect(service.writeTextFile('/remote/file.ts', 'new')).rejects.toMatchObject(
+      {
+        name: 'RequestError',
+        code: -32010,
+        message: 'remote write rejected',
+      }
     );
-    expect(local.writeTextFile).not.toHaveBeenCalled();
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+    expect(client.requests).toEqual([]);
     expect(service.usesRemoteFiles()).toBe(true);
   });
 
   it('fails closed instead of reading a same-named local file after a remote failure', async () => {
-    const local = fallback();
-    const connection = {
-      readTextFile: vi.fn(async () => {
-        throw new Error('remote read rejected');
-      }),
-    };
-    const service = new AcpFileSystemService(
-      connection as never,
-      'session-a',
-      { readTextFile: true } as never,
-      local
-    );
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const remoteReadRejected = new RequestError(-32011, 'remote read rejected');
+    const readSpy = vi
+      .spyOn(client, 'readTextFile')
+      .mockRejectedValueOnce(remoteReadRejected);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      readTextFile: true,
+    });
 
-    await expect(service.readTextFile('/remote/file.ts')).rejects.toThrow(
-      'remote read rejected'
-    );
-    expect(local.readTextFile).not.toHaveBeenCalled();
+    await expect(service.readTextFile('/remote/file.ts')).rejects.toMatchObject({
+      name: 'RequestError',
+      code: -32011,
+      message: 'remote read rejected',
+    });
+    expect(readSpy).toHaveBeenCalledTimes(1);
+    expect(client.requests).toEqual([]);
   });
 
-  it('uses the local filesystem only when the client did not advertise remote fs', async () => {
-    const local = fallback();
-    const service = new AcpFileSystemService(
-      {} as never,
-      'session-a',
-      {} as never,
-      local
-    );
+  it('throws a typed read capability error without issuing ACP requests', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {});
 
-    await expect(service.readTextFile('/shared/file.ts')).resolves.toBe(
-      'local fallback'
-    );
-    await service.writeTextFile('/shared/file.ts', 'new');
-    expect(local.writeTextFile).toHaveBeenCalledWith('/shared/file.ts', 'new');
+    await expect(service.readTextFile('/remote/file.ts')).rejects.toMatchObject({
+      name: 'AcpFileSystemCapabilityError',
+      message: 'ACP remote filesystem does not support readTextFile',
+      operation: 'readTextFile',
+    });
+    await expect(service.exists('/remote/file.ts')).rejects.toMatchObject({
+      name: 'AcpFileSystemCapabilityError',
+      operation: 'readTextFile',
+    });
+    expect(client.requests).toEqual([]);
     expect(service.usesRemoteFiles()).toBe(false);
+  });
+
+  it('throws a typed write capability error without issuing ACP requests', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {});
+
+    await expect(service.writeTextFile('/remote/file.ts', 'new')).rejects.toMatchObject(
+      {
+        name: 'AcpFileSystemCapabilityError',
+        message: 'ACP remote filesystem does not support writeTextFile',
+        operation: 'writeTextFile',
+      }
+    );
+    expect(client.requests).toEqual([]);
+  });
+
+  it('throws typed capability errors for unsupported binary and directory operations', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    await expect(service.readBinaryFile('/remote/file.bin')).rejects.toMatchObject({
+      name: 'AcpFileSystemCapabilityError',
+      operation: 'readBinaryFile',
+    });
+    await expect(service.stat('/remote/file.bin')).rejects.toMatchObject({
+      name: 'AcpFileSystemCapabilityError',
+      operation: 'stat',
+    });
+    await expect(service.mkdir('/remote/dir')).rejects.toMatchObject({
+      name: 'AcpFileSystemCapabilityError',
+      operation: 'mkdir',
+    });
+    expect(client.requests).toEqual([]);
+  });
+
+  it('returns true from exists when remote read succeeds', async () => {
+    const client = new ControlledFileClient();
+    client.files.set('/remote/file.ts', 'content');
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      readTextFile: true,
+    });
+
+    await expect(service.exists('/remote/file.ts')).resolves.toBe(true);
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: '/remote/file.ts',
+          sessionId: 'session-a',
+        },
+      },
+    ]);
+  });
+
+  it('returns false from exists only for confirmed ACP not found errors', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      readTextFile: true,
+    });
+
+    await expect(service.exists('/remote/missing.ts')).resolves.toBe(false);
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: '/remote/missing.ts',
+          sessionId: 'session-a',
+        },
+      },
+    ]);
+  });
+
+  it('rethrows permission timeout network and unknown exists failures instead of assuming true', async () => {
+    const cases = [
+      {
+        thrown: new RequestError(-32020, 'Permission denied'),
+        expected: { name: 'RequestError', code: -32020, message: 'Permission denied' },
+      },
+      {
+        thrown: new RequestError(-32021, 'Request timed out'),
+        expected: { name: 'RequestError', code: -32021, message: 'Request timed out' },
+      },
+      {
+        thrown: new RequestError(-32022, 'Network disconnected'),
+        expected: {
+          name: 'RequestError',
+          code: -32022,
+          message: 'Network disconnected',
+        },
+      },
+      {
+        thrown: new Error('Unexpected decode failure'),
+        expected: {
+          name: 'RequestError',
+          code: -32603,
+          message: 'Internal error',
+          data: { details: 'Unexpected decode failure' },
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const client = new ControlledFileClient();
+      const harness = createPairedAcpHarness(client);
+      harnesses.push(harness);
+      vi.spyOn(client, 'readTextFile').mockRejectedValueOnce(testCase.thrown);
+      const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+        readTextFile: true,
+      });
+
+      await expect(service.exists('/remote/file.ts')).rejects.toMatchObject(
+        testCase.expected
+      );
+      expect(client.requests).toEqual([]);
+    }
+  });
+
+  it('recognizes bounded not-found errors and rejects unrelated errors', () => {
+    expect(
+      isAcpResourceNotFoundError(RequestError.resourceNotFound('/secret/path'))
+    ).toBe(true);
+    expect(
+      isAcpResourceNotFoundError(new RequestError(-32002, 'resource missing'))
+    ).toBe(true);
+    expect(isAcpResourceNotFoundError(new Error('No such file or directory'))).toBe(
+      true
+    );
+    expect(isAcpResourceNotFoundError(new Error('Path does not exist'))).toBe(true);
+    expect(isAcpResourceNotFoundError(new Error('Permission denied'))).toBe(false);
+    expect(isAcpResourceNotFoundError({ code: -32002 })).toBe(false);
+  });
+
+  it('exports a typed capability error class', () => {
+    const error = new AcpFileSystemCapabilityError('mkdir');
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe('AcpFileSystemCapabilityError');
+    expect(error.message).toBe('ACP remote filesystem does not support mkdir');
+    expect(error.operation).toBe('mkdir');
   });
 });

@@ -8,40 +8,59 @@
 import type {
   AgentSideConnection,
   FileSystemCapabilities,
+  RequestError,
 } from '@agentclientprotocol/sdk';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import {
   type FileStat,
   type FileSystemService,
-  LocalFileSystemService,
 } from '../services/FileSystemService.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
-/**
- * ACP 文件系统服务
- *
- * 将文件操作转发给 IDE 执行。
- * 如果 IDE 不支持某个操作，则回退到本地文件系统。
- */
+export class AcpFileSystemCapabilityError extends Error {
+  readonly name = 'AcpFileSystemCapabilityError';
+
+  constructor(readonly operation: string) {
+    super(`ACP remote filesystem does not support ${operation}`);
+  }
+}
+
+export function isAcpResourceNotFoundError(error: unknown): boolean {
+  if (isRequestErrorWithCode(error, -32002)) {
+    return true;
+  }
+
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return [
+    'not found',
+    'no such file',
+    'enoent',
+    'does not exist',
+    'file not found',
+    'path not found',
+  ].some((pattern) => message.includes(pattern));
+}
+
 export class AcpFileSystemService implements FileSystemService {
   constructor(
     private readonly connection: AgentSideConnection,
     private readonly sessionId: string,
-    private readonly capabilities: FileSystemCapabilities,
-    private readonly fallback: FileSystemService = new LocalFileSystemService()
+    private readonly capabilities: FileSystemCapabilities
   ) {}
 
   /**
    * 读取文本文件
    *
-   * 如果 IDE 支持 readTextFile，则通过 ACP 协议读取；
-   * 否则回退到本地文件系统。
+   * 如果 IDE 不支持 readTextFile，则 fail-closed。
    */
   async readTextFile(filePath: string): Promise<string> {
     if (!this.capabilities.readTextFile) {
-      logger.debug(`[AcpFileSystem] readTextFile fallback: ${filePath}`);
-      return this.fallback.readTextFile(filePath);
+      throw new AcpFileSystemCapabilityError('readTextFile');
     }
 
     try {
@@ -60,13 +79,11 @@ export class AcpFileSystemService implements FileSystemService {
   /**
    * 写入文本文件
    *
-   * 如果 IDE 支持 writeTextFile，则通过 ACP 协议写入；
-   * 否则回退到本地文件系统。
+   * 如果 IDE 不支持 writeTextFile，则 fail-closed。
    */
   async writeTextFile(filePath: string, content: string): Promise<void> {
     if (!this.capabilities.writeTextFile) {
-      logger.debug(`[AcpFileSystem] writeTextFile fallback: ${filePath}`);
-      return this.fallback.writeTextFile(filePath, content);
+      throw new AcpFileSystemCapabilityError('writeTextFile');
     }
 
     try {
@@ -85,24 +102,13 @@ export class AcpFileSystemService implements FileSystemService {
   /**
    * 检查文件是否存在
    *
-   * 策略：优先信任 ACP，宁可误判"存在"也不要误判"不存在"
-   *
-   * 1. 如果 IDE 支持 readTextFile，通过 ACP 判断：
-   *    - 读取成功 -> 存在
-   *    - 错误明确是"not found/enoent" -> 不存在
-   *    - 其他错误（权限、二进制、超时等）-> 假设存在
-   *      （让后续操作揭示真正问题，而非提前终止）
-   *
-   * 2. 如果 IDE 不支持 readTextFile，fallback 到本地
+   * 只通过 ACP 远端 read 判断文件存在性；缺少 read 能力时 fail-closed。
    */
   async exists(filePath: string): Promise<boolean> {
-    // 如果 IDE 不支持文件读取，fallback 到本地
     if (!this.capabilities.readTextFile) {
-      logger.debug(`[AcpFileSystem] exists fallback to local: ${filePath}`);
-      return this.fallback.exists(filePath);
+      throw new AcpFileSystemCapabilityError('readTextFile');
     }
 
-    // 通过 ACP 检查
     try {
       await this.connection.readTextFile({
         path: filePath,
@@ -111,72 +117,46 @@ export class AcpFileSystemService implements FileSystemService {
       logger.debug(`[AcpFileSystem] exists(${filePath}): true (ACP read success)`);
       return true;
     } catch (error) {
-      const errorMsg = String(error).toLowerCase();
-
-      // 只有明确的"不存在"错误才返回 false
-      const notFoundPatterns = [
-        'not found',
-        'no such file',
-        'enoent',
-        'does not exist',
-        'file not found',
-        'path not found',
-      ];
-
-      const isNotFound = notFoundPatterns.some((pattern) => errorMsg.includes(pattern));
-
-      if (isNotFound) {
+      if (isAcpResourceNotFoundError(error)) {
         logger.debug(`[AcpFileSystem] exists(${filePath}): false (ACP: not found)`);
         return false;
       }
-
-      // 其他错误（权限、二进制、超时等）假设文件存在
-      // 让后续操作揭示真正问题，而非在这里提前终止
-      // 使用 warn 级别记录，便于诊断
-      const errorType = categorizeError(errorMsg);
-      logger.warn(
-        `[AcpFileSystem] exists(${filePath}): assuming exists due to ${errorType} error`,
-        { error: String(error), errorType, filePath }
-      );
-      return true;
+      throw error;
     }
   }
 
   /**
    * 读取二进制文件
    *
-   * ACP 协议目前只支持文本文件读取，二进制文件回退到本地。
+   * ACP 协议目前只支持文本文件读取，二进制文件 fail-closed。
    */
   async readBinaryFile(filePath: string): Promise<Buffer> {
-    // ACP 协议暂不支持二进制读取，使用本地
-    logger.debug(`[AcpFileSystem] readBinaryFile fallback: ${filePath}`);
-    return this.fallback.readBinaryFile(filePath);
+    logger.debug(`[AcpFileSystem] readBinaryFile unsupported: ${filePath}`);
+    throw new AcpFileSystemCapabilityError('readBinaryFile');
   }
 
   /**
    * 获取文件统计信息
    *
-   * ACP 协议暂不支持 stat 操作，回退到本地。
+   * ACP 协议暂不支持 stat 操作，fail-closed。
    */
   async stat(filePath: string): Promise<FileStat | null> {
-    // ACP 协议暂无 stat 方法，使用本地
-    logger.debug(`[AcpFileSystem] stat fallback: ${filePath}`);
-    return this.fallback.stat(filePath);
+    logger.debug(`[AcpFileSystem] stat unsupported: ${filePath}`);
+    throw new AcpFileSystemCapabilityError('stat');
   }
 
   /**
    * 创建目录
    *
-   * ACP 协议暂不支持 mkdir 操作，回退到本地。
-   * 注：writeTextFile 通常会自动创建父目录。
+   * ACP 协议暂不支持 mkdir 操作，fail-closed。
    */
   async mkdir(
     dirPath: string,
     options?: { recursive?: boolean; mode?: number }
   ): Promise<void> {
-    // ACP 协议暂无 mkdir 方法，使用本地
-    logger.debug(`[AcpFileSystem] mkdir fallback: ${dirPath}`);
-    return this.fallback.mkdir(dirPath, options);
+    void options;
+    logger.debug(`[AcpFileSystem] mkdir unsupported: ${dirPath}`);
+    throw new AcpFileSystemCapabilityError('mkdir');
   }
 
   /**
@@ -205,24 +185,9 @@ export class AcpFileSystemService implements FileSystemService {
   }
 }
 
-/**
- * 对错误信息进行分类，便于诊断
- */
-function categorizeError(errorMsg: string): string {
-  if (errorMsg.includes('permission') || errorMsg.includes('access denied')) {
-    return 'permission';
-  }
-  if (errorMsg.includes('timeout') || errorMsg.includes('timed out')) {
-    return 'timeout';
-  }
-  if (errorMsg.includes('binary') || errorMsg.includes('encoding')) {
-    return 'binary';
-  }
-  if (errorMsg.includes('too large') || errorMsg.includes('size')) {
-    return 'size';
-  }
-  if (errorMsg.includes('connection') || errorMsg.includes('network')) {
-    return 'network';
-  }
-  return 'unknown';
+function isRequestErrorWithCode(
+  error: unknown,
+  code: number
+): error is RequestError & { code: number } {
+  return error instanceof Error && 'code' in error && error.code === code;
 }
