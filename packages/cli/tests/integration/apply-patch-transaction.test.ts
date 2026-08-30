@@ -2,7 +2,9 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getAcpFileRequestCoordinator } from '../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
+import { commitVerifiedRemoteTextMutation } from '../../src/acp/RemoteTextMutation.js';
 import type {
   FileStat,
   FileSystemService,
@@ -217,6 +219,48 @@ describe('ApplyPatch local transaction', () => {
 });
 
 describe('ApplyPatch ACP remote transaction', () => {
+  it('self-owned verified remote mutations release their lease so the same path can be reacquired immediately', async () => {
+    const client = new ControlledFileClient();
+    client.files.set('/remote/file.ts', 'const value = false;\n');
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'self-owned-verified',
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      }
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+
+    const receipt = await commitVerifiedRemoteTextMutation({
+      service,
+      filePath: '/remote/file.ts',
+      previous: { exists: true, content: 'const value = false;\n' },
+      intendedContent: 'const value = true;\n',
+      operation: 'edit',
+      recordAccess: false,
+    });
+
+    expect(receipt).toMatchObject({
+      writeAcknowledged: true,
+      writeVerified: true,
+      sideEffectsUncertain: false,
+      requiresRead: false,
+    });
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    const lease = service.tryAcquireMutationLease(['/remote/file.ts']);
+    expect(lease.isCurrent('/remote/file.ts')).toBe(true);
+    lease.release();
+  });
+
   it('detects preflight content races before publishing any remote write', async () => {
     const files = new Map([
       ['/remote/first.ts', 'const first = false;\n'],

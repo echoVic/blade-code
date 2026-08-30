@@ -102,6 +102,9 @@ export async function commitVerifiedRemoteTextMutation(options: {
     if (readback.kind === 'content') {
       if (readback.content === options.intendedContent) {
         markForwardVerified(activeLease, options.filePath);
+        if (ownedLease) {
+          ownedLease.commitVerified();
+        }
         if (options.recordAccess !== false) {
           options.service.recordRemoteAccess(
             options.filePath,
