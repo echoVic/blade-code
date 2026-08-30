@@ -60,15 +60,32 @@ patch grammar，但不接受 Codex 的“前缀已提交、失败返回 delta”
 
 ## ACP
 
-当 ACP Client 声明 `readTextFile` 和 `writeTextFile` 时，文件由远端 IDE 持有。
-标准 ACP 没有 delete、rename 或 multi-file transaction API，因此：
+ACP Session 的 text filesystem owner 按 capability matrix 选择：
 
-- 多文件 `Update File` 可用；每次写入后 read-back 验证。
+- `fs` capability 缺失，或 `readTextFile=false && writeTextFile=false` 时，继续使用
+  Session-local backend。
+- 只要 `readTextFile===true` 或 `writeTextFile===true` 任一项为真，text filesystem
+  owner 就在 Session 初始化时冻结为 remote。
+- 远端 mutation 仍要求 `readTextFile=true && writeTextFile=true` 同时成立；缺少任一项
+  都会 fail closed。
+
+标准 ACP 没有 delete、rename 或 multi-file transaction API，因此 remote-owned
+`ApplyPatch` 具有以下边界：
+
+- Session 只要在初始化时协商出任一 text fs capability，就冻结 remote owner；后续
+  reconnect 不会切回本地，capability 变化必须重建 Session。
+- 多文件 `Update File` 可用；提交前对每个目标做完整 preflight compare，每次写入后都
+  read-back 验证。
 - 任一写入失败时，所有已尝试文件按逆序写回旧内容并再次 read-back。
 - Add、Delete 和 Move fail closed，不会错误写到 Blade 宿主机。
 - Client 已声明远端 fs 后，ACP request 失败不再 fallback 到同名本地路径。
+- remote 协调状态只保留 Session-bound opaque hash/token/timing，不记录 remote path、
+  remote content 或 remote digest，也不能作为远端存在性或权限证据。
+- `sideEffectsUncertain=true` 表示最终 remote 状态无法证明；调用方必须重新 `Read`
+  再决定是否重试。`false` 只表示当前路径无未分类副作用，或补偿回滚已验证。
 
-未声明远端 fs 的 ACP Client 继续使用共享本地 workspace，可使用完整本地事务。
+未声明远端 fs，或两项 capability 都为 `false` 的 ACP Client，继续使用共享本地
+workspace，可使用完整本地事务与完整 patch grammar。
 
 ## Session 集成
 
@@ -86,6 +103,18 @@ patch grammar，但不接受 Codex 的“前缀已提交、失败返回 delta”
 多路径并发、发布中途故障、远端模糊失败补偿回滚、Snapshot 整体 rewind、LSP 和
 Hook 多文件事件。
 
-真实 API 资格要求模型先 Read 两个 existing files，再仅调用一次 ApplyPatch 更新两个
-文件并新增第三个文件；不得退回 Edit、Write 或 Bash。生产 Web GUI 还必须展示三个
-changed files、每文件 diff、Auto Edit 权限语义和 fresh-tab 零 console error。
+### 本地 backend / ACP-local 资格
+
+旧的真实 API 资格要求模型先 Read 两个 existing files，再仅调用一次 ApplyPatch 更新
+两个文件并新增第三个文件；不得退回 Edit、Write 或 Bash。该资格用于证明本地 backend
+与 ACP-local backend 的完整 patch grammar、事务发布和三文件 GUI 展示语义。生产
+Web GUI 还必须展示三个 changed files、每文件 diff、Auto Edit 权限语义和 fresh-tab
+零 console error。
+
+### ACP remote filesystem 资格
+
+ACP remote ownership 的 release qualification 单独记录在
+[ACP Remote Filesystem Ownership 资格验证证据](../testing/acp-remote-filesystem-ownership-evidence.md)。
+该资格只证明 remote-owned `ApplyPatch` 的多文件 `Update File`、逐写 read-back、
+补偿回滚与 fail-closed 边界；`Add File`、`Delete File`、`Move to` 仍不属于 ACP
+remote qualification 范围。

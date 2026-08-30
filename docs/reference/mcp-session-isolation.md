@@ -54,6 +54,15 @@ project B 的 Session 不会继承 A 的 MCP；B 的配置也不会写回全局 
 - `tools/call` binary 和大文本使用按 Session hash 隔离的私有 artifact store；本地
   Session 可读取绝对路径，ACP remote 仅接收 opaque ID，不暴露宿主存储路径。
 
+ACP remote filesystem ownership 也遵循相同的 Session freeze 原则：
+
+- 只要 Session 初始化时 `readTextFile===true` 或 `writeTextFile===true` 其一成立，
+  text-file owner 就冻结为 remote；
+- `fs` 缺失或两项 capability 都为 `false` 时，Session 继续使用本地 backend；
+- transport reconnect 不改变该 owner，capability 变化必须通过重建 Session 生效；
+- `isAcpMode()` 仍只表示当前 surface 是 ACP，不等同于 remote filesystem owner
+  predicate。
+
 Task worktree 的执行路径仍是 worktree，但 MCP 配置身份和默认 cwd 使用
 `taskWorktree.originalWorkspaceRoot`。这与 `projectPath` / `workspacePath`
 双身份模型一致。

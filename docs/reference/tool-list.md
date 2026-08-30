@@ -4,6 +4,18 @@
 
 ## 文件操作
 
+ACP text filesystem owner 统一按以下 capability matrix 判定：
+
+| ACP `fs` capability | owner 结果 | 可用 mutation |
+| --- | --- | --- |
+| `fs` 缺失，或 `readTextFile=false && writeTextFile=false` | local / ACP-local backend | 本地完整 `Read` / `Write` / `Edit` / `ApplyPatch` |
+| `readTextFile=true, writeTextFile=false` | frozen remote owner | 仅 remote `Read`；remote mutation fail closed |
+| `readTextFile=false, writeTextFile=true` | frozen remote owner | owner 仍为 remote，但 remote mutation 继续 fail closed |
+| `readTextFile=true, writeTextFile=true` | frozen remote owner | remote `Read` / `Write` / `Edit` / `ApplyPatch(Update File only)` |
+
+该 owner 在 Session 初始化时冻结；transport reconnect 不改变 owner，capability 变化必须重建
+Session。
+
 ### Read
 
 读取文件内容，支持文本、图片、PDF、Jupyter Notebook。
@@ -17,6 +29,15 @@
 
 **类型**: ReadOnly
 **返回**: 带行号的文件内容
+**ACP remote ownership**:
+
+- Session 初始化时只要 `readTextFile===true` 或 `writeTextFile===true` 其一成立，
+  text filesystem owner 就冻结为 remote；transport reconnect 不改变 owner，capability
+  变化必须重建 Session。
+- remote `Read` 只接受 UTF-8 text；binary/base64/已知二进制扩展在发 ACP request 前
+  fail closed。
+- ACP Session 未声明 fs，或两项 capability 都是 `false` 时，继续使用 Session-local
+  backend；本地 CLI/Web/ACP-local 语义不变。
 
 ### Write
 
@@ -32,6 +53,15 @@
 
 **类型**: Write
 **特性**: 支持备份、权限检查、目录自动创建
+**ACP remote ownership**:
+
+- remote `Write` 仅在 Session owner 已冻结为 remote 且 `readTextFile=true`、
+  `writeTextFile=true` 同时成立时可用。
+- existing file 必须先有当前 Session 的 prior matching `Read` digest；远端内容漂移时
+  fail closed，不发 write request。
+- new file 只接受明确 ACP not-found 作为 read-before-write 例外；不保证 parent
+  creation，也不会 fallback 到宿主机同名路径。
+- `sideEffectsUncertain=true` 表示最终 remote 状态无法证明，retry 前必须重新 `Read`。
 
 ### Edit
 
@@ -47,6 +77,12 @@
 **类型**: Write  
 **特性**: 支持回滚、预览、并发文件锁  
 **注意**: 使用前必须先用 Read 工具读取文件
+**ACP remote ownership**:
+
+- remote `Edit` 与 remote `Write` 同样要求 read+write capability 同时存在，并要求
+  当前 Session 持有 matching prior `Read` digest。
+- remote mutation 失败不会退回宿主机同名路径；`sideEffectsUncertain=false` 只表示
+  当前路径不存在未分类副作用，不等于一定成功。
 
 ### ApplyPatch
 
@@ -56,14 +92,18 @@
 |------|------|------|------|
 | `patch` | string | ✅ | 完整的 `*** Begin Patch` / `*** End Patch` 文档 |
 
-支持 `Add File`、`Update File`、`Delete File`、`Move to`、多 hunk、semantic locator
-和 `End of File`。路径必须相对 workspace。
+local backend 与 ACP-local backend 支持完整 patch grammar：`Add File`、`Update File`、
+`Delete File`、`Move to`、多 hunk、semantic locator 和 `End of File`。路径必须相对
+workspace。
 
 **类型**: Write
 **特性**: 完整 preflight、canonical containment、多路径锁、staging/backup、
 fsync、失败全量 rollback、Session Snapshot、LSP/Hook/AutoVerify 多文件集成
-**ACP**: 远端 filesystem 仅支持带 read-back 和补偿回滚的多文件 Update；协议没有
-delete/rename 时 Add/Delete/Move fail closed
+**ACP**: remote-owned filesystem 仅支持带 read-back 和补偿回滚的多文件 `Update File`；
+`Add File`、`Delete File`、`Move to` 全部 fail closed，不会回退宿主机。本地 CLI/Web、
+ACP-local backend，以及未声明 fs 或 all-false capability 的 ACP Session，继续使用
+完整本地事务与完整 patch grammar。`sideEffectsUncertain=true` 表示远端最终状态无法证明，
+必须重新 `Read` 后才能安全重试。
 **详情**: [Atomic ApplyPatch](atomic-apply-patch.md)
 
 ### NotebookEdit

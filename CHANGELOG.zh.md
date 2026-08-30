@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.126] - 2026-08-30
+
+### 新增
+- 新增 Session 冻结的 ACP 远端文本文件系统所有权、session-scoped SHA-256 remote-read ledger，以及不依赖同名宿主路径的 opaque remote coordination 与 lock identity。
+
+### 修复
+- 让 unsupported binary、stat、mkdir、delete、rename 等非文本 ACP 文件系统操作统一 fail closed，不再回退到 Blade 宿主机。
+- remote Write / Edit 现在同时要求 `readTextFile` 与 `writeTextFile`，并要求 prior matching Read digest；new-file Write 仅接受明确的 ACP not-found preflight 结果。
+- 将 remote mutation 收紧为一次写入加有界 read-back 校验，覆盖 acknowledged write、ack loss 与无法证明最终状态时的 truthful uncertainty 归类。
+- 将 remote ApplyPatch 限定为带补偿的 `Update File`，支持逆序 verified compensation 与 abort-safe rollback；不声称 ACP 原生支持 multi-file transaction 或 remote parent mkdir。
+- 收紧 remote Read error redaction，保留 duplicate initialize 下的 ownership freeze，并保持 ACP-local 在未冻结 remote owner 时与本地 backend 语义一致。
+
+### 测试
+- 新增 paired ACP、host canary、session-scoped ledger、rollback、cancellation、opaque coordination 与 UI projection 边界的确定性覆盖。
+- 通过 `deepseek-v4-flash` 与 `deepseek-v4-pro` 完成 production BladeAgent paired ACP 资格验证，framework retry 为 `0`。
+
 ## [0.10.125] - 2026-08-30
 
 ### 新增

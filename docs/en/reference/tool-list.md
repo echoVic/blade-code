@@ -4,6 +4,18 @@ This document lists all built-in tools for Blade Code and their parameter descri
 
 ## File Operations
 
+ACP text-filesystem ownership follows one capability matrix:
+
+| ACP `fs` capability | Owner result | Available mutation |
+| --- | --- | --- |
+| `fs` absent, or `readTextFile=false && writeTextFile=false` | local / ACP-local backend | Full local `Read` / `Write` / `Edit` / `ApplyPatch` |
+| `readTextFile=true, writeTextFile=false` | frozen remote owner | Remote `Read` only; remote mutation fails closed |
+| `readTextFile=false, writeTextFile=true` | frozen remote owner | Owner is still remote, but remote mutation continues to fail closed |
+| `readTextFile=true, writeTextFile=true` | frozen remote owner | Remote `Read` / `Write` / `Edit` / `ApplyPatch(Update File only)` |
+
+That owner freezes at Session initialization time. Transport reconnect does not
+change it, and capability changes require a new Session.
+
 ### Read
 
 Reads file content, supports text, images, PDF, Jupyter Notebook.
@@ -17,6 +29,16 @@ Reads file content, supports text, images, PDF, Jupyter Notebook.
 
 **Type**: ReadOnly
 **Returns**: File content with line numbers
+**ACP remote ownership**:
+
+- If either `readTextFile===true` or `writeTextFile===true` at Session
+  initialization, the text-filesystem owner is frozen as remote. Transport
+  reconnect does not change that owner, and capability changes require a new
+  Session.
+- Remote `Read` accepts UTF-8 text only. Binary/base64/known-binary-extension
+  cases fail closed before any ACP request.
+- If ACP fs is absent or both capabilities are `false`, the Session keeps its
+  Session-local backend; local CLI/Web/ACP-local semantics stay unchanged.
 
 ### Write
 
@@ -32,6 +54,17 @@ Writes or creates a file.
 
 **Type**: Write  
 **Features**: Supports backup, permission checking, automatic directory creation
+**ACP remote ownership**:
+
+- Remote `Write` is available only when the Session owner is frozen as remote
+  and both `readTextFile=true` and `writeTextFile=true` are present.
+- Existing files require a prior matching `Read` digest from the current
+  Session. Remote drift fails closed without issuing a write request.
+- New-file writes accept only an explicit ACP not-found result as the
+  read-before-write exception. They do not guarantee parent creation and never
+  fall back to a same-named host path.
+- `sideEffectsUncertain=true` means the final remote state cannot be proven and
+  callers must `Read` again before retrying.
 
 ### Edit
 
@@ -47,6 +80,13 @@ Performs exact string replacement.
 **Type**: Write  
 **Features**: Supports rollback, preview, concurrent file locking  
 **Note**: Must use the Read tool to read the file first before use
+**ACP remote ownership**:
+
+- Remote `Edit` has the same read+write capability and prior-read-digest
+  requirements as remote `Write`.
+- A failed remote mutation never falls back to a same-named host path.
+  `sideEffectsUncertain=false` means no remaining unclassified side effect on
+  that path; it does not guarantee success.
 
 ### ApplyPatch
 
@@ -56,11 +96,19 @@ Atomically modifies multiple UTF-8 text files using a strict Codex-style patch g
 |-----------|------|----------|-------------|
 | `patch` | string | ✅ | Complete `*** Begin Patch` / `*** End Patch` document |
 
-Supports `Add File`, `Update File`, `Delete File`, `Move to`, multiple hunks, semantic locators, and `End of File`. Paths must be relative to the workspace.
+The local backend and ACP-local backend support the full patch grammar:
+`Add File`, `Update File`, `Delete File`, `Move to`, multiple hunks, semantic
+locators, and `End of File`. Paths must be relative to the workspace.
 
 **Type**: Write  
 **Features**: Complete preflight, canonical containment, multi-path locking, staging/backup, fsync, full rollback on failure, Session Snapshot, multi-file LSP/Hook/AutoVerify integration  
-**ACP**: Remote filesystem only supports multi-file Update with read-back and compensating rollback; Add/Delete/Move fail closed when the protocol lacks delete/rename  
+**ACP**: A remote-owned filesystem supports only multi-file `Update File` with
+read-back and compensating rollback. `Add File`, `Delete File`, and `Move to`
+all fail closed and never fall back to the host machine. Local CLI/Web,
+ACP-local backends, and ACP Sessions with no fs or all-false capabilities keep
+the full local transaction path and full patch grammar.
+`sideEffectsUncertain=true` means the final remote state cannot be proven and
+the caller must re-read before retrying.
 **Details**: [Atomic ApplyPatch](/en/reference/atomic-apply-patch.md)
 
 ### NotebookEdit

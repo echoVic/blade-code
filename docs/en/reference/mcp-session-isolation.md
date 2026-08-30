@@ -39,6 +39,15 @@ Each Session creates an independent `McpRegistry`:
 - Transport anomalies first revoke the current Session's old catalog, then execute single-flight bounded recovery via generation fence; Session dispose cancels backoffs and in-progress connections; restored resource subscriptions only come from that Session's desired set;
 - `tools/call` binary and large text use a private artifact store isolated by Session hash; local Sessions can read absolute paths, while ACP remote receives only opaque IDs and does not expose host storage paths.
 
+ACP remote-filesystem ownership follows the same Session-freeze rule:
+
+- if either `readTextFile===true` or `writeTextFile===true` at Session initialization,
+  the text-file owner is frozen as remote;
+- if `fs` is absent or both capabilities are `false`, the Session keeps the local backend;
+- transport reconnect does not change that owner, and capability changes require a new Session;
+- `isAcpMode()` still means only that the current surface is ACP, not that the Session owns a
+  remote filesystem.
+
 The execution path for task worktrees remains the worktree, but MCP configuration identity and default cwd use `taskWorktree.originalWorkspaceRoot`. This is consistent with the `projectPath` / `workspacePath` dual-identity model.
 
 ## CLI Configuration Format

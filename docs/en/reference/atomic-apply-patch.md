@@ -53,14 +53,38 @@ Each canonical workspace also holds an independent 0600 cross-process lock. Two 
 
 ## ACP
 
-When an ACP Client declares `readTextFile` and `writeTextFile`, files are held by the remote IDE. Standard ACP has no delete, rename, or multi-file transaction APIs, so:
+ACP Sessions choose the text-filesystem owner with the following capability matrix:
 
-- Multi-file `Update File` is available; read-back verification after each write.
+- If `fs` is absent, or `readTextFile=false && writeTextFile=false`, the Session
+  stays on its Session-local backend.
+- If either `readTextFile===true` or `writeTextFile===true`, the text-filesystem
+  owner is frozen as remote at Session initialization time.
+- Remote mutation still requires both `readTextFile=true` and
+  `writeTextFile=true`; missing either one fails closed.
+
+Standard ACP has no delete, rename, or multi-file transaction APIs, so
+remote-owned `ApplyPatch` has the following boundary:
+
+- Once Session initialization negotiates any text-fs capability, the owner is
+  frozen as remote. Reconnect does not switch back to local ownership, and
+  capability changes require a new Session.
+- Multi-file `Update File` is available; every target receives full preflight
+  comparison before publish, and every write is followed by read-back
+  verification.
 - When any write fails, all attempted files have old content written back in reverse order and read back again.
 - Add, Delete, and Move fail closed and do not incorrectly write to the Blade host.
 - After the Client has declared a remote fs, failed ACP requests no longer fall back to same-named local paths.
+- Remote coordination state stores only Session-bound opaque hashes, tokens, and
+  timing facts. It does not retain remote path, remote content, or remote
+  digest, and it is not evidence of remote existence or permission.
+- `sideEffectsUncertain=true` means the final remote state cannot be proven and
+  the caller must `Read` again before retrying. `false` means only that this
+  path has no remaining unclassified side effect, or that compensating rollback
+  has been verified.
 
-ACP Clients that do not declare a remote fs continue to use the shared local workspace with full local transactions.
+ACP Clients that do not declare a remote fs, or declare both capabilities as
+`false`, continue to use the shared local workspace with full local
+transactions and the full patch grammar.
 
 ## Session Integration
 
@@ -73,6 +97,26 @@ ACP Clients that do not declare a remote fs continue to use the shared local wor
 
 ## Qualification Verification
 
-Deterministic tests cover grammar, CRLF, locators, EOF, zero side effects on context failure, symlink escape, multi-path concurrency, mid-publish failures, remote fuzzy failure compensating rollback, Snapshot full rewind, LSP, and Hook multi-file events.
+Deterministic tests cover grammar, CRLF, locators, EOF, zero side effects on
+context failure, symlink escape, multi-path concurrency, mid-publish failures,
+remote fuzzy failure compensating rollback, Snapshot full rewind, LSP, and Hook
+multi-file events.
 
-Real API qualification requires the model to first Read two existing files, then call ApplyPatch exactly once to update two files and add a third; it must not fall back to Edit, Write, or Bash. Production Web GUI must also show three changed files, per-file diffs, Auto Edit permission semantics, and zero console errors on fresh tabs.
+### Local backend / ACP-local qualification
+
+The older real-API qualification requires the model to first Read two existing
+files, then call ApplyPatch exactly once to update two files and add a third,
+without falling back to Edit, Write, or Bash. That qualification proves the
+full patch grammar, transaction publish path, and three-file GUI presentation
+for the local backend and ACP-local backend. Production Web GUI must also show
+three changed files, per-file diffs, Auto Edit permission semantics, and zero
+console errors on fresh tabs.
+
+### ACP remote filesystem qualification
+
+The release qualification for ACP remote ownership is documented separately in
+[ACP Remote Filesystem Ownership Qualification Evidence](/en/testing/acp-remote-filesystem-ownership-evidence.md).
+That qualification proves only remote-owned multi-file `Update File`,
+per-write read-back, compensating rollback, and fail-closed boundaries.
+`Add File`, `Delete File`, and `Move to` remain outside the ACP remote
+qualification scope.

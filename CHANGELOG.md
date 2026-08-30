@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.126] - 2026-08-30
+
+### Added
+- Added Session-frozen ACP remote text filesystem ownership, a session-scoped SHA-256 remote-read ledger, and opaque remote coordination and lock identities that never rely on same-named host paths.
+
+### Fixed
+- Made unsupported binary, stat, mkdir, delete, rename, and other non-text ACP filesystem operations fail closed without falling back to the Blade host.
+- Required remote Write and Edit to have both `readTextFile` and `writeTextFile`, plus a prior matching Read digest; new-file Write now accepts only an explicit ACP not-found preflight result.
+- Bound remote mutation to one write plus bounded read-back verification, preserved acknowledged-write and lost-ack outcomes, and reported uncertainty truthfully when the final remote state cannot be proven.
+- Restricted remote ApplyPatch to compensated `Update File` only, with reverse verified compensation, abort-safe rollback, and no claim of native ACP multi-file transactions or remote parent-directory creation.
+- Redacted remote Read control-plane failures, preserved duplicate-initialize ownership freeze, and kept ACP-local behavior aligned with the local backend when no remote filesystem owner is frozen.
+
+### Tests
+- Added deterministic paired ACP and host-canary coverage for ownership freeze, session-scoped ledger, rollback, cancellation, opaque coordination, and UI projection boundaries.
+- Qualified the production BladeAgent paired ACP trajectory with `deepseek-v4-flash` and `deepseek-v4-pro` at framework retry `0`.
+
 ## [0.10.125] - 2026-08-30
 
 ### Added
