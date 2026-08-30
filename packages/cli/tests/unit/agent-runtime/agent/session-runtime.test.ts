@@ -11,6 +11,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectRuleCatalog } from '../../../../src/agent/resources/WorkspaceProjectRules.js';
 import { DurableSteeringInbox } from '../../../../src/agent/runtime/DurableSteeringInbox.js';
+import { SessionLease } from '../../../../src/agent/runtime/SessionLease.js';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { getUserPromptArtifactReference } from '../../../../src/agent/runtime/UserPromptArtifactStore.js';
 import {
@@ -2782,6 +2783,500 @@ describe('SessionRuntime', () => {
     } finally {
       await recovered.dispose();
     }
+  });
+
+  it('resolves the disposed waiter false and the successor waiter true after a late stale callback', async () => {
+    const workspaceRoot = path.join(
+      storageRoot,
+      'background-subagent-waiter-handoff-project'
+    );
+    const sessionId = 'background-subagent-waiter-handoff-parent';
+    const childSessionId = 'agent-background-subagent-waiter-handoff';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const firstPrepared = await first.prepareInputTurn('launch the background child');
+    if (!firstPrepared.accepted) throw new Error('Expected direct input preparation');
+    const firstContextManager = first.getExecutionEngine().getContextManager();
+    const firstAssistantMessageId = await firstContextManager.saveMessage(
+      sessionId,
+      'assistant',
+      ''
+    );
+    await firstContextManager.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Wait for late marker',
+        prompt: 'Wait for a late background marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+        run_in_background: true,
+      },
+      firstAssistantMessageId
+    );
+    AgentSessionStore.getInstance().saveSession({
+      schemaVersion: 2,
+      id: childSessionId,
+      subagentType: 'Explore',
+      description: 'Wait for late marker',
+      prompt: 'Wait for a late background marker.',
+      messages: [],
+      status: 'running',
+      background: true,
+      createdAt: Date.now() - 1000,
+      lastActiveAt: Date.now() - 500,
+      parentSessionId: sessionId,
+      parentProjectPath: workspaceRoot,
+      rootAgentId: childSessionId,
+      resumeDepth: 0,
+      workspaceRoot,
+      isolation: 'none',
+    });
+    first.registerBackgroundSubagent(childSessionId);
+    const staleNotify = first.notifyBackgroundSubagentCompleted.bind(first);
+
+    let firstWaiterSettled = false;
+    const firstWaiter = first
+      .waitForBackgroundSubagentFollowUp(firstPrepared.handle)
+      .then((value) => {
+        firstWaiterSettled = true;
+        return value;
+      });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(firstWaiterSettled).toBe(false);
+
+    const firstDispose = first.dispose();
+    await expect(firstWaiter).resolves.toBe(false);
+    expect(firstWaiterSettled).toBe(true);
+    await expect(firstDispose).resolves.toBeUndefined();
+
+    const second = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const secondPrepared = await second.prepareInputTurn('resume waiting');
+    if (!secondPrepared.accepted) throw new Error('Expected direct input preparation');
+    const secondContextManager = second.getExecutionEngine().getContextManager();
+    const secondAssistantMessageId = await secondContextManager.saveMessage(
+      sessionId,
+      'assistant',
+      ''
+    );
+    await secondContextManager.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Wait for late marker',
+        prompt: 'Wait for a late background marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+        run_in_background: true,
+      },
+      secondAssistantMessageId
+    );
+    second.registerBackgroundSubagent(childSessionId);
+
+    let secondWaiterSettled = false;
+    const secondWaiter = second
+      .waitForBackgroundSubagentFollowUp(secondPrepared.handle)
+      .then((value) => {
+        secondWaiterSettled = true;
+        return value;
+      });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(secondWaiterSettled).toBe(false);
+
+    AgentSessionStore.getInstance().markCompleted(childSessionId, {
+      success: true,
+      message: 'BACKGROUND_RUNTIME_WAITER_HANDOFF_MARKER',
+    });
+    await staleNotify(childSessionId);
+
+    expect(firstWaiterSettled).toBe(true);
+    expect(second.getPendingSteeringMessages()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: `background-subagent-completion:${childSessionId}`,
+          content: expect.stringContaining('BACKGROUND_RUNTIME_WAITER_HANDOFF_MARKER'),
+        }),
+      ])
+    );
+    await expect(secondWaiter).resolves.toBe(true);
+    expect(secondWaiterSettled).toBe(true);
+    await second.dispose();
+  });
+
+  it.each([
+    {
+      label: 'failed',
+      childStatus: 'failed' as const,
+      result: {
+        success: false,
+        message: 'BACKGROUND_RUNTIME_FAILED_MARKER',
+        error: 'background failed',
+      },
+      expectedStatus: 'failed',
+      expectedSummary: 'BACKGROUND_RUNTIME_FAILED_MARKER',
+    },
+    {
+      label: 'cancelled',
+      childStatus: 'cancelled' as const,
+      result: {
+        success: false,
+        message: 'BACKGROUND_RUNTIME_CANCELLED_MARKER',
+        error: 'background cancelled',
+      },
+      expectedStatus: 'cancelled',
+      expectedSummary: 'BACKGROUND_RUNTIME_CANCELLED_MARKER',
+    },
+    {
+      label: 'resumed',
+      childStatus: 'completed' as const,
+      resumedFrom: 'agent-background-child-source',
+      result: {
+        success: true,
+        message: 'BACKGROUND_RUNTIME_RESUMED_MARKER',
+      },
+      expectedStatus: 'completed',
+      expectedSummary: 'BACKGROUND_RUNTIME_RESUMED_MARKER',
+    },
+  ])(
+    'preserves %s background child admission and lineage through dispatcher handoff',
+    async ({
+      label,
+      childStatus,
+      resumedFrom,
+      result,
+      expectedStatus,
+      expectedSummary,
+    }) => {
+      const workspaceRoot = path.join(
+        storageRoot,
+        `background-subagent-${label}-project`
+      );
+      const sessionId = `background-subagent-${label}-parent`;
+      const childSessionId = `agent-background-subagent-${label}`;
+      const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+      const prepared = await first.prepareInputTurn('launch background child');
+      if (!prepared.accepted) throw new Error('Expected direct input preparation');
+      const contextManager = first.getExecutionEngine().getContextManager();
+      const assistantMessageId = await contextManager.saveMessage(
+        sessionId,
+        'assistant',
+        ''
+      );
+      const toolCallId = await contextManager.saveToolUse(
+        sessionId,
+        'Task',
+        {
+          description: `Inspect ${label} marker`,
+          prompt: `Inspect the ${label} marker.`,
+          subagent_type: 'Explore',
+          subagent_session_id: childSessionId,
+          ...(resumedFrom ? { resume_from: resumedFrom } : {}),
+          run_in_background: true,
+        },
+        assistantMessageId
+      );
+      await contextManager.saveToolResult(
+        sessionId,
+        toolCallId,
+        'Task',
+        {
+          agent_id: childSessionId,
+          status: 'running',
+        },
+        assistantMessageId,
+        undefined,
+        undefined,
+        {
+          subagentSessionId: childSessionId,
+          subagentType: 'Explore',
+          subagentDescription: `Inspect ${label} marker`,
+          subagentStatus: 'running',
+          subagentRootId: resumedFrom ?? childSessionId,
+          subagentResumeDepth: resumedFrom ? 1 : 0,
+        },
+        {
+          background: true,
+          subagentSessionId: childSessionId,
+        }
+      );
+      await first.finishTurn(prepared.handle, {
+        outcome: {
+          status: 'completed',
+          turnsCount: 1,
+          toolCallsCount: 1,
+          durationMs: 10,
+        },
+      });
+      const staleNotify = first.notifyBackgroundSubagentCompleted.bind(first);
+      const sessionStore = AgentSessionStore.getInstance();
+      if (resumedFrom) {
+        sessionStore.saveSession({
+          schemaVersion: 2,
+          id: resumedFrom,
+          subagentType: 'Explore',
+          description: 'Source child',
+          prompt: 'Source child',
+          messages: [{ role: 'assistant', content: 'SOURCE_BACKGROUND_MARKER' }],
+          status: 'completed',
+          background: true,
+          result: {
+            success: true,
+            message: 'SOURCE_BACKGROUND_MARKER',
+          },
+          createdAt: Date.now() - 4000,
+          lastActiveAt: Date.now() - 3500,
+          completedAt: Date.now() - 3000,
+          parentSessionId: sessionId,
+          parentProjectPath: workspaceRoot,
+          rootAgentId: resumedFrom,
+          resumeDepth: 0,
+          workspaceRoot,
+          isolation: 'none',
+        });
+      }
+      sessionStore.saveSession({
+        schemaVersion: 2,
+        id: childSessionId,
+        subagentType: 'Explore',
+        description: `Inspect ${label} marker`,
+        prompt: `Inspect the ${label} marker.`,
+        messages: [{ role: 'assistant', content: expectedSummary }],
+        status: childStatus,
+        background: true,
+        result,
+        createdAt: Date.now() - 2000,
+        lastActiveAt: Date.now() - 1500,
+        completedAt: Date.now() - 1000,
+        parentSessionId: sessionId,
+        parentProjectPath: workspaceRoot,
+        rootAgentId: resumedFrom ?? childSessionId,
+        ...(resumedFrom ? { resumedFrom } : {}),
+        resumeDepth: resumedFrom ? 1 : 0,
+        workspaceRoot,
+        isolation: 'none',
+      });
+      await first.dispose();
+
+      const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+      try {
+        await staleNotify(childSessionId);
+        expect(recovered.getPendingSteeringMessages()).toEqual([
+          expect.objectContaining({
+            id: `background-subagent-completion:${childSessionId}`,
+            content: expect.stringContaining(expectedSummary),
+            metadata: expect.objectContaining({
+              backgroundSubagentCompletion: expect.objectContaining({
+                childSessionId,
+                status: expectedStatus,
+                ...(resumedFrom ? { resumedFrom } : {}),
+                rootAgentId: resumedFrom ?? childSessionId,
+                resumeDepth: resumedFrom ? 1 : 0,
+              }),
+            }),
+          }),
+        ]);
+      } finally {
+        await recovered.dispose();
+      }
+    }
+  );
+
+  it('rolls back dispatcher attach when the initial reconcile fails and releases the lease', async () => {
+    const workspaceRoot = path.join(storageRoot, 'background-subagent-attach-failure');
+    const sessionId = 'background-subagent-attach-failure-parent';
+    const childSessionId = 'agent-background-subagent-attach-failure';
+    const originalPersist =
+      PersistentStore.prototype.persistBackgroundSubagentCompletion;
+    const dispatcherModule = await import(
+      '../../../../src/agent/runtime/BackgroundSubagentCompletionDispatcher.js'
+    );
+    const statsBefore =
+      dispatcherModule.backgroundSubagentCompletionDispatcher.getStats();
+    const persistSpy = vi
+      .spyOn(PersistentStore.prototype, 'persistBackgroundSubagentCompletion')
+      .mockImplementation(async function (currentSessionId, completion) {
+        if (
+          currentSessionId === sessionId &&
+          completion.childSessionId === childSessionId
+        ) {
+          throw new Error('attach reconcile failed');
+        }
+        return originalPersist.call(this, currentSessionId, completion);
+      });
+
+    const seed = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await seed.prepareInputTurn('launch child');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const contextManager = seed.getExecutionEngine().getContextManager();
+    const assistantMessageId = await contextManager.saveMessage(
+      sessionId,
+      'assistant',
+      ''
+    );
+    await contextManager.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Attach failure marker',
+        prompt: 'Attach failure marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+        run_in_background: true,
+      },
+      assistantMessageId
+    );
+    seed.registerBackgroundSubagent(childSessionId);
+    AgentSessionStore.getInstance().saveSession({
+      schemaVersion: 2,
+      id: childSessionId,
+      subagentType: 'Explore',
+      description: 'Attach failure marker',
+      prompt: 'Attach failure marker.',
+      messages: [{ role: 'assistant', content: 'ATTACH_FAILURE_MARKER' }],
+      status: 'completed',
+      background: true,
+      result: { success: true, message: 'ATTACH_FAILURE_MARKER' },
+      createdAt: Date.now() - 1000,
+      lastActiveAt: Date.now() - 500,
+      completedAt: Date.now() - 250,
+      parentSessionId: sessionId,
+      parentProjectPath: workspaceRoot,
+      rootAgentId: childSessionId,
+      resumeDepth: 0,
+      workspaceRoot,
+      isolation: 'none',
+    });
+    await seed.dispose();
+
+    await expect(SessionRuntime.create({ sessionId, workspaceRoot })).rejects.toThrow(
+      'attach reconcile failed'
+    );
+    expect(persistSpy).toHaveBeenCalled();
+    const statsAfterFailure =
+      dispatcherModule.backgroundSubagentCompletionDispatcher.getStats();
+    expect(statsAfterFailure.registrations).toBe(statsBefore.registrations);
+    expect(statsAfterFailure.activeOwnerOperations).toBe(0);
+    persistSpy.mockRestore();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    await recovered.dispose();
+  });
+
+  it('keeps concurrent dispose calls blocked until an in-flight dispatcher reconcile releases, then cleans once', async () => {
+    const workspaceRoot = path.join(storageRoot, 'background-subagent-dispose-gate');
+    const sessionId = 'background-subagent-dispose-gate-parent';
+    const childSessionId = 'agent-background-subagent-dispose-gate';
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const contextManager = runtime.getExecutionEngine().getContextManager();
+    const assistantMessageId = await contextManager.saveMessage(
+      sessionId,
+      'assistant',
+      ''
+    );
+    await contextManager.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Dispose gate marker',
+        prompt: 'Dispose gate marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+        run_in_background: true,
+      },
+      assistantMessageId
+    );
+    runtime.registerBackgroundSubagent(childSessionId);
+    AgentSessionStore.getInstance().saveSession({
+      schemaVersion: 2,
+      id: childSessionId,
+      subagentType: 'Explore',
+      description: 'Dispose gate marker',
+      prompt: 'Dispose gate marker.',
+      messages: [{ role: 'assistant', content: 'DISPOSE_GATE_MARKER' }],
+      status: 'completed',
+      background: true,
+      result: { success: true, message: 'DISPOSE_GATE_MARKER' },
+      createdAt: Date.now() - 1000,
+      lastActiveAt: Date.now() - 500,
+      completedAt: Date.now() - 250,
+      parentSessionId: sessionId,
+      parentProjectPath: workspaceRoot,
+      rootAgentId: childSessionId,
+      resumeDepth: 0,
+      workspaceRoot,
+      isolation: 'none',
+    });
+
+    let releasePersist: () => void = () => undefined;
+    const persistGate = new Promise<void>((resolve) => {
+      releasePersist = resolve;
+    });
+    let persistEntered = false;
+    const originalPersist =
+      PersistentStore.prototype.persistBackgroundSubagentCompletion;
+    const persistSpy = vi
+      .spyOn(PersistentStore.prototype, 'persistBackgroundSubagentCompletion')
+      .mockImplementation(async function (currentSessionId, completion) {
+        if (
+          currentSessionId === sessionId &&
+          completion.childSessionId === childSessionId
+        ) {
+          persistEntered = true;
+          await persistGate;
+        }
+        return originalPersist.call(this, currentSessionId, completion);
+      });
+    const releaseLease = vi.spyOn(SessionLease.prototype, 'release');
+
+    let dispatchSettled = false;
+    const dispatch = runtime
+      .notifyBackgroundSubagentCompleted(childSessionId)
+      .then(() => {
+        dispatchSettled = true;
+      });
+    await vi.waitFor(() => {
+      expect(persistEntered).toBe(true);
+    });
+
+    let firstDisposeSettled = false;
+    let secondDisposeSettled = false;
+    const firstDispose = runtime.dispose().then(
+      () => {
+        firstDisposeSettled = true;
+      },
+      (error) => {
+        firstDisposeSettled = true;
+        throw error;
+      }
+    );
+    const secondDispose = runtime.dispose().then(
+      () => {
+        secondDisposeSettled = true;
+      },
+      (error) => {
+        secondDisposeSettled = true;
+        throw error;
+      }
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(dispatchSettled).toBe(false);
+    expect(firstDisposeSettled).toBe(false);
+    expect(secondDisposeSettled).toBe(false);
+    expect(releaseLease).not.toHaveBeenCalled();
+    expect(runtime.getExecutionEngine()).toBeDefined();
+
+    releasePersist();
+    await expect(dispatch).resolves.toBeUndefined();
+    await expect(firstDispose).resolves.toBeUndefined();
+    await expect(secondDispose).resolves.toBeUndefined();
+    expect(releaseLease).toHaveBeenCalledTimes(1);
+    expect(() => runtime.getExecutionEngine()).toThrow(
+      'Session runtime is not initialized'
+    );
+    persistSpy.mockRestore();
   });
 
   it('releases a background completion wait when the parent signal aborts', async () => {
