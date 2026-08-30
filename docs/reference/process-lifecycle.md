@@ -141,6 +141,11 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   与 terminal `subtask_ref`，再写 deterministic
   `background-subagent-completion:<child-id>` inbox item。parent ACK 是 exactly-once
   权威，crash 可分别从 receipt 或 inbox 边界恢复。
+- 同一进程内 parent `SessionRuntime` 被替换时，后台 completion callback 不再绑定旧
+  Runtime 实例；它按 canonical workspace + Session ID 路由到当前已 attach 的 Runtime。
+  attach 会在创建返回前完成一次 full reconcile，detach 会等待已有 dispatch，再允许旧
+  Runtime 清理 mailbox/engine 并释放 Session lease；无 live Runtime 的 completion 不缓存
+  payload，而由下一次 attach 从 terminal child sidecar 修复。
 - active parent 在 Provider end-turn 后若仍有 background Task，会等待 completion signal
   而不轮询；用户 steering 优先并可直接启动下一 pending turn。idle TUI、Web 与 ACP 在
   completion fsync 后恢复同一 parent，Headless 保持在共享 Agent stream。`TaskOutput`
