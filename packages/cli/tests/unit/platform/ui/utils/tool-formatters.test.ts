@@ -182,6 +182,35 @@ describe('tool formatters', () => {
     expect(/^[\uDC00-\uDFFF]/.test(detail)).toBe(false);
   });
 
+  it('shows a generic uncertainty warning for failed remote mutations without raw client errors', () => {
+    const display = formatToolDisplay('Write', {
+      success: false,
+      llmContent: 'File write failed: raw client content should not render',
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: 'ACP client exploded with raw remote stack details',
+      },
+      metadata: {
+        summary: '写入 remote-output.txt 失败',
+        file_path: '/remote/workspace/remote-output.txt',
+        kind: 'edit',
+        oldContent: 'old remote content',
+        newContent: 'new remote content',
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    });
+
+    expect(display.summary).toBe('写入 remote-output.txt 失败');
+    expect(display.detail, 'expected remote mutation uncertainty detail').toBeDefined();
+    expect(display.detail).toContain(
+      'Side effects: uncertain; inspect before retrying'
+    );
+    expect(display.detail).not.toContain('raw client content should not render');
+    expect(display.detail).not.toContain('ACP client exploded');
+  });
+
   it('renders bounded Browser summaries without page snapshot content', () => {
     expect(
       formatToolCallSummary('BrowserNavigate', {

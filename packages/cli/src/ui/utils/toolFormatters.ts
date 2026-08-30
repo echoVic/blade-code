@@ -238,6 +238,10 @@ export function generateToolDetail(
   toolName: string,
   result: ToolResult
 ): string | null {
+  const uncertainMutationDetail = mutationUncertaintyDetail(toolName, result);
+  if (uncertainMutationDetail) {
+    return uncertainMutationDetail;
+  }
   if (
     !result?.success &&
     toolName !== 'Bash' &&
@@ -596,6 +600,18 @@ export function generateToolDetail(
       return typeof detail === 'string' ? detail : null;
     }
   }
+}
+
+function mutationUncertaintyDetail(
+  toolName: string,
+  result: ToolResult
+): string | null {
+  if (result.success) return null;
+  if (toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'ApplyPatch') {
+    return null;
+  }
+  if (result.metadata?.sideEffectsUncertain !== true) return null;
+  return 'Side effects: uncertain; inspect before retrying';
 }
 
 /**

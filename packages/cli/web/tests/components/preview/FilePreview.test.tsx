@@ -1105,4 +1105,97 @@ describe('FilePreview', () => {
       expect(container.textContent).toContain('second.ts');
     });
   });
+
+  test('renders successful remote Write and Edit diffs without mutation-status controls', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    useSessionStore.setState({
+      messages: [
+        {
+          id: 'remote-write-result',
+          role: 'assistant',
+          content: '',
+          timestamp: 1,
+          metadata: {
+            kind: 'tool_result',
+            toolName: 'Write',
+            summary: '写入 remote-output.txt 并完成远端回读校验',
+            output:
+              '<<<DIFF>>>' +
+              JSON.stringify({
+                patch:
+                  '--- remote-output.txt\n' +
+                  '+++ remote-output.txt\n' +
+                  '@@\n' +
+                  '-old remote line\n' +
+                  '+new remote line',
+              }) +
+              '<<</DIFF>>>',
+            metadata: {
+              kind: 'edit',
+              file_path: '/remote/workspace/remote-output.txt',
+              oldContent: 'old remote line\n',
+              newContent: 'new remote line\n',
+              write_acknowledged: true,
+              write_verified: true,
+              sideEffectsUncertain: false,
+            },
+          },
+        },
+        {
+          id: 'remote-edit-result',
+          role: 'assistant',
+          content: '',
+          timestamp: 2,
+          metadata: {
+            kind: 'tool_result',
+            toolName: 'Edit',
+            summary: '编辑 remote-edit.txt 并完成远端回读校验',
+            output:
+              '<<<DIFF>>>' +
+              JSON.stringify({
+                patch:
+                  '--- remote-edit.txt\n' +
+                  '+++ remote-edit.txt\n' +
+                  '@@\n' +
+                  '-before edit line\n' +
+                  '+after edit line',
+              }) +
+              '<<</DIFF>>>',
+            metadata: {
+              kind: 'edit',
+              file_path: '/remote/workspace/remote-edit.txt',
+              oldContent: 'before edit line\n',
+              newContent: 'after edit line\n',
+              write_acknowledged: true,
+              write_verified: true,
+              sideEffectsUncertain: false,
+            },
+          },
+        },
+      ],
+    });
+    fetchMock.mockResolvedValue(createJsonResponse([]));
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('remote-output.txt');
+    });
+    expect(container.textContent).toContain(
+      '写入 remote-output.txt 并完成远端回读校验'
+    );
+    expect(container.textContent).toContain('remote-edit.txt');
+    expect(container.textContent).toContain('编辑 remote-edit.txt 并完成远端回读校验');
+    expect(
+      Array.from(container.querySelectorAll('button')).some((button) =>
+        button.textContent?.includes('Retry')
+      )
+    ).toBe(false);
+    expect(container.textContent).not.toContain('Side effects: uncertain');
+    expect(container.textContent).not.toContain('inspect before retrying');
+    expect(container.textContent).not.toContain('write acknowledged');
+    expect(container.textContent).not.toContain('write verified');
+  });
 });
