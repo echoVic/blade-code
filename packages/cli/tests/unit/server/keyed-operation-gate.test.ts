@@ -141,4 +141,43 @@ describe('KeyedOperationGate', () => {
     await expect(repeatShutdown).resolves.toBeUndefined();
     expect(gate.getStats()).toEqual({ keys: 0, operations: 0, closing: 0 });
   });
+
+  it('preserves existing close waiters across shutdown and fails closed after release', async () => {
+    const { KeyedOperationGate } = await loadModule();
+    vi.useFakeTimers({ now: 1_000 });
+    const gate = new KeyedOperationGate<string>();
+    const lease = gate.enter('alpha');
+    const closeSet = gate.beginCloseMany(['alpha'], new Error('close requested'));
+    const closeWait = closeSet.waitForIdle({ deadlineAt: 1_100 });
+    const shutdown = gate.shutdown(new Error('shutdown'));
+    let closeWaitSettled = false;
+    let shutdownSettled = false;
+    void closeWait.then(
+      () => {
+        closeWaitSettled = true;
+      },
+      () => {
+        closeWaitSettled = true;
+      }
+    );
+    void shutdown.then(() => {
+      shutdownSettled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(99);
+    expect(closeWaitSettled).toBe(false);
+    expect(shutdownSettled).toBe(false);
+    expect(gate.getStats()).toEqual({ keys: 1, operations: 1, closing: 1 });
+
+    lease.release();
+    await Promise.resolve();
+
+    expect(closeWaitSettled).toBe(true);
+    expect(shutdownSettled).toBe(true);
+    await expect(closeWait).resolves.toBeUndefined();
+    await expect(shutdown).resolves.toBeUndefined();
+    expect(() => closeSet.commit()).toThrow();
+    expect(() => closeSet.rollback()).toThrow();
+    expect(gate.getStats()).toEqual({ keys: 0, operations: 0, closing: 0 });
+  });
 });

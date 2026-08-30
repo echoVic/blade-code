@@ -18,6 +18,7 @@ interface CloseState<K> {
   readonly keys: readonly K[];
   readonly waiters: Set<IdleWaiter>;
   state: 'open' | 'committed' | 'rolled_back';
+  shutdownLocked: boolean;
 }
 
 export interface KeyedOperationLease {
@@ -146,6 +147,7 @@ export class KeyedOperationGate<K> {
       keys: closeKeys,
       waiters: new Set(),
       state: 'open',
+      shutdownLocked: false,
     };
     for (const key of closeKeys) {
       this.closings.set(key, closeState);
@@ -157,6 +159,9 @@ export class KeyedOperationGate<K> {
     }
 
     const ensureOpen = () => {
+      if (closeState.shutdownLocked || this.shutdownReason !== undefined) {
+        throw new Error('Keyed operation gate is shut down');
+      }
       if (closeState.state === 'committed') {
         throw new Error('Keyed operation close set is already committed');
       }
@@ -225,6 +230,9 @@ export class KeyedOperationGate<K> {
         });
       },
       commit: () => {
+        if (closeState.shutdownLocked || this.shutdownReason !== undefined) {
+          throw new Error('Keyed operation gate is shut down');
+        }
         if (closeState.state === 'committed') return;
         ensureOpen();
         if (!this.isCloseStateIdle(closeState)) {
@@ -240,6 +248,9 @@ export class KeyedOperationGate<K> {
         settleWaiters();
       },
       rollback: () => {
+        if (closeState.shutdownLocked || this.shutdownReason !== undefined) {
+          throw new Error('Keyed operation gate is shut down');
+        }
         if (closeState.state === 'rolled_back') return;
         ensureOpen();
         closeState.state = 'rolled_back';
@@ -256,7 +267,13 @@ export class KeyedOperationGate<K> {
   shutdown(reason: unknown): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
     this.shutdownReason = reason;
-    this.closings.clear();
+    const uniqueCloseStates = new Set(this.closings.values());
+    for (const closeState of uniqueCloseStates) {
+      closeState.shutdownLocked = true;
+      if (this.isCloseStateIdle(closeState)) {
+        this.finalizeShutdownCloseState(closeState);
+      }
+    }
     for (const operationsForKey of this.operations.values()) {
       for (const operation of operationsForKey) {
         operation.internalController.abort(reason);
@@ -307,6 +324,24 @@ export class KeyedOperationGate<K> {
   private resolveRelevantWaiters(key: K): void {
     const closeState = this.closings.get(key);
     if (!closeState || !this.isCloseStateIdle(closeState)) return;
+    if (closeState.shutdownLocked) {
+      this.finalizeShutdownCloseState(closeState);
+      return;
+    }
+    for (const waiter of closeState.waiters) {
+      if (waiter.timer !== undefined) clearTimeout(waiter.timer);
+      waiter.removeAbortListener?.();
+      waiter.resolve();
+    }
+    closeState.waiters.clear();
+  }
+
+  private finalizeShutdownCloseState(closeState: CloseState<K>): void {
+    for (const key of closeState.keys) {
+      if (this.closings.get(key) === closeState) {
+        this.closings.delete(key);
+      }
+    }
     for (const waiter of closeState.waiters) {
       if (waiter.timer !== undefined) clearTimeout(waiter.timer);
       waiter.removeAbortListener?.();
