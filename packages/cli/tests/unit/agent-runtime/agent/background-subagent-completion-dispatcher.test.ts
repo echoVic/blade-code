@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
+  BackgroundSubagentCompletionDispatchResult,
+  BackgroundSubagentCompletionRegistration,
   BackgroundSubagentCompletionSink,
-  DispatchResult,
-  Registration,
 } from '../../../../src/agent/runtime/BackgroundSubagentCompletionDispatcher.js';
 import {
   BackgroundSubagentCompletionDispatcher,
@@ -25,7 +25,10 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-function createOwner(sessionId = 'owner-session', projectPath = '/workspace'): {
+function createOwner(
+  sessionId = 'owner-session',
+  projectPath = '/workspace'
+): {
   sessionId: string;
   projectPath: string;
 } {
@@ -68,9 +71,9 @@ describe('BackgroundSubagentCompletionDispatcher', () => {
   it('defers dispatch when no sink is attached', async () => {
     const dispatcher = new BackgroundSubagentCompletionDispatcher();
 
-    await expect(
-      dispatcher.dispatch(createOwner(), 'child-session')
-    ).resolves.toBe('deferred');
+    await expect(dispatcher.dispatch(createOwner(), 'child-session')).resolves.toBe(
+      'deferred'
+    );
     expect(dispatcher.getStats()).toEqual({
       registrations: 0,
       activeOwnerOperations: 0,
@@ -82,10 +85,8 @@ describe('BackgroundSubagentCompletionDispatcher', () => {
     const calls: Array<string | undefined> = [];
     const gate = deferred<void>();
 
-    const pendingRegistration = dispatcher.attach(
-      createOwner(),
-      createSink(calls, gate)
-    );
+    const pendingRegistration: Promise<BackgroundSubagentCompletionRegistration> =
+      dispatcher.attach(createOwner(), createSink(calls, gate));
 
     await Promise.resolve();
     expect(calls).toEqual([undefined]);
@@ -109,9 +110,11 @@ describe('BackgroundSubagentCompletionDispatcher', () => {
     const gate = deferred<void>();
     const owner = createOwner();
 
-    const registrationPromise = dispatcher.attach(owner, createSink(calls, gate));
+    const registrationPromise: Promise<BackgroundSubagentCompletionRegistration> =
+      dispatcher.attach(owner, createSink(calls, gate));
     await Promise.resolve();
-    const dispatchPromise = dispatcher.dispatch(owner, 'child-session');
+    const dispatchPromise: Promise<BackgroundSubagentCompletionDispatchResult> =
+      dispatcher.dispatch(owner, 'child-session');
 
     await Promise.resolve();
     expect(calls).toEqual([undefined]);
@@ -204,7 +207,9 @@ describe('BackgroundSubagentCompletionDispatcher', () => {
     const second = await dispatcher.attach(owner, createSink(secondCalls));
     await first.dispose();
 
-    await expect(dispatcher.dispatch(owner, 'child-session')).resolves.toBe('delivered');
+    await expect(dispatcher.dispatch(owner, 'child-session')).resolves.toBe(
+      'delivered'
+    );
     expect(firstCalls).toEqual([undefined]);
     expect(secondCalls).toEqual([undefined, 'child-session']);
 

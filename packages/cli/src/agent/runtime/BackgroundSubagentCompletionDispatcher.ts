@@ -1,20 +1,20 @@
-import {
-  normalizeAgentSessionOwner,
-  type AgentSessionOwner,
-} from '../subagents/AgentSessionStore.js';
 import { assertValidSessionId } from '../../context/storage/pathUtils.js';
 import { sessionRefKey } from '../../server/sessionRef.js';
 import { KeyedMutexRegistry } from '../../utils/KeyedMutexRegistry.js';
+import {
+  type AgentSessionOwner,
+  normalizeAgentSessionOwner,
+} from '../subagents/AgentSessionStore.js';
 
 export interface BackgroundSubagentCompletionSink {
   reconcile(agentId?: string): Promise<void>;
 }
 
-export interface Registration {
+export interface BackgroundSubagentCompletionRegistration {
   dispose(): Promise<void>;
 }
 
-export type DispatchResult = 'delivered' | 'deferred';
+export type BackgroundSubagentCompletionDispatchResult = 'delivered' | 'deferred';
 
 interface SinkRegistration {
   readonly token: symbol;
@@ -28,7 +28,7 @@ export class BackgroundSubagentCompletionDispatcher {
   async attach(
     owner: AgentSessionOwner,
     sink: BackgroundSubagentCompletionSink
-  ): Promise<Registration> {
+  ): Promise<BackgroundSubagentCompletionRegistration> {
     const ownerKey = this.getOwnerKey(owner);
     const token = Symbol(ownerKey);
 
@@ -64,7 +64,7 @@ export class BackgroundSubagentCompletionDispatcher {
   async dispatch(
     owner: AgentSessionOwner,
     agentId: string
-  ): Promise<DispatchResult> {
+  ): Promise<BackgroundSubagentCompletionDispatchResult> {
     assertValidSessionId(agentId);
     const ownerKey = this.getOwnerKey(owner);
 
