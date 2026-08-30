@@ -34,6 +34,12 @@ export interface PairedAcpHarness {
   close(): Promise<void>;
 }
 
+export interface PairedAcpAppHarness {
+  clientConnection: acp.ClientConnection;
+  agentConnection: acp.AgentSideConnection;
+  close(): Promise<void>;
+}
+
 async function closeWriter(writable: WritableStream<Uint8Array>): Promise<void> {
   let writer: WritableStreamDefaultWriter<Uint8Array>;
   try {
@@ -42,12 +48,66 @@ async function closeWriter(writable: WritableStream<Uint8Array>): Promise<void> 
     return;
   }
   try {
-    await writer.close();
+    await settleWithin(writer.close());
   } catch {
     // The paired connection may have already closed this transport direction.
   } finally {
     writer.releaseLock();
   }
+}
+
+async function settleWithin(promise: Promise<unknown>, timeoutMs = 50): Promise<void> {
+  await Promise.race([
+    promise.then(
+      () => undefined,
+      () => undefined
+    ),
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      timer.unref?.();
+    }),
+  ]);
+}
+
+function createClosableHarness<
+  TClientConnection extends { closed: Promise<unknown> },
+>(input: {
+  clientConnection: TClientConnection;
+  agentConnection: acp.AgentSideConnection;
+  clientToAgent: TransformStream<Uint8Array, Uint8Array>;
+  agentToClient: TransformStream<Uint8Array, Uint8Array>;
+  closeClientConnection?: () => void;
+}): {
+  clientConnection: TClientConnection;
+  agentConnection: acp.AgentSideConnection;
+  close(): Promise<void>;
+} {
+  let closePromise: Promise<void> | undefined;
+
+  return {
+    clientConnection: input.clientConnection,
+    agentConnection: input.agentConnection,
+    close: () => {
+      closePromise ??= (async () => {
+        input.closeClientConnection?.();
+        await Promise.all([
+          closeWriter(input.clientToAgent.writable),
+          closeWriter(input.agentToClient.writable),
+        ]);
+        await Promise.all([
+          settleWithin(input.clientConnection.closed),
+          settleWithin(input.agentConnection.closed),
+        ]);
+      })();
+      return closePromise;
+    },
+  };
+}
+
+export function closePairedAcpHarness(
+  harness: PairedAcpHarness | PairedAcpAppHarness
+): Promise<void> {
+  return harness.close();
 }
 
 export function createPairedAcpHarness(client: acp.Client): PairedAcpHarness {
@@ -61,23 +121,33 @@ export function createPairedAcpHarness(client: acp.Client): PairedAcpHarness {
     () => new MinimalAgent(),
     acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
   );
-  let closePromise: Promise<void> | undefined;
-
-  return {
+  return createClosableHarness({
     clientConnection,
     agentConnection,
-    close: () => {
-      closePromise ??= (async () => {
-        await Promise.all([
-          closeWriter(clientToAgent.writable),
-          closeWriter(agentToClient.writable),
-        ]);
-        await Promise.all([
-          clientConnection.closed.catch(() => undefined),
-          agentConnection.closed.catch(() => undefined),
-        ]);
-      })();
-      return closePromise;
+    clientToAgent,
+    agentToClient,
+  });
+}
+
+export function createPairedAcpAppHarness(
+  clientApp: acp.ClientApp
+): PairedAcpAppHarness {
+  const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
+  const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
+  const clientConnection = clientApp.connect(
+    acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
+  );
+  const agentConnection = new acp.AgentSideConnection(
+    () => new MinimalAgent(),
+    acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
+  );
+  return createClosableHarness({
+    clientConnection,
+    agentConnection,
+    clientToAgent,
+    agentToClient,
+    closeClientConnection: () => {
+      clientConnection.close();
     },
-  };
+  });
 }
