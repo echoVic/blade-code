@@ -423,6 +423,105 @@ describe('SessionProjectionResidency', () => {
     });
   });
 
+  it('rejects rollback after invalidateAll and never revives snapshots once invalidation drains', async () => {
+    const { residency } = createResidency(1);
+    const lease = residency.reserve('A').commit(makeValue('A'));
+    const closeSet = residency.beginCloseMany(['A'], 'close-before-shutdown');
+
+    const invalidation = residency.invalidateAll('shutdown');
+    lease.release();
+    await expect(invalidation).resolves.toBeUndefined();
+
+    expect(() =>
+      closeSet.rollback(new Map([['A', makeValue('A', 'revived', 2)]]))
+    ).toThrow(SessionProjectionResidencyClosedError);
+    expect(residency.snapshot('A')).toBeUndefined();
+    expect(residency.snapshotAll()).toEqual([]);
+    expect(residency.getStats()).toEqual({
+      resident: 0,
+      closing: 0,
+      reserved: 0,
+      pinned: 0,
+      retained: 0,
+      maxResident: 1,
+      idleMs: 30_000,
+    });
+  });
+
+  it('keeps waiters and close state intact when pinned rollback with replacement conflicts, then resolves after release', async () => {
+    const { residency } = createResidency(1);
+    const lease = residency.reserve('A').commit(makeValue('A'));
+    const closeSet = residency.beginCloseMany(['A'], 'pinned-rollback');
+    const waiter = closeSet.waitForIdle();
+
+    expect(() =>
+      closeSet.rollback(new Map([['A', makeValue('A', 'replacement', 2)]]))
+    ).toThrow(SessionProjectionResidencyConflictError);
+    expect(residency.getStats()).toEqual({
+      resident: 0,
+      closing: 1,
+      reserved: 0,
+      pinned: 1,
+      retained: 1,
+      maxResident: 1,
+      idleMs: 30_000,
+    });
+    expect(residency.getDebugStats()).toEqual({
+      tombstones: 0,
+      waiters: 1,
+      listeners: 0,
+    });
+
+    let waiterSettled = false;
+    void waiter.then(() => {
+      waiterSettled = true;
+    });
+    await Promise.resolve();
+    expect(waiterSettled).toBe(false);
+
+    lease.release();
+    await expect(waiter).resolves.toBeUndefined();
+    closeSet.rollback(new Map([['A', makeValue('A', 'replacement', 2)]]));
+    expect(residency.snapshot('A')).toEqual({
+      id: 'A',
+      label: 'replacement',
+      version: 2,
+    });
+  });
+
+  it('keeps retained capacity and pins intact when pinned rollback(undefined) conflicts, then frees capacity only after release', () => {
+    const { residency } = createResidency(1);
+    const lease = residency.reserve('A').commit(makeValue('A'));
+    const closeSet = residency.beginCloseMany(['A'], 'drop-after-pin');
+
+    expect(() => closeSet.rollback(new Map([['A', undefined]]))).toThrow(
+      SessionProjectionResidencyConflictError
+    );
+    expect(residency.getStats()).toEqual({
+      resident: 0,
+      closing: 1,
+      reserved: 0,
+      pinned: 1,
+      retained: 1,
+      maxResident: 1,
+      idleMs: 30_000,
+    });
+    expect(() => residency.reserve('B')).toThrow(SessionProjectionCapacityError);
+
+    lease.release();
+    closeSet.rollback(new Map([['A', undefined]]));
+    expect(residency.getStats()).toEqual({
+      resident: 0,
+      closing: 0,
+      reserved: 0,
+      pinned: 0,
+      retained: 0,
+      maxResident: 1,
+      idleMs: 30_000,
+    });
+    expect(residency.reserve('B').commit(makeValue('B')).isCurrent()).toBe(true);
+  });
+
   it('notifies capacity listeners on real releases, tolerates listener exceptions, and supports unsubscribe churn cleanup', () => {
     const { residency } = createResidency(1);
     const calls: string[] = [];

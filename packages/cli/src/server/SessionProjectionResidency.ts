@@ -363,6 +363,9 @@ export class SessionProjectionResidency<T, S> {
     };
 
     const rollback = (replacements: Map<string, T | undefined>) => {
+      if (this.closed) {
+        throw new SessionProjectionResidencyClosedError(this.closedReason);
+      }
       if (closeState.state === 'committed') {
         throw new SessionProjectionResidencyClosedError(
           'Session projection close set is already committed'
@@ -377,6 +380,12 @@ export class SessionProjectionResidency<T, S> {
           );
         }
         return;
+      }
+      if (!idle()) {
+        throw new SessionProjectionResidencyConflictError(
+          closeState.keys[0] ?? '',
+          'Session projection close set still has active pins'
+        );
       }
       for (const key of closeState.originalResidentKeys) {
         if (!replacements.has(key)) {
