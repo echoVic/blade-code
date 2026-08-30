@@ -794,8 +794,12 @@ describe
           ]);
           const completionInboxId = `background-subagent-completion:${childSessionId}`;
           const childSidecarPath = getChildSidecarPath(prepared, childSessionId);
+          const childSidecarBeforeReplacement = await readFile(
+            childSidecarPath,
+            'utf8'
+          );
           const childSidecarWhileHeld = JSON.parse(
-            await readFile(childSidecarPath, 'utf8')
+            childSidecarBeforeReplacement
           ) as Record<string, unknown>;
           const eventsBeforeReplacement =
             (await new PersistentStore(prepared.workspace).loadEvents(
@@ -923,27 +927,25 @@ describe
           });
           expect(runtimeB.getTurnRecoveryAssessment()).toEqual({ state: 'none' });
 
-          const busEvents: Array<Record<string, unknown>> = [];
-          const busWakePromise = withTimeout(
-            new Promise<void>((resolve) => {
-              busUnsubscribe = Bus.subscribe((event) => {
-                if (
-                  event.sessionId !== prepared.sessionId ||
-                  event.projectPath !== prepared.workspace ||
-                  event.type !== 'subagent.completion.queued' ||
-                  event.properties.childSessionId !== childSessionId
-                ) {
-                  return;
-                }
-                busEvents.push(event.properties);
-                busUnsubscribe?.();
-                busUnsubscribe = undefined;
-                resolve();
-              });
-            }),
-            60_000,
-            'Runtime B never received the queued background completion bus wake'
+          expect(await readFile(childSidecarPath, 'utf8')).toBe(
+            childSidecarBeforeReplacement
           );
+          const busEvents: Array<Record<string, unknown>> = [];
+          const busWake = createDeferred<void>();
+          busUnsubscribe = Bus.subscribe((event) => {
+            if (
+              event.sessionId !== prepared.sessionId ||
+              event.projectPath !== prepared.workspace ||
+              event.type !== 'subagent.completion.queued' ||
+              event.properties.childSessionId !== childSessionId
+            ) {
+              return;
+            }
+            busEvents.push(event.properties);
+            busUnsubscribe?.();
+            busUnsubscribe = undefined;
+            busWake.resolve();
+          });
 
           expect(runtimeB.getPendingSteeringCount()).toBe(0);
           expect(
@@ -951,7 +953,11 @@ describe
           ).not.toContain(completionInboxId);
 
           prepared.proxy.releaseHeld();
-          await busWakePromise;
+          await withTimeout(
+            busWake.promise,
+            60_000,
+            'Runtime B never received the queued background completion bus wake'
+          );
 
           expect(busEvents).toEqual([
             expect.objectContaining({
