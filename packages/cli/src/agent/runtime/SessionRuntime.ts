@@ -210,6 +210,10 @@ import {
   type SteeringEnqueueResult,
   type SteeringMessage,
 } from './ActiveTurnMailbox.js';
+import {
+  type BackgroundSubagentCompletionRegistration,
+  backgroundSubagentCompletionDispatcher,
+} from './BackgroundSubagentCompletionDispatcher.js';
 import { SessionInUseError, SessionLease } from './SessionLease.js';
 import { type TaskAdmissionSnapshot, taskRunScheduler } from './TaskRunScheduler.js';
 import {
@@ -417,6 +421,12 @@ export class SessionRuntime {
   private backgroundSubagentCompletionRevision = 0;
   private backgroundTaskChildIds = new Set<string>();
   private readonly backgroundTaskCompletionSettledIds = new Set<string>();
+  private readonly backgroundSubagentCompletionOwner: Readonly<{
+    sessionId: string;
+    workspaceRoot: string;
+    projectPath: string;
+  }>;
+  private backgroundSubagentCompletionRegistration?: BackgroundSubagentCompletionRegistration;
 
   constructor(
     private readonly config: BladeConfig,
@@ -459,6 +469,11 @@ export class SessionRuntime {
       maxFileSize: 1024 * 1024,
       maxLines: 2000,
       maxTokens: 32000,
+    });
+    this.backgroundSubagentCompletionOwner = Object.freeze({
+      sessionId: options.sessionId,
+      workspaceRoot: path.resolve(options.workspaceRoot ?? getCwd()),
+      projectPath: path.resolve(options.workspaceRoot ?? getCwd()),
     });
   }
 
@@ -1848,11 +1863,10 @@ export class SessionRuntime {
   }
 
   async notifyBackgroundSubagentCompleted(agentId: string): Promise<void> {
-    try {
-      await this.reconcileBackgroundSubagentCompletions(agentId);
-    } finally {
-      this.signalBackgroundSubagentCompletionWaiters();
-    }
+    await backgroundSubagentCompletionDispatcher.dispatch(
+      this.backgroundSubagentCompletionOwner,
+      agentId
+    );
   }
 
   registerBackgroundSubagent(agentId: string): void {
@@ -1942,6 +1956,30 @@ export class SessionRuntime {
     return sessions.some((session) => session.status === 'running')
       ? 'running'
       : 'none';
+  }
+
+  private async reconcileBackgroundSubagentCompletionSink(
+    agentId?: string
+  ): Promise<void> {
+    try {
+      await this.reconcileBackgroundSubagentCompletions(agentId);
+    } finally {
+      this.signalBackgroundSubagentCompletionWaiters();
+    }
+  }
+
+  private async attachBackgroundSubagentCompletionDispatcher(): Promise<void> {
+    if (this.backgroundSubagentCompletionRegistration) {
+      return;
+    }
+    this.backgroundSubagentCompletionRegistration =
+      await backgroundSubagentCompletionDispatcher.attach(
+        this.backgroundSubagentCompletionOwner,
+        {
+          reconcile: (agentId?: string) =>
+            this.reconcileBackgroundSubagentCompletionSink(agentId),
+        }
+      );
   }
 
   private async reconcileBackgroundSubagentCompletions(
@@ -2347,7 +2385,7 @@ export class SessionRuntime {
         await this.reloadPendingInbox();
       }
       await this.recoverTeamLeadMessages();
-      await this.reconcileBackgroundSubagentCompletions();
+      await this.attachBackgroundSubagentCompletionDispatcher();
       if (recovery) {
         logger.warn(
           `[SessionRuntime ${this.sessionId}] recovered ${recovery.outcome} turn ${recovery.turnId}`
@@ -2542,10 +2580,16 @@ export class SessionRuntime {
     const autoVerifyRuntime = this.autoVerifyRuntime;
     const lspManager = this.lspManager;
     const browserRuntime = this.browserRuntime;
+    const backgroundSubagentCompletionRegistration =
+      this.backgroundSubagentCompletionRegistration;
+    this.backgroundSubagentCompletionRegistration = undefined;
     await attempt('stop side conversations', () =>
       this.sideConversationOperations.shutdown('session-runtime-dispose')
     );
     await attempt('close the Session browser', () => browserRuntime?.dispose());
+    await attempt('dispose the background subagent completion registration', () =>
+      backgroundSubagentCompletionRegistration?.dispose()
+    );
     this.signalBackgroundSubagentCompletionWaiters();
     this.chatService = undefined;
     this.executionEngine = undefined;

@@ -2340,6 +2340,450 @@ describe('SessionRuntime', () => {
     await second.dispose();
   });
 
+  it('dispatches a stale background completion callback to the attached successor runtime exactly once', async () => {
+    const workspaceRoot = path.join(
+      storageRoot,
+      'background-subagent-dispatch-successor-project'
+    );
+    const sessionId = 'background-subagent-dispatch-successor-parent';
+    const childSessionId = 'agent-background-subagent-dispatch-successor';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('launch the background child');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const firstContextManager = first.getExecutionEngine().getContextManager();
+    await firstContextManager.saveMessage(
+      sessionId,
+      'user',
+      'launch the background child',
+      null,
+      { inboxMessageId: prepared.messageId }
+    );
+    const assistantMessageId = await firstContextManager.saveMessage(
+      sessionId,
+      'assistant',
+      ''
+    );
+    const toolCallId = await firstContextManager.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Inspect background marker',
+        prompt: 'Inspect the project and return the background marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+        run_in_background: true,
+      },
+      assistantMessageId
+    );
+    await firstContextManager.saveToolResult(
+      sessionId,
+      toolCallId,
+      'Task',
+      {
+        agent_id: childSessionId,
+        status: 'running',
+      },
+      assistantMessageId,
+      undefined,
+      undefined,
+      {
+        subagentSessionId: childSessionId,
+        subagentType: 'Explore',
+        subagentDescription: 'Inspect background marker',
+        subagentStatus: 'running',
+        subagentRootId: childSessionId,
+        subagentResumeDepth: 0,
+      },
+      {
+        background: true,
+        subagentSessionId: childSessionId,
+      }
+    );
+    await first.finishTurn(prepared.handle, {
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 1,
+        durationMs: 10,
+      },
+    });
+    const staleNotify = first.notifyBackgroundSubagentCompleted.bind(first);
+    AgentSessionStore.getInstance().saveSession({
+      schemaVersion: 2,
+      id: childSessionId,
+      subagentType: 'Explore',
+      description: 'Inspect background marker',
+      prompt: 'Inspect the project and return the background marker.',
+      messages: [],
+      status: 'running',
+      background: true,
+      createdAt: Date.now() - 1000,
+      lastActiveAt: Date.now() - 500,
+      parentSessionId: sessionId,
+      parentProjectPath: workspaceRoot,
+      rootAgentId: childSessionId,
+      resumeDepth: 0,
+      workspaceRoot,
+      isolation: 'none',
+      configSnapshot: {
+        name: 'Explore',
+        description: 'Explore agent',
+        source: 'builtin',
+      },
+    });
+    await first.dispose();
+
+    const busWakeEvents: Array<Record<string, unknown>> = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (
+        event.sessionId === sessionId &&
+        event.projectPath === workspaceRoot &&
+        event.type === 'subagent.completion.queued'
+      ) {
+        busWakeEvents.push(event.properties);
+      }
+    });
+    const second = await SessionRuntime.create({ sessionId, workspaceRoot });
+
+    try {
+      expect(second.getPendingSteeringCount()).toBe(0);
+
+      AgentSessionStore.getInstance().markCompleted(childSessionId, {
+        success: true,
+        message: 'BACKGROUND_RUNTIME_DISPATCH_SUCCESSOR_MARKER',
+      });
+
+      await staleNotify(childSessionId);
+
+      expect(second.getPendingSteeringMessages()).toEqual([
+        expect.objectContaining({
+          id: `background-subagent-completion:${childSessionId}`,
+          origin: 'background_subagent',
+          persisted: true,
+          content: expect.stringContaining(
+            'BACKGROUND_RUNTIME_DISPATCH_SUCCESSOR_MARKER'
+          ),
+          metadata: expect.objectContaining({
+            clientVisible: false,
+            backgroundSubagentCompletion: expect.objectContaining({
+              childSessionId,
+            }),
+          }),
+        }),
+      ]);
+      expect(busWakeEvents).toEqual([
+        expect.objectContaining({
+          childSessionId,
+          status: 'completed',
+          queued: 1,
+        }),
+      ]);
+      await Promise.all([
+        staleNotify(childSessionId),
+        second.notifyBackgroundSubagentCompleted(childSessionId),
+      ]);
+      expect(second.getPendingSteeringMessages()).toHaveLength(1);
+      expect(busWakeEvents).toHaveLength(1);
+
+      const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
+      expect(
+        events?.filter(
+          (event) =>
+            event.type === 'message_created' &&
+            event.data.inboxMessageId ===
+              `background-subagent-completion:${childSessionId}`
+        )
+      ).toHaveLength(1);
+      expect(
+        events?.filter(
+          (event) =>
+            event.type === 'part_created' &&
+            event.data.partType === 'subtask_ref' &&
+            event.data.payload !== null &&
+            typeof event.data.payload === 'object' &&
+            !Array.isArray(event.data.payload) &&
+            event.data.payload.childSessionId === childSessionId &&
+            event.data.payload.status === 'completed'
+        )
+      ).toHaveLength(1);
+      expect(
+        events?.filter(
+          (event) =>
+            event.type === 'inbox_acknowledged' &&
+            event.data.messageIds.includes(
+              `background-subagent-completion:${childSessionId}`
+            )
+        )
+      ).toHaveLength(0);
+    } finally {
+      unsubscribe();
+      await second.dispose();
+    }
+  });
+
+  it('repairs deferred background completion dispatch on the next attached runtime', async () => {
+    const workspaceRoot = path.join(
+      storageRoot,
+      'background-subagent-dispatch-deferred-project'
+    );
+    const sessionId = 'background-subagent-dispatch-deferred-parent';
+    const childSessionId = 'agent-background-subagent-dispatch-deferred';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('launch the background child');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const firstContextManager = first.getExecutionEngine().getContextManager();
+    await firstContextManager.saveMessage(
+      sessionId,
+      'user',
+      'launch the background child',
+      null,
+      { inboxMessageId: prepared.messageId }
+    );
+    const assistantMessageId = await firstContextManager.saveMessage(
+      sessionId,
+      'assistant',
+      ''
+    );
+    const toolCallId = await firstContextManager.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Inspect background marker',
+        prompt: 'Inspect the project and return the background marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+        run_in_background: true,
+      },
+      assistantMessageId
+    );
+    await firstContextManager.saveToolResult(
+      sessionId,
+      toolCallId,
+      'Task',
+      {
+        agent_id: childSessionId,
+        status: 'running',
+      },
+      assistantMessageId,
+      undefined,
+      undefined,
+      {
+        subagentSessionId: childSessionId,
+        subagentType: 'Explore',
+        subagentDescription: 'Inspect background marker',
+        subagentStatus: 'running',
+        subagentRootId: childSessionId,
+        subagentResumeDepth: 0,
+      },
+      {
+        background: true,
+        subagentSessionId: childSessionId,
+      }
+    );
+    await first.finishTurn(prepared.handle, {
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 1,
+        durationMs: 10,
+      },
+    });
+    const staleNotify = first.notifyBackgroundSubagentCompleted.bind(first);
+    AgentSessionStore.getInstance().saveSession({
+      schemaVersion: 2,
+      id: childSessionId,
+      subagentType: 'Explore',
+      description: 'Inspect background marker',
+      prompt: 'Inspect the project and return the background marker.',
+      messages: [
+        {
+          role: 'assistant',
+          content: 'BACKGROUND_RUNTIME_DISPATCH_DEFERRED_MARKER',
+        },
+      ],
+      status: 'completed',
+      background: true,
+      result: {
+        success: true,
+        message: 'BACKGROUND_RUNTIME_DISPATCH_DEFERRED_MARKER',
+      },
+      createdAt: Date.now() - 1000,
+      lastActiveAt: Date.now() - 500,
+      completedAt: Date.now() - 250,
+      parentSessionId: sessionId,
+      parentProjectPath: workspaceRoot,
+      rootAgentId: childSessionId,
+      resumeDepth: 0,
+      workspaceRoot,
+      isolation: 'none',
+      configSnapshot: {
+        name: 'Explore',
+        description: 'Explore agent',
+        source: 'builtin',
+      },
+    });
+    await first.dispose();
+
+    await staleNotify(childSessionId);
+    const eventsAfterDeferred = await new PersistentStore(workspaceRoot).loadEvents(
+      sessionId
+    );
+    expect(
+      eventsAfterDeferred?.filter(
+        (event) =>
+          event.type === 'message_created' &&
+          event.data.inboxMessageId ===
+            `background-subagent-completion:${childSessionId}`
+      )
+    ).toHaveLength(0);
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    try {
+      expect(recovered.getPendingSteeringMessages()).toEqual([
+        expect.objectContaining({
+          id: `background-subagent-completion:${childSessionId}`,
+          content: expect.stringContaining(
+            'BACKGROUND_RUNTIME_DISPATCH_DEFERRED_MARKER'
+          ),
+        }),
+      ]);
+    } finally {
+      await recovered.dispose();
+    }
+  });
+
+  it('does not inject a deferred background completion after rewind removes the Task call', async () => {
+    const workspaceRoot = path.join(
+      storageRoot,
+      'background-subagent-dispatch-rewind-project'
+    );
+    const sessionId = 'background-subagent-dispatch-rewind-parent';
+    const childSessionId = 'agent-background-subagent-dispatch-rewind';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('launch the background child');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const firstContextManager = first.getExecutionEngine().getContextManager();
+    await firstContextManager.saveMessage(
+      sessionId,
+      'user',
+      'launch the background child',
+      null,
+      { inboxMessageId: prepared.messageId }
+    );
+    const assistantMessageId = await firstContextManager.saveMessage(
+      sessionId,
+      'assistant',
+      ''
+    );
+    const toolCallId = await firstContextManager.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Inspect background marker',
+        prompt: 'Inspect the project and return the background marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+        run_in_background: true,
+      },
+      assistantMessageId
+    );
+    await firstContextManager.saveToolResult(
+      sessionId,
+      toolCallId,
+      'Task',
+      {
+        agent_id: childSessionId,
+        status: 'running',
+      },
+      assistantMessageId,
+      undefined,
+      undefined,
+      {
+        subagentSessionId: childSessionId,
+        subagentType: 'Explore',
+        subagentDescription: 'Inspect background marker',
+        subagentStatus: 'running',
+        subagentRootId: childSessionId,
+        subagentResumeDepth: 0,
+      },
+      {
+        background: true,
+        subagentSessionId: childSessionId,
+      }
+    );
+    await first.finishTurn(prepared.handle, {
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 1,
+        durationMs: 10,
+      },
+    });
+    const staleNotify = first.notifyBackgroundSubagentCompleted.bind(first);
+    AgentSessionStore.getInstance().saveSession({
+      schemaVersion: 2,
+      id: childSessionId,
+      subagentType: 'Explore',
+      description: 'Inspect background marker',
+      prompt: 'Inspect the project and return the background marker.',
+      messages: [
+        {
+          role: 'assistant',
+          content: 'BACKGROUND_RUNTIME_DISPATCH_REWIND_MARKER',
+        },
+      ],
+      status: 'completed',
+      background: true,
+      result: {
+        success: true,
+        message: 'BACKGROUND_RUNTIME_DISPATCH_REWIND_MARKER',
+      },
+      createdAt: Date.now() - 1000,
+      lastActiveAt: Date.now() - 500,
+      completedAt: Date.now() - 250,
+      parentSessionId: sessionId,
+      parentProjectPath: workspaceRoot,
+      rootAgentId: childSessionId,
+      resumeDepth: 0,
+      workspaceRoot,
+      isolation: 'none',
+      configSnapshot: {
+        name: 'Explore',
+        description: 'Explore agent',
+        source: 'builtin',
+      },
+    });
+    await first.dispose();
+
+    await staleNotify(childSessionId);
+    const checkpoints = await SessionService.listRewindCheckpoints(
+      sessionId,
+      workspaceRoot
+    );
+    const targetCheckpoint = checkpoints.at(-1);
+    if (!targetCheckpoint) throw new Error('Expected a rewind checkpoint');
+    await SessionService.rewindSession(sessionId, workspaceRoot, {
+      targetMessageId: targetCheckpoint.messageId,
+      mode: 'conversation',
+    });
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    try {
+      expect(recovered.getPendingSteeringCount()).toBe(0);
+      const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
+      expect(
+        events?.filter(
+          (event) =>
+            event.type === 'message_created' &&
+            event.data.inboxMessageId ===
+              `background-subagent-completion:${childSessionId}`
+        )
+      ).toHaveLength(0);
+    } finally {
+      await recovered.dispose();
+    }
+  });
+
   it('releases a background completion wait when the parent signal aborts', async () => {
     const workspaceRoot = path.join(storageRoot, 'background-wait-abort-project');
     const sessionId = 'background-wait-abort-parent';
