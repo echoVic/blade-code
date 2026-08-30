@@ -112,7 +112,10 @@ vi.mock('nanoid', () => ({
 
 import { Agent } from '../../../../src/agent/Agent.js';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
-import { AgentSessionStore } from '../../../../src/agent/subagents/AgentSessionStore.js';
+import {
+  type AgentSession,
+  AgentSessionStore,
+} from '../../../../src/agent/subagents/AgentSessionStore.js';
 import {
   BackgroundAgentManager,
   PROCESS_RESTART_SUBAGENT_RECOVERY_FAILED,
@@ -425,6 +428,85 @@ describe('BackgroundAgentManager', () => {
           }),
         })
       );
+    });
+
+    it('应先持久化 terminal sidecar 再触发完成通知', async () => {
+      const callOrder: string[] = [];
+      const completedSession: AgentSession = {
+        schemaVersion: 2,
+        id: 'agent-session_test-uuid-1234',
+        subagentType: 'Explore',
+        description: 'Persist completion ordering',
+        prompt: 'Finish after persisting the sidecar.',
+        messages: [],
+        status: 'completed',
+        background: true,
+        createdAt: 1,
+        lastActiveAt: 2,
+        completedAt: 3,
+        rootAgentId: 'agent-session_test-uuid-1234',
+        resumeDepth: 0,
+        workspaceRoot: '/repo',
+        isolation: 'worktree',
+        result: {
+          success: true,
+          message: 'Task completed',
+        },
+        worktree: {
+          sessionId: 'agent-session_test-uuid-1234',
+          name: 'agent/agent-session_test-uuid-1234',
+          branch: 'blade-worktree-agent',
+          baseCommit: 'abc',
+          originalBranch: 'main',
+          repositoryRoot: '/repo',
+          originalWorkspaceRoot: '/repo',
+          worktreeRoot: '/tmp/agent-worktree',
+          workspaceRoot: '/tmp/agent-worktree',
+          sourceHadChanges: false,
+        },
+      };
+      const mockStore = AgentSessionStore.getInstance();
+      vi.mocked(mockStore.updateSession).mockImplementation(() => {
+        callOrder.push('updateSession');
+        return undefined;
+      });
+      vi.mocked(mockStore.markCompleted).mockImplementation(() => {
+        callOrder.push('markCompleted');
+        return completedSession;
+      });
+      const onCompleted = vi.fn(async (session: AgentSession) => {
+        callOrder.push('onCompleted');
+        expect(session).toBe(completedSession);
+      });
+
+      const agentId = manager.startBackgroundAgent({
+        config: {
+          name: 'Explore',
+          description: 'Explore agent',
+        },
+        description: 'Persist completion ordering',
+        prompt: 'Finish after persisting the sidecar.',
+        workspaceRoot: '/repo',
+        isolation: 'worktree',
+        onCompleted,
+      });
+
+      await manager.waitForCompletion(agentId, 0);
+
+      expect(callOrder.indexOf('updateSession')).toBeGreaterThanOrEqual(0);
+      expect(callOrder.indexOf('markCompleted')).toBeGreaterThan(
+        callOrder.indexOf('updateSession')
+      );
+      expect(callOrder.indexOf('onCompleted')).toBeGreaterThan(
+        callOrder.indexOf('markCompleted')
+      );
+      expect(worktreeState.finalize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId,
+          success: true,
+        })
+      );
+      expect(onCompleted).toHaveBeenCalledTimes(1);
     });
 
     it('应启动后台 agent 并返回 ID', () => {

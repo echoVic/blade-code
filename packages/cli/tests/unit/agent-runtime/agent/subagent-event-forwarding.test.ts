@@ -11,6 +11,7 @@
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoopEvent } from '../../../../src/agent/loop/types.js';
+import type { AgentSession } from '../../../../src/agent/subagents/AgentSessionStore.js';
 import type { LoopResult } from '../../../../src/agent/types.js';
 
 /** 创建一个 mock async generator，yield 给定事件后返回 LoopResult */
@@ -730,5 +731,157 @@ describe('Task tool subagent event publishing', () => {
     vi.doUnmock('../../../../src/store/vanilla.js');
     vi.doUnmock('../../../../src/agent/subagents/SubagentExecutor.js');
     vi.doUnmock('../../../../src/agent/subagents/AgentSessionStore.js');
+  });
+
+  it('orders background completion as notify, UI complete, then subagent.complete', async () => {
+    vi.resetModules();
+    const completionOrder: string[] = [];
+    const startedOptions: Array<{
+      onCompleted?: (session: AgentSession) => Promise<void>;
+    }> = [];
+    const busState = {
+      publish: vi.fn((_ref: unknown, type: string) => {
+        if (type === 'subagent.complete') completionOrder.push('bus.complete');
+      }),
+    };
+    const backgroundManagerState = {
+      startBackgroundAgent: vi.fn(
+        (options: {
+          agentId?: string;
+          onCompleted?: (session: AgentSession) => Promise<void>;
+        }) => {
+          startedOptions.push(options);
+          return options.agentId ?? 'agent_bg-1';
+        }
+      ),
+      getAgent: vi.fn(),
+      isRunning: vi.fn(() => false),
+      resumeAgent: vi.fn(),
+    };
+    const storeState = {
+      startSubagentProgress: vi.fn(),
+      updateSubagentTool: vi.fn(),
+      completeSubagentProgress: vi.fn(() => {
+        completionOrder.push('ui.complete');
+      }),
+    };
+    vi.doMock('../../../../src/server/bus.js', () => ({
+      Bus: {
+        publish: busState.publish,
+      },
+    }));
+    vi.doMock('../../../../src/agent/subagents/BackgroundAgentManager.js', () => ({
+      BackgroundAgentManager: {
+        getInstance: () => backgroundManagerState,
+      },
+    }));
+    vi.doMock('../../../../src/store/vanilla.js', () => ({
+      vanillaStore: {
+        getState: () => ({
+          app: {
+            actions: {
+              startSubagentProgress: storeState.startSubagentProgress,
+              updateSubagentTool: storeState.updateSubagentTool,
+              completeSubagentProgress: storeState.completeSubagentProgress,
+            },
+          },
+        }),
+      },
+    }));
+
+    const { PermissionMode } = await import('../../../../src/config/types.js');
+    const { subagentRegistry } = await import(
+      '../../../../src/agent/subagents/SubagentRegistry.js'
+    );
+    subagentRegistry.applyOverrides([
+      {
+        name: 'test-worker',
+        description: 'test worker',
+      },
+    ]);
+    const { taskTool } = await import('../../../../src/tools/builtin/task/task.js');
+    const notifyBackgroundSubagentCompleted = vi.fn(async (agentId: string) => {
+      completionOrder.push(`notify:${agentId}`);
+    });
+    const registerBackgroundSubagent = vi.fn((agentId: string) => {
+      completionOrder.push(`register:${agentId}`);
+    });
+    const context = {
+      sessionId: 'parent-session',
+      workspaceRoot: '/tmp/parent-workspace',
+      permissionMode: PermissionMode.DEFAULT,
+      signal: new AbortController().signal,
+      updateOutput: vi.fn(),
+      registerBackgroundSubagent,
+      notifyBackgroundSubagentCompleted,
+    };
+
+    const result = await taskTool.execute(
+      {
+        subagent_type: 'test-worker',
+        description: 'Background ordering',
+        prompt: 'Run in the background and surface the terminal event ordering.',
+        run_in_background: true,
+      },
+      undefined,
+      context
+    );
+
+    expect(result.success).toBe(true);
+    expect(startedOptions).toHaveLength(1);
+    const startedAgentId = registerBackgroundSubagent.mock.calls[0]?.[0];
+    expect(typeof startedAgentId).toBe('string');
+    completionOrder.length = 0;
+
+    const completedSession: AgentSession = {
+      schemaVersion: 2,
+      id: startedAgentId,
+      subagentType: 'test-worker',
+      description: 'Background ordering',
+      prompt: 'Run in the background and surface the terminal event ordering.',
+      messages: [],
+      status: 'completed',
+      background: true,
+      createdAt: 1,
+      lastActiveAt: 2,
+      completedAt: 3,
+      rootAgentId: 'agent_bg-1',
+      resumeDepth: 0,
+      result: {
+        success: true,
+        message: 'terminal summary',
+      },
+    };
+
+    await startedOptions[0]?.onCompleted?.(completedSession);
+
+    expect(notifyBackgroundSubagentCompleted).toHaveBeenCalledWith(startedAgentId);
+    expect(storeState.completeSubagentProgress).toHaveBeenCalledWith(
+      expect.any(String),
+      true,
+      'terminal summary'
+    );
+    expect(busState.publish).toHaveBeenCalledWith(
+      {
+        sessionId: 'parent-session',
+        projectPath: path.resolve('/tmp/parent-workspace/../parent-workspace'),
+      },
+      'subagent.complete',
+      expect.objectContaining({
+        subagentSessionId: startedAgentId,
+        success: true,
+        status: 'completed',
+        summary: 'terminal summary',
+      })
+    );
+    expect(completionOrder).toEqual([
+      `notify:${startedAgentId}`,
+      'ui.complete',
+      'bus.complete',
+    ]);
+
+    vi.doUnmock('../../../../src/server/bus.js');
+    vi.doUnmock('../../../../src/agent/subagents/BackgroundAgentManager.js');
+    vi.doUnmock('../../../../src/store/vanilla.js');
   });
 });

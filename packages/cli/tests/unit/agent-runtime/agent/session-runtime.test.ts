@@ -2341,6 +2341,131 @@ describe('SessionRuntime', () => {
     await second.dispose();
   });
 
+  it('rejects a terminal Team member without a committed background Task call', async () => {
+    const workspaceRoot = path.join(
+      storageRoot,
+      'team-member-without-background-task-project'
+    );
+    const sessionId = 'team-member-without-background-task-parent';
+    const childSessionId = 'team-reviewer-without-background-task';
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const queuedEvents: Array<Record<string, unknown>> = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (
+        event.sessionId === sessionId &&
+        event.projectPath === workspaceRoot &&
+        event.type === 'subagent.completion.queued'
+      ) {
+        queuedEvents.push(event.properties);
+      }
+    });
+
+    try {
+      const prepared = await runtime.prepareInputTurn('coordinate the agent team');
+      if (!prepared.accepted) throw new Error('Expected direct input preparation');
+      const contextManager = runtime.getExecutionEngine().getContextManager();
+      await contextManager.saveMessage(
+        sessionId,
+        'user',
+        'coordinate the agent team',
+        null,
+        { inboxMessageId: prepared.messageId }
+      );
+      const assistantMessageId = await contextManager.saveMessage(
+        sessionId,
+        'assistant',
+        ''
+      );
+      const toolCallId = await contextManager.saveToolUse(
+        sessionId,
+        'TeamCreate',
+        {
+          team_name: 'review-team',
+          members: [
+            {
+              name: 'reviewer',
+              subagent_type: 'Explore',
+              prompt: 'Review the implementation.',
+            },
+          ],
+        },
+        assistantMessageId
+      );
+      await contextManager.saveToolResult(
+        sessionId,
+        toolCallId,
+        'TeamCreate',
+        { team: { name: 'review-team' } },
+        assistantMessageId
+      );
+      await runtime.finishTurn(prepared.handle, {
+        outcome: {
+          status: 'completed',
+          turnsCount: 1,
+          toolCallsCount: 1,
+          durationMs: 10,
+        },
+      });
+
+      runtime.registerBackgroundSubagent(childSessionId);
+      AgentSessionStore.getInstance().saveSession({
+        schemaVersion: 2,
+        id: childSessionId,
+        subagentType: 'Explore',
+        description: 'Review the implementation',
+        prompt: 'Review the implementation.',
+        messages: [{ role: 'assistant', content: 'TEAM_REVIEW_COMPLETE' }],
+        status: 'completed',
+        background: true,
+        result: { success: true, message: 'TEAM_REVIEW_COMPLETE' },
+        createdAt: Date.now() - 1_000,
+        lastActiveAt: Date.now() - 500,
+        completedAt: Date.now() - 250,
+        parentSessionId: sessionId,
+        parentProjectPath: workspaceRoot,
+        rootAgentId: childSessionId,
+        resumeDepth: 0,
+        taskListId: 'review-team',
+        teamId: 'review-team',
+        workspaceRoot,
+        isolation: 'none',
+        configSnapshot: {
+          name: 'Explore',
+          description: 'Explore agent',
+          source: 'builtin',
+        },
+      });
+
+      await runtime.notifyBackgroundSubagentCompleted(childSessionId);
+
+      expect(runtime.getPendingSteeringMessages()).toHaveLength(0);
+      expect(queuedEvents).toHaveLength(0);
+      const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
+      expect(
+        events?.filter(
+          (event) =>
+            event.type === 'message_created' &&
+            event.data.inboxMessageId ===
+              `background-subagent-completion:${childSessionId}`
+        )
+      ).toHaveLength(0);
+      expect(
+        events?.filter(
+          (event) =>
+            event.type === 'part_created' &&
+            event.data.partType === 'subtask_ref' &&
+            event.data.payload !== null &&
+            typeof event.data.payload === 'object' &&
+            !Array.isArray(event.data.payload) &&
+            event.data.payload.childSessionId === childSessionId
+        )
+      ).toHaveLength(0);
+    } finally {
+      unsubscribe();
+      await runtime.dispose();
+    }
+  });
+
   it('dispatches a stale background completion callback to the attached successor runtime exactly once', async () => {
     const workspaceRoot = path.join(
       storageRoot,

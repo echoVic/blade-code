@@ -5,9 +5,32 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentSession } from '../../../../../src/agent/subagents/AgentSessionStore';
 
 const mockSessions = new Map<string, Partial<AgentSession>>();
-const startOptions = new Map<string, any>();
+type StartedAgentOptions = {
+  agentId: string;
+  config: {
+    name: string;
+  };
+  description: string;
+  prompt: string;
+  parentSessionId?: string;
+  parentProjectPath?: string;
+  teamId?: string;
+  onStarted?: (agentId: string) => void | Promise<void>;
+  onCompleted?: (session: AgentSession) => void | Promise<void>;
+  agentResources?: unknown;
+  modelResources?: unknown;
+  lspResources?: unknown;
+  reasoningEffort?: string;
+  serviceTier?: string;
+  responseVerbosity?: string;
+  communicationStyle?: string;
+  isolation?: 'none' | 'worktree';
+  taskListId?: string;
+  workspaceRoot?: string;
+};
+const startOptions = new Map<string, StartedAgentOptions>();
 const mockManager = {
-  startBackgroundAgent: vi.fn((options: any) => {
+  startBackgroundAgent: vi.fn((options: StartedAgentOptions) => {
     const agentId = options.agentId;
     startOptions.set(agentId, options);
     mockSessions.set(agentId, {
@@ -50,17 +73,26 @@ import { Bus } from '../../../../../src/server/bus';
 import { getBuiltinTools } from '../../../../../src/tools/builtin/index';
 import { createTeamTools } from '../../../../../src/tools/builtin/team/index';
 import { executeToolInvocation } from '../../../../../src/tools/execution/ToolInvocationRunner';
+import type { Tool } from '../../../../../src/tools/types';
+
+type TeamToolOptions = NonNullable<Parameters<typeof createTeamTools>[0]>;
 
 async function createTempConfigDir() {
   return fs.mkdtemp(path.join(tmpdir(), 'blade-team-tools-test-'));
 }
 
-function getTool(configDir: string, name: string) {
-  const tool = createTeamTools({ sessionId: 'session-a', configDir }).find(
-    (candidate) => candidate.name === name
-  );
+function getTool(
+  configDir: string,
+  name: string,
+  options: Partial<TeamToolOptions> = {}
+): Tool<Record<string, unknown>> {
+  const tool = createTeamTools({
+    sessionId: 'session-a',
+    configDir,
+    ...options,
+  }).find((candidate) => candidate.name === name);
   if (!tool) throw new Error(`Tool not found: ${name}`);
-  return tool as any;
+  return tool as unknown as Tool<Record<string, unknown>>;
 }
 
 describe('agent team tools', () => {
@@ -247,7 +279,17 @@ describe('agent team tools', () => {
       expect(stored.members.every((member: object) => !('status' in member))).toBe(
         true
       );
-      expect((result.llmContent as any).team.tasks).toEqual([
+      const teamContent = result.llmContent as {
+        team: {
+          tasks: Array<{
+            id: string;
+            owner?: string;
+            status: string;
+            dependsOn: string[];
+          }>;
+        };
+      };
+      expect(teamContent.team.tasks).toEqual([
         expect.objectContaining({
           id: '1',
           owner: 'team-researcher-checkout-refactor',
@@ -267,8 +309,9 @@ describe('agent team tools', () => {
       if (!researcher) throw new Error('Missing researcher session');
       researcher.status = 'completed';
       researcher.result = { success: true, message: 'Mapped checkout flow' };
-      const onCompleted = startOptions.get('team-researcher-checkout-refactor')
-        ?.onCompleted as ((session: AgentSession) => Promise<void>) | undefined;
+      const onCompleted = startOptions.get(
+        'team-researcher-checkout-refactor'
+      )?.onCompleted;
       await onCompleted?.(researcher as AgentSession);
       expect(notifyBackgroundSubagentCompleted).toHaveBeenCalledWith(
         'team-researcher-checkout-refactor'
@@ -281,6 +324,125 @@ describe('agent team tools', () => {
         ])
       );
     } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes task completion and unblocked events before parent notification', async () => {
+    const configDir = await createTempConfigDir();
+    const notifyBackgroundSubagentCompleted = vi.fn(async () => undefined);
+    const eventOrder: string[] = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (event.sessionId !== 'session-a') return;
+      if (event.type === 'team.task.unblocked') eventOrder.push('team.task.unblocked');
+      if (event.type === 'team.member.completed')
+        eventOrder.push('team.member.completed');
+      if (event.type === 'team.completed') eventOrder.push('team.completed');
+    });
+    notifyBackgroundSubagentCompleted.mockImplementation(async () => {
+      eventOrder.push('parent.notify');
+    });
+
+    try {
+      const teamCreateTool = getTool(configDir, 'TeamCreate');
+      const result = await teamCreateTool.execute(
+        {
+          team_name: 'Completion Bridge',
+          members: [
+            {
+              name: 'researcher',
+              subagent_type: 'Explore',
+              prompt: 'Complete the first task and unblock the next teammate.',
+            },
+            {
+              name: 'planner',
+              subagent_type: 'Plan',
+              prompt: 'Wait for the unblocked task and then complete planning.',
+            },
+          ],
+          tasks: [
+            {
+              subject: 'Map flow',
+              description: 'Map the completion flow',
+              assigned_to: 'researcher',
+            },
+            {
+              subject: 'Plan follow-up',
+              description: 'Continue after the map is complete',
+              assigned_to: 'planner',
+              depends_on: ['1'],
+            },
+          ],
+        },
+        undefined,
+        {
+          sessionId: 'session-a',
+          workspaceRoot: '/workspace',
+          notifyBackgroundSubagentCompleted,
+        }
+      );
+
+      expect(result.success).toBe(true);
+      const graph = new TeamTaskGraph('completion-bridge', configDir);
+      await graph.claimNext('team-researcher-completion-bridge');
+      const researcher = mockSessions.get('team-researcher-completion-bridge');
+      if (!researcher) throw new Error('Missing researcher session');
+      researcher.status = 'completed';
+      researcher.result = { success: true, message: 'Mapped completion flow' };
+
+      eventOrder.length = 0;
+      const onCompleted = startOptions.get(
+        'team-researcher-completion-bridge'
+      )?.onCompleted;
+      if (!onCompleted) throw new Error('Missing researcher completion callback');
+      await onCompleted(researcher as AgentSession);
+
+      expect(eventOrder).toEqual([
+        'team.task.unblocked',
+        'team.member.completed',
+        'parent.notify',
+      ]);
+      expect(notifyBackgroundSubagentCompleted).toHaveBeenCalledWith(
+        'team-researcher-completion-bridge'
+      );
+      await expect(graph.listTasks()).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: '1', status: 'completed' }),
+          expect.objectContaining({
+            id: '2',
+            status: 'pending',
+            owner: 'team-planner-completion-bridge',
+          }),
+        ])
+      );
+
+      await graph.claimNext('team-planner-completion-bridge');
+      const planner = mockSessions.get('team-planner-completion-bridge');
+      if (!planner) throw new Error('Missing planner session');
+      planner.status = 'completed';
+      planner.result = { success: true, message: 'Planned the follow-up' };
+
+      eventOrder.length = 0;
+      const plannerCompleted = startOptions.get(
+        'team-planner-completion-bridge'
+      )?.onCompleted;
+      if (!plannerCompleted) throw new Error('Missing planner completion callback');
+      await plannerCompleted(planner as AgentSession);
+
+      expect(eventOrder).toEqual([
+        'team.member.completed',
+        'team.completed',
+        'parent.notify',
+      ]);
+      expect(notifyBackgroundSubagentCompleted).toHaveBeenCalledTimes(2);
+      await expect(graph.listTasks()).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: '1', status: 'completed' }),
+          expect.objectContaining({ id: '2', status: 'completed' }),
+        ])
+      );
+    } finally {
+      unsubscribe();
       await fs.rm(configDir, { recursive: true, force: true });
     }
   });
@@ -302,9 +464,7 @@ describe('agent team tools', () => {
       projectRoot: '/workspace/source',
       servers: { typescript: { command: 'server' } },
     } as never;
-    const tool = createTeamTools({
-      sessionId: 'session-a',
-      configDir,
+    const teamCreateTool = getTool(configDir, 'TeamCreate', {
       subagentRegistry,
       agentResources,
       modelResources,
@@ -313,9 +473,7 @@ describe('agent team tools', () => {
       getServiceTier: () => 'fast',
       getResponseVerbosity: () => 'high',
       getCommunicationStyle: () => 'friendly',
-    }).find((candidate) => candidate.name === 'TeamCreate');
-    if (!tool) throw new Error('TeamCreate tool not found');
-    const teamCreateTool = tool as any;
+    });
 
     try {
       await teamCreateTool.execute(
@@ -409,7 +567,16 @@ describe('agent team tools', () => {
       const result = await getTool(configDir, 'TeamStatus').execute({
         team_name: 'search-work',
       });
-      const content = result.llmContent as any;
+      const content = result.llmContent as {
+        team: {
+          members: Array<{
+            name: string;
+            status: string;
+            agentId?: string;
+            result?: { success: boolean; message: string };
+          }>;
+        };
+      };
 
       expect(result.success).toBe(true);
       expect(content.team.members).toEqual(
@@ -471,22 +638,35 @@ describe('agent team tools', () => {
 
   it('rejects unknown teammate subagent types', async () => {
     const configDir = await createTempConfigDir();
+    const registerBackgroundSubagent = vi.fn();
+    const notifyBackgroundSubagentCompleted = vi.fn(async () => undefined);
 
     try {
-      const result = await getTool(configDir, 'TeamCreate').execute({
-        team_name: 'Invalid Team',
-        members: [
-          {
-            name: 'writer',
-            subagent_type: 'Missing',
-            prompt: 'Try to run as a missing agent type.',
-          },
-        ],
-      });
+      const result = await getTool(configDir, 'TeamCreate').execute(
+        {
+          team_name: 'Invalid Team',
+          members: [
+            {
+              name: 'writer',
+              subagent_type: 'Missing',
+              prompt: 'Try to run as a missing agent type.',
+            },
+          ],
+        },
+        undefined,
+        {
+          sessionId: 'session-a',
+          workspaceRoot: '/workspace',
+          registerBackgroundSubagent,
+          notifyBackgroundSubagentCompleted,
+        }
+      );
 
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('Invalid subagent type');
       expect(mockManager.startBackgroundAgent).not.toHaveBeenCalled();
+      expect(registerBackgroundSubagent).not.toHaveBeenCalled();
+      expect(notifyBackgroundSubagentCompleted).not.toHaveBeenCalled();
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });
     }
@@ -694,7 +874,10 @@ describe('agent team tools', () => {
         { sessionId: 'session-a', workspaceRoot: '/workspace' }
       );
       expect(inbox.success).toBe(true);
-      expect((inbox.llmContent as any).messages).toEqual([
+      const inboxContent = inbox.llmContent as {
+        messages: Array<{ from: string; to: string; body: string }>;
+      };
+      expect(inboxContent.messages).toEqual([
         expect.objectContaining({
           from: 'reviewer',
           to: 'team-lead',
