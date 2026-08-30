@@ -1,5 +1,9 @@
 import { basename, extname } from 'path';
 import {
+  ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+  AcpRemoteFileBoundaryError,
+} from '../../../acp/AcpFileRequestCoordinator.js';
+import {
   AcpFileSystemCapabilityError,
   AcpFileSystemService,
 } from '../../../acp/AcpFileSystemService.js';
@@ -703,6 +707,7 @@ async function executeRemoteEdit(
   updateOutput?: (content: string) => void
 ): Promise<ToolResult> {
   const { file_path, old_string, new_string, replace_all } = params;
+  const deadlineAt = Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS;
   const stableMetadata = {
     file_path,
     sideEffectsUncertain: false,
@@ -726,10 +731,59 @@ async function executeRemoteEdit(
   }
 
   signal.throwIfAborted?.();
-  let previous: Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>>;
+  const requiresReadBoundary = (error: unknown): boolean =>
+    error instanceof AcpRemoteFileBoundaryError &&
+    Boolean(
+      (error as AcpRemoteFileBoundaryError & { requiresRead?: boolean }).requiresRead
+    );
+  let lease: ReturnType<AcpFileSystemService['tryAcquireMutationLease']>;
   try {
-    previous = await fsService.readTextFileIfExists(file_path);
+    lease = fsService.tryAcquireMutationLease([file_path]);
+  } catch (error) {
+    if (requiresReadBoundary(error)) {
+      return {
+        success: false,
+        llmContent:
+          'Remote file state is uncertain for this path. Use Read on the same file to refresh remote state before retrying Edit.',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'Remote file state requires a fresh Read before mutation',
+        },
+        metadata: {
+          file_path,
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
+          requiresRead: true,
+        },
+      };
+    }
+    if (error instanceof AcpRemoteFileBoundaryError && error.reason === 'busy') {
+      return {
+        success: false,
+        llmContent:
+          'Remote file is busy with another in-flight mutation. Wait for it to settle before retrying Edit.',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'Remote file is busy',
+        },
+        metadata: stableMetadata,
+      };
+    }
+    throw error;
+  }
+  let previous:
+    | Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>>
+    | undefined;
+  try {
+    previous = await fsService.readTextFileIfExists(file_path, {
+      signal,
+      deadlineAt,
+      purpose: 'preflight',
+      lease,
+    });
   } catch {
+    lease.release();
     return {
       success: false,
       llmContent: 'File edit failed: Unable to read remote file before edit',
@@ -741,6 +795,7 @@ async function executeRemoteEdit(
     };
   }
   if (!previous.exists) {
+    lease.release();
     return {
       success: false,
       llmContent: `File not found: ${file_path}`,
@@ -754,6 +809,7 @@ async function executeRemoteEdit(
 
   const accessStatus = fsService.checkRemoteAccess(file_path, previous.content);
   if (accessStatus === 'missing') {
+    lease.release();
     return {
       success: false,
       llmContent:
@@ -770,6 +826,7 @@ async function executeRemoteEdit(
   }
 
   if (accessStatus === 'modified') {
+    lease.release();
     return {
       success: false,
       llmContent:
@@ -783,6 +840,7 @@ async function executeRemoteEdit(
   }
 
   if (old_string === new_string) {
+    lease.release();
     return {
       success: false,
       llmContent: 'New string is identical; no replacement needed',
@@ -797,6 +855,7 @@ async function executeRemoteEdit(
   const content = previous.content;
   const matchResult = smartMatch(content, old_string);
   if (!matchResult.matched) {
+    lease.release();
     const errorDetails = generateRichErrorMessage(content, old_string, file_path);
     return {
       success: false,
@@ -813,6 +872,7 @@ async function executeRemoteEdit(
   const actualString = matchResult.matched;
   const matches = findMatchesWithActual(content, actualString);
   if (matches.length > 1 && !replace_all) {
+    lease.release();
     const lines = content.split('\n');
     let currentPos = 0;
     const matchLocations: { line: number; column: number; context: string }[] = [];
@@ -883,12 +943,17 @@ async function executeRemoteEdit(
   try {
     const receipt = await commitVerifiedRemoteTextMutation({
       service: fsService,
+      lease,
       filePath: file_path,
       previous,
       intendedContent: newContent,
       operation: 'edit',
       signal,
+      deadlineAt,
     });
+    if (receipt.writeVerified) {
+      lease.commitVerified();
+    }
     const diffSnippet = generateDiffSnippetWithMatch(
       content,
       newContent,
@@ -918,6 +983,7 @@ async function executeRemoteEdit(
       write_acknowledged: receipt.writeAcknowledged,
       write_verified: receipt.writeVerified,
       sideEffectsUncertain: receipt.sideEffectsUncertain,
+      requiresRead: receipt.requiresRead || undefined,
     };
 
     return {
@@ -928,6 +994,36 @@ async function executeRemoteEdit(
       metadata,
     };
   } catch (error) {
+    if (error instanceof AcpRemoteMutationError && error.requiresRead) {
+      return {
+        success: false,
+        llmContent:
+          'Remote file state is uncertain for this path. Use Read on the same file to refresh remote state before retrying Edit.',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'Remote file state requires a fresh Read before mutation',
+        },
+        metadata: {
+          file_path,
+          matches_found: matches.length,
+          replacements_made: replacedCount,
+          replace_all,
+          old_string_length: old_string.length,
+          new_string_length: new_string.length,
+          original_size: content.length,
+          new_size: newContent.length,
+          size_diff: newContent.length - content.length,
+          snapshot_created: false,
+          kind: 'edit',
+          oldContent: content,
+          newContent,
+          write_acknowledged: error.writeAcknowledged,
+          write_verified: error.writeVerified,
+          sideEffectsUncertain: error.sideEffectsUncertain,
+          requiresRead: true,
+        },
+      };
+    }
     if (error instanceof AcpRemoteMutationError) {
       return {
         success: false,
@@ -953,10 +1049,13 @@ async function executeRemoteEdit(
           write_acknowledged: error.writeAcknowledged,
           write_verified: error.writeVerified,
           sideEffectsUncertain: error.sideEffectsUncertain,
+          requiresRead: error.requiresRead || undefined,
         },
       };
     }
     throw error;
+  } finally {
+    lease.release();
   }
 }
 

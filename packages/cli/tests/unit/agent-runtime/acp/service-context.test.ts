@@ -270,6 +270,81 @@ describe('AcpServiceContext session isolation', () => {
     expect(fileSystem.getRemoteAccessRecord('/workspace/a.ts')).toBeUndefined();
   });
 
+  it('preserves remote mutation quarantine across destroy and rebuild on the same connection but clears it on connection close', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true } },
+      '/workspace/a'
+    );
+
+    const initialFileSystem = getAcpFileSystemService('session-a');
+    expect(initialFileSystem).toBeInstanceOf(AcpFileSystemService);
+    if (!(initialFileSystem instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+
+    const initialLease = initialFileSystem.tryAcquireMutationLease([
+      '/workspace/shared.ts',
+    ]);
+    initialLease.markUncertain('/workspace/shared.ts');
+    initialLease.release();
+
+    AcpServiceContext.destroySession('session-a');
+
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true } },
+      '/workspace/a'
+    );
+
+    const rebuiltFileSystem = getAcpFileSystemService('session-a');
+    expect(rebuiltFileSystem).toBeInstanceOf(AcpFileSystemService);
+    if (!(rebuiltFileSystem instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+
+    await expect(
+      Promise.resolve().then(() =>
+        rebuiltFileSystem.tryAcquireMutationLease(['/workspace/shared.ts'])
+      )
+    ).rejects.toMatchObject({
+      name: 'AcpRemoteFileBoundaryError',
+      reason: 'busy',
+      operation: 'write',
+      dispatched: false,
+      requestPending: false,
+    });
+
+    await harness.close();
+
+    const replacementHarness = createPairedAcpHarness(client);
+    harnesses.push(replacementHarness);
+    AcpServiceContext.destroySession('session-a');
+    AcpServiceContext.initializeSession(
+      replacementHarness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true } },
+      '/workspace/a'
+    );
+
+    const afterReconnectFileSystem = getAcpFileSystemService('session-a');
+    expect(afterReconnectFileSystem).toBeInstanceOf(AcpFileSystemService);
+    if (!(afterReconnectFileSystem instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+
+    const recoveredLease = afterReconnectFileSystem.tryAcquireMutationLease([
+      '/workspace/shared.ts',
+    ]);
+    expect(recoveredLease.isCurrent('/workspace/shared.ts')).toBe(true);
+    recoveredLease.release();
+  });
+
   it('snapshots session fs capabilities at initialization time', async () => {
     interface MutableClientCapabilities extends acp.ClientCapabilities {
       fs?: {

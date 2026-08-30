@@ -23,6 +23,7 @@ import {
   AcpRemoteFileBoundaryError,
   type AcpRemoteFileRequestPurpose,
   type AcpRemoteMutationLease,
+  type AcpRemoteMutationRecoveryLease,
   type AcpRemoteUserReadPermit,
   createAcpRemoteConnectionPathIdentity,
   getAcpFileRequestCoordinator,
@@ -164,7 +165,7 @@ export class AcpFileSystemService implements FileSystemService {
       signal?: AbortSignal;
       deadlineAt?: number;
       purpose?: AcpRemoteFileRequestPurpose;
-      lease?: AcpRemoteMutationLease;
+      lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
     }
   ): Promise<void> {
     if (!this.capabilities.writeTextFile) {
@@ -172,17 +173,18 @@ export class AcpFileSystemService implements FileSystemService {
     }
 
     const normalizedPath = normalizeAcpRemotePath(filePath);
-    const coordinator = getAcpFileRequestCoordinator(this.connection);
-    const lease =
-      options?.lease ??
-      coordinator.tryAcquireMutationLease([normalizedPath], this.sessionId);
-    const ownsLease = options?.lease === undefined;
+    const ownedLease =
+      options?.lease === undefined
+        ? this.tryAcquireMutationLease([normalizedPath])
+        : undefined;
+    const lease = options?.lease ?? ownedLease;
     const combinedSignal = createCombinedAbortSignal(
       this.disposeController.signal,
       options?.signal
     );
     const deadlineAt =
       options?.deadlineAt ?? Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS;
+    const coordinator = getAcpFileRequestCoordinator(this.connection);
 
     try {
       await coordinator.runRequest({
@@ -206,18 +208,18 @@ export class AcpFileSystemService implements FileSystemService {
             }
           ),
       });
-      if (ownsLease) {
-        lease.markDefinite(normalizedPath);
+      if (ownedLease) {
+        ownedLease.markDefinite(normalizedPath);
       }
     } catch (error) {
       logger.warn('[AcpFileSystem] writeTextFile ACP request failed');
-      if (ownsLease && shouldMarkWriteUncertain(error)) {
-        lease.markUncertain(normalizedPath);
+      if (ownedLease && shouldMarkWriteUncertain(error)) {
+        ownedLease.markUncertain(normalizedPath);
       }
       throw error;
     } finally {
-      if (ownsLease) {
-        lease.release();
+      if (ownedLease) {
+        ownedLease.release();
       }
       combinedSignal.cleanup();
     }
@@ -323,11 +325,22 @@ export class AcpFileSystemService implements FileSystemService {
   }
 
   async readTextFileIfExists(
-    filePath: string
+    filePath: string,
+    options?: {
+      signal?: AbortSignal;
+      deadlineAt?: number;
+      purpose?: AcpRemoteFileRequestPurpose;
+      userReadPermit?: AcpRemoteUserReadPermit;
+      lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
+    }
   ): Promise<{ exists: false } | { exists: true; content: string }> {
     try {
       const content = await this.runBoundedTextRead(filePath, {
-        purpose: 'preflight',
+        signal: options?.signal,
+        deadlineAt: options?.deadlineAt,
+        purpose: options?.purpose ?? 'preflight',
+        userReadPermit: options?.userReadPermit,
+        lease: options?.lease,
       });
       return { exists: true, content };
     } catch (error) {
@@ -388,6 +401,18 @@ export class AcpFileSystemService implements FileSystemService {
     return { ...record };
   }
 
+  precheckMutationPaths(filePaths: readonly string[]): void {
+    const normalizedPaths = filePaths.map(normalizeAcpRemotePath);
+    const coordinator = getAcpFileRequestCoordinator(this.connection);
+    coordinator.precheckMutationPaths(normalizedPaths, this.sessionId);
+  }
+
+  tryAcquireMutationLease(filePaths: readonly string[]): AcpRemoteMutationLease {
+    const normalizedPaths = filePaths.map(normalizeAcpRemotePath);
+    const coordinator = getAcpFileRequestCoordinator(this.connection);
+    return coordinator.tryAcquireMutationLease(normalizedPaths, this.sessionId);
+  }
+
   dispose(): void {
     this.disposeController.abort();
     this.remoteAccessLedger.clear();
@@ -400,6 +425,7 @@ export class AcpFileSystemService implements FileSystemService {
       deadlineAt?: number;
       purpose: AcpRemoteFileRequestPurpose;
       userReadPermit?: AcpRemoteUserReadPermit;
+      lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
     }
   ): Promise<string> {
     if (!this.capabilities.readTextFile) {
@@ -423,6 +449,7 @@ export class AcpFileSystemService implements FileSystemService {
         pathIdentity: createAcpRemoteConnectionPathIdentity(normalizedPath),
         deadlineAt,
         signal: combinedSignal.signal,
+        lease: options.lease,
         userReadPermit: options.userReadPermit,
         dispatch: (cancellationSignal) =>
           this.connection.request(

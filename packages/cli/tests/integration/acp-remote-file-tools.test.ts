@@ -14,6 +14,7 @@ import {
   isAcpRemoteFileSystem,
 } from '../../src/acp/AcpServiceContext.js';
 import { PermissionMode } from '../../src/config/types.js';
+import { applyPatchTool } from '../../src/tools/builtin/file/applyPatch.js';
 import { editTool } from '../../src/tools/builtin/file/edit.js';
 import { FileAccessTracker } from '../../src/tools/builtin/file/FileAccessTracker.js';
 import { readTool } from '../../src/tools/builtin/file/read.js';
@@ -707,6 +708,27 @@ describe('ACP remote Write/Edit builtin tools', () => {
     );
   }
 
+  function initializeRemoteSessionsOnSameConnection(
+    client: ControlledFileClient,
+    sessions: ReadonlyArray<{
+      sessionId: string;
+      cwd: string;
+      capabilities: { readTextFile?: boolean; writeTextFile?: boolean };
+    }>
+  ): void {
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    for (const session of sessions) {
+      sessionIds.add(session.sessionId);
+      AcpServiceContext.initializeSession(
+        harness.agentConnection,
+        session.sessionId,
+        { fs: session.capabilities },
+        session.cwd
+      );
+    }
+  }
+
   async function executeRead(filePath: string, sessionId: string) {
     return readTool.execute(
       {
@@ -756,6 +778,20 @@ describe('ACP remote Write/Edit builtin tools', () => {
       },
       options?.signal,
       { sessionId }
+    );
+  }
+
+  async function executeApplyPatch(
+    patch: string,
+    sessionId: string,
+    workspaceRoot: string
+  ) {
+    return applyPatchTool.execute(
+      {
+        patch,
+      },
+      undefined,
+      { sessionId, workspaceRoot }
     );
   }
 
@@ -1415,6 +1451,252 @@ describe('ACP remote Write/Edit builtin tools', () => {
     ]);
   });
 
+  it('remote Write acquires the mutation lease before preflight and rejects a concurrent session on the same normalized path', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-lease-before-preflight-');
+    const filePath = path.join(root, 'shared.txt');
+    const client = new ControlledFileClient();
+    client.files.set(filePath, 'alpha\n');
+    const sessionA = 'remote-write-lease-a';
+    const sessionB = 'remote-write-lease-b';
+    initializeRemoteSessionsOnSameConnection(client, [
+      {
+        sessionId: sessionA,
+        cwd: root,
+        capabilities: { readTextFile: true, writeTextFile: true },
+      },
+      {
+        sessionId: sessionB,
+        cwd: root,
+        capabilities: { readTextFile: true, writeTextFile: true },
+      },
+    ]);
+
+    await expectRemoteReadSuccess(client, filePath, sessionA, 'alpha\n');
+
+    const blockedWrite = client.enqueueBlockedWrite();
+    const firstWrite = executeWrite(
+      path.join(root, '.', 'shared.txt'),
+      'beta\n',
+      sessionA
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const concurrentWrite = await executeWrite(
+      path.join(root, 'nested', '..', 'shared.txt'),
+      'gamma\n',
+      sessionB
+    );
+
+    expect(concurrentWrite).toMatchObject({
+      success: false,
+      error: {
+        type: 'execution_error',
+      },
+    });
+    expect(client.requests.map((request) => request.kind)).toEqual(['read', 'read']);
+
+    blockedWrite.release();
+    await firstWrite;
+  });
+
+  it('remote Edit acquires the mutation lease before preflight and still allows another normalized path concurrently', async () => {
+    const root = await createTempRoot('blade-acp-remote-edit-lease-before-preflight-');
+    const sharedPath = path.join(root, 'shared.txt');
+    const siblingPath = path.join(root, 'sibling.txt');
+    const client = new ControlledFileClient();
+    client.files.set(sharedPath, 'alpha beta\n');
+    client.files.set(siblingPath, 'left right\n');
+    const sessionA = 'remote-edit-lease-a';
+    const sessionB = 'remote-edit-lease-b';
+    initializeRemoteSessionsOnSameConnection(client, [
+      {
+        sessionId: sessionA,
+        cwd: root,
+        capabilities: { readTextFile: true, writeTextFile: true },
+      },
+      {
+        sessionId: sessionB,
+        cwd: root,
+        capabilities: { readTextFile: true, writeTextFile: true },
+      },
+    ]);
+
+    await expectRemoteReadSuccess(client, sharedPath, sessionA, 'alpha beta\n');
+    await expectRemoteReadSuccess(client, siblingPath, sessionB, 'left right\n');
+
+    const blockedWrite = client.enqueueBlockedWrite();
+    const firstEdit = executeEdit(
+      path.join(root, '.', 'shared.txt'),
+      'beta',
+      'gamma',
+      sessionA
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const concurrentSamePath = await executeEdit(
+      path.join(root, 'nested', '..', 'shared.txt'),
+      'beta',
+      'delta',
+      sessionB
+    );
+    expect(concurrentSamePath).toMatchObject({
+      success: false,
+      error: {
+        type: 'execution_error',
+      },
+    });
+
+    const concurrentDifferentPath = await executeEdit(
+      siblingPath,
+      'right',
+      'center',
+      sessionB
+    );
+    expect(concurrentDifferentPath.success).toBe(true);
+
+    blockedWrite.release();
+    await firstEdit;
+  });
+
+  it('remote Write quarantines a pending mutation, blocks Read Write Edit and ApplyPatch guidance, and requires a fresh same-session Read before re-enabling mutation', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-quarantine-');
+    const filePath = path.join(root, 'quarantine.txt');
+    const client = new ControlledFileClient();
+    client.files.set(filePath, 'alpha\n');
+    const sessionA = 'remote-write-quarantine-a';
+    const sessionB = 'remote-write-quarantine-b';
+    initializeRemoteSessionsOnSameConnection(client, [
+      {
+        sessionId: sessionA,
+        cwd: root,
+        capabilities: { readTextFile: true, writeTextFile: true },
+      },
+      {
+        sessionId: sessionB,
+        cwd: root,
+        capabilities: { readTextFile: true, writeTextFile: true },
+      },
+    ]);
+
+    await expectRemoteReadSuccess(client, filePath, sessionA, 'alpha\n');
+
+    vi.useFakeTimers({ now: 5_000 });
+    try {
+      const blockedWrite = client.enqueueBlockedWrite();
+      const pendingWrite = executeWrite(filePath, 'beta\n', sessionA);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await vi.advanceTimersByTimeAsync(30_001);
+      const timedOutWrite = await pendingWrite;
+      expect(timedOutWrite).toMatchObject({
+        success: false,
+        llmContent:
+          'Remote file state is uncertain for this path. Use Read on the same file to refresh remote state before retrying Write.',
+        error: {
+          type: 'execution_error',
+          message: 'Remote file state requires a fresh Read before mutation',
+        },
+        metadata: {
+          file_path: filePath,
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
+          requiresRead: true,
+        },
+      });
+      expect(Object.hasOwn(timedOutWrite.metadata ?? {}, 'write_acknowledged')).toBe(
+        true
+      );
+      expect(Object.hasOwn(timedOutWrite.metadata ?? {}, 'write_verified')).toBe(true);
+      expect(Object.hasOwn(timedOutWrite.metadata ?? {}, 'sideEffectsUncertain')).toBe(
+        true
+      );
+      expect(Object.hasOwn(timedOutWrite.metadata ?? {}, 'requiresRead')).toBe(true);
+
+      const readWhilePending = await executeRead(filePath, sessionA);
+      expect(readWhilePending).toMatchObject({
+        success: false,
+        error: {
+          type: 'execution_error',
+        },
+      });
+
+      const writeWhilePending = await executeWrite(filePath, 'gamma\n', sessionA);
+      expect(writeWhilePending).toMatchObject({
+        success: false,
+        llmContent:
+          'Remote file state is uncertain for this path. Use Read on the same file to refresh remote state before retrying Write.',
+        error: {
+          type: 'execution_error',
+          message: 'Remote file state requires a fresh Read before mutation',
+        },
+        metadata: {
+          file_path: filePath,
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
+          requiresRead: true,
+        },
+      });
+
+      const editWhilePending = await executeEdit(filePath, 'alpha', 'delta', sessionA);
+      expect(editWhilePending).toMatchObject({
+        success: false,
+        llmContent:
+          'Remote file state is uncertain for this path. Use Read on the same file to refresh remote state before retrying Edit.',
+        error: {
+          type: 'execution_error',
+          message: 'Remote file state requires a fresh Read before mutation',
+        },
+        metadata: {
+          file_path: filePath,
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
+          requiresRead: true,
+        },
+      });
+
+      const applyPatchWhilePending = await executeApplyPatch(
+        `*** Begin Patch\n*** Update File: quarantine.txt\n@@\n-alpha\n+gamma\n*** End Patch`,
+        sessionA,
+        root
+      );
+      expect(applyPatchWhilePending).toMatchObject({
+        success: false,
+        error: {
+          type: 'execution_error',
+        },
+      });
+
+      blockedWrite.release();
+      await vi.runAllTimersAsync();
+      await Promise.resolve();
+
+      const foreignRead = await executeRead(filePath, sessionB);
+      expect(foreignRead).toMatchObject({
+        success: false,
+        error: {
+          type: 'execution_error',
+        },
+      });
+
+      const ownFreshRead = await executeRead(filePath, sessionA);
+      expect(ownFreshRead).toMatchObject({
+        success: true,
+        llmContent: 'beta\n',
+      });
+
+      const writeAfterFreshRead = await executeWrite(filePath, 'delta\n', sessionA);
+      expect(writeAfterFreshRead.success).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     {
       label: 'acknowledged success',
@@ -1665,7 +1947,7 @@ describe('ACP remote Write/Edit builtin tools', () => {
         },
       });
       expect(result.llmContent).toContain(
-        'write readback could not verify the remote side effects'
+        'Remote file state is uncertain for this path'
       );
       expect(client.requests.map((request) => request.kind)).toEqual([
         'read',

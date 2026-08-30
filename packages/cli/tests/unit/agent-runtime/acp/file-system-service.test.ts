@@ -800,6 +800,48 @@ describe('AcpFileSystemService remote ownership', () => {
     acquireLeaseSpy.mockRestore();
   });
 
+  it('normalizes paths for mutation precheck and lease acquisition through service convenience methods', async () => {
+    const clientApp = acp
+      .client({ name: 'file-system-mutation-convenience-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+
+    expect(() =>
+      service.precheckMutationPaths(['/workspace/dir/../shared.ts'])
+    ).not.toThrow();
+
+    const lease = service.tryAcquireMutationLease(['/workspace/./shared.ts']);
+    expect(lease.generationFor('/workspace/shared.ts')).toBeGreaterThan(0);
+    expect(lease.isCurrent('/workspace/shared.ts')).toBe(true);
+
+    await expect(
+      Promise.resolve().then(() =>
+        service.tryAcquireMutationLease(['/workspace/shared.ts'])
+      )
+    ).rejects.toMatchObject({
+      name: 'AcpRemoteFileBoundaryError',
+      reason: 'busy',
+      operation: 'write',
+      dispatched: false,
+      requestPending: false,
+    });
+
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    lease.release();
+  });
+
   it('does not mark a no-options write as uncertain when aborted before dispatch', async () => {
     const clientApp = acp
       .client({ name: 'file-system-write-pre-dispatch-abort-client' })

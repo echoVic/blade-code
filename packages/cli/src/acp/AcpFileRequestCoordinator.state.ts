@@ -268,11 +268,19 @@ export function boundaryRejectToken<T>(
   if (token.settled) {
     return undefined;
   }
-  token.boundaryError = new AcpRemoteFileBoundaryError(
-    reason,
-    token.operation,
-    token.dispatched,
-    requestPending && token.dispatched
+  const requiresRead =
+    token.operation === 'write' &&
+    token.dispatched &&
+    requestPending &&
+    token.writeLeaseSnapshot !== undefined;
+  token.boundaryError = withRequiresRead(
+    new AcpRemoteFileBoundaryError(
+      reason,
+      token.operation,
+      token.dispatched,
+      requestPending && token.dispatched
+    ),
+    requiresRead
   );
   if (token.operation === 'read' && token.readToken) {
     token.readToken.detached = token.boundaryError.requestPending;
@@ -338,8 +346,12 @@ export function assertMutationPathsAvailable(
   }
   const retainedCount = state.mutationStates.size;
   for (const pathIdentity of pathIdentities) {
-    if (state.mutationStates.has(pathIdentity)) {
-      throw new AcpRemoteFileBoundaryError('busy', 'write', false, false);
+    const mutationState = state.mutationStates.get(pathIdentity);
+    if (mutationState) {
+      throw withRequiresRead(
+        new AcpRemoteFileBoundaryError('busy', 'write', false, false),
+        mutationState.kind === 'pending-write' || mutationState.kind === 'needs-read'
+      );
     }
   }
   if (retainedCount + pathIdentities.length > MAX_ACP_REMOTE_MUTATION_PATHS) {
@@ -565,7 +577,10 @@ export function beginUserReadPermit(
     };
   }
   if (mutationState.kind === 'pending-write') {
-    throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
+    throw withRequiresRead(
+      new AcpRemoteFileBoundaryError('busy', 'read', false, false),
+      true
+    );
   }
   if (
     mutationState.kind === 'needs-read' &&
@@ -624,7 +639,10 @@ export function assertReadPathAvailability<T>(
   if (spec.userReadPermit?.lane === 'recovery') {
     const mutationState = state.mutationStates.get(spec.pathIdentity);
     if (mutationState?.kind === 'pending-write') {
-      throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
+      throw withRequiresRead(
+        new AcpRemoteFileBoundaryError('busy', 'read', false, false),
+        true
+      );
     }
     if (!mutationState || mutationState.kind !== 'needs-read') {
       throw new AcpRemoteFileBoundaryError(
@@ -670,7 +688,10 @@ export function assertReadPathAvailability<T>(
     mutationState?.kind === 'pending-write' ||
     mutationState?.kind === 'reconciling'
   ) {
-    throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
+    throw withRequiresRead(
+      new AcpRemoteFileBoundaryError('busy', 'read', false, false),
+      mutationState?.kind === 'pending-write'
+    );
   }
 }
 
@@ -680,13 +701,17 @@ export function assertWritePathAvailability<T>(
 ): void {
   const mutationState = state.mutationStates.get(spec.pathIdentity);
   const metadata = getLeaseMetadata(spec.lease);
-  if (
-    !mutationState ||
-    mutationState.kind !== 'active-mutation' ||
-    !metadata ||
-    metadata.sessionId !== spec.sessionId
-  ) {
-    throw new AcpRemoteFileBoundaryError('busy', 'write', false, false);
+  if (!mutationState || !metadata || metadata.sessionId !== spec.sessionId) {
+    throw withRequiresRead(
+      new AcpRemoteFileBoundaryError('busy', 'write', false, false),
+      mutationState?.kind === 'pending-write' || mutationState?.kind === 'needs-read'
+    );
+  }
+  if (mutationState.kind !== 'active-mutation') {
+    throw withRequiresRead(
+      new AcpRemoteFileBoundaryError('busy', 'write', false, false),
+      mutationState.kind === 'pending-write' || mutationState.kind === 'needs-read'
+    );
   }
   if (metadata.kind === 'active') {
     if (
@@ -709,6 +734,21 @@ export function assertWritePathAvailability<T>(
   ) {
     throw new AcpRemoteFileBoundaryError('busy', 'write', false, false);
   }
+}
+
+function withRequiresRead(
+  error: AcpRemoteFileBoundaryError,
+  requiresRead: boolean
+): AcpRemoteFileBoundaryError {
+  if (!requiresRead) {
+    return error;
+  }
+  Object.defineProperty(error, 'requiresRead', {
+    value: true,
+    enumerable: true,
+    configurable: true,
+  });
+  return error;
 }
 
 export function handleSettlementState<T>(

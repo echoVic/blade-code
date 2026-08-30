@@ -164,6 +164,7 @@ export class AcpFileRequestCoordinator {
   }
 
   precheckMutationPaths(normalizedPaths: readonly string[], sessionId: string): void {
+    this.assertOpen('write');
     const identities = dedupeNormalizedPathIdentities(normalizedPaths);
     this.assertMutationPathsAvailable(identities);
     void sessionId;

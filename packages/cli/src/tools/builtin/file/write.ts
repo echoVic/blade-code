@@ -1,6 +1,10 @@
 import { promises as fs } from 'fs';
 import { basename, dirname, extname } from 'path';
 import {
+  ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+  AcpRemoteFileBoundaryError,
+} from '../../../acp/AcpFileRequestCoordinator.js';
+import {
   AcpFileSystemCapabilityError,
   AcpFileSystemService,
 } from '../../../acp/AcpFileSystemService.js';
@@ -392,7 +396,8 @@ async function executeRemoteWrite(
   updateOutput?: (content: string) => void
 ): Promise<ToolResult> {
   const { file_path, content, encoding } = params;
-  const mismatchMetadata = {
+  const deadlineAt = Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS;
+  const stableMetadata = {
     file_path,
     sideEffectsUncertain: false,
   } satisfies Pick<WriteMetadata, 'file_path' | 'sideEffectsUncertain'>;
@@ -406,7 +411,7 @@ async function executeRemoteWrite(
         type: ToolErrorType.VALIDATION_ERROR,
         message: 'ACP remote Write only supports UTF-8 text writes',
       },
-      metadata: mismatchMetadata,
+      metadata: stableMetadata,
     };
   }
 
@@ -421,73 +426,117 @@ async function executeRemoteWrite(
           type: ToolErrorType.VALIDATION_ERROR,
           message: `ACP remote filesystem does not support ${error.operation}`,
         },
-        metadata: mismatchMetadata,
+        metadata: stableMetadata,
       };
     }
     throw error;
   }
 
   signal.throwIfAborted?.();
-  let previous: Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>>;
+  const requiresReadBoundary = (error: unknown): boolean =>
+    error instanceof AcpRemoteFileBoundaryError &&
+    Boolean(
+      (error as AcpRemoteFileBoundaryError & { requiresRead?: boolean }).requiresRead
+    );
+  const getOldContent = (
+    prior: Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>> | undefined
+  ): string => (prior?.exists ? prior.content : '');
+  let lease: ReturnType<AcpFileSystemService['tryAcquireMutationLease']>;
+  let previous:
+    | Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>>
+    | undefined;
   try {
-    previous = await fsService.readTextFileIfExists(file_path);
-  } catch {
-    return {
-      success: false,
-      llmContent: 'File write failed: Unable to read remote file before write',
-      error: {
-        type: ToolErrorType.EXECUTION_ERROR,
-        message: 'Unable to read remote file before write',
-      },
-      metadata: mismatchMetadata,
-    };
-  }
-  if (previous.exists) {
-    const accessStatus = fsService.checkRemoteAccess(file_path, previous.content);
-    if (accessStatus === 'missing') {
+    lease = fsService.tryAcquireMutationLease([file_path]);
+  } catch (error) {
+    if (requiresReadBoundary(error)) {
       return {
         success: false,
         llmContent:
-          "If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.",
+          'Remote file state is uncertain for this path. Use Read on the same file to refresh remote state before retrying Write.',
         error: {
-          type: ToolErrorType.VALIDATION_ERROR,
-          message: 'File not read before write',
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'Remote file state requires a fresh Read before mutation',
         },
         metadata: {
           file_path,
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
           requiresRead: true,
-          sideEffectsUncertain: false,
         },
       };
     }
-
-    if (accessStatus === 'modified') {
+    if (error instanceof AcpRemoteFileBoundaryError && error.reason === 'busy') {
       return {
         success: false,
         llmContent:
-          'The file has been modified externally since the last successful Read. Use Read again before writing.',
+          'Remote file is busy with another in-flight mutation. Wait for it to settle before retrying Write.',
         error: {
-          type: ToolErrorType.VALIDATION_ERROR,
-          message: 'File modified externally',
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'Remote file is busy',
         },
-        metadata: {
-          file_path,
-          sideEffectsUncertain: false,
-        },
+        metadata: stableMetadata,
       };
     }
+    throw error;
   }
-
-  updateOutput?.('通过 IDE 写入文件...');
   try {
+    previous = await fsService.readTextFileIfExists(file_path, {
+      signal,
+      deadlineAt,
+      purpose: 'preflight',
+      lease,
+    });
+    if (previous.exists) {
+      const accessStatus = fsService.checkRemoteAccess(file_path, previous.content);
+      if (accessStatus === 'missing') {
+        return {
+          success: false,
+          llmContent:
+            "If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.",
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: 'File not read before write',
+          },
+          metadata: {
+            file_path,
+            requiresRead: true,
+            sideEffectsUncertain: false,
+          },
+        };
+      }
+
+      if (accessStatus === 'modified') {
+        return {
+          success: false,
+          llmContent:
+            'The file has been modified externally since the last successful Read. Use Read again before writing.',
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: 'File modified externally',
+          },
+          metadata: {
+            file_path,
+            sideEffectsUncertain: false,
+          },
+        };
+      }
+    }
+
+    updateOutput?.('通过 IDE 写入文件...');
     const receipt = await commitVerifiedRemoteTextMutation({
       service: fsService,
+      lease,
       filePath: file_path,
       previous,
       intendedContent: content,
       operation: 'write',
       signal,
+      deadlineAt,
     });
+    if (receipt.writeVerified) {
+      lease.commitVerified();
+    }
     const metadata: WriteMetadata = {
       file_path,
       content_size: content.length,
@@ -503,6 +552,7 @@ async function executeRemoteWrite(
       write_acknowledged: receipt.writeAcknowledged,
       write_verified: receipt.writeVerified,
       sideEffectsUncertain: receipt.sideEffectsUncertain,
+      requiresRead: receipt.requiresRead || undefined,
     };
 
     return {
@@ -513,6 +563,30 @@ async function executeRemoteWrite(
       metadata,
     };
   } catch (error) {
+    if (error instanceof AcpRemoteMutationError && error.requiresRead) {
+      return {
+        success: false,
+        llmContent:
+          'Remote file state is uncertain for this path. Use Read on the same file to refresh remote state before retrying Write.',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'Remote file state requires a fresh Read before mutation',
+        },
+        metadata: {
+          file_path,
+          file_size: Buffer.byteLength(content, 'utf8'),
+          encoding,
+          kind: 'edit',
+          oldContent: getOldContent(previous),
+          newContent: content,
+          snapshot_created: false,
+          write_acknowledged: error.writeAcknowledged,
+          write_verified: error.writeVerified,
+          sideEffectsUncertain: error.sideEffectsUncertain,
+          requiresRead: true,
+        },
+      };
+    }
     if (error instanceof AcpRemoteMutationError) {
       return {
         success: false,
@@ -526,15 +600,47 @@ async function executeRemoteWrite(
           file_size: Buffer.byteLength(content, 'utf8'),
           encoding,
           kind: 'edit',
-          oldContent: previous.exists ? previous.content : '',
+          oldContent: getOldContent(previous),
           newContent: content,
           snapshot_created: false,
           write_acknowledged: error.writeAcknowledged,
           write_verified: error.writeVerified,
           sideEffectsUncertain: error.sideEffectsUncertain,
+          requiresRead: error.requiresRead || undefined,
         },
       };
     }
+    if (requiresReadBoundary(error)) {
+      return {
+        success: false,
+        llmContent:
+          'Remote file state is uncertain for this path. Use Read on the same file to refresh remote state before retrying Write.',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'Remote file state requires a fresh Read before mutation',
+        },
+        metadata: {
+          file_path,
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
+          requiresRead: true,
+        },
+      };
+    }
+    if (previous === undefined) {
+      return {
+        success: false,
+        llmContent: 'File write failed: Unable to read remote file before write',
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: 'Unable to read remote file before write',
+        },
+        metadata: stableMetadata,
+      };
+    }
     throw error;
+  } finally {
+    lease.release();
   }
 }
