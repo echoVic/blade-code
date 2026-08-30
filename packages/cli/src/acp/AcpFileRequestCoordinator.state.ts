@@ -18,11 +18,15 @@ type MutationPathStateKind =
   | 'needs-read'
   | 'reconciling';
 
+type MutationLeaseKind = 'active' | 'recovery';
+
 export interface MutationPathState {
   readonly pathIdentity: string;
   readonly sessionId: string;
   generation: number;
   kind: MutationPathStateKind;
+  leaseKind: MutationLeaseKind;
+  leaseId: symbol;
   retiredGenerations?: Set<number>;
 }
 
@@ -53,6 +57,11 @@ export interface RequestToken<T> {
   aborted: boolean;
   boundaryError: AcpRemoteFileBoundaryError | undefined;
   readToken?: ReadTokenState;
+  writeLeaseSnapshot?: {
+    generation: number;
+    leaseId: symbol;
+    leaseKind: MutationLeaseKind;
+  };
 }
 
 export interface RecoveryPermitState {
@@ -70,6 +79,27 @@ export interface AcpCoordinatorMutableState {
   recoveryPermits: Map<string, RecoveryPermitState>;
   closed: boolean;
 }
+
+interface ActiveLeaseMetadata {
+  readonly kind: 'active';
+  readonly sessionId: string;
+  readonly leaseId: symbol;
+  readonly generations: Map<string, number>;
+  released: boolean;
+}
+
+interface RecoveryLeaseMetadata {
+  readonly kind: 'recovery';
+  readonly sessionId: string;
+  readonly leaseId: symbol;
+  readonly pathIdentity: string;
+  readonly generation: number;
+  finished: boolean;
+}
+
+type LeaseMetadata = ActiveLeaseMetadata | RecoveryLeaseMetadata;
+
+const leaseMetadata = new WeakMap<object, LeaseMetadata>();
 
 export function createCoordinatorMutableState(): AcpCoordinatorMutableState {
   return {
@@ -115,6 +145,15 @@ export function createLocalPromiseToken<T>(
   };
 }
 
+function getLeaseMetadata(
+  lease: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease | undefined
+): LeaseMetadata | undefined {
+  if (!lease) {
+    return undefined;
+  }
+  return leaseMetadata.get(lease);
+}
+
 export function reserveRequestToken<T>(
   state: AcpCoordinatorMutableState,
   spec: AcpRemoteFileRequestSpec<T>
@@ -131,6 +170,22 @@ export function reserveRequestToken<T>(
   }
 
   const token = createLocalPromiseToken(spec, kind);
+  const metadata = getLeaseMetadata(spec.lease);
+  if (spec.operation === 'write' && metadata) {
+    if (metadata.kind === 'active') {
+      token.writeLeaseSnapshot = {
+        generation: metadata.generations.get(spec.pathIdentity) ?? 0,
+        leaseId: metadata.leaseId,
+        leaseKind: metadata.kind,
+      };
+    } else {
+      token.writeLeaseSnapshot = {
+        generation: metadata.generation,
+        leaseId: metadata.leaseId,
+        leaseKind: metadata.kind,
+      };
+    }
+  }
   if (spec.operation === 'read') {
     token.readToken = {
       pathIdentity: spec.pathIdentity,
@@ -162,7 +217,6 @@ export function cleanupToken<T>(
   state: AcpCoordinatorMutableState,
   token: RequestToken<T>
 ): void {
-  clearLocalBoundaryResources(token);
   if (token.kind === 'normal') {
     state.normalTokens.delete(token as RequestToken<unknown>);
   } else if (state.recoveryToken === (token as RequestToken<unknown>)) {
@@ -191,7 +245,6 @@ export function closeRejectToken<T>(
   if (token.settled) {
     return undefined;
   }
-  clearLocalBoundaryResources(token);
   token.settled = true;
   const error = new AcpRemoteFileBoundaryError(
     'closed',
@@ -226,11 +279,16 @@ export function boundaryRejectToken<T>(
   }
   if (token.operation === 'write' && token.dispatched) {
     const mutationState = state.mutationStates.get(token.pathIdentity);
-    if (mutationState && mutationState.sessionId === token.sessionId) {
+    if (
+      mutationState &&
+      mutationState.sessionId === token.sessionId &&
+      mutationState.generation === token.writeLeaseSnapshot?.generation &&
+      mutationState.leaseId === token.writeLeaseSnapshot.leaseId &&
+      mutationState.leaseKind === token.writeLeaseSnapshot.leaseKind
+    ) {
       mutationState.kind = 'pending-write';
     }
   }
-  clearLocalBoundaryResources(token);
   token.settled = true;
   token.reject(token.boundaryError);
   return token.boundaryError;
@@ -299,6 +357,7 @@ export function createMutationLease(
   pathIdentities: readonly string[],
   sessionId: string
 ): AcpRemoteMutationLease {
+  const activeLeaseId = Symbol('acp-mutation-lease');
   const generations = new Map<string, number>();
   for (const pathIdentity of pathIdentities) {
     const existing = state.mutationStates.get(pathIdentity);
@@ -316,13 +375,15 @@ export function createMutationLease(
       sessionId,
       generation: generations.get(pathIdentity) ?? 1,
       kind: 'active-mutation',
+      leaseKind: 'active',
+      leaseId: activeLeaseId,
       retiredGenerations,
     });
   }
 
   let released = false;
   let verified = false;
-  return {
+  const lease: AcpRemoteMutationLease = {
     sessionId,
     pathIdentities,
     generationFor(filePath: string): number {
@@ -390,16 +451,20 @@ export function createMutationLease(
         );
       }
       const nextGeneration = generation + 1;
+      const recoveryLeaseId = Symbol('acp-recovery-lease');
       generations.set(pathIdentity, nextGeneration);
       const retiredGenerations = new Set(mutationState.retiredGenerations ?? []);
       retiredGenerations.add(generation);
       mutationState.generation = nextGeneration;
       mutationState.kind = 'active-mutation';
+      mutationState.leaseKind = 'recovery';
+      mutationState.leaseId = recoveryLeaseId;
       mutationState.retiredGenerations = retiredGenerations;
-      return {
+      const recoveryLease: AcpRemoteMutationRecoveryLease = {
         generation: nextGeneration,
         pathIdentity,
         finish(outcome: 'restored' | 'uncertain'): void {
+          recoveryMetadata.finished = true;
           const current = state.mutationStates.get(pathIdentity);
           if (
             !current ||
@@ -415,6 +480,16 @@ export function createMutationLease(
           }
         },
       };
+      const recoveryMetadata: RecoveryLeaseMetadata = {
+        kind: 'recovery',
+        sessionId,
+        leaseId: recoveryLeaseId,
+        pathIdentity,
+        generation: nextGeneration,
+        finished: false,
+      };
+      leaseMetadata.set(recoveryLease, recoveryMetadata);
+      return recoveryLease;
     },
     commitVerified(): void {
       verified = true;
@@ -449,6 +524,20 @@ export function createMutationLease(
       }
     },
   };
+  const activeMetadata: ActiveLeaseMetadata = {
+    kind: 'active',
+    sessionId,
+    leaseId: activeLeaseId,
+    generations,
+    released: false,
+  };
+  leaseMetadata.set(lease, activeMetadata);
+  const originalRelease = lease.release;
+  lease.release = (): void => {
+    activeMetadata.released = true;
+    originalRelease();
+  };
+  return lease;
 }
 
 export function beginUserReadPermit(
@@ -529,12 +618,11 @@ export function assertReadPathAvailability<T>(
   state: AcpCoordinatorMutableState,
   spec: AcpRemoteFileRequestSpec<T>
 ): void {
-  const readToken = state.readTokens.get(spec.pathIdentity);
-  if (readToken) {
-    throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
-  }
   if (spec.userReadPermit?.lane === 'recovery') {
     const mutationState = state.mutationStates.get(spec.pathIdentity);
+    if (mutationState?.kind === 'pending-write') {
+      throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
+    }
     if (!mutationState || mutationState.kind !== 'needs-read') {
       throw new AcpRemoteFileBoundaryError(
         'stale-reconciliation',
@@ -556,6 +644,10 @@ export function assertReadPathAvailability<T>(
         false
       );
     }
+    const readToken = state.readTokens.get(spec.pathIdentity);
+    if (readToken && !readToken.detached) {
+      throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
+    }
     if (mutationState.retiredGenerations?.has(spec.userReadPermit.generation)) {
       throw new AcpRemoteFileBoundaryError(
         'stale-reconciliation',
@@ -565,6 +657,10 @@ export function assertReadPathAvailability<T>(
       );
     }
     return;
+  }
+  const readToken = state.readTokens.get(spec.pathIdentity);
+  if (readToken) {
+    throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
   }
   const mutationState = state.mutationStates.get(spec.pathIdentity);
   if (
@@ -580,7 +676,34 @@ export function assertWritePathAvailability<T>(
   spec: AcpRemoteFileRequestSpec<T>
 ): void {
   const mutationState = state.mutationStates.get(spec.pathIdentity);
-  if (!mutationState || mutationState.kind !== 'active-mutation') {
+  const metadata = getLeaseMetadata(spec.lease);
+  if (
+    !mutationState ||
+    mutationState.kind !== 'active-mutation' ||
+    !metadata ||
+    metadata.sessionId !== spec.sessionId
+  ) {
+    throw new AcpRemoteFileBoundaryError('busy', 'write', false, false);
+  }
+  if (metadata.kind === 'active') {
+    if (
+      metadata.released ||
+      !metadata.generations.has(spec.pathIdentity) ||
+      metadata.generations.get(spec.pathIdentity) !== mutationState.generation ||
+      mutationState.leaseKind !== metadata.kind ||
+      mutationState.leaseId !== metadata.leaseId
+    ) {
+      throw new AcpRemoteFileBoundaryError('busy', 'write', false, false);
+    }
+    return;
+  }
+  if (
+    metadata.finished ||
+    metadata.pathIdentity !== spec.pathIdentity ||
+    metadata.generation !== mutationState.generation ||
+    mutationState.leaseKind !== metadata.kind ||
+    mutationState.leaseId !== metadata.leaseId
+  ) {
     throw new AcpRemoteFileBoundaryError('busy', 'write', false, false);
   }
 }
@@ -614,7 +737,10 @@ export function handleSettlementState<T>(
   if (
     mutationState &&
     mutationState.sessionId === spec.sessionId &&
-    token.boundaryError?.dispatched
+    token.boundaryError?.dispatched &&
+    mutationState.generation === token.writeLeaseSnapshot?.generation &&
+    mutationState.leaseId === token.writeLeaseSnapshot.leaseId &&
+    mutationState.leaseKind === token.writeLeaseSnapshot.leaseKind
   ) {
     mutationState.kind = 'needs-read';
   }

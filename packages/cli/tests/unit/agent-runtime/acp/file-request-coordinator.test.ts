@@ -8,6 +8,7 @@ import {
   ACP_REMOTE_READBACK_TIMEOUT_MS,
   AcpRemoteFileBoundaryError,
   type AcpRemoteMutationLease,
+  type AcpRemoteMutationRecoveryLease,
   getAcpFileRequestCoordinator,
   MAX_ACP_NORMAL_FILE_REQUESTS,
   MAX_ACP_REMOTE_FILE_REQUESTS,
@@ -55,6 +56,48 @@ function makeIdentity(filePath: string): string {
   return `acp-remote-connection-path:${createHash('sha256')
     .update(normalizeAcpRemotePath(filePath))
     .digest('hex')}`;
+}
+
+function createSyntheticMutationLease(
+  sessionId: string,
+  filePath: string,
+  generation: number
+): AcpRemoteMutationLease {
+  const pathIdentity = makeIdentity(filePath);
+  return {
+    sessionId,
+    pathIdentities: [pathIdentity],
+    generationFor(path: string): number {
+      return path === filePath ? generation : 0;
+    },
+    isCurrent(path: string): boolean {
+      return path === filePath;
+    },
+    markForwardVerified(_filePath: string): void {
+      // Synthetic negative-path lease does not own coordinator state.
+    },
+    markDefinite(_filePath: string): void {
+      // Synthetic negative-path lease does not own coordinator state.
+    },
+    markUncertain(_filePath: string): void {
+      // Synthetic negative-path lease does not own coordinator state.
+    },
+    beginRecovery(path: string): AcpRemoteMutationRecoveryLease {
+      return {
+        generation: this.generationFor(path),
+        pathIdentity,
+        finish(_outcome: 'restored' | 'uncertain'): void {
+          // Synthetic negative-path lease does not own coordinator state.
+        },
+      };
+    },
+    commitVerified(): void {
+      // Synthetic negative-path lease does not own coordinator state.
+    },
+    release(): void {
+      // Synthetic negative-path lease does not own coordinator state.
+    },
+  };
 }
 
 function expectBoundaryError(
@@ -240,6 +283,10 @@ describe('AcpFileRequestCoordinator', () => {
       )
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const connectionRemoveSpy = vi.spyOn(
+      harness.agentConnection.signal,
+      'removeEventListener'
+    );
     const abortController = new AbortController();
 
     await expect(
@@ -274,6 +321,19 @@ describe('AcpFileRequestCoordinator', () => {
           ),
       })
     ).rejects.toThrow('Internal error');
+    await expect(
+      coordinator.runRequest({
+        operation: 'read',
+        purpose: 'user-read',
+        sessionId: 'session-a',
+        pathIdentity: makeIdentity('/repo/sync-throw.txt'),
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        signal,
+        dispatch: () => {
+          throw new Error('sync dispatch failed');
+        },
+      })
+    ).rejects.toThrow('sync dispatch failed');
     const abortPromise = coordinator.runRequest({
       operation: 'read',
       purpose: 'user-read',
@@ -326,6 +386,7 @@ describe('AcpFileRequestCoordinator', () => {
     blocked.resolve();
     await vi.runAllTimersAsync();
     expect(addSpy.mock.calls.length).toBe(removeSpy.mock.calls.length);
+    expect(connectionRemoveSpy.mock.calls.length).toBe(6);
     expect(vi.getTimerCount()).toBe(0);
     expect(unhandled).toEqual([]);
   });
@@ -607,6 +668,261 @@ describe('AcpFileRequestCoordinator', () => {
       pendingWrites: 0,
       needsRead: 1,
     });
+  });
+
+  it('rejects writes without a matching active or recovery lease before dispatch', async () => {
+    let dispatchCount = 0;
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp
+          .client({ name: 'coordinator-write-lease-client' })
+          .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => {
+            dispatchCount += 1;
+            return {};
+          })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const path = '/repo/file.txt';
+    const pathIdentity = makeIdentity(path);
+    const activeLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    const staleGeneration = activeLease.generationFor(path);
+
+    await expect(
+      coordinator.runRequest({
+        operation: 'write',
+        purpose: 'mutation',
+        sessionId: 'session-a',
+        pathIdentity,
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        dispatch: (cancellationSignal) =>
+          harness.agentConnection.request(
+            acp.CLIENT_METHODS.fs_write_text_file,
+            { path, content: 'missing-lease', sessionId: 'session-a' },
+            { cancellationSignal }
+          ),
+      })
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+    expect(dispatchCount).toBe(0);
+
+    const foreignLease = createSyntheticMutationLease(
+      'session-b',
+      path,
+      staleGeneration
+    );
+    await expect(
+      coordinator.runRequest({
+        operation: 'write',
+        purpose: 'mutation',
+        sessionId: 'session-a',
+        pathIdentity,
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        lease: foreignLease,
+        dispatch: (cancellationSignal) =>
+          harness.agentConnection.request(
+            acp.CLIENT_METHODS.fs_write_text_file,
+            { path, content: 'foreign-lease', sessionId: 'session-a' },
+            { cancellationSignal }
+          ),
+      })
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+    expect(dispatchCount).toBe(0);
+
+    activeLease.release();
+    const currentLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    await expect(
+      coordinator.runRequest({
+        operation: 'write',
+        purpose: 'mutation',
+        sessionId: 'session-a',
+        pathIdentity,
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        lease: activeLease,
+        dispatch: (cancellationSignal) =>
+          harness.agentConnection.request(
+            acp.CLIENT_METHODS.fs_write_text_file,
+            { path, content: 'stale-lease', sessionId: 'session-a' },
+            { cancellationSignal }
+          ),
+      })
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+    expect(dispatchCount).toBe(0);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    currentLease.markUncertain(path);
+    const recoveryLease = currentLease.beginRecovery(path);
+    await expect(
+      coordinator.runRequest({
+        operation: 'write',
+        purpose: 'rollback',
+        sessionId: 'session-a',
+        pathIdentity,
+        deadlineAt: Date.now() + ACP_REMOTE_PATCH_COMPENSATION_TIMEOUT_MS,
+        lease: recoveryLease,
+        dispatch: (cancellationSignal) =>
+          harness.agentConnection.request(
+            acp.CLIENT_METHODS.fs_write_text_file,
+            { path, content: 'rollback', sessionId: 'session-a' },
+            { cancellationSignal }
+          ),
+      })
+    ).resolves.toEqual({});
+    expect(dispatchCount).toBe(1);
+
+    recoveryLease.finish('restored');
+  });
+
+  it('lets a matching reconciliation bypass a detached normal read but not pending-write', async () => {
+    const detachedReadGate = deferred<void>();
+    let readDispatchCount = 0;
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp
+          .client({ name: 'coordinator-recovery-detached-client' })
+          .onRequest(acp.CLIENT_METHODS.fs_read_text_file, async () => {
+            readDispatchCount += 1;
+            if (readDispatchCount === 1) {
+              await detachedReadGate.promise;
+              return { content: 'late detached content' };
+            }
+            return { content: 'reconciled content' };
+          })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const path = '/repo/shared.txt';
+    const pathIdentity = makeIdentity(path);
+
+    const detachedRead = coordinator.runRequest({
+      operation: 'read',
+      purpose: 'user-read',
+      sessionId: 'session-a',
+      pathIdentity,
+      deadlineAt: Date.now() + 25,
+      dispatch: (cancellationSignal) =>
+        harness.agentConnection.request(
+          acp.CLIENT_METHODS.fs_read_text_file,
+          { path, sessionId: 'session-a' },
+          { cancellationSignal }
+        ),
+    });
+
+    await vi.advanceTimersByTimeAsync(26);
+    await expect(detachedRead).rejects.toMatchObject({
+      reason: 'timeout',
+      dispatched: true,
+      requestPending: true,
+    });
+
+    const lease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    lease.markUncertain(path);
+    const permit = coordinator.beginUserRead(path, 'session-a');
+    expect(permit.lane).toBe('recovery');
+
+    await expect(
+      coordinator.runRequest({
+        operation: 'read',
+        purpose: 'user-read',
+        sessionId: 'session-b',
+        pathIdentity,
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        dispatch: () => Promise.resolve({ content: 'other-session' }),
+      })
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+
+    await expect(
+      coordinator.runRequest({
+        operation: 'read',
+        purpose: 'user-read',
+        sessionId: 'session-a',
+        pathIdentity,
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        userReadPermit: permit,
+        dispatch: (cancellationSignal) =>
+          harness.agentConnection.request(
+            acp.CLIENT_METHODS.fs_read_text_file,
+            { path, sessionId: 'session-a' },
+            { cancellationSignal }
+          ),
+      })
+    ).resolves.toEqual({ content: 'reconciled content' });
+    expect(readDispatchCount).toBe(2);
+
+    detachedReadGate.resolve();
+    await vi.runAllTimersAsync();
+
+    const blockedWrite = deferred<void>();
+    const pendingWriteHarness = trackHarness(
+      createPairedAcpAppHarness(
+        acp
+          .client({ name: 'coordinator-recovery-pending-write-client' })
+          .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => {
+            await blockedWrite.promise;
+            return {};
+          })
+      )
+    );
+    const pendingWriteCoordinator = getAcpFileRequestCoordinator(
+      pendingWriteHarness.agentConnection
+    );
+    const pendingPath = '/repo/pending-write.txt';
+    const pendingLease = pendingWriteCoordinator.tryAcquireMutationLease(
+      [pendingPath],
+      'session-a'
+    );
+    const pendingWrite = pendingWriteCoordinator.runRequest({
+      operation: 'write',
+      purpose: 'mutation',
+      sessionId: 'session-a',
+      pathIdentity: makeIdentity(pendingPath),
+      deadlineAt: Date.now() + 25,
+      lease: pendingLease,
+      dispatch: (cancellationSignal) =>
+        pendingWriteHarness.agentConnection.request(
+          acp.CLIENT_METHODS.fs_write_text_file,
+          { path: pendingPath, content: 'updated', sessionId: 'session-a' },
+          { cancellationSignal }
+        ),
+    });
+
+    await vi.advanceTimersByTimeAsync(26);
+    await expect(pendingWrite).rejects.toMatchObject({
+      reason: 'timeout',
+      dispatched: true,
+      requestPending: true,
+    });
+    await expect(
+      Promise.resolve().then(() =>
+        pendingWriteCoordinator.beginUserRead(pendingPath, 'session-a')
+      )
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+
+    blockedWrite.resolve();
+    await vi.runAllTimersAsync();
   });
 
   it('rejects opposite or stale generation settlement and makes repeated release idempotent', async () => {

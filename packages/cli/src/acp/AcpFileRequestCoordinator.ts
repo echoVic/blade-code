@@ -147,6 +147,7 @@ export class AcpFileRequestCoordinator {
       token.requestPending = true;
       this.observeUnderlyingSettlement(token, pending, spec);
     } catch (error) {
+      this.clearLocalBoundaryResources(token);
       this.cleanupToken(token);
       token.reject(error);
       return token.localPromise;
@@ -237,16 +238,19 @@ export class AcpFileRequestCoordinator {
     result: { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown }
   ): void {
     if (this.state.closed) {
+      this.clearLocalBoundaryResources(token);
       this.cleanupToken(token);
       return;
     }
     handleSettlementState(this.state, token, spec);
 
     if (token.boundaryError) {
+      this.clearLocalBoundaryResources(token);
       this.cleanupToken(token);
       return;
     }
 
+    this.clearLocalBoundaryResources(token);
     this.cleanupToken(token);
     if (result.status === 'fulfilled') {
       token.resolve(result.value);
@@ -261,6 +265,7 @@ export class AcpFileRequestCoordinator {
     requestPending: boolean
   ): void {
     boundaryRejectToken(this.state, token, reason, requestPending);
+    this.clearLocalBoundaryResources(token);
   }
 
   private closeRejectToken<T>(token: RequestToken<T>): void {
@@ -268,9 +273,7 @@ export class AcpFileRequestCoordinator {
     if (!wasOpen) {
       return;
     }
-    if (token.deadlineAbortHandler) {
-      this.connection.signal.removeEventListener('abort', token.deadlineAbortHandler);
-    }
+    this.clearLocalBoundaryResources(token);
     token.controller.abort();
   }
 
@@ -281,6 +284,7 @@ export class AcpFileRequestCoordinator {
   private clearLocalBoundaryResources<T>(token: RequestToken<T>): void {
     if (token.deadlineAbortHandler) {
       this.connection.signal.removeEventListener('abort', token.deadlineAbortHandler);
+      token.deadlineAbortHandler = undefined;
     }
     clearLocalBoundaryResources(token);
   }
