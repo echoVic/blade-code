@@ -231,4 +231,67 @@ describe('AcpFileSystemService remote ownership', () => {
     expect(error.message).toBe('ACP remote filesystem does not support mkdir');
     expect(error.operation).toBe('mkdir');
   });
+
+  it('snapshots constructor capabilities instead of sharing the caller reference', async () => {
+    const client = new ControlledFileClient();
+    client.files.set('/remote/file.ts', 'snapshot content');
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const mutableCapabilities = {
+      readTextFile: true,
+      writeTextFile: false,
+    };
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      mutableCapabilities
+    );
+
+    mutableCapabilities.readTextFile = false;
+    mutableCapabilities.writeTextFile = true;
+
+    expect(service.canReadTextFile()).toBe(true);
+    expect(service.canWriteTextFile()).toBe(false);
+    expect(service.usesRemoteFiles()).toBe(true);
+    await expect(service.readTextFile('/remote/file.ts')).resolves.toBe(
+      'snapshot content'
+    );
+    await expect(service.writeTextFile('/remote/file.ts', 'new')).rejects.toMatchObject(
+      {
+        name: 'AcpFileSystemCapabilityError',
+        operation: 'writeTextFile',
+      }
+    );
+  });
+
+  it('returns a defensive copy from getCapabilities', async () => {
+    const client = new ControlledFileClient();
+    client.files.set('/remote/file.ts', 'snapshot content');
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      readTextFile: true,
+      writeTextFile: false,
+    });
+
+    const exposed = service.getCapabilities();
+    exposed.readTextFile = false;
+    exposed.writeTextFile = true;
+
+    expect(service.canReadTextFile()).toBe(true);
+    expect(service.canWriteTextFile()).toBe(false);
+    expect(service.getCapabilities()).toEqual({
+      readTextFile: true,
+      writeTextFile: false,
+    });
+    await expect(service.readTextFile('/remote/file.ts')).resolves.toBe(
+      'snapshot content'
+    );
+    await expect(service.writeTextFile('/remote/file.ts', 'new')).rejects.toMatchObject(
+      {
+        name: 'AcpFileSystemCapabilityError',
+        operation: 'writeTextFile',
+      }
+    );
+  });
 });

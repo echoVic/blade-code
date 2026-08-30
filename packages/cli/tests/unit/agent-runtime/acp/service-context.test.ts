@@ -26,6 +26,11 @@ const capabilities: acp.ClientCapabilities = {
   terminal: true,
 };
 
+interface AcpFileSystemServiceLike {
+  canReadTextFile(): boolean;
+  canWriteTextFile(): boolean;
+}
+
 describe('AcpServiceContext session isolation', () => {
   const harnesses: PairedAcpHarness[] = [];
 
@@ -180,6 +185,46 @@ describe('AcpServiceContext session isolation', () => {
     expect(isAcpRemoteFileSystem()).toBe(false);
     expect(isAcpRemoteFileSystem('unknown-session')).toBe(false);
     expect(isAcpMode('unknown-session')).toBe(false);
+  });
+
+  it('snapshots session fs capabilities at initialization time', async () => {
+    interface MutableClientCapabilities extends acp.ClientCapabilities {
+      fs?: {
+        readTextFile?: boolean;
+        writeTextFile?: boolean;
+      };
+    }
+
+    const client = new ControlledFileClient();
+    client.files.set('/workspace/a/file.ts', 'remote content');
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const mutableCapabilities: MutableClientCapabilities = {
+      fs: { readTextFile: true, writeTextFile: false },
+      terminal: false,
+    };
+
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      mutableCapabilities,
+      '/workspace/a'
+    );
+
+    mutableCapabilities.fs = { readTextFile: false, writeTextFile: true };
+
+    expect(isAcpRemoteFileSystem('session-a')).toBe(true);
+    const fileSystem = getAcpFileSystemService('session-a');
+    expect(fileSystem).toBeInstanceOf(Object);
+    expect(fileSystem).toMatchObject({
+      canReadTextFile: expect.any(Function),
+      canWriteTextFile: expect.any(Function),
+    });
+    expect((fileSystem as AcpFileSystemServiceLike).canReadTextFile()).toBe(true);
+    expect((fileSystem as AcpFileSystemServiceLike).canWriteTextFile()).toBe(false);
+    await expect(fileSystem.readTextFile('/workspace/a/file.ts')).resolves.toBe(
+      'remote content'
+    );
   });
 
   it('binds a local terminal to the Session cwd when capability is absent', async () => {

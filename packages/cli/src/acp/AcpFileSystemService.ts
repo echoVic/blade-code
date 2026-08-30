@@ -47,11 +47,18 @@ export function isAcpResourceNotFoundError(error: unknown): boolean {
 }
 
 export class AcpFileSystemService implements FileSystemService {
+  private readonly capabilities: FileSystemCapabilities;
+
   constructor(
     private readonly connection: AgentSideConnection,
     private readonly sessionId: string,
-    private readonly capabilities: FileSystemCapabilities
-  ) {}
+    capabilities: FileSystemCapabilities
+  ) {
+    this.capabilities = {
+      readTextFile: capabilities.readTextFile === true,
+      writeTextFile: capabilities.writeTextFile === true,
+    };
+  }
 
   /**
    * 读取文本文件
@@ -163,7 +170,7 @@ export class AcpFileSystemService implements FileSystemService {
    * 获取 IDE 支持的文件系统能力
    */
   getCapabilities(): FileSystemCapabilities {
-    return this.capabilities;
+    return { ...this.capabilities };
   }
 
   /**
