@@ -1,6 +1,6 @@
 # ACP Filesystem Request Lifecycle Design
 
-> 状态：设计复审中
+> 状态：批准实施
 > 日期：2026-08-31
 
 ## 背景
