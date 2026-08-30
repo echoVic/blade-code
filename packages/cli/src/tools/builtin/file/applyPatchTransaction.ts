@@ -403,6 +403,7 @@ export async function commitRemotePatchTransaction(
     }
   } catch (error) {
     const rollbackErrors: unknown[] = [];
+    const rollbackSignal = new AbortController().signal;
     for (const change of attempted.reverse()) {
       try {
         if (remoteService) {
@@ -412,7 +413,7 @@ export async function commitRemotePatchTransaction(
             previous: { exists: true, content: change.newContent! },
             intendedContent: change.oldContent!,
             operation: 'edit',
-            signal,
+            signal: rollbackSignal,
             recordAccess: false,
           });
         } else {

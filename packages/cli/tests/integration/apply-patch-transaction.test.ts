@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
 import type {
   FileStat,
@@ -9,6 +9,7 @@ import type {
 } from '../../src/services/FileSystemService.js';
 import { parseApplyPatch } from '../../src/tools/builtin/file/applyPatchParser.js';
 import {
+  AcpRemotePatchTransactionError,
   commitLocalPatchTransaction,
   commitRemotePatchTransaction,
   type LocalPatchFileSystem,
@@ -422,6 +423,187 @@ describe('ApplyPatch ACP remote transaction', () => {
       name: 'AcpRemotePatchTransactionError',
       sideEffectsUncertain: true,
     });
+  });
+
+  it('rolls back already-verified remote writes even when the user signal aborts before a later operation', async () => {
+    const { client, service } = createAcpRemoteFileSystem(
+      new Map([
+        ['/remote/first.ts', 'const first = false;\n'],
+        ['/remote/second.ts', 'const second = false;\n'],
+      ]),
+      'rollback-after-abort'
+    );
+    service.recordRemoteAccess('/remote/first.ts', 'const first = false;\n', 'read');
+    service.recordRemoteAccess('/remote/second.ts', 'const second = false;\n', 'read');
+    const controller = new AbortController();
+    let secondForwardReadCount = 0;
+    const originalReadTextFile = client.readTextFile.bind(client);
+    client.readTextFile = async (params) => {
+      if (params.path === '/remote/second.ts') {
+        secondForwardReadCount += 1;
+        if (secondForwardReadCount === 2) {
+          controller.abort();
+        }
+      }
+      return originalReadTextFile(params);
+    };
+    const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+    const plan = await planRemotePatchTransaction(operations, '/remote', service);
+
+    let thrown: unknown;
+    try {
+      await commitRemotePatchTransaction(plan, service, controller.signal);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AcpRemotePatchTransactionError);
+    if (!(thrown instanceof AcpRemotePatchTransactionError)) {
+      throw new Error('expected AcpRemotePatchTransactionError');
+    }
+    expect(thrown.sideEffectsUncertain).toBe(false);
+    expect(thrown.errors[0]).toMatchObject({ name: 'AbortError' });
+    expect(client.requests.map((request) => request.kind)).toEqual([
+      'read',
+      'read',
+      'read',
+      'write',
+      'read',
+      'read',
+      'write',
+      'read',
+      'write',
+      'read',
+    ]);
+    expect(
+      client.requests
+        .filter((request) => request.kind === 'write')
+        .map((request) => request.request)
+    ).toEqual([
+      {
+        path: '/remote/first.ts',
+        content: 'const first = true;\n',
+        sessionId: 'rollback-after-abort',
+      },
+      {
+        path: '/remote/second.ts',
+        content: 'const second = false;\n',
+        sessionId: 'rollback-after-abort',
+      },
+      {
+        path: '/remote/first.ts',
+        content: 'const first = false;\n',
+        sessionId: 'rollback-after-abort',
+      },
+    ]);
+    expect(client.files.get('/remote/first.ts')).toBe('const first = false;\n');
+    expect(client.files.get('/remote/second.ts')).toBe('const second = false;\n');
+    expect(service.getRemoteAccessRecord('/remote/first.ts')?.lastOperation).toBe(
+      'read'
+    );
+    expect(service.getRemoteAccessRecord('/remote/second.ts')?.lastOperation).toBe(
+      'read'
+    );
+  });
+
+  it('keeps the abort error first and marks sideEffectsUncertain=true when rollback verification also fails after cancellation', async () => {
+    const { client, service } = createAcpRemoteFileSystem(
+      new Map([
+        ['/remote/first.ts', 'const first = false;\n'],
+        ['/remote/second.ts', 'const second = false;\n'],
+      ]),
+      'rollback-after-abort-uncertain'
+    );
+    service.recordRemoteAccess('/remote/first.ts', 'const first = false;\n', 'read');
+    service.recordRemoteAccess('/remote/second.ts', 'const second = false;\n', 'read');
+    const controller = new AbortController();
+    let secondForwardReadCount = 0;
+    const originalReadTextFile = client.readTextFile.bind(client);
+    client.readTextFile = async (params) => {
+      if (params.path === '/remote/second.ts') {
+        secondForwardReadCount += 1;
+        if (secondForwardReadCount === 2) {
+          controller.abort();
+        }
+      }
+      return originalReadTextFile(params);
+    };
+    client.enqueueWriteBehavior({ kind: 'apply-and-ack' });
+    client.enqueueWriteBehavior({
+      kind: 'replace-and-throw',
+      content: 'const first = rollback mismatch;\n',
+      error: new Error('remote rollback mismatch'),
+    });
+    const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+    const plan = await planRemotePatchTransaction(operations, '/remote', service);
+
+    let thrown: unknown;
+    try {
+      await commitRemotePatchTransaction(plan, service, controller.signal);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AcpRemotePatchTransactionError);
+    if (!(thrown instanceof AcpRemotePatchTransactionError)) {
+      throw new Error('expected AcpRemotePatchTransactionError');
+    }
+    expect(thrown.sideEffectsUncertain).toBe(true);
+    expect(thrown.errors[0]).toMatchObject({ name: 'AbortError' });
+    expect(thrown.errors[1]).toMatchObject({
+      message: 'edit readback returned unexpected remote content',
+    });
+    expect(client.requests.filter((request) => request.kind === 'write')).toEqual([
+      {
+        kind: 'write',
+        request: {
+          path: '/remote/first.ts',
+          content: 'const first = true;\n',
+          sessionId: 'rollback-after-abort-uncertain',
+        },
+      },
+      {
+        kind: 'write',
+        request: {
+          path: '/remote/second.ts',
+          content: 'const second = false;\n',
+          sessionId: 'rollback-after-abort-uncertain',
+        },
+      },
+      {
+        kind: 'write',
+        request: {
+          path: '/remote/first.ts',
+          content: 'const first = false;\n',
+          sessionId: 'rollback-after-abort-uncertain',
+        },
+      },
+    ]);
+    expect(client.files.get('/remote/first.ts')).toBe('const first = false;\n');
+    expect(client.files.get('/remote/second.ts')).toBe(
+      'const first = rollback mismatch;\n'
+    );
+    expect(service.getRemoteAccessRecord('/remote/first.ts')?.lastOperation).toBe(
+      'read'
+    );
   });
 
   it('fails closed for remote add, delete, and move operations', async () => {

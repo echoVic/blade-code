@@ -818,5 +818,8 @@ describe('ApplyPatch builtin tool', () => {
     }
     expect(service.getRemoteAccessRecord('C:\\workspace\\first.ts')).toBeUndefined();
     expect(service.getRemoteAccessRecord('C:\\workspace\\second.ts')).toBeUndefined();
+    expect(result.metadata?.summary).toBe(
+      'ApplyPatch failed; final remote state is uncertain, re-read affected files before retrying'
+    );
   });
 });

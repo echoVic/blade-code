@@ -164,7 +164,7 @@ export const readTool = createTool({
               },
             };
           }
-          throw error;
+          return sanitizedRemoteReadFailure();
         }
 
         if (typeof signal.throwIfAborted === 'function') {
@@ -371,6 +371,17 @@ export const readTool = createTool({
     return ext ? `**/*${ext}` : '**/*';
   },
 });
+
+function sanitizedRemoteReadFailure(): ToolResult {
+  return {
+    success: false,
+    llmContent: 'File read failed: Unable to read remote file',
+    error: {
+      type: ToolErrorType.EXECUTION_ERROR,
+      message: 'Unable to read remote file',
+    },
+  };
+}
 
 /**
  * 检查是否是文本文件

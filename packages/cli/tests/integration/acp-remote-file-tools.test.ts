@@ -232,14 +232,15 @@ describe('ACP remote Read builtin tool', () => {
     },
   ])(
     'remote Read keeps $label failures as execution errors instead of not-found',
-    async ({ error, matcher }) => {
+    async ({ error }) => {
       const root = await createTempRoot('blade-acp-remote-failure-');
       const filePath = path.join(root, 'failing.txt');
       const hostCanary = 'host should remain untouched\n';
       await fs.writeFile(filePath, hostCanary, 'utf8');
 
       const client = new ControlledFileClient();
-      const readSpy = vi.spyOn(client, 'readTextFile').mockRejectedValueOnce(error);
+      client.enqueueReadError(error);
+      const readSpy = vi.spyOn(client, 'readTextFile');
       const sessionId = `remote-read-failure-${Math.random().toString(16).slice(2)}`;
       initializeRemoteSession(client, sessionId, root);
 
@@ -247,14 +248,77 @@ describe('ACP remote Read builtin tool', () => {
 
       expect(result.success).toBe(false);
       expect(result.error?.type).toBe('execution_error');
-      expect(result.llmContent).toMatch(/^File read failed:/);
-      expect(result.llmContent).toMatch(matcher);
+      expect(result.llmContent).toBe('File read failed: Unable to read remote file');
+      expect(result.error?.message).toBe('Unable to read remote file');
+      expect(Object.hasOwn(result.error ?? {}, 'details')).toBe(false);
       expect(result.llmContent).not.toContain('File not found');
       expect(readSpy).toHaveBeenCalledTimes(1);
+      expect(client.requests).toEqual([
+        {
+          kind: 'read',
+          request: {
+            path: filePath,
+            sessionId,
+          },
+        },
+      ]);
       expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
       await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
     }
   );
+
+  it('remote Read sanitizes ACP control-plane errors without leaking client-private payloads', async () => {
+    const root = await createTempRoot('blade-acp-remote-read-sanitize-');
+    const filePath = path.join(root, 'sanitize.txt');
+    const hostCanary = 'host should remain untouched\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    const sentinel =
+      'ACP_SENTINEL::private-path=/remote/private/secret.txt::payload=sk-live-123';
+    client.enqueueReadError(
+      Object.assign(new RequestError(-32020, sentinel), {
+        data: {
+          sentinel,
+          payload: 'token=sk-live-123',
+          privatePath: '/remote/private/secret.txt',
+        },
+        secretLikeField: 'api_key=sk-live-123',
+      })
+    );
+    const readSpy = vi.spyOn(client, 'readTextFile');
+    const sessionId = 'remote-read-sanitize';
+    initializeRemoteSession(client, sessionId, root);
+
+    const result = await executeRead(filePath, sessionId);
+    const serialized = JSON.stringify(result);
+
+    expect(result).toMatchObject({
+      success: false,
+      llmContent: 'File read failed: Unable to read remote file',
+      error: {
+        type: 'execution_error',
+        message: 'Unable to read remote file',
+      },
+    });
+    expect(Object.hasOwn(result.error ?? {}, 'details')).toBe(false);
+    expect(serialized).not.toContain('ACP_SENTINEL');
+    expect(serialized).not.toContain('/remote/private/secret.txt');
+    expect(serialized).not.toContain('sk-live-123');
+    expect(serialized).not.toContain('secretLikeField');
+    expect(readSpy).toHaveBeenCalledTimes(1);
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+    expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
+  });
 
   it.each([
     {

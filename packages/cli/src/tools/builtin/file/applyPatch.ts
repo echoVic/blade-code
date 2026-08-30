@@ -437,12 +437,16 @@ function failure(
   type: ToolErrorType = ToolErrorType.EXECUTION_ERROR,
   metadata?: Partial<ApplyPatchMetadata>
 ): ToolResult {
+  const summary =
+    metadata?.sideEffectsUncertain === true
+      ? 'ApplyPatch failed; final remote state is uncertain, re-read affected files before retrying'
+      : 'ApplyPatch failed; no partial patch was accepted';
   return {
     success: false,
     llmContent: message,
     error: { type, message },
     metadata: {
-      summary: 'ApplyPatch failed; no partial patch was accepted',
+      summary,
       ...metadata,
     },
   };
