@@ -19,6 +19,14 @@ import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getCwd } from '../utils/cwd.js';
 import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
+import {
+  isValidResidentSessionProjectionLimit,
+  isValidSessionProjectionIdleMs,
+  MAX_RESIDENT_SESSION_PROJECTIONS,
+  MAX_SESSION_PROJECTION_IDLE_MS,
+  MIN_RESIDENT_SESSION_PROJECTIONS,
+  MIN_SESSION_PROJECTION_IDLE_MS,
+} from './sessionProjectionResidency.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -492,6 +500,23 @@ export interface SaveOptions {
   projectDir?: string;
 }
 
+export type ConfigSaveErrorCode =
+  | 'UNKNOWN_CONFIG_FIELD'
+  | 'NON_PERSISTABLE_FIELD'
+  | 'INVALID_CONFIG_SCOPE'
+  | 'INVALID_CONFIG_VALUE';
+
+export class ConfigSaveError extends Error {
+  constructor(
+    public readonly code: ConfigSaveErrorCode,
+    message: string,
+    public readonly field?: keyof BladeConfig
+  ) {
+    super(message);
+    this.name = 'ConfigSaveError';
+  }
+}
+
 // ============================================
 // ConfigService 类
 // ============================================
@@ -555,6 +580,7 @@ export class ConfigService {
     // 1. 验证字段可持久化性
     this.validatePersistableFields(updates);
     this.validateAllowedScopes(updates, options.scope);
+    this.validateFieldValues(updates);
 
     // 2. 按 target 和 scope 分组
     const grouped = this.groupUpdatesByTarget(
@@ -722,13 +748,18 @@ export class ConfigService {
       const routing = FIELD_ROUTING_TABLE[key];
 
       if (!routing) {
-        throw new Error(`Unknown config field: ${key}`);
+        throw new ConfigSaveError(
+          'UNKNOWN_CONFIG_FIELD',
+          `Unknown config field: ${key}`
+        );
       }
 
       if (!routing.persistable) {
-        throw new Error(
+        throw new ConfigSaveError(
+          'NON_PERSISTABLE_FIELD',
           `Field "${key}" is non-persistable and cannot be saved to config files. ` +
-            `Non-persistable fields are runtime-only and only valid for the current session.`
+            `Non-persistable fields are runtime-only and only valid for the current session.`,
+          key as keyof BladeConfig
         );
       }
     }
@@ -743,10 +774,38 @@ export class ConfigService {
       if (!routing?.allowedScopes) continue;
       const scope = scopeOverride ?? routing.defaultScope;
       if (!routing.allowedScopes.includes(scope)) {
-        throw new Error(
-          `Field "${key}" only supports scopes: ${routing.allowedScopes.join(', ')}`
+        throw new ConfigSaveError(
+          'INVALID_CONFIG_SCOPE',
+          `Field "${key}" only supports scopes: ${routing.allowedScopes.join(', ')}`,
+          key as keyof BladeConfig
         );
       }
+    }
+  }
+
+  private validateFieldValues(updates: Partial<BladeConfig>): void {
+    if (
+      updates.maxResidentSessionProjections !== undefined &&
+      !isValidResidentSessionProjectionLimit(updates.maxResidentSessionProjections)
+    ) {
+      throw new ConfigSaveError(
+        'INVALID_CONFIG_VALUE',
+        'Field "maxResidentSessionProjections" must be a safe integer between ' +
+          `${MIN_RESIDENT_SESSION_PROJECTIONS} and ${MAX_RESIDENT_SESSION_PROJECTIONS}`,
+        'maxResidentSessionProjections'
+      );
+    }
+
+    if (
+      updates.sessionProjectionIdleMs !== undefined &&
+      !isValidSessionProjectionIdleMs(updates.sessionProjectionIdleMs)
+    ) {
+      throw new ConfigSaveError(
+        'INVALID_CONFIG_VALUE',
+        'Field "sessionProjectionIdleMs" must be a safe integer between ' +
+          `${MIN_SESSION_PROJECTION_IDLE_MS} and ${MAX_SESSION_PROJECTION_IDLE_MS}`,
+        'sessionProjectionIdleMs'
+      );
     }
   }
 

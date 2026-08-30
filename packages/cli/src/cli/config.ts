@@ -148,7 +148,7 @@ export const globalOptions = {
   'session-runtime-idle-ms': {
     alias: ['sessionRuntimeIdleMs'],
     type: 'number',
-    describe: 'Idle time before an evictable Web Session runtime is disposed',
+    describe: 'Idle time before an evictable Web Session runtime is evicted',
     group: 'AI Options:',
     default: undefined,
   },
@@ -162,7 +162,7 @@ export const globalOptions = {
   'session-projection-idle-ms': {
     alias: ['sessionProjectionIdleMs'],
     type: 'number',
-    describe: 'Idle time before an evictable Session projection is disposed',
+    describe: 'Idle time before an evictable Session projection is evicted',
     group: 'AI Options:',
     default: undefined,
   },

@@ -1,12 +1,22 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setCwdState } from '../../src/bootstrap/state.js';
 import { ConfigManager } from '../../src/config/ConfigManager.js';
 import { ConfigService } from '../../src/config/ConfigService.js';
 import { resetWorkspaceIdentityCache } from '../../src/security/WorkspaceIdentity.js';
 import { WorkspaceTrustService } from '../../src/security/WorkspaceTrustService.js';
+import { BladeServerError } from '../../src/server/error.js';
+import { ConfigRoutes } from '../../src/server/routes/config.js';
 
 vi.unmock('node:child_process');
 
@@ -421,6 +431,32 @@ describe('ConfigManager 集成', () => {
       ).rejects.toThrow('maxResidentSessionProjections');
     });
 
+    it('invalid global session projection residency values should be rejected centrally', async () => {
+      await expect(
+        ConfigService.getInstance().save(
+          {
+            maxResidentSessionProjections: 0,
+          },
+          { scope: 'global', immediate: true }
+        )
+      ).rejects.toMatchObject({
+        code: 'INVALID_CONFIG_VALUE',
+        message: expect.stringContaining('maxResidentSessionProjections'),
+      });
+
+      await expect(
+        ConfigService.getInstance().save(
+          {
+            sessionProjectionIdleMs: 1,
+          },
+          { scope: 'global', immediate: true }
+        )
+      ).rejects.toMatchObject({
+        code: 'INVALID_CONFIG_VALUE',
+        message: expect.stringContaining('sessionProjectionIdleMs'),
+      });
+    });
+
     it('应忽略项目与本地 settings 中的全局专属驻留设置并按文件各警告一次', async () => {
       const projectSettingsPath = path.join(tempProject, '.blade', 'settings.json');
       const localSettingsPath = path.join(tempProject, '.blade', 'settings.local.json');
@@ -466,6 +502,166 @@ describe('ConfigManager 集成', () => {
       );
 
       warnSpy.mockRestore();
+    });
+
+    it('同一 ConfigManager instance 重复 initialize/reload 不应重复 warning，reset 后可再次 warning', async () => {
+      const projectSettingsPath = path.join(tempProject, '.blade', 'settings.json');
+      const localSettingsPath = path.join(tempProject, '.blade', 'settings.local.json');
+      mkdirSync(path.dirname(projectSettingsPath), { recursive: true });
+      writeFileSync(
+        projectSettingsPath,
+        JSON.stringify({
+          maxResidentSessionProjections: 512,
+        })
+      );
+      writeFileSync(
+        localSettingsPath,
+        JSON.stringify({
+          sessionProjectionIdleMs: 3_600_000,
+        })
+      );
+
+      await WorkspaceTrustService.getInstance().trust(tempProject);
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const manager = ConfigManager.getInstance();
+      await manager.initialize();
+      await manager.reload();
+      await manager.initialize();
+
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+
+      warnSpy.mockClear();
+      ConfigManager.resetInstance();
+      await ConfigManager.getInstance().initialize();
+
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+      expect(warnSpy.mock.calls).toEqual(
+        expect.arrayContaining([
+          [
+            expect.stringContaining(
+              'Ignoring global-only session projection residency settings in'
+            ),
+            projectSettingsPath,
+          ],
+          [
+            expect.stringContaining(
+              'Ignoring global-only session projection residency settings in'
+            ),
+            localSettingsPath,
+          ],
+        ])
+      );
+
+      warnSpy.mockRestore();
+    });
+
+    it('ConfigRoutes should return typed 400 and rollback real store state for invalid project-scoped updates', async () => {
+      const { configActions, ensureStoreInitialized, getConfig } = await import(
+        '../../src/store/vanilla.js'
+      );
+      await ensureStoreInitialized();
+
+      await configActions().updateConfig(
+        {
+          maxResidentSessionProjections: 256,
+          sessionProjectionIdleMs: 1_800_000,
+        },
+        { scope: 'global', immediate: true }
+      );
+
+      const before = getConfig();
+      const userSettingsPath = path.join(tempHome, '.blade', 'settings.json');
+      const projectSettingsPath = path.join(tempProject, '.blade', 'settings.json');
+      const localSettingsPath = path.join(tempProject, '.blade', 'settings.local.json');
+
+      const app = new Hono();
+      app.onError((error, c) => {
+        if (error instanceof BladeServerError) {
+          return c.json(error.toObject(), error.statusCode as 400 | 500);
+        }
+        throw error;
+      });
+      app.route('/configs', ConfigRoutes());
+
+      const response = await app.request('/configs', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          updates: { maxResidentSessionProjections: 99 },
+          options: { scope: 'project', immediate: true },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: {
+          code: 'BAD_REQUEST',
+          message: expect.stringContaining('maxResidentSessionProjections'),
+        },
+      });
+      expect(getConfig()).toMatchObject({
+        maxResidentSessionProjections: before?.maxResidentSessionProjections,
+        sessionProjectionIdleMs: before?.sessionProjectionIdleMs,
+      });
+      expect(JSON.parse(readFileSync(userSettingsPath, 'utf8'))).toMatchObject({
+        maxResidentSessionProjections: 256,
+        sessionProjectionIdleMs: 1_800_000,
+      });
+      expect(existsSync(projectSettingsPath)).toBe(false);
+      expect(existsSync(localSettingsPath)).toBe(false);
+    });
+
+    it('ConfigRoutes should return typed 400 and rollback real store state for invalid numeric updates', async () => {
+      const { configActions, ensureStoreInitialized, getConfig } = await import(
+        '../../src/store/vanilla.js'
+      );
+      await ensureStoreInitialized();
+
+      await configActions().updateConfig(
+        {
+          maxResidentSessionProjections: 256,
+          sessionProjectionIdleMs: 1_800_000,
+        },
+        { scope: 'global', immediate: true }
+      );
+
+      const before = getConfig();
+      const userSettingsPath = path.join(tempHome, '.blade', 'settings.json');
+
+      const app = new Hono();
+      app.onError((error, c) => {
+        if (error instanceof BladeServerError) {
+          return c.json(error.toObject(), error.statusCode as 400 | 500);
+        }
+        throw error;
+      });
+      app.route('/configs', ConfigRoutes());
+
+      const response = await app.request('/configs', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          updates: { sessionProjectionIdleMs: 1 },
+          options: { scope: 'global', immediate: true },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: {
+          code: 'BAD_REQUEST',
+          message: expect.stringContaining('sessionProjectionIdleMs'),
+        },
+      });
+      expect(getConfig()).toMatchObject({
+        maxResidentSessionProjections: before?.maxResidentSessionProjections,
+        sessionProjectionIdleMs: before?.sessionProjectionIdleMs,
+      });
+      expect(JSON.parse(readFileSync(userSettingsPath, 'utf8'))).toMatchObject({
+        maxResidentSessionProjections: 256,
+        sessionProjectionIdleMs: 1_800_000,
+      });
     });
   });
 

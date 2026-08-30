@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { ConfigSaveError } from '../../config/ConfigService.js';
 import type { BladeConfig } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
@@ -69,10 +70,7 @@ export const ConfigRoutes = () => {
 
       return c.json({ success: true, updates });
     } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.includes('only supports scopes: global')
-      ) {
+      if (error instanceof ConfigSaveError) {
         throw new BadRequestError(error.message);
       }
       logger.error('[ConfigRoutes] Failed to update config:', error);
