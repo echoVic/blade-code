@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.124] - 2026-08-30
+
+### Fixed
+- Routed background-subagent terminal callbacks by immutable parent owner, so a callback captured by an old `SessionRuntime` reaches the currently attached Runtime after same-process replacement.
+- Serialized dispatcher attach, initial reconciliation, completion delivery, and detach per owner; made Runtime disposal single-flight and fail closed while it joins in-flight completion work before releasing the Session lease.
+
+### Tests
+- Added deterministic Task/Team ordering, provenance rejection, reentrancy, handoff, repair, waiter, and disposal regressions.
+- Added zero-retry DeepSeek Flash/Pro qualification proving a running child survives Runtime A-to-B replacement and wakes B's live durable mailbox exactly once.
+
 ## [0.10.123] - 2026-08-30
 
 ### Fixed

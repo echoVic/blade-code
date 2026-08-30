@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.124] - 2026-08-30
+
+### 修复
+- 按不可变 parent owner 路由后台 subagent 的终态 callback，使旧 `SessionRuntime` 捕获的 callback 在同进程 Runtime 替换后能够送达当前已 attach 的 Runtime。
+- 按 owner 串行 dispatcher attach、初始 reconcile、completion delivery 与 detach；Runtime dispose 改为 single-flight，并在释放 Session lease 前 fail closed 地等待已有 completion 工作收敛。
+
+### 测试
+- 新增 Task/Team 顺序、provenance 拒绝、重入、handoff、修复、waiter 与 dispose 的确定性回归。
+- 新增关闭重试的 DeepSeek Flash/Pro 资格验证，证明 running child 可跨 Runtime A→B 替换存活，并恰好一次唤醒 B 的 live durable mailbox。
+
 ## [0.10.123] - 2026-08-30
 
 ### 修复
