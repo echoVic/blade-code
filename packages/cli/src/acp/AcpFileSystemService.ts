@@ -5,6 +5,8 @@
  * 当 IDE 声明支持 fs 能力时，可以使用此服务替代本地文件操作。
  */
 
+import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type {
   AgentSideConnection,
   FileSystemCapabilities,
@@ -17,6 +19,39 @@ import {
 } from '../services/FileSystemService.js';
 
 const logger = createLogger(LogCategory.AGENT);
+const MAX_REMOTE_ACCESS_RECORDS = 1024;
+
+export type RemoteFileOperation = 'read' | 'edit' | 'write';
+
+export interface RemoteFileAccessRecord {
+  filePath: string;
+  accessTime: number;
+  contentSha256: string;
+  sessionId: string;
+  lastOperation: RemoteFileOperation;
+  source: 'remote';
+}
+
+export type RemoteAccessStatus = 'missing' | 'current' | 'modified';
+
+export function normalizeAcpRemotePath(filePath: string): string {
+  if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
+    throw new Error(
+      'ACP remote file path must be absolute; UNC paths are not supported'
+    );
+  }
+
+  if (/^[A-Za-z]:[\\/]/.test(filePath)) {
+    const normalized = path.win32.normalize(filePath);
+    return `${normalized[0].toUpperCase()}${normalized.slice(1)}`;
+  }
+
+  if (filePath.startsWith('/')) {
+    return path.posix.normalize(filePath);
+  }
+
+  throw new Error('ACP remote file path must be absolute');
+}
 
 export class AcpFileSystemCapabilityError extends Error {
   readonly name = 'AcpFileSystemCapabilityError';
@@ -48,6 +83,7 @@ export function isAcpResourceNotFoundError(error: unknown): boolean {
 
 export class AcpFileSystemService implements FileSystemService {
   private readonly capabilities: FileSystemCapabilities;
+  private readonly remoteAccessLedger = new Map<string, RemoteFileAccessRecord>();
 
   constructor(
     private readonly connection: AgentSideConnection,
@@ -189,6 +225,60 @@ export class AcpFileSystemService implements FileSystemService {
   usesRemoteFiles(): boolean {
     return this.canReadTextFile() || this.canWriteTextFile();
   }
+
+  recordRemoteAccess(
+    filePath: string,
+    content: string,
+    operation: RemoteFileOperation
+  ): void {
+    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const record: RemoteFileAccessRecord = {
+      filePath: normalizedPath,
+      accessTime: Date.now(),
+      contentSha256: sha256(content),
+      sessionId: this.sessionId,
+      lastOperation: operation,
+      source: 'remote',
+    };
+
+    this.remoteAccessLedger.delete(normalizedPath);
+    this.remoteAccessLedger.set(normalizedPath, record);
+
+    while (this.remoteAccessLedger.size > MAX_REMOTE_ACCESS_RECORDS) {
+      const oldestKey = this.remoteAccessLedger.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      this.remoteAccessLedger.delete(oldestKey);
+    }
+  }
+
+  checkRemoteAccess(filePath: string, content: string): RemoteAccessStatus {
+    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const existing = this.remoteAccessLedger.get(normalizedPath);
+    if (!existing) {
+      return 'missing';
+    }
+
+    this.remoteAccessLedger.delete(normalizedPath);
+    this.remoteAccessLedger.set(normalizedPath, existing);
+
+    return existing.contentSha256 === sha256(content) ? 'current' : 'modified';
+  }
+
+  getRemoteAccessRecord(filePath: string): RemoteFileAccessRecord | undefined {
+    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const record = this.remoteAccessLedger.get(normalizedPath);
+    if (!record) {
+      return undefined;
+    }
+
+    return { ...record };
+  }
+
+  dispose(): void {
+    this.remoteAccessLedger.clear();
+  }
 }
 
 function isRequestErrorWithCode(
@@ -196,4 +286,8 @@ function isRequestErrorWithCode(
   code: number
 ): error is RequestError & { code: number } {
   return error instanceof Error && 'code' in error && error.code === code;
+}
+
+function sha256(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
 }

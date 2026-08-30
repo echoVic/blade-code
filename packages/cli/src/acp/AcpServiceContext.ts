@@ -659,7 +659,7 @@ export class AcpServiceContext {
       clientCapabilities?.fs?.readTextFile === true ||
       clientCapabilities?.fs?.writeTextFile === true;
     const fileSystemService: FileSystemService = usesRemoteFileSystem
-      ? new AcpFileSystemService(connection, sessionId, clientCapabilities.fs)
+      ? new AcpFileSystemService(connection, sessionId, clientCapabilities.fs ?? {})
       : new LocalFileSystemService();
 
     if (usesRemoteFileSystem) {
@@ -704,6 +704,10 @@ export class AcpServiceContext {
    * 只清理指定会话，不影响其他会话。
    */
   static destroySession(sessionId: string): void {
+    const services = AcpServiceContext.sessions.get(sessionId);
+    if (services?.fileSystemService instanceof AcpFileSystemService) {
+      services.fileSystemService.dispose();
+    }
     AcpServiceContext.sessions.delete(sessionId);
 
     // 如果是当前会话，清除当前会话 ID

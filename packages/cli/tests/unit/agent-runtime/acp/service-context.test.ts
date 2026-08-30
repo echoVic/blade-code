@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.unmock('node:child_process');
 vi.unmock('child_process');
 
+import { AcpFileSystemService } from '../../../../src/acp/AcpFileSystemService.js';
 import {
   AcpServiceContext,
   getAcpFileSystemService,
@@ -25,11 +26,6 @@ const capabilities: acp.ClientCapabilities = {
   fs: { readTextFile: true, writeTextFile: true },
   terminal: true,
 };
-
-interface AcpFileSystemServiceLike {
-  canReadTextFile(): boolean;
-  canWriteTextFile(): boolean;
-}
 
 describe('AcpServiceContext session isolation', () => {
   const harnesses: PairedAcpHarness[] = [];
@@ -187,6 +183,31 @@ describe('AcpServiceContext session isolation', () => {
     expect(isAcpMode('unknown-session')).toBe(false);
   });
 
+  it('disposes session-scoped remote ledger state when the session is destroyed', () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true } },
+      '/workspace/a'
+    );
+
+    const fileSystem = getAcpFileSystemService('session-a');
+    expect(fileSystem).toBeInstanceOf(AcpFileSystemService);
+    if (!(fileSystem instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+
+    fileSystem.recordRemoteAccess('/workspace/a.ts', 'alpha', 'read');
+    expect(fileSystem.getRemoteAccessRecord('/workspace/a.ts')).toBeDefined();
+
+    AcpServiceContext.destroySession('session-a');
+
+    expect(fileSystem.getRemoteAccessRecord('/workspace/a.ts')).toBeUndefined();
+  });
+
   it('snapshots session fs capabilities at initialization time', async () => {
     interface MutableClientCapabilities extends acp.ClientCapabilities {
       fs?: {
@@ -220,8 +241,12 @@ describe('AcpServiceContext session isolation', () => {
       canReadTextFile: expect.any(Function),
       canWriteTextFile: expect.any(Function),
     });
-    expect((fileSystem as AcpFileSystemServiceLike).canReadTextFile()).toBe(true);
-    expect((fileSystem as AcpFileSystemServiceLike).canWriteTextFile()).toBe(false);
+    expect(fileSystem).toBeInstanceOf(AcpFileSystemService);
+    if (!(fileSystem instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    expect(fileSystem.canReadTextFile()).toBe(true);
+    expect(fileSystem.canWriteTextFile()).toBe(false);
     await expect(fileSystem.readTextFile('/workspace/a/file.ts')).resolves.toBe(
       'remote content'
     );
