@@ -130,9 +130,15 @@ API keys, or raw Provider request content.
 
 ## Release gates
 
-- `bun run type-check`: passed.
-- Focused and cross-surface results are listed above. Final full lint, build, and test counts are
-  recorded before the release commit.
+- `bun run type-check`: CLI, VSCode, and Web all exited 0.
+- `bun run lint`: CLI, VSCode, and Web all exited 0; CLI checked 1,296 files and Web checked
+  193 files.
+- `bun run build`: CLI/Web and VSCode builds exited 0. The existing non-blocking warnings
+  remained for stale Browserslist data and one Web chunk larger than 500 kB.
+- `bun run test:all`:
+  - non-performance: 449 files passed, 91 skipped; 4,739 tests passed, 84 skipped;
+  - performance: 4 files passed, 1 skipped; 9 tests passed, 1 skipped;
+  - the overall command exited 0 with zero failures.
 - Biome on changed files and `git diff --check`: passed.
 
 Qualified source hashes:

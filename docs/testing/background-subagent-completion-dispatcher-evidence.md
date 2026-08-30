@@ -110,8 +110,15 @@ API key 或原始 Provider 请求内容。
 
 ## 发布级门禁
 
-- `bun run type-check`：通过。
-- focused 与跨 surface 结果见上；最终全量 lint、build、test 数量在 release commit 前补录。
+- `bun run type-check`：CLI、VSCode 与 Web 全部退出 0。
+- `bun run lint`：CLI、VSCode 与 Web 全部退出 0；CLI 检查 1,296 个文件，Web
+  检查 193 个文件。
+- `bun run build`：CLI/Web 与 VSCode build 全部退出 0；只保留既有 Browserslist
+  数据过期和 Web chunk 大于 500 kB 的非阻断警告。
+- `bun run test:all`：
+  - 非性能：449 files 通过、91 skipped；4,739 tests 通过、84 skipped；
+  - performance：4 files 通过、1 skipped；9 tests 通过、1 skipped；
+  - 总命令退出码 0，0 failed。
 - 变更文件 Biome 与 `git diff --check`：通过。
 
 资格验证源码哈希：
