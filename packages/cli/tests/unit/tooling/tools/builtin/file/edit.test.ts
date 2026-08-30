@@ -452,6 +452,11 @@ describe('EditTool', () => {
       expect(result.success).toBe(false);
       expect(result.error?.type).toBe('execution_error');
       expect(result.error?.message).toBe('ACP remote filesystem mismatch');
+      expect(result.metadata?.file_path).toBe('/tmp/remote-mismatch.txt');
+      expect(result.metadata?.sideEffectsUncertain).toBe(false);
+      expect(
+        Object.hasOwn((result.metadata ?? {}) as object, 'sideEffectsUncertain')
+      ).toBe(true);
       expect(readSpy).not.toHaveBeenCalled();
       expect(writeSpy).not.toHaveBeenCalled();
       expect(statSpy).not.toHaveBeenCalled();

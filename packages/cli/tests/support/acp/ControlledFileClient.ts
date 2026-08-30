@@ -25,6 +25,7 @@ export type ControlledWriteBehavior =
 
 type ControlledReadBehavior =
   | { kind: 'pass-through' }
+  | { kind: 'blocked'; promise: Promise<void> }
   | { kind: 'throw'; error: Error };
 
 export class ControlledFileClient implements acp.Client {
@@ -40,6 +41,10 @@ export class ControlledFileClient implements acp.Client {
 
   enqueueReadBehavior(behavior: ControlledReadBehavior): void {
     this.readBehaviors.push(behavior);
+  }
+
+  enqueueReadPassThrough(): void {
+    this.readBehaviors.push({ kind: 'pass-through' });
   }
 
   enqueueReadError(error: Error): void {
@@ -62,6 +67,15 @@ export class ControlledFileClient implements acp.Client {
     return { release };
   }
 
+  enqueueBlockedRead(): { release: () => void } {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.enqueueReadBehavior({ kind: 'blocked', promise });
+    return { release };
+  }
+
   async requestPermission(
     _params: acp.RequestPermissionRequest
   ): Promise<acp.RequestPermissionResponse> {
@@ -77,6 +91,9 @@ export class ControlledFileClient implements acp.Client {
   ): Promise<acp.ReadTextFileResponse> {
     this.requests.push({ kind: 'read', request: params });
     const behavior = this.readBehaviors.shift();
+    if (behavior?.kind === 'blocked') {
+      await behavior.promise;
+    }
     if (behavior?.kind === 'throw') {
       throw behavior.error;
     }

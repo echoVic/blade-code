@@ -108,6 +108,10 @@ export const editTool = createTool({
               type: ToolErrorType.EXECUTION_ERROR,
               message: 'ACP remote filesystem mismatch',
             },
+            metadata: {
+              file_path,
+              sideEffectsUncertain: false,
+            },
           };
         }
         return executeRemoteEdit(
@@ -699,6 +703,10 @@ async function executeRemoteEdit(
   updateOutput?: (content: string) => void
 ): Promise<ToolResult> {
   const { file_path, old_string, new_string, replace_all } = params;
+  const stableMetadata = {
+    file_path,
+    sideEffectsUncertain: false,
+  } satisfies Pick<EditMetadata, 'file_path' | 'sideEffectsUncertain'>;
 
   try {
     fsService.assertTextMutationCapabilities();
@@ -711,17 +719,27 @@ async function executeRemoteEdit(
           type: ToolErrorType.VALIDATION_ERROR,
           message: `ACP remote filesystem does not support ${error.operation}`,
         },
-        metadata: {
-          file_path,
-          sideEffectsUncertain: false,
-        },
+        metadata: stableMetadata,
       };
     }
     throw error;
   }
 
   signal.throwIfAborted?.();
-  const previous = await fsService.readTextFileIfExists(file_path);
+  let previous: Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>>;
+  try {
+    previous = await fsService.readTextFileIfExists(file_path);
+  } catch {
+    return {
+      success: false,
+      llmContent: 'File edit failed: Unable to read remote file before edit',
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: 'Unable to read remote file before edit',
+      },
+      metadata: stableMetadata,
+    };
+  }
   if (!previous.exists) {
     return {
       success: false,
@@ -730,10 +748,7 @@ async function executeRemoteEdit(
         type: ToolErrorType.EXECUTION_ERROR,
         message: '文件不存在',
       },
-      metadata: {
-        file_path,
-        sideEffectsUncertain: false,
-      },
+      metadata: stableMetadata,
     };
   }
 
@@ -748,9 +763,8 @@ async function executeRemoteEdit(
         message: 'File not read before edit',
       },
       metadata: {
-        file_path,
+        ...stableMetadata,
         requiresRead: true,
-        sideEffectsUncertain: false,
       },
     };
   }
@@ -764,10 +778,7 @@ async function executeRemoteEdit(
         type: ToolErrorType.VALIDATION_ERROR,
         message: 'File modified externally',
       },
-      metadata: {
-        file_path,
-        sideEffectsUncertain: false,
-      },
+      metadata: stableMetadata,
     };
   }
 
@@ -779,10 +790,7 @@ async function executeRemoteEdit(
         type: ToolErrorType.VALIDATION_ERROR,
         message: '新旧字符串相同',
       },
-      metadata: {
-        file_path,
-        sideEffectsUncertain: false,
-      },
+      metadata: stableMetadata,
     };
   }
 
@@ -798,10 +806,7 @@ async function executeRemoteEdit(
         message: '未找到匹配内容',
         details: errorDetails.metadata,
       },
-      metadata: {
-        file_path,
-        sideEffectsUncertain: false,
-      },
+      metadata: stableMetadata,
     };
   }
 
@@ -856,10 +861,7 @@ async function executeRemoteEdit(
           count: matches.length,
         },
       },
-      metadata: {
-        file_path,
-        sideEffectsUncertain: false,
-      },
+      metadata: stableMetadata,
     };
   }
 

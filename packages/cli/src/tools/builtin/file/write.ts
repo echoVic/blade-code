@@ -93,6 +93,10 @@ export const writeTool = createTool({
               type: ToolErrorType.EXECUTION_ERROR,
               message: 'ACP remote filesystem mismatch',
             },
+            metadata: {
+              file_path,
+              sideEffectsUncertain: false,
+            },
           };
         }
         return executeRemoteWrite(
@@ -388,6 +392,10 @@ async function executeRemoteWrite(
   updateOutput?: (content: string) => void
 ): Promise<ToolResult> {
   const { file_path, content, encoding } = params;
+  const mismatchMetadata = {
+    file_path,
+    sideEffectsUncertain: false,
+  } satisfies Pick<WriteMetadata, 'file_path' | 'sideEffectsUncertain'>;
 
   if (encoding !== 'utf8') {
     return {
@@ -398,10 +406,7 @@ async function executeRemoteWrite(
         type: ToolErrorType.VALIDATION_ERROR,
         message: 'ACP remote Write only supports UTF-8 text writes',
       },
-      metadata: {
-        file_path,
-        sideEffectsUncertain: false,
-      },
+      metadata: mismatchMetadata,
     };
   }
 
@@ -416,17 +421,27 @@ async function executeRemoteWrite(
           type: ToolErrorType.VALIDATION_ERROR,
           message: `ACP remote filesystem does not support ${error.operation}`,
         },
-        metadata: {
-          file_path,
-          sideEffectsUncertain: false,
-        },
+        metadata: mismatchMetadata,
       };
     }
     throw error;
   }
 
   signal.throwIfAborted?.();
-  const previous = await fsService.readTextFileIfExists(file_path);
+  let previous: Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>>;
+  try {
+    previous = await fsService.readTextFileIfExists(file_path);
+  } catch {
+    return {
+      success: false,
+      llmContent: 'File write failed: Unable to read remote file before write',
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: 'Unable to read remote file before write',
+      },
+      metadata: mismatchMetadata,
+    };
+  }
   if (previous.exists) {
     const accessStatus = fsService.checkRemoteAccess(file_path, previous.content);
     if (accessStatus === 'missing') {

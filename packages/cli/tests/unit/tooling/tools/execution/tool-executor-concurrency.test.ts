@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PermissionMode } from '../../../../../src/config/types.js';
+import { HookManager } from '../../../../../src/hooks/HookManager.js';
+import { HookEvent } from '../../../../../src/hooks/types/HookTypes.js';
+import type { LspSessionManager } from '../../../../../src/lsp/LspSessionManager.js';
 import { Type } from '../../../../../src/schema/index.js';
 import { createTool } from '../../../../../src/tools/core/createTool.js';
+import type { AutoVerifyRuntime } from '../../../../../src/tools/execution/AutoVerify.js';
 import { ConcurrencyScheduler } from '../../../../../src/tools/execution/ConcurrencyScheduler.js';
 import { ToolExecutor } from '../../../../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../../../../src/tools/registry/ToolRegistry.js';
@@ -59,6 +63,10 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
 }
+
+afterEach(() => {
+  HookManager.resetInstance();
+});
 
 function boundedScheduler(
   options: {
@@ -385,6 +393,227 @@ describe('ToolExecutor concurrency contract', () => {
         message: '任务已被用户中止',
       },
     });
+  });
+
+  it('preserves a classified result when abort happens during post hooks', async () => {
+    const postHookGate = deferred<void>();
+    const events: string[] = [];
+    const hookManager = HookManager.getInstance();
+    hookManager.loadConfig({ enabled: true }, '/tmp/blade-post-hooks');
+    hookManager.registerFunction(
+      HookEvent.PostToolUse,
+      undefined,
+      async () => {
+        events.push('post-hook:start');
+        await postHookGate.promise;
+        events.push('post-hook:end');
+        return {};
+      },
+      { projectDir: '/tmp/blade-post-hooks' }
+    );
+    const registry = new ToolRegistry();
+    registry.register(
+      createTool({
+        name: 'RemoteMutationPostHook',
+        displayName: 'RemoteMutationPostHook',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({}),
+        description: { short: 'classified result survives post hooks' },
+        async execute() {
+          events.push('tool:execute');
+          return {
+            success: false,
+            llmContent: 'remote mutation uncertain',
+            error: {
+              type: ToolErrorType.EXECUTION_ERROR,
+              message: 'side effects uncertain',
+            },
+            metadata: {
+              sideEffectsUncertain: true,
+              write_acknowledged: true,
+              write_verified: false,
+            },
+          };
+        },
+      }) as never
+    );
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      contextDefaults: { workspaceRoot: '/tmp/blade-post-hooks' },
+    });
+    const controller = new AbortController();
+
+    const resultPromise = executor.execute(
+      'RemoteMutationPostHook',
+      {},
+      {
+        signal: controller.signal,
+        sessionId: 'post-hook-session',
+        workspaceRoot: '/tmp/blade-post-hooks',
+      }
+    );
+    await vi.waitFor(() => {
+      expect(events).toEqual(['tool:execute', 'post-hook:start']);
+    });
+
+    controller.abort();
+    postHookGate.resolve();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      success: false,
+      error: {
+        type: 'execution_error',
+        message: 'side effects uncertain',
+      },
+      metadata: {
+        sideEffectsUncertain: true,
+        write_acknowledged: true,
+        write_verified: false,
+      },
+    });
+    expect(events).toEqual(['tool:execute', 'post-hook:start', 'post-hook:end']);
+  });
+
+  it('preserves a classified result when abort happens during lsp afterToolUse', async () => {
+    const lspGate = deferred<void>();
+    const events: string[] = [];
+    const registry = new ToolRegistry();
+    registry.register(
+      createTool({
+        name: 'RemoteMutationLsp',
+        displayName: 'RemoteMutationLsp',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({}),
+        description: { short: 'classified result survives lsp sync' },
+        async execute() {
+          events.push('tool:execute');
+          return {
+            success: true,
+            llmContent: 'remote mutation verified',
+            metadata: {
+              sideEffectsUncertain: false,
+              write_acknowledged: true,
+              write_verified: true,
+            },
+          };
+        },
+      }) as never
+    );
+    const lspManager = {
+      afterToolUse: vi.fn(async () => {
+        events.push('lsp:start');
+        await lspGate.promise;
+        events.push('lsp:end');
+      }),
+    } satisfies Pick<LspSessionManager, 'afterToolUse'>;
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      lspManager,
+    });
+    const controller = new AbortController();
+
+    const resultPromise = executor.execute(
+      'RemoteMutationLsp',
+      {},
+      {
+        signal: controller.signal,
+      }
+    );
+    await vi.waitFor(() => {
+      expect(events).toEqual(['tool:execute', 'lsp:start']);
+    });
+
+    controller.abort();
+    lspGate.resolve();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      success: true,
+      metadata: {
+        sideEffectsUncertain: false,
+        write_acknowledged: true,
+        write_verified: true,
+      },
+    });
+    expect(lspManager.afterToolUse).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(['tool:execute', 'lsp:start', 'lsp:end']);
+  });
+
+  it('preserves a classified result when abort happens during auto verify', async () => {
+    const verifyGate = deferred<void>();
+    const events: string[] = [];
+    const registry = new ToolRegistry();
+    registry.register(
+      createTool({
+        name: 'RemoteMutationAutoVerify',
+        displayName: 'RemoteMutationAutoVerify',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({}),
+        description: { short: 'classified result survives auto verify' },
+        async execute() {
+          events.push('tool:execute');
+          return {
+            success: false,
+            llmContent: 'remote mutation uncertain',
+            error: {
+              type: ToolErrorType.EXECUTION_ERROR,
+              message: 'side effects uncertain',
+            },
+            metadata: {
+              sideEffectsUncertain: true,
+              write_acknowledged: true,
+              write_verified: false,
+            },
+          };
+        },
+      }) as never
+    );
+    const autoVerifyRuntime = {
+      verify: vi.fn(async () => {
+        events.push('auto-verify:start');
+        await verifyGate.promise;
+        events.push('auto-verify:end');
+      }),
+    } satisfies Pick<AutoVerifyRuntime, 'verify'>;
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      autoVerifyRuntime,
+    });
+    const controller = new AbortController();
+
+    const resultPromise = executor.execute(
+      'RemoteMutationAutoVerify',
+      {},
+      {
+        signal: controller.signal,
+      }
+    );
+    await vi.waitFor(() => {
+      expect(events).toEqual(['tool:execute', 'auto-verify:start']);
+    });
+
+    controller.abort();
+    verifyGate.resolve();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      success: false,
+      error: {
+        type: 'execution_error',
+        message: 'side effects uncertain',
+      },
+      metadata: {
+        sideEffectsUncertain: true,
+        write_acknowledged: true,
+        write_verified: false,
+      },
+    });
+    expect(autoVerifyRuntime.verify).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(['tool:execute', 'auto-verify:start', 'auto-verify:end']);
   });
 
   it('keeps shared writes parallel across paths and serialized on one path', async () => {

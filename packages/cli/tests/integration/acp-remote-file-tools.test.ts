@@ -557,6 +557,56 @@ describe('ACP remote Write/Edit builtin tools', () => {
     ]);
   });
 
+  it('remote Write sanitizes preflight read errors and keeps sentinel details out of the result', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-preflight-sanitize-');
+    const filePath = path.join(root, 'sanitize.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    const sentinel = new RequestError(-32020, 'SENTINEL_PERMISSION');
+    Object.assign(sentinel, {
+      data: { sentinel: true },
+      path: '/private/secret.txt',
+    });
+    client.enqueueReadError(sentinel);
+    const sessionId = 'remote-write-preflight-sanitize';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const result = await executeWrite(filePath, 'remote content\n', sessionId);
+
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        type: 'execution_error',
+        message: 'Unable to read remote file before write',
+      },
+      metadata: {
+        file_path: filePath,
+        sideEffectsUncertain: false,
+      },
+    });
+    expect(result.llmContent).toBe(
+      'File write failed: Unable to read remote file before write'
+    );
+    expect(JSON.stringify(result)).not.toContain('SENTINEL_PERMISSION');
+    expect(JSON.stringify(result)).not.toContain('/private/secret.txt');
+    expect(JSON.stringify(result)).not.toContain('"sentinel":true');
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
+  });
+
   it('remote Edit of an existing file requires a prior successful remote Read', async () => {
     const root = await createTempRoot('blade-acp-remote-edit-read-before-write-');
     const filePath = path.join(root, 'existing.txt');
@@ -586,6 +636,56 @@ describe('ACP remote Write/Edit builtin tools', () => {
         },
       },
     ]);
+  });
+
+  it('remote Edit sanitizes preflight read errors and keeps sentinel details out of the result', async () => {
+    const root = await createTempRoot('blade-acp-remote-edit-preflight-sanitize-');
+    const filePath = path.join(root, 'sanitize.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    const sentinel = new RequestError(-32021, 'SENTINEL_TIMEOUT');
+    Object.assign(sentinel, {
+      data: { sentinel: true },
+      path: '/private/secret.txt',
+    });
+    client.enqueueReadError(sentinel);
+    const sessionId = 'remote-edit-preflight-sanitize';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const result = await executeEdit(filePath, 'alpha', 'beta', sessionId);
+
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        type: 'execution_error',
+        message: 'Unable to read remote file before edit',
+      },
+      metadata: {
+        file_path: filePath,
+        sideEffectsUncertain: false,
+      },
+    });
+    expect(result.llmContent).toBe(
+      'File edit failed: Unable to read remote file before edit'
+    );
+    expect(JSON.stringify(result)).not.toContain('SENTINEL_TIMEOUT');
+    expect(JSON.stringify(result)).not.toContain('/private/secret.txt');
+    expect(JSON.stringify(result)).not.toContain('"sentinel":true');
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
   });
 
   it('remote Write rejects stale digests after a remote Read without issuing a write request', async () => {
@@ -694,6 +794,12 @@ describe('ACP remote Write/Edit builtin tools', () => {
     expect(result.metadata?.last_modified).toBeUndefined();
     expect(result.metadata?.file_size).toBe(Buffer.byteLength('created remotely\n'));
     expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
+    const service = getAcpFileSystemService(sessionId);
+    if (!(service instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    expect(service.getRemoteAccessRecord(filePath)?.lastOperation).toBe('write');
+    expect(service.checkRemoteAccess(filePath, 'created remotely\n')).toBe('current');
   });
 
   it('remote Edit currently does not classify uncertain outcomes when write throws after applying remotely', async () => {
@@ -724,6 +830,12 @@ describe('ACP remote Write/Edit builtin tools', () => {
     expect(result.metadata?.write_acknowledged).toBe(false);
     expect(result.metadata?.write_verified).toBe(true);
     expect(result.metadata?.sideEffectsUncertain).toBe(false);
+    const service = getAcpFileSystemService(sessionId);
+    if (!(service instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    expect(service.getRemoteAccessRecord(filePath)?.lastOperation).toBe('edit');
+    expect(service.checkRemoteAccess(filePath, 'alpha gamma\n')).toBe('current');
   });
 
   it('remote Write fails validation before any I/O when ACP client is write-only', async () => {
@@ -1097,6 +1209,45 @@ describe('ACP remote Write/Edit builtin tools', () => {
         sideEffectsUncertain: true,
       },
     },
+    {
+      label: 'readback timeout error',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueReadErrorAfter(1, new RequestError(-32021, 'Request timed out'));
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
+    {
+      label: 'readback disconnect error',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueReadErrorAfter(
+          1,
+          new RequestError(-32022, 'Network disconnected')
+        );
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
+    {
+      label: 'readback unknown error',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueReadErrorAfter(1, new Error('Unexpected decode failure'));
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
   ])('remote Write outcome matrix: $label', async ({ configure, expected }) => {
     const root = await createTempRoot('blade-acp-remote-write-matrix-');
     const filePath = path.join(root, 'matrix.txt');
@@ -1122,6 +1273,17 @@ describe('ACP remote Write/Edit builtin tools', () => {
       'write',
       'read',
     ]);
+    const service = getAcpFileSystemService(sessionId);
+    if (!(service instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    if (expected.success) {
+      expect(service.getRemoteAccessRecord(filePath)?.lastOperation).toBe('write');
+      expect(service.checkRemoteAccess(filePath, 'beta\n')).toBe('current');
+    } else {
+      expect(service.checkRemoteAccess(filePath, 'alpha\n')).toBe('current');
+      expect(service.checkRemoteAccess(filePath, 'beta\n')).not.toBe('current');
+    }
   });
 
   it('remote Write classifies new file still missing after a thrown write as definite failure', async () => {
@@ -1144,6 +1306,62 @@ describe('ACP remote Write/Edit builtin tools', () => {
     expect(result.metadata?.write_acknowledged).toBe(false);
     expect(result.metadata?.write_verified).toBe(false);
     expect(result.metadata?.sideEffectsUncertain).toBe(false);
+  });
+
+  it('remote Write times out readback after exactly 5s and does not replay the write', async () => {
+    vi.useFakeTimers();
+    let releaseBlockedRead: (() => void) | undefined;
+    try {
+      const root = await createTempRoot('blade-acp-remote-write-readback-timeout-');
+      const filePath = path.join(root, 'timeout.txt');
+      const client = new ControlledFileClient();
+      client.enqueueReadPassThrough();
+      const blockedRead = client.enqueueBlockedRead();
+      releaseBlockedRead = blockedRead.release;
+      const sessionId = 'remote-write-readback-timeout';
+      initializeRemoteSession(client, sessionId, root, {
+        readTextFile: true,
+        writeTextFile: true,
+      });
+
+      const resultPromise = executeWrite(filePath, 'created remotely\n', sessionId);
+      await Promise.resolve();
+
+      let settled = false;
+      void resultPromise.finally(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await resultPromise;
+
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          type: 'execution_error',
+        },
+        metadata: {
+          write_acknowledged: true,
+          write_verified: false,
+          sideEffectsUncertain: true,
+        },
+      });
+      expect(result.llmContent).toContain(
+        'write readback could not verify the remote side effects'
+      );
+      expect(client.requests.map((request) => request.kind)).toEqual([
+        'read',
+        'write',
+        'read',
+      ]);
+    } finally {
+      releaseBlockedRead?.();
+      vi.useRealTimers();
+    }
   });
 
   it.each([
@@ -1247,6 +1465,42 @@ describe('ACP remote Write/Edit builtin tools', () => {
         sideEffectsUncertain: true,
       },
     },
+    {
+      label: 'readback permission error',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueReadErrorAfter(1, new RequestError(-32020, 'Permission denied'));
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
+    {
+      label: 'readback timeout error',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueReadErrorAfter(1, new RequestError(-32021, 'Request timed out'));
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
+    {
+      label: 'readback unknown error',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueReadErrorAfter(1, new Error('Unexpected decode failure'));
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
   ])('remote Edit outcome matrix: $label', async ({ configure, expected }) => {
     const root = await createTempRoot('blade-acp-remote-edit-matrix-');
     const filePath = path.join(root, 'matrix.txt');
@@ -1272,5 +1526,16 @@ describe('ACP remote Write/Edit builtin tools', () => {
       'write',
       'read',
     ]);
+    const service = getAcpFileSystemService(sessionId);
+    if (!(service instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    if (expected.success) {
+      expect(service.getRemoteAccessRecord(filePath)?.lastOperation).toBe('edit');
+      expect(service.checkRemoteAccess(filePath, 'alpha gamma\n')).toBe('current');
+    } else {
+      expect(service.checkRemoteAccess(filePath, 'alpha beta\n')).toBe('current');
+      expect(service.checkRemoteAccess(filePath, 'alpha gamma\n')).not.toBe('current');
+    }
   });
 });

@@ -79,8 +79,8 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
   private readonly approvalController: ToolApprovalController;
   private readonly concurrencyGate = new ToolConcurrencyGate();
   private readonly contextDefaults: ExecutionContext;
-  private readonly autoVerifyRuntime?: AutoVerifyRuntime;
-  private readonly lspManager?: LspSessionManager;
+  private readonly autoVerifyRuntime?: Pick<AutoVerifyRuntime, 'verify'>;
+  private readonly lspManager?: Pick<LspSessionManager, 'afterToolUse'>;
   private readonly onDispose?: () => void;
   private readonly ownerId = `tool-executor-${randomUUID()}`;
   private disposed = false;
@@ -672,8 +672,8 @@ export interface ToolExecutorConfig {
   scheduler?: ConcurrencyScheduler;
   concurrencyLimits?: ConcurrencyLimits;
   contextDefaults?: ExecutionContext;
-  autoVerifyRuntime?: AutoVerifyRuntime;
-  lspManager?: LspSessionManager;
+  autoVerifyRuntime?: Pick<AutoVerifyRuntime, 'verify'>;
+  lspManager?: Pick<LspSessionManager, 'afterToolUse'>;
   onDispose?: () => void;
 }
 
