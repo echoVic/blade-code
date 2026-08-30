@@ -465,7 +465,10 @@ function shouldMarkWriteUncertain(error: unknown): boolean {
   if (!(error instanceof AcpRemoteFileBoundaryError)) {
     return true;
   }
-  return error.dispatched || error.requestPending;
+  if (!error.dispatched) {
+    return false;
+  }
+  return !error.requestPending;
 }
 
 function createCombinedAbortSignal(...signals: Array<AbortSignal | undefined>): {
