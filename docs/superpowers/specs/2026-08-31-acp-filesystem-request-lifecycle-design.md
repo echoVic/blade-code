@@ -78,7 +78,8 @@ settle 后允许一次用户 `Read` 取得权威状态并解除 quarantine。该
 - lifecycle state 与时间；
 - 是否需要 fresh user Read。
 
-它不保存 remote path、文件内容、content digest、credential 或 Client error。connection 的
+它不保存 remote path、文件内容、content digest、credential 或 Client error。所有 path state
+只用现有 `createOpaqueLockKey()` 的结果索引。connection 的
 `signal` abort 后，协调器关闭并释放自己的内存状态。
 
 同一 connection 下，Session destroy/reload 可创建新的 `AcpFileSystemService`，但会复用同一
@@ -86,9 +87,10 @@ coordinator。因此同一 `sessionId + normalized path` 的 timed-out write 不
 失去 fence。全新 ACP connection 是新的 generation；旧 connection 关闭是该 generation 的终止
 边界。
 
-协调器同时限制 connection 上未终结 filesystem requests 的数量，固定上限为 32，与现有全局
-tool in-flight 上限一致。达到上限后，新请求在发送前 fail closed；底层 request settle 或
-connection close 时释放计数。
+协调器同时限制 connection 上未终结 filesystem requests 的数量为 32，并限制 active /
+quarantined path state 为 1024。达到任一上限后，新 mutation 在发送前 fail closed；read 仍只能
+占用剩余 request slot，不能通过淘汰 quarantine 来换取容量。底层 request settle 或 connection
+close 时释放 pending-request 计数；`clean` path state 立即删除。
 
 ## Request lifecycle
 
@@ -97,13 +99,16 @@ connection close 时释放计数。
 ```ts
 interface AcpRemoteFileRequestOptions {
   signal?: AbortSignal;
-  timeoutMs?: number;
+  deadlineAt?: number;
   purpose?: 'user-read' | 'preflight' | 'readback' | 'mutation' | 'rollback';
 }
 ```
 
-默认 read/write hard deadline 为 30 秒；mutation read-back 保持 5 秒。ApplyPatch 使用共享绝对
-deadline，防止最多 100 个 operation 把 per-request 上限串联成无意义的超长锁持有时间。具体预算：
+默认 read/write hard deadline 为 30 秒；mutation read-back 保持 5 秒。deadline 使用绝对时间，
+嵌套调用不会重置预算。ApplyPatch 在取得现有 workspace/path locks 后创建共享 request-phase
+绝对 deadline，防止最多 100 个 operation 把 per-request 上限串联成无意义的超长锁持有时间。
+现有 workspace-lock acquisition 仍使用自己的 10 秒上限，不在本 patch 重写 lock manager。具体
+request-phase 预算：
 
 - remote ApplyPatch 总预算 120 秒；
 - 为 compensation 预留最后 30 秒；
@@ -116,7 +121,7 @@ deadline，防止最多 100 个 operation 把 per-request 上限串联成无意�
 1. 校验 capability、connection 状态、request cap 和 path fence。
 2. 若 parent signal 已 abort 或 deadline 已到，在发 request 前失败。
 3. 注册 request token；write 同时注册 active mutation generation。
-4. 用 `connection.request(CLIENT_METHODS.fs_*, params, { cancellationSignal })` 发送标准 ACP
+4. 用公开的 `connection.request(CLIENT_METHODS.fs_*, params, { cancellationSignal })` 发送标准 ACP
    request。
 5. response 先到则清理 timer/listener/token，并按现有逻辑处理。
 6. user abort 或 deadline 先到则 abort child controller，发送 `$/cancel_request`，本地调用立即
@@ -131,28 +136,41 @@ coordinator 的 pending 状态，不能更新 ledger、旧 ToolResult 或当前 
 
 | 状态 | 允许 user Read | 允许 mutation | 退出条件 |
 | --- | --- | --- | --- |
-| `clean` | 是 | 是 | write boundary 后进入 `pending-write` |
-| `pending-write` | 否，fail fast | 否，fail fast | 底层 request settle 后进入 `needs-read` |
-| `needs-read` | 是 | 否，fail fast | fresh user Read 成功或明确 not-found 后回到 `clean` |
+| `clean` | 是 | 是 | mutation lease 开始后进入 `active-mutation` |
+| `active-mutation` | 否，fail fast | 否；同一 lease 的 read-back/rollback 除外 | verified/definite completion 回到 `clean`；boundary 或 unverifiable read-back 转入下述状态 |
+| `pending-write` | 否，fail fast | 否，fail fast | 底层 write request settle 后进入 `needs-read` |
+| `needs-read` | 是，单次 reconciliation | 否；持有匹配 generation 的 compensation lease 除外 | 匹配 generation 的 fresh user Read 成功或明确 not-found 后回到 `clean` |
+
+ToolExecutor 让 remote-owned `Read` 与 `Write` / `Edit` 一样使用同一个 opaque path lock；
+local 与 ACP-local Read 仍保持 concurrency-safe。ApplyPatch 继续在工具内部取得同一组 opaque path
+locks。这样同 Session、同 normalized path 的 user Read 不会与 mutation preflight、write、read-back
+或 compensation 并发。
+
+mutation lease 为每次操作分配单调 generation。reconciliation Read 开始时捕获 generation，完成时
+只有在 path 仍处于同一 `needs-read` generation 才能原子更新/清除 ledger 与 quarantine；若期间
+rollback 或其他内部 recovery 推进 generation，该 Read 返回稳定的 stale-reconciliation 失败，不能
+把新一代 fence 清掉。
 
 普通 timed-out read 不改变文件状态，但仍占一个有界 pending request slot；其 late response 不写
-ledger。只有 `Read` 工具在本地仍等待时得到的成功内容，或明确 not-found，才能执行 reconcile。
-内部 preflight、exists、read-back 不能解除 quarantine。
+ledger。只有 `Read` 工具在本地 boundary 内得到的成功内容，或明确 not-found，才能执行
+reconcile。内部 preflight、exists、read-back 不能解除 quarantine。
 
 任何 `AcpRemoteMutationError` 若最终是 `sideEffectsUncertain: true`，即使 write request 已 settle，
 也要把该 path 标为 `needs-read`。普通 `Write` / `Edit` 在 quarantine 上返回稳定失败，提示先
-`Read`，且不发新的 ACP request。
+`Read`，且不发新的 ACP request。ApplyPatch compensation 只能凭产生 uncertainty 的同一
+transaction generation 获取一次 recovery lease；它不能绕过另一个 transaction 或未知旧 write
+留下的 `pending-write` fence。
 
 ## Mutation 与 ApplyPatch
 
 `commitVerifiedRemoteTextMutation()` 保持一 write、一 read-back：
 
-- write 使用 user signal 与 30 秒 request deadline；
+- write 使用 user signal 与 30 秒 request deadline，并由 mutation lease 保持 path generation；
 - write 在 dispatch 后被 abort/timeout 时直接返回 uncertain，不立即 read-back，因为旧 write 仍
   可能执行；
 - write 已 settle 后，无论 ack 成功或普通 error，仍按现有规则执行一次 5 秒 read-back；
 - read-back timeout 会发送标准 cancel，并按现有内容矩阵分类；uncertain 结果 quarantine path；
-- verified success 更新 ledger；definite old/missing 不污染 ledger。
+- verified success 更新 ledger 并结束 lease；definite old/missing 不污染 ledger并清理 active state。
 
 ApplyPatch 在获取 workspace/path locks 和执行任何 I/O 前检查所有 target path 的 quarantine。
 transaction 使用绝对 deadline；forward budget 到达后停止发布新 change，并进入 compensation。
@@ -162,6 +180,10 @@ transaction 使用绝对 deadline；forward budget 到达后停止发布新 chan
 - 不对该 path 立即发送 rollback write，避免 rollback 与旧 forward write 竞态；
 - 继续逆序补偿此前已验证的 changes；
 - transaction 必须返回 `sideEffectsUncertain: true`，current path 保持 quarantine。
+
+若 forward write 已 settle、只有 read-back 无法验证，持有匹配 transaction generation 的
+compensation 可以在 path lock 内尝试恢复；它会推进 generation，任何更早开始的 user Read 都不能
+解除这次 recovery fence。
 
 若 rollback write/read-back 自身超时或无法验证，对应 path 保持 quarantine，AggregateError 仍以
 原始 forward error 为第一项，rollback errors 按逆序随后排列。所有可验证 rollback 成功后才可清理
@@ -174,7 +196,8 @@ transaction 使用绝对 deadline；forward budget 到达后停止发布新 chan
 - write boundary 或 quarantined mutation 返回
   `write_acknowledged: false`、`write_verified: false`、
   `sideEffectsUncertain: true`，并明确要求 fresh `Read` 后再重试。
-- ToolExecutor 在 tool Promise 本地 settle 后释放现有 lock；安全性由 quarantine fence 保证，
+- ToolExecutor 在 tool Promise 本地 settle 后释放现有 lock；安全性由 generation-bound quarantine
+  fence 保证，
   不让旧 RPC 晚到与新 mutation 交错。
 - 现有 generic uncertainty formatter 继续使用；本 patch 不增加 ACP 专属控件。Web GUI 只增加
   regression，证明该 metadata 不改变现有 diff/error 呈现。
@@ -196,9 +219,12 @@ transaction 使用绝对 deadline；forward budget 到达后停止发布新 chan
 - `AgentSideConnection.request()` 收到标准 fs method 和 `cancellationSignal`；
 - read/write success、error、abort、timeout 均清理 timer/listener；late fulfill/reject 无 unhandled；
 - blocked read/write 在 deadline 后本地 settle，且 request cap 阻止无界积累；
+- active/quarantined path cap 阻止对无限多唯一路径制造常驻 fence，且绝不通过 eviction 丢安全状态；
 - pending write 期间同 path Read/Write/Edit/ApplyPatch 均在发 request/获取 host-private lock 前失败；
+- remote-owned Read 与同 path mutation 共用 opaque lock；不同 path 和 local Read 保持并发；
 - late write settle 只把 path 从 `pending-write` 推到 `needs-read`；不会更新 ledger；
-- fresh user Read success 或明确 not-found 才解除 quarantine；internal preflight/read-back 不解除；
+- generation-matched fresh user Read success 或明确 not-found 才解除 quarantine；并发旧 Read、internal
+  preflight/read-back 不解除；
 - quarantine 解除后同 path mutation 可重新执行，其他 path 保持可用；
 - ToolExecutor opaque lock 与 ApplyPatch workspace/path locks 在 local deadline 后释放；
 - ApplyPatch 不与 pending forward write 并发 rollback，但仍逆序补偿此前 verified files；
