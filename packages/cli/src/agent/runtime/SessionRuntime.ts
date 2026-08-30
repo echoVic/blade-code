@@ -421,6 +421,7 @@ export class SessionRuntime {
   private backgroundSubagentCompletionRevision = 0;
   private backgroundTaskChildIds = new Set<string>();
   private readonly backgroundTaskCompletionSettledIds = new Set<string>();
+  private disposePromise?: Promise<void>;
   private readonly backgroundSubagentCompletionOwner: Readonly<{
     sessionId: string;
     workspaceRoot: string;
@@ -1879,7 +1880,13 @@ export class SessionRuntime {
     signal?: AbortSignal
   ): Promise<boolean> {
     while (!signal?.aborted) {
+      if (this.disposing || !this.initialized || !this.activeTurnMailbox) {
+        return false;
+      }
       await this.reconcileBackgroundSubagentCompletions();
+      if (this.disposing || !this.initialized || !this.activeTurnMailbox) {
+        return false;
+      }
       if (await this.hasUnclaimedPendingInput(handle)) return true;
 
       const revision = this.backgroundSubagentCompletionRevision;
@@ -2552,134 +2559,140 @@ export class SessionRuntime {
   }
 
   async dispose(): Promise<void> {
-    this.disposing = true;
-    let firstError: unknown;
-    const attempt = async (label: string, cleanup: () => Promise<void> | void) => {
-      try {
-        await cleanup();
-      } catch (error) {
-        firstError ??= error;
-        logger.warn(
-          `[SessionRuntime ${this.sessionId}] Failed to ${label} during cleanup`,
-          error
-        );
-      }
-    };
-    const disposableChatService = this.chatService as
-      | (IChatService & { dispose?: () => Promise<void> | void })
-      | undefined;
-    const sessionMcpRegistry = this.sessionMcpRegistry;
-    const mcpCatalogListener = this.mcpCatalogListener;
-    const mcpContentCatalogListener = this.mcpContentCatalogListener;
-    const mcpResourceUpdatedListener = this.mcpResourceUpdatedListener;
-    const mcpConnectionListener = this.mcpConnectionListener;
-    const mcpLogListener = this.mcpLogListener;
-    const mcpInstructionsListener = this.mcpInstructionsListener;
-    const mcpTaskListener = this.mcpTaskListener;
-    const sessionLease = this.sessionLease;
-    const autoVerifyRuntime = this.autoVerifyRuntime;
-    const lspManager = this.lspManager;
-    const browserRuntime = this.browserRuntime;
-    const backgroundSubagentCompletionRegistration =
-      this.backgroundSubagentCompletionRegistration;
-    this.backgroundSubagentCompletionRegistration = undefined;
-    await attempt('stop side conversations', () =>
-      this.sideConversationOperations.shutdown('session-runtime-dispose')
-    );
-    await attempt('close the Session browser', () => browserRuntime?.dispose());
-    await attempt('dispose the background subagent completion registration', () =>
-      backgroundSubagentCompletionRegistration?.dispose()
-    );
-    this.signalBackgroundSubagentCompletionWaiters();
-    this.chatService = undefined;
-    this.executionEngine = undefined;
-    this.activeTurnMailbox = undefined;
-    this.startupTurnRecovery = undefined;
-    this.startupTurnRecoveryAcknowledged = false;
-    this.startupTurnRecoveryAssessmentTaken = false;
-    this.startupAdoptedToolResults = [];
-    this.backgroundTaskChildIds.clear();
-    this.backgroundTaskCompletionSettledIds.clear();
-    this.currentModelMaxContextTokens = undefined;
-    this.baseRegistry = new ToolRegistry();
-    this.sessionMcpRegistry = undefined;
-    this.mcpCatalogListener = undefined;
-    this.mcpContentCatalogListener = undefined;
-    this.mcpResourceUpdatedListener = undefined;
-    this.mcpConnectionListener = undefined;
-    this.mcpLogListener = undefined;
-    this.mcpInstructionsListener = undefined;
-    this.mcpTaskListener = undefined;
-    this.mcpCatalogBarrier = async () => undefined;
-    this.executorCatalogs.clear();
-    this.sessionLease = undefined;
-    this.autoVerifyRuntime = undefined;
-    this.lspManager = undefined;
-    this.browserRuntime = undefined;
-
-    await attempt('kill the session background processes', () =>
-      BackgroundShellManager.getInstance().killSession(this.sessionId)
-    );
-    await attempt('clear the session approvals', () => this.approvalStore.clear());
-    await attempt('clear the session file access records', () =>
-      FileAccessTracker.getInstance().clearSession(this.sessionId, this.workspaceRoot)
-    );
-    await attempt('stop the session auto-verification processes', () =>
-      autoVerifyRuntime?.dispose()
-    );
-    await attempt('stop the session LSP servers', () => lspManager?.dispose());
-    await attempt('release the session hook model resources', () =>
-      HookManager.getInstance().unbindSessionModelResources(this.sessionId, [
-        this.projectRoot,
-        this.workspaceRoot,
-      ])
-    );
-    await attempt('release the session worktrees', () =>
-      worktreeManager.releaseSession(this.sessionId)
-    );
-    await attempt('dispose the session chat service', () =>
-      disposableChatService?.dispose?.()
-    );
-    await attempt('cancel the session MCP tasks', () =>
-      McpTaskManager.getInstance().cancelSession({
-        sessionId: this.sessionId,
-        projectPath: this.workspaceRoot,
-      })
-    );
-    await attempt('disconnect the session MCP servers', async () => {
-      if (sessionMcpRegistry && mcpCatalogListener) {
-        sessionMcpRegistry.off('catalogChanged', mcpCatalogListener);
-      }
-      if (sessionMcpRegistry && mcpContentCatalogListener) {
-        sessionMcpRegistry.off('contentCatalogChanged', mcpContentCatalogListener);
-      }
-      if (sessionMcpRegistry && mcpResourceUpdatedListener) {
-        sessionMcpRegistry.off('resourceUpdated', mcpResourceUpdatedListener);
-      }
-      if (sessionMcpRegistry && mcpConnectionListener) {
-        sessionMcpRegistry.off('connectionLifecycleChanged', mcpConnectionListener);
-      }
-      if (sessionMcpRegistry && mcpLogListener) {
-        sessionMcpRegistry.off('log', mcpLogListener);
-      }
-      if (sessionMcpRegistry && mcpInstructionsListener) {
-        sessionMcpRegistry.off('instructionsChanged', mcpInstructionsListener);
-      }
-      if (mcpTaskListener) {
-        McpTaskManager.getInstance().off('taskChanged', mcpTaskListener);
-      }
-      await sessionMcpRegistry?.disconnectAll();
-    });
-    await attempt('release the session lease', () => sessionLease?.release());
-
-    this.currentModelId = undefined;
-    this.currentReasoning = undefined;
-    this.currentServiceTier = undefined;
-    this.initialized = false;
-
-    if (firstError !== undefined) {
-      throw firstError;
+    if (this.disposePromise) {
+      return this.disposePromise;
     }
+    this.disposing = true;
+    this.disposePromise = (async () => {
+      let firstError: unknown;
+      const attempt = async (label: string, cleanup: () => Promise<void> | void) => {
+        try {
+          await cleanup();
+        } catch (error) {
+          firstError ??= error;
+          logger.warn(
+            `[SessionRuntime ${this.sessionId}] Failed to ${label} during cleanup`,
+            error
+          );
+        }
+      };
+      const disposableChatService = this.chatService as
+        | (IChatService & { dispose?: () => Promise<void> | void })
+        | undefined;
+      const sessionMcpRegistry = this.sessionMcpRegistry;
+      const mcpCatalogListener = this.mcpCatalogListener;
+      const mcpContentCatalogListener = this.mcpContentCatalogListener;
+      const mcpResourceUpdatedListener = this.mcpResourceUpdatedListener;
+      const mcpConnectionListener = this.mcpConnectionListener;
+      const mcpLogListener = this.mcpLogListener;
+      const mcpInstructionsListener = this.mcpInstructionsListener;
+      const mcpTaskListener = this.mcpTaskListener;
+      const sessionLease = this.sessionLease;
+      const autoVerifyRuntime = this.autoVerifyRuntime;
+      const lspManager = this.lspManager;
+      const browserRuntime = this.browserRuntime;
+      const backgroundSubagentCompletionRegistration =
+        this.backgroundSubagentCompletionRegistration;
+      await attempt('stop side conversations', () =>
+        this.sideConversationOperations.shutdown('session-runtime-dispose')
+      );
+      await attempt('close the Session browser', () => browserRuntime?.dispose());
+      await attempt('dispose the background subagent completion registration', () =>
+        backgroundSubagentCompletionRegistration?.dispose()
+      );
+      this.backgroundSubagentCompletionRegistration = undefined;
+      this.signalBackgroundSubagentCompletionWaiters();
+      this.chatService = undefined;
+      this.executionEngine = undefined;
+      this.activeTurnMailbox = undefined;
+      this.startupTurnRecovery = undefined;
+      this.startupTurnRecoveryAcknowledged = false;
+      this.startupTurnRecoveryAssessmentTaken = false;
+      this.startupAdoptedToolResults = [];
+      this.backgroundTaskChildIds.clear();
+      this.backgroundTaskCompletionSettledIds.clear();
+      this.currentModelMaxContextTokens = undefined;
+      this.baseRegistry = new ToolRegistry();
+      this.sessionMcpRegistry = undefined;
+      this.mcpCatalogListener = undefined;
+      this.mcpContentCatalogListener = undefined;
+      this.mcpResourceUpdatedListener = undefined;
+      this.mcpConnectionListener = undefined;
+      this.mcpLogListener = undefined;
+      this.mcpInstructionsListener = undefined;
+      this.mcpTaskListener = undefined;
+      this.mcpCatalogBarrier = async () => undefined;
+      this.executorCatalogs.clear();
+      this.sessionLease = undefined;
+      this.autoVerifyRuntime = undefined;
+      this.lspManager = undefined;
+      this.browserRuntime = undefined;
+
+      await attempt('kill the session background processes', () =>
+        BackgroundShellManager.getInstance().killSession(this.sessionId)
+      );
+      await attempt('clear the session approvals', () => this.approvalStore.clear());
+      await attempt('clear the session file access records', () =>
+        FileAccessTracker.getInstance().clearSession(this.sessionId, this.workspaceRoot)
+      );
+      await attempt('stop the session auto-verification processes', () =>
+        autoVerifyRuntime?.dispose()
+      );
+      await attempt('stop the session LSP servers', () => lspManager?.dispose());
+      await attempt('release the session hook model resources', () =>
+        HookManager.getInstance().unbindSessionModelResources(this.sessionId, [
+          this.projectRoot,
+          this.workspaceRoot,
+        ])
+      );
+      await attempt('release the session worktrees', () =>
+        worktreeManager.releaseSession(this.sessionId)
+      );
+      await attempt('dispose the session chat service', () =>
+        disposableChatService?.dispose?.()
+      );
+      await attempt('cancel the session MCP tasks', () =>
+        McpTaskManager.getInstance().cancelSession({
+          sessionId: this.sessionId,
+          projectPath: this.workspaceRoot,
+        })
+      );
+      await attempt('disconnect the session MCP servers', async () => {
+        if (sessionMcpRegistry && mcpCatalogListener) {
+          sessionMcpRegistry.off('catalogChanged', mcpCatalogListener);
+        }
+        if (sessionMcpRegistry && mcpContentCatalogListener) {
+          sessionMcpRegistry.off('contentCatalogChanged', mcpContentCatalogListener);
+        }
+        if (sessionMcpRegistry && mcpResourceUpdatedListener) {
+          sessionMcpRegistry.off('resourceUpdated', mcpResourceUpdatedListener);
+        }
+        if (sessionMcpRegistry && mcpConnectionListener) {
+          sessionMcpRegistry.off('connectionLifecycleChanged', mcpConnectionListener);
+        }
+        if (sessionMcpRegistry && mcpLogListener) {
+          sessionMcpRegistry.off('log', mcpLogListener);
+        }
+        if (sessionMcpRegistry && mcpInstructionsListener) {
+          sessionMcpRegistry.off('instructionsChanged', mcpInstructionsListener);
+        }
+        if (mcpTaskListener) {
+          McpTaskManager.getInstance().off('taskChanged', mcpTaskListener);
+        }
+        await sessionMcpRegistry?.disconnectAll();
+      });
+      await attempt('release the session lease', () => sessionLease?.release());
+
+      this.currentModelId = undefined;
+      this.currentReasoning = undefined;
+      this.currentServiceTier = undefined;
+      this.initialized = false;
+
+      if (firstError !== undefined) {
+        throw firstError;
+      }
+    })();
+    return this.disposePromise;
   }
 
   private resolveModelConfig(requestedModelId?: string): ModelConfig {
