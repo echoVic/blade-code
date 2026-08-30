@@ -4,6 +4,7 @@
 
 import { promises as fs } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as acpContext from '../../../../../../src/acp/AcpServiceContext.js';
 import { setFileSystemService } from '../../../../../../src/services/FileSystemService.js';
 import { FileAccessTracker } from '../../../../../../src/tools/builtin/file/FileAccessTracker.js';
 import { writeTool } from '../../../../../../src/tools/builtin/file/write.js';
@@ -12,6 +13,8 @@ import { createMockFileSystem } from '../../../../../support/mocks/mockFileSyste
 // Mock AcpServiceContext at module level
 vi.mock('../../../../../../src/acp/AcpServiceContext.js', () => ({
   isAcpMode: vi.fn(() => false),
+  isAcpRemoteFileSystem: vi.fn(() => false),
+  getAcpFileSystemService: vi.fn(),
   AcpServiceContext: {
     initializeSession: vi.fn(),
     destroySession: vi.fn(),
@@ -62,6 +65,10 @@ describe('WriteTool', () => {
   let _originalFSService: any;
 
   beforeEach(() => {
+    vi.mocked(acpContext.isAcpMode).mockReturnValue(false);
+    vi.mocked(acpContext.isAcpRemoteFileSystem).mockReturnValue(false);
+    vi.mocked(acpContext.getAcpFileSystemService).mockReset();
+
     // 创建 mock 文件系统
     mockFS = createMockFileSystem();
 
@@ -234,6 +241,47 @@ describe('WriteTool', () => {
   });
 
   describe('错误处理', () => {
+    it('remote filesystem ownership mismatch 应 fail-closed 且不触碰 host I/O', async () => {
+      const acpContext = await import('../../../../../../src/acp/AcpServiceContext.js');
+      vi.mocked(acpContext.isAcpMode).mockReturnValue(true);
+      vi.mocked(acpContext.isAcpRemoteFileSystem).mockReturnValue(true);
+      vi.mocked(acpContext.getAcpFileSystemService).mockReturnValue(mockFS as never);
+
+      const mkdirSpy = vi.spyOn(mockFS, 'mkdir');
+      const existsSpy = vi.spyOn(mockFS, 'exists');
+      const readSpy = vi.spyOn(mockFS, 'readTextFile');
+      const writeSpy = vi.spyOn(mockFS, 'writeTextFile');
+      const statSpy = vi.spyOn(mockFS, 'stat');
+      const trackerEditSpy = vi.spyOn(
+        FileAccessTracker.getInstance(),
+        'recordFileEdit'
+      );
+
+      const result = await executeWrite(
+        {
+          file_path: '/tmp/remote-mismatch.txt',
+          content: 'remote only',
+          create_directories: true,
+        },
+        {
+          sessionId: 'remote-mismatch-session',
+          messageId: 'msg-123',
+          updateOutput: vi.fn(),
+          signal: new AbortController().signal,
+        }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.type).toBe('execution_error');
+      expect(result.error?.message).toBe('ACP remote filesystem mismatch');
+      expect(mkdirSpy).not.toHaveBeenCalled();
+      expect(existsSpy).not.toHaveBeenCalled();
+      expect(readSpy).not.toHaveBeenCalled();
+      expect(writeSpy).not.toHaveBeenCalled();
+      expect(statSpy).not.toHaveBeenCalled();
+      expect(trackerEditSpy).not.toHaveBeenCalled();
+    });
+
     it('应该处理中止信号', async () => {
       const filePath = '/tmp/test.txt';
       const content = 'Hello, World!';

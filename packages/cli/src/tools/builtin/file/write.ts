@@ -1,6 +1,18 @@
 import { promises as fs } from 'fs';
 import { basename, dirname, extname } from 'path';
-import { getAcpFileSystemService, isAcpMode } from '../../../acp/AcpServiceContext.js';
+import {
+  AcpFileSystemCapabilityError,
+  AcpFileSystemService,
+} from '../../../acp/AcpFileSystemService.js';
+import {
+  getAcpFileSystemService,
+  isAcpMode,
+  isAcpRemoteFileSystem,
+} from '../../../acp/AcpServiceContext.js';
+import {
+  AcpRemoteMutationError,
+  commitVerifiedRemoteTextMutation,
+} from '../../../acp/RemoteTextMutation.js';
 import { Default, Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
@@ -67,9 +79,33 @@ export const writeTool = createTool({
 
       // 获取文件系统服务（ACP 或本地）
       const useAcp = isAcpMode(sessionId);
+      const remoteFileSystem = isAcpRemoteFileSystem(sessionId);
       const fsService = useAcp
         ? getAcpFileSystemService(sessionId)
         : getFileSystemService();
+
+      if (remoteFileSystem) {
+        if (!(fsService instanceof AcpFileSystemService)) {
+          return {
+            success: false,
+            llmContent: 'File write failed: internal ACP remote filesystem mismatch',
+            error: {
+              type: ToolErrorType.EXECUTION_ERROR,
+              message: 'ACP remote filesystem mismatch',
+            },
+          };
+        }
+        return executeRemoteWrite(
+          fsService,
+          {
+            file_path,
+            content,
+            encoding,
+          },
+          signal,
+          updateOutput
+        );
+      }
 
       // 检查并创建目录（统一使用 FileSystemService）
       if (create_directories) {
@@ -339,4 +375,151 @@ function formatFileSize(bytes: number): string {
   }
 
   return `${size.toFixed(1)}${units[unitIndex]}`;
+}
+
+async function executeRemoteWrite(
+  fsService: AcpFileSystemService,
+  params: {
+    file_path: string;
+    content: string;
+    encoding: 'utf8' | 'base64' | 'binary';
+  },
+  signal: AbortSignal,
+  updateOutput?: (content: string) => void
+): Promise<ToolResult> {
+  const { file_path, content, encoding } = params;
+
+  if (encoding !== 'utf8') {
+    return {
+      success: false,
+      llmContent:
+        "ACP remote Write only supports UTF-8 text writes. Use encoding='utf8'.",
+      error: {
+        type: ToolErrorType.VALIDATION_ERROR,
+        message: 'ACP remote Write only supports UTF-8 text writes',
+      },
+      metadata: {
+        file_path,
+        sideEffectsUncertain: false,
+      },
+    };
+  }
+
+  try {
+    fsService.assertTextMutationCapabilities();
+  } catch (error) {
+    if (error instanceof AcpFileSystemCapabilityError) {
+      return {
+        success: false,
+        llmContent: `ACP remote Write requires ${error.operation} capability.`,
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message: `ACP remote filesystem does not support ${error.operation}`,
+        },
+        metadata: {
+          file_path,
+          sideEffectsUncertain: false,
+        },
+      };
+    }
+    throw error;
+  }
+
+  signal.throwIfAborted?.();
+  const previous = await fsService.readTextFileIfExists(file_path);
+  if (previous.exists) {
+    const accessStatus = fsService.checkRemoteAccess(file_path, previous.content);
+    if (accessStatus === 'missing') {
+      return {
+        success: false,
+        llmContent:
+          "If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.",
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message: 'File not read before write',
+        },
+        metadata: {
+          file_path,
+          requiresRead: true,
+          sideEffectsUncertain: false,
+        },
+      };
+    }
+
+    if (accessStatus === 'modified') {
+      return {
+        success: false,
+        llmContent:
+          'The file has been modified externally since the last successful Read. Use Read again before writing.',
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message: 'File modified externally',
+        },
+        metadata: {
+          file_path,
+          sideEffectsUncertain: false,
+        },
+      };
+    }
+  }
+
+  updateOutput?.('通过 IDE 写入文件...');
+  try {
+    const receipt = await commitVerifiedRemoteTextMutation({
+      service: fsService,
+      filePath: file_path,
+      previous,
+      intendedContent: content,
+      operation: 'write',
+      signal,
+    });
+    const metadata: WriteMetadata = {
+      file_path,
+      content_size: content.length,
+      file_size: Buffer.byteLength(content, 'utf8'),
+      encoding,
+      summary: previous.exists
+        ? `写入 ${basename(file_path)} 并完成远端回读校验`
+        : `创建 ${basename(file_path)} 并完成远端回读校验`,
+      kind: 'edit',
+      oldContent: previous.exists ? previous.content : '',
+      newContent: content,
+      snapshot_created: false,
+      write_acknowledged: receipt.writeAcknowledged,
+      write_verified: receipt.writeVerified,
+      sideEffectsUncertain: receipt.sideEffectsUncertain,
+    };
+
+    return {
+      success: true,
+      llmContent: previous.exists
+        ? `Wrote ${file_path} (${content.length} chars, updated existing file)`
+        : `Created ${file_path} (${content.length} chars, new file)`,
+      metadata,
+    };
+  } catch (error) {
+    if (error instanceof AcpRemoteMutationError) {
+      return {
+        success: false,
+        llmContent: `File write failed: ${error.message}`,
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: error.message,
+        },
+        metadata: {
+          file_path,
+          file_size: Buffer.byteLength(content, 'utf8'),
+          encoding,
+          kind: 'edit',
+          oldContent: previous.exists ? previous.content : '',
+          newContent: content,
+          snapshot_created: false,
+          write_acknowledged: error.writeAcknowledged,
+          write_verified: error.writeVerified,
+          sideEffectsUncertain: error.sideEffectsUncertain,
+        },
+      };
+    }
+    throw error;
+  }
 }

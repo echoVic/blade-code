@@ -222,8 +222,31 @@ export class AcpFileSystemService implements FileSystemService {
     return this.capabilities.writeTextFile ?? false;
   }
 
+  assertTextMutationCapabilities(): void {
+    if (!this.canReadTextFile()) {
+      throw new AcpFileSystemCapabilityError('readTextFile');
+    }
+    if (!this.canWriteTextFile()) {
+      throw new AcpFileSystemCapabilityError('writeTextFile');
+    }
+  }
+
   usesRemoteFiles(): boolean {
     return this.canReadTextFile() || this.canWriteTextFile();
+  }
+
+  async readTextFileIfExists(
+    filePath: string
+  ): Promise<{ exists: false } | { exists: true; content: string }> {
+    try {
+      const content = await this.readTextFile(filePath);
+      return { exists: true, content };
+    } catch (error) {
+      if (isAcpResourceNotFoundError(error)) {
+        return { exists: false };
+      }
+      throw error;
+    }
   }
 
   recordRemoteAccess(

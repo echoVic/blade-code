@@ -11,8 +11,10 @@ import {
   isAcpMode,
   isAcpRemoteFileSystem,
 } from '../../src/acp/AcpServiceContext.js';
+import { editTool } from '../../src/tools/builtin/file/edit.js';
 import { FileAccessTracker } from '../../src/tools/builtin/file/FileAccessTracker.js';
 import { readTool } from '../../src/tools/builtin/file/read.js';
+import { writeTool } from '../../src/tools/builtin/file/write.js';
 import { ControlledFileClient } from '../support/acp/ControlledFileClient.js';
 import {
   createPairedAcpHarness,
@@ -354,5 +356,921 @@ describe('ACP remote Read builtin tool', () => {
       },
     });
     expect(client.requests).toEqual([]);
+  });
+});
+
+describe('ACP remote Write/Edit builtin tools', () => {
+  const harnesses: PairedAcpHarness[] = [];
+  const sessionIds = new Set<string>();
+  const tempRoots: string[] = [];
+
+  beforeEach(() => {
+    FileAccessTracker.resetInstance();
+  });
+
+  afterEach(async () => {
+    for (const sessionId of sessionIds) {
+      AcpServiceContext.destroySession(sessionId);
+    }
+    sessionIds.clear();
+    FileAccessTracker.resetInstance();
+    await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
+    await Promise.all(
+      tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))
+    );
+  });
+
+  async function createTempRoot(prefix: string): Promise<string> {
+    const root = await fs.mkdtemp(path.join(tmpdir(), prefix));
+    tempRoots.push(root);
+    return root;
+  }
+
+  function initializeRemoteSession(
+    client: ControlledFileClient,
+    sessionId: string,
+    cwd: string,
+    capabilities: { readTextFile?: boolean; writeTextFile?: boolean }
+  ): void {
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    sessionIds.add(sessionId);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      sessionId,
+      { fs: capabilities },
+      cwd
+    );
+  }
+
+  async function executeRead(filePath: string, sessionId: string) {
+    return readTool.execute(
+      {
+        file_path: filePath,
+        encoding: 'utf8',
+      },
+      undefined,
+      { sessionId }
+    );
+  }
+
+  async function executeWrite(
+    filePath: string,
+    content: string,
+    sessionId: string,
+    options?: {
+      encoding?: 'utf8' | 'base64' | 'binary';
+      create_directories?: boolean;
+      signal?: AbortSignal;
+    }
+  ) {
+    return writeTool.execute(
+      {
+        file_path: filePath,
+        content,
+        encoding: options?.encoding ?? 'utf8',
+        create_directories: options?.create_directories ?? true,
+      },
+      options?.signal,
+      { sessionId }
+    );
+  }
+
+  async function executeEdit(
+    filePath: string,
+    oldString: string,
+    newString: string,
+    sessionId: string,
+    options?: { replace_all?: boolean; signal?: AbortSignal }
+  ) {
+    return editTool.execute(
+      {
+        file_path: filePath,
+        old_string: oldString,
+        new_string: newString,
+        replace_all: options?.replace_all ?? false,
+      },
+      options?.signal,
+      { sessionId }
+    );
+  }
+
+  async function expectRemoteReadSuccess(
+    client: ControlledFileClient,
+    filePath: string,
+    sessionId: string,
+    content: string
+  ): Promise<void> {
+    client.files.set(filePath, content);
+    const result = await executeRead(filePath, sessionId);
+    expect(result.success).toBe(true);
+  }
+
+  it('remote Write fails validation before any I/O when ACP client is read-only', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-capability-');
+    const filePath = path.join(root, 'capability.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-read-only';
+    initializeRemoteSession(client, sessionId, root, { readTextFile: true });
+
+    const result = await executeWrite(filePath, 'remote content\n', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(client.requests).toEqual([]);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
+  });
+
+  it('remote Edit fails validation before any I/O when ACP client is write-only', async () => {
+    const root = await createTempRoot('blade-acp-remote-edit-capability-');
+    const filePath = path.join(root, 'capability.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    client.files.set(filePath, 'remote alpha\n');
+    const sessionId = 'remote-edit-write-only';
+    initializeRemoteSession(client, sessionId, root, { writeTextFile: true });
+
+    const result = await executeEdit(filePath, 'alpha', 'beta', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(client.requests).toEqual([]);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
+  });
+
+  it('remote Write rejects non-utf8 encoding before any ACP request', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-encoding-');
+    const filePath = path.join(root, 'encoding.bin');
+    const hostCanary = 'host file must stay unchanged\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-non-utf8';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const result = await executeWrite(filePath, 'aGVsbG8=', sessionId, {
+      encoding: 'base64',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(client.requests).toEqual([]);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
+  });
+
+  it('remote Write of an existing file requires a prior successful remote Read', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-read-before-write-');
+    const filePath = path.join(root, 'existing.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    const remoteContent = 'remote original\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    client.files.set(filePath, remoteContent);
+    const sessionId = 'remote-write-needs-read';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const result = await executeWrite(filePath, 'remote updated\n', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(result.error?.message).toBe('File not read before write');
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
+  it('remote Edit of an existing file requires a prior successful remote Read', async () => {
+    const root = await createTempRoot('blade-acp-remote-edit-read-before-write-');
+    const filePath = path.join(root, 'existing.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    const remoteContent = 'remote alpha\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    client.files.set(filePath, remoteContent);
+    const sessionId = 'remote-edit-needs-read';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const result = await executeEdit(filePath, 'alpha', 'beta', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(result.error?.message).toBe('File not read before edit');
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
+  it('remote Write rejects stale digests after a remote Read without issuing a write request', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-stale-');
+    const filePath = path.join(root, 'stale.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    client.files.set(filePath, 'alpha\n');
+    const sessionId = 'remote-write-stale';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const readResult = await executeRead(filePath, sessionId);
+    expect(readResult.success).toBe(true);
+    client.files.set(filePath, 'beta\n');
+
+    const result = await executeWrite(filePath, 'gamma\n', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(result.error?.message).toBe('File modified externally');
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
+  it('remote Edit rejects stale digests after a remote Read without issuing a write request', async () => {
+    const root = await createTempRoot('blade-acp-remote-edit-stale-');
+    const filePath = path.join(root, 'stale.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    client.files.set(filePath, 'alpha beta\n');
+    const sessionId = 'remote-edit-stale';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const readResult = await executeRead(filePath, sessionId);
+    expect(readResult.success).toBe(true);
+    client.files.set(filePath, 'alpha gamma\n');
+
+    const result = await executeEdit(filePath, 'beta', 'delta', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(result.error?.message).toBe('File modified externally');
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
+  it('remote Write currently does not report verified mutation metadata after an acknowledged write', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-metadata-');
+    const filePath = path.join(root, 'metadata.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-metadata';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const result = await executeWrite(filePath, 'created remotely\n', sessionId);
+
+    expect(result.success).toBe(true);
+    expect(result.metadata?.write_acknowledged).toBe(true);
+    expect(result.metadata?.write_verified).toBe(true);
+    expect(result.metadata?.sideEffectsUncertain).toBe(false);
+    expect(result.metadata?.snapshot_created).toBe(false);
+    expect(result.metadata?.created_directories).toBeUndefined();
+    expect(result.metadata?.last_modified).toBeUndefined();
+    expect(result.metadata?.file_size).toBe(Buffer.byteLength('created remotely\n'));
+    expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
+  });
+
+  it('remote Edit currently does not classify uncertain outcomes when write throws after applying remotely', async () => {
+    const root = await createTempRoot('blade-acp-remote-edit-uncertain-');
+    const filePath = path.join(root, 'uncertain.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    const remoteContent = 'alpha beta\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    client.files.set(filePath, remoteContent);
+    client.enqueueWriteBehavior({
+      kind: 'apply-and-throw',
+      error: new Error('remote ack lost'),
+    });
+    const sessionId = 'remote-edit-uncertain';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const readResult = await executeRead(filePath, sessionId);
+    expect(readResult.success).toBe(true);
+
+    const result = await executeEdit(filePath, 'beta', 'gamma', sessionId);
+
+    expect(result.success).toBe(true);
+    expect(result.metadata?.write_acknowledged).toBe(false);
+    expect(result.metadata?.write_verified).toBe(true);
+    expect(result.metadata?.sideEffectsUncertain).toBe(false);
+  });
+
+  it('remote Write fails validation before any I/O when ACP client is write-only', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-write-only-');
+    const filePath = path.join(root, 'capability.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-write-only';
+    initializeRemoteSession(client, sessionId, root, { writeTextFile: true });
+
+    const result = await executeWrite(filePath, 'remote content\n', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(client.requests).toEqual([]);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
+  });
+
+  it('remote Edit fails validation before any I/O when ACP client is read-only', async () => {
+    const root = await createTempRoot('blade-acp-remote-edit-read-only-');
+    const filePath = path.join(root, 'capability.txt');
+    const hostCanary = 'host file must stay unchanged\n';
+    await fs.writeFile(filePath, hostCanary, 'utf8');
+
+    const client = new ControlledFileClient();
+    client.files.set(filePath, 'remote alpha\n');
+    const sessionId = 'remote-edit-read-only';
+    initializeRemoteSession(client, sessionId, root, { readTextFile: true });
+
+    const result = await executeEdit(filePath, 'alpha', 'beta', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(client.requests).toEqual([]);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
+  });
+
+  it('remote Write on a missing file succeeds without a prior Read and does not touch host parent state', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-missing-');
+    const filePath = path.join(root, 'nested', 'created.txt');
+    const parentDir = path.dirname(filePath);
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-missing';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const result = await executeWrite(filePath, 'created remotely\n', sessionId, {
+      create_directories: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+      {
+        kind: 'write',
+        request: {
+          path: filePath,
+          content: 'created remotely\n',
+          sessionId,
+        },
+      },
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+    await expect(fs.access(parentDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
+  });
+
+  it('remote Edit on a missing file maps to not-found without issuing a write request', async () => {
+    const root = await createTempRoot('blade-acp-remote-edit-missing-');
+    const filePath = path.join(root, 'missing.txt');
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-edit-missing';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const result = await executeEdit(filePath, 'alpha', 'beta', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.llmContent).toBe(`File not found: ${filePath}`);
+    expect(result.error?.type).toBe('execution_error');
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
+  it('remote Write does not accept a prior Read from another session on the same path', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-cross-session-');
+    const filePath = path.join(root, 'shared.txt');
+    const clientA = new ControlledFileClient();
+    const clientB = new ControlledFileClient();
+    const sessionA = 'remote-write-cross-session-a';
+    const sessionB = 'remote-write-cross-session-b';
+
+    initializeRemoteSession(clientA, sessionA, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+    initializeRemoteSession(clientB, sessionB, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    await expectRemoteReadSuccess(clientA, filePath, sessionA, 'alpha\n');
+    clientB.files.set(filePath, 'alpha\n');
+
+    const result = await executeWrite(filePath, 'beta\n', sessionB);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(result.error?.message).toBe('File not read before write');
+    expect(clientB.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId: sessionB,
+        },
+      },
+    ]);
+  });
+
+  it('remote Edit does not accept a prior Read from another session on the same path', async () => {
+    const root = await createTempRoot('blade-acp-remote-edit-cross-session-');
+    const filePath = path.join(root, 'shared.txt');
+    const clientA = new ControlledFileClient();
+    const clientB = new ControlledFileClient();
+    const sessionA = 'remote-edit-cross-session-a';
+    const sessionB = 'remote-edit-cross-session-b';
+
+    initializeRemoteSession(clientA, sessionA, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+    initializeRemoteSession(clientB, sessionB, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    await expectRemoteReadSuccess(clientA, filePath, sessionA, 'alpha beta\n');
+    clientB.files.set(filePath, 'alpha beta\n');
+
+    const result = await executeEdit(filePath, 'beta', 'gamma', sessionB);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('validation_error');
+    expect(result.error?.message).toBe('File not read before edit');
+    expect(clientB.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId: sessionB,
+        },
+      },
+    ]);
+  });
+
+  it('remote Write permits mutation when the prior digest is unchanged', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-current-');
+    const filePath = path.join(root, 'current.txt');
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-current';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    await expectRemoteReadSuccess(client, filePath, sessionId, 'alpha\n');
+    const result = await executeWrite(filePath, 'beta\n', sessionId);
+
+    expect(result.success).toBe(true);
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+      {
+        kind: 'write',
+        request: {
+          path: filePath,
+          content: 'beta\n',
+          sessionId,
+        },
+      },
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
+  it('remote Edit permits mutation when the prior digest is unchanged', async () => {
+    const root = await createTempRoot('blade-acp-remote-edit-current-');
+    const filePath = path.join(root, 'current.txt');
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-edit-current';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    await expectRemoteReadSuccess(client, filePath, sessionId, 'alpha beta\n');
+    const result = await executeEdit(filePath, 'beta', 'gamma', sessionId);
+
+    expect(result.success).toBe(true);
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+      {
+        kind: 'write',
+        request: {
+          path: filePath,
+          content: 'alpha gamma\n',
+          sessionId,
+        },
+      },
+      {
+        kind: 'read',
+        request: {
+          path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    {
+      label: 'acknowledged success',
+      configure: (_client: ControlledFileClient) => {
+        // no-op
+      },
+      expected: {
+        success: true,
+        write_acknowledged: true,
+        write_verified: true,
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      label: 'ack lost but readback intended',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueWriteBehavior({
+          kind: 'apply-and-throw',
+          error: new Error('ack lost'),
+        });
+      },
+      expected: {
+        success: true,
+        write_acknowledged: false,
+        write_verified: true,
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      label: 'acknowledged old content readback',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueWriteBehavior({ kind: 'ack-without-apply' });
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      label: 'acknowledged third content readback',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueWriteBehavior({
+          kind: 'ack-with-replacement',
+          content: 'third value\n',
+        });
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
+    {
+      label: 'old content after thrown write',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueWriteBehavior({
+          kind: 'leave-old-and-throw',
+          error: new Error('write rejected'),
+        });
+      },
+      expected: {
+        success: false,
+        write_acknowledged: false,
+        write_verified: false,
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      label: 'third content after thrown write',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueWriteBehavior({
+          kind: 'replace-and-throw',
+          content: 'third value\n',
+          error: new Error('write ambiguous'),
+        });
+      },
+      expected: {
+        success: false,
+        write_acknowledged: false,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
+    {
+      label: 'readback permission error',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueReadErrorAfter(1, new RequestError(-32020, 'Permission denied'));
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
+  ])('remote Write outcome matrix: $label', async ({ configure, expected }) => {
+    const root = await createTempRoot('blade-acp-remote-write-matrix-');
+    const filePath = path.join(root, 'matrix.txt');
+    const client = new ControlledFileClient();
+    const sessionId = `remote-write-matrix-${Math.random().toString(16).slice(2)}`;
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    await expectRemoteReadSuccess(client, filePath, sessionId, 'alpha\n');
+    configure(client);
+
+    const result = await executeWrite(filePath, 'beta\n', sessionId);
+
+    expect(result.success).toBe(expected.success);
+    expect(result.metadata?.write_acknowledged).toBe(expected.write_acknowledged);
+    expect(result.metadata?.write_verified).toBe(expected.write_verified);
+    expect(result.metadata?.sideEffectsUncertain).toBe(expected.sideEffectsUncertain);
+    expect(client.requests.map((request) => request.kind)).toEqual([
+      'read',
+      'read',
+      'write',
+      'read',
+    ]);
+  });
+
+  it('remote Write classifies new file still missing after a thrown write as definite failure', async () => {
+    const root = await createTempRoot('blade-acp-remote-write-new-not-found-');
+    const filePath = path.join(root, 'new-file.txt');
+    const client = new ControlledFileClient();
+    client.enqueueWriteBehavior({
+      kind: 'leave-old-and-throw',
+      error: new Error('write rejected'),
+    });
+    const sessionId = 'remote-write-new-not-found';
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    const result = await executeWrite(filePath, 'created remotely\n', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.metadata?.write_acknowledged).toBe(false);
+    expect(result.metadata?.write_verified).toBe(false);
+    expect(result.metadata?.sideEffectsUncertain).toBe(false);
+  });
+
+  it.each([
+    {
+      label: 'acknowledged success',
+      configure: (_client: ControlledFileClient) => {
+        // no-op
+      },
+      expected: {
+        success: true,
+        write_acknowledged: true,
+        write_verified: true,
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      label: 'ack lost but readback intended',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueWriteBehavior({
+          kind: 'apply-and-throw',
+          error: new Error('ack lost'),
+        });
+      },
+      expected: {
+        success: true,
+        write_acknowledged: false,
+        write_verified: true,
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      label: 'acknowledged old content readback',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueWriteBehavior({ kind: 'ack-without-apply' });
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      label: 'acknowledged third content readback',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueWriteBehavior({
+          kind: 'ack-with-replacement',
+          content: 'alpha third\n',
+        });
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
+    {
+      label: 'old content after thrown write',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueWriteBehavior({
+          kind: 'leave-old-and-throw',
+          error: new Error('write rejected'),
+        });
+      },
+      expected: {
+        success: false,
+        write_acknowledged: false,
+        write_verified: false,
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      label: 'third content after thrown write',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueWriteBehavior({
+          kind: 'replace-and-throw',
+          content: 'alpha third\n',
+          error: new Error('write ambiguous'),
+        });
+      },
+      expected: {
+        success: false,
+        write_acknowledged: false,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
+    {
+      label: 'readback disconnect error',
+      configure: (client: ControlledFileClient) => {
+        client.enqueueReadErrorAfter(
+          1,
+          new RequestError(-32022, 'Network disconnected')
+        );
+      },
+      expected: {
+        success: false,
+        write_acknowledged: true,
+        write_verified: false,
+        sideEffectsUncertain: true,
+      },
+    },
+  ])('remote Edit outcome matrix: $label', async ({ configure, expected }) => {
+    const root = await createTempRoot('blade-acp-remote-edit-matrix-');
+    const filePath = path.join(root, 'matrix.txt');
+    const client = new ControlledFileClient();
+    const sessionId = `remote-edit-matrix-${Math.random().toString(16).slice(2)}`;
+    initializeRemoteSession(client, sessionId, root, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
+
+    await expectRemoteReadSuccess(client, filePath, sessionId, 'alpha beta\n');
+    configure(client);
+
+    const result = await executeEdit(filePath, 'beta', 'gamma', sessionId);
+
+    expect(result.success).toBe(expected.success);
+    expect(result.metadata?.write_acknowledged).toBe(expected.write_acknowledged);
+    expect(result.metadata?.write_verified).toBe(expected.write_verified);
+    expect(result.metadata?.sideEffectsUncertain).toBe(expected.sideEffectsUncertain);
+    expect(client.requests.map((request) => request.kind)).toEqual([
+      'read',
+      'read',
+      'write',
+      'read',
+    ]);
   });
 });

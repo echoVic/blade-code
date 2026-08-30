@@ -6,7 +6,7 @@ import { ConcurrencyScheduler } from '../../../../../src/tools/execution/Concurr
 import { ToolExecutor } from '../../../../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../../../../src/tools/registry/ToolRegistry.js';
 import type { Tool } from '../../../../../src/tools/types/ToolTypes.js';
-import { ToolKind } from '../../../../../src/tools/types/ToolTypes.js';
+import { ToolErrorType, ToolKind } from '../../../../../src/tools/types/ToolTypes.js';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -167,6 +167,224 @@ describe('ToolExecutor concurrency contract', () => {
 
     exclusive.resolve();
     await exclusiveResult;
+  });
+
+  it('returns generic cancellation before dispatch when the signal is already aborted', async () => {
+    const executeSpy = vi.fn();
+    const registry = new ToolRegistry();
+    registry.register(
+      createTool({
+        name: 'AbortBeforeDispatch',
+        displayName: 'AbortBeforeDispatch',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({}),
+        description: { short: 'pre-dispatch abort boundary' },
+        async execute() {
+          executeSpy();
+          return { success: true, llmContent: 'should not execute' };
+        },
+      }) as never
+    );
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await executor.execute(
+      'AbortBeforeDispatch',
+      {},
+      {
+        signal: controller.signal,
+      }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      metadata: { abortedBeforeLaunch: true },
+    });
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it('preserves a classified remote mutation result after post-dispatch cancellation', async () => {
+    const release = deferred<void>();
+    const events: string[] = [];
+    const registry = new ToolRegistry();
+    registry.register(
+      createTool({
+        name: 'RemoteMutation',
+        displayName: 'RemoteMutation',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({}),
+        description: { short: 'remote mutation cancellation boundary' },
+        async execute() {
+          events.push('write-dispatched');
+          await release.promise;
+          events.push('readback-verified');
+          return {
+            success: true,
+            llmContent: 'remote mutation verified',
+            metadata: {
+              sideEffectsUncertain: false,
+              write_acknowledged: true,
+              write_verified: true,
+            },
+          };
+        },
+      }) as never
+    );
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    });
+    const controller = new AbortController();
+
+    const resultPromise = executor.execute(
+      'RemoteMutation',
+      {},
+      { signal: controller.signal }
+    );
+    await vi.waitFor(() => {
+      expect(events).toEqual(['write-dispatched']);
+    });
+
+    controller.abort();
+    release.resolve();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      success: true,
+      metadata: {
+        sideEffectsUncertain: false,
+        write_acknowledged: true,
+        write_verified: true,
+      },
+    });
+    expect(events).toEqual(['write-dispatched', 'readback-verified']);
+  });
+
+  it('preserves an uncertain classified result after post-dispatch cancellation', async () => {
+    const release = deferred<void>();
+    const events: string[] = [];
+    const registry = new ToolRegistry();
+    registry.register(
+      createTool({
+        name: 'RemoteMutationUncertain',
+        displayName: 'RemoteMutationUncertain',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({}),
+        description: { short: 'remote mutation uncertain cancellation boundary' },
+        async execute() {
+          events.push('write-dispatched');
+          await release.promise;
+          events.push('readback-classified');
+          return {
+            success: false,
+            llmContent: 'remote mutation uncertain',
+            error: {
+              type: ToolErrorType.EXECUTION_ERROR,
+              message: 'side effects uncertain',
+            },
+            metadata: {
+              sideEffectsUncertain: true,
+              write_acknowledged: true,
+              write_verified: false,
+            },
+          };
+        },
+      }) as never
+    );
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    });
+    const controller = new AbortController();
+
+    const resultPromise = executor.execute(
+      'RemoteMutationUncertain',
+      {},
+      {
+        signal: controller.signal,
+      }
+    );
+    await vi.waitFor(() => {
+      expect(events).toEqual(['write-dispatched']);
+    });
+
+    controller.abort();
+    release.resolve();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      success: false,
+      metadata: {
+        sideEffectsUncertain: true,
+        write_acknowledged: true,
+        write_verified: false,
+      },
+      error: {
+        type: 'execution_error',
+        message: 'side effects uncertain',
+      },
+    });
+    expect(events).toEqual(['write-dispatched', 'readback-classified']);
+  });
+
+  it('does not treat prototype metadata as a classified side-effect outcome', async () => {
+    const release = deferred<void>();
+    const registry = new ToolRegistry();
+    registry.register(
+      createTool({
+        name: 'PrototypeMetadataMutation',
+        displayName: 'PrototypeMetadataMutation',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({}),
+        description: { short: 'prototype metadata should not bypass cancellation' },
+        async execute() {
+          await release.promise;
+          const metadata = Object.create({ sideEffectsUncertain: false }) as Record<
+            string,
+            unknown
+          >;
+          metadata.write_acknowledged = true;
+          metadata.write_verified = true;
+          return {
+            success: true,
+            llmContent: 'prototype metadata result',
+            metadata,
+          };
+        },
+      }) as never
+    );
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    });
+    const controller = new AbortController();
+
+    const resultPromise = executor.execute(
+      'PrototypeMetadataMutation',
+      {},
+      {
+        signal: controller.signal,
+      }
+    );
+    await flushMicrotasks();
+    controller.abort();
+    release.resolve();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      success: false,
+      metadata: {
+        shouldExitLoop: true,
+      },
+      error: {
+        message: '任务已被用户中止',
+      },
+    });
   });
 
   it('keeps shared writes parallel across paths and serialized on one path', async () => {

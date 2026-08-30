@@ -1,5 +1,17 @@
 import { basename, extname } from 'path';
-import { getAcpFileSystemService, isAcpMode } from '../../../acp/AcpServiceContext.js';
+import {
+  AcpFileSystemCapabilityError,
+  AcpFileSystemService,
+} from '../../../acp/AcpFileSystemService.js';
+import {
+  getAcpFileSystemService,
+  isAcpMode,
+  isAcpRemoteFileSystem,
+} from '../../../acp/AcpServiceContext.js';
+import {
+  AcpRemoteMutationError,
+  commitVerifiedRemoteTextMutation,
+} from '../../../acp/RemoteTextMutation.js';
 import { Default, Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
@@ -82,9 +94,34 @@ export const editTool = createTool({
 
       // 获取文件系统服务（ACP 或本地）
       const useAcp = isAcpMode(sessionId);
+      const remoteFileSystem = isAcpRemoteFileSystem(sessionId);
       const fsService = useAcp
         ? getAcpFileSystemService(sessionId)
         : getFileSystemService();
+
+      if (remoteFileSystem) {
+        if (!(fsService instanceof AcpFileSystemService)) {
+          return {
+            success: false,
+            llmContent: 'File edit failed: internal ACP remote filesystem mismatch',
+            error: {
+              type: ToolErrorType.EXECUTION_ERROR,
+              message: 'ACP remote filesystem mismatch',
+            },
+          };
+        }
+        return executeRemoteEdit(
+          fsService,
+          {
+            file_path,
+            old_string,
+            new_string,
+            replace_all,
+          },
+          signal,
+          updateOutput
+        );
+      }
 
       // 读取文件内容（统一使用 FileSystemService）
       let content: string;
@@ -648,6 +685,277 @@ Common issues:
       totalLines,
     },
   };
+}
+
+async function executeRemoteEdit(
+  fsService: AcpFileSystemService,
+  params: {
+    file_path: string;
+    old_string: string;
+    new_string: string;
+    replace_all: boolean;
+  },
+  signal: AbortSignal,
+  updateOutput?: (content: string) => void
+): Promise<ToolResult> {
+  const { file_path, old_string, new_string, replace_all } = params;
+
+  try {
+    fsService.assertTextMutationCapabilities();
+  } catch (error) {
+    if (error instanceof AcpFileSystemCapabilityError) {
+      return {
+        success: false,
+        llmContent: `ACP remote Edit requires ${error.operation} capability.`,
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message: `ACP remote filesystem does not support ${error.operation}`,
+        },
+        metadata: {
+          file_path,
+          sideEffectsUncertain: false,
+        },
+      };
+    }
+    throw error;
+  }
+
+  signal.throwIfAborted?.();
+  const previous = await fsService.readTextFileIfExists(file_path);
+  if (!previous.exists) {
+    return {
+      success: false,
+      llmContent: `File not found: ${file_path}`,
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: '文件不存在',
+      },
+      metadata: {
+        file_path,
+        sideEffectsUncertain: false,
+      },
+    };
+  }
+
+  const accessStatus = fsService.checkRemoteAccess(file_path, previous.content);
+  if (accessStatus === 'missing') {
+    return {
+      success: false,
+      llmContent:
+        'You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.',
+      error: {
+        type: ToolErrorType.VALIDATION_ERROR,
+        message: 'File not read before edit',
+      },
+      metadata: {
+        file_path,
+        requiresRead: true,
+        sideEffectsUncertain: false,
+      },
+    };
+  }
+
+  if (accessStatus === 'modified') {
+    return {
+      success: false,
+      llmContent:
+        'The file has been modified externally since the last successful Read. Use Read again before editing.',
+      error: {
+        type: ToolErrorType.VALIDATION_ERROR,
+        message: 'File modified externally',
+      },
+      metadata: {
+        file_path,
+        sideEffectsUncertain: false,
+      },
+    };
+  }
+
+  if (old_string === new_string) {
+    return {
+      success: false,
+      llmContent: 'New string is identical; no replacement needed',
+      error: {
+        type: ToolErrorType.VALIDATION_ERROR,
+        message: '新旧字符串相同',
+      },
+      metadata: {
+        file_path,
+        sideEffectsUncertain: false,
+      },
+    };
+  }
+
+  const content = previous.content;
+  const matchResult = smartMatch(content, old_string);
+  if (!matchResult.matched) {
+    const errorDetails = generateRichErrorMessage(content, old_string, file_path);
+    return {
+      success: false,
+      llmContent: errorDetails.llmContent,
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: '未找到匹配内容',
+        details: errorDetails.metadata,
+      },
+      metadata: {
+        file_path,
+        sideEffectsUncertain: false,
+      },
+    };
+  }
+
+  const actualString = matchResult.matched;
+  const matches = findMatchesWithActual(content, actualString);
+  if (matches.length > 1 && !replace_all) {
+    const lines = content.split('\n');
+    let currentPos = 0;
+    const matchLocations: { line: number; column: number; context: string }[] = [];
+
+    for (let lineNum = 0; lineNum < lines.length; lineNum += 1) {
+      const line = lines[lineNum];
+      const lineStart = currentPos;
+      const lineEnd = currentPos + line.length;
+      for (const matchIndex of matches) {
+        if (matchIndex >= lineStart && matchIndex < lineEnd) {
+          const contextStart = Math.max(0, lineNum - 1);
+          const contextEnd = Math.min(lines.length - 1, lineNum + 1);
+          const contextPreview = lines
+            .slice(contextStart, contextEnd + 1)
+            .map((value) => value.trim())
+            .join(' ')
+            .slice(0, 80);
+          matchLocations.push({
+            line: lineNum + 1,
+            column: matchIndex - lineStart + 1,
+            context: contextPreview,
+          });
+        }
+      }
+      currentPos = lineEnd + 1;
+    }
+
+    return {
+      success: false,
+      llmContent: [
+        `[WARN] EDIT PAUSED: old_string matches ${matches.length} locations (must be unique).`,
+        '',
+        '**Matches found at:**',
+        ...matchLocations.map((loc, index) => ` ${index + 1}. Line ${loc.line}`),
+        '',
+        '**Action Required:** Add 3-5 lines of surrounding context to make old_string unique.',
+      ].join('\n'),
+      error: {
+        type: ToolErrorType.VALIDATION_ERROR,
+        message: 'old_string is not unique',
+        details: {
+          matches: matchLocations.map((loc) => ({
+            line: loc.line,
+            column: loc.column,
+          })),
+          count: matches.length,
+        },
+      },
+      metadata: {
+        file_path,
+        sideEffectsUncertain: false,
+      },
+    };
+  }
+
+  let newContent: string;
+  let replacedCount: number;
+  if (replace_all) {
+    newContent = content.split(actualString).join(new_string);
+    replacedCount = matches.length;
+  } else {
+    const firstMatchIndex = content.indexOf(actualString);
+    newContent =
+      content.substring(0, firstMatchIndex) +
+      new_string +
+      content.substring(firstMatchIndex + actualString.length);
+    replacedCount = 1;
+  }
+
+  updateOutput?.('通过 IDE 写入文件...');
+  try {
+    const receipt = await commitVerifiedRemoteTextMutation({
+      service: fsService,
+      filePath: file_path,
+      previous,
+      intendedContent: newContent,
+      operation: 'edit',
+      signal,
+    });
+    const diffSnippet = generateDiffSnippetWithMatch(
+      content,
+      newContent,
+      actualString,
+      new_string,
+      4
+    );
+    const metadata: EditMetadata = {
+      file_path,
+      matches_found: matches.length,
+      replacements_made: replacedCount,
+      replace_all,
+      old_string_length: old_string.length,
+      new_string_length: new_string.length,
+      original_size: content.length,
+      new_size: newContent.length,
+      size_diff: newContent.length - content.length,
+      snapshot_created: false,
+      diff_snippet: diffSnippet,
+      summary:
+        replacedCount === 1
+          ? `替换 1 处匹配到 ${basename(file_path)}`
+          : `替换 ${replacedCount} 处匹配到 ${basename(file_path)}`,
+      kind: 'edit',
+      oldContent: content,
+      newContent,
+      write_acknowledged: receipt.writeAcknowledged,
+      write_verified: receipt.writeVerified,
+      sideEffectsUncertain: receipt.sideEffectsUncertain,
+    };
+
+    return {
+      success: true,
+      llmContent: diffSnippet
+        ? `Edited ${file_path} (${replacedCount} replacement${replacedCount > 1 ? 's' : ''}):\n${diffSnippet}`
+        : `Edited ${file_path} (${replacedCount} replacement${replacedCount > 1 ? 's' : ''})`,
+      metadata,
+    };
+  } catch (error) {
+    if (error instanceof AcpRemoteMutationError) {
+      return {
+        success: false,
+        llmContent: `File edit failed: ${error.message}`,
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message: error.message,
+        },
+        metadata: {
+          file_path,
+          matches_found: matches.length,
+          replacements_made: replacedCount,
+          replace_all,
+          old_string_length: old_string.length,
+          new_string_length: new_string.length,
+          original_size: content.length,
+          new_size: newContent.length,
+          size_diff: newContent.length - content.length,
+          snapshot_created: false,
+          kind: 'edit',
+          oldContent: content,
+          newContent,
+          write_acknowledged: error.writeAcknowledged,
+          write_verified: error.writeVerified,
+          sideEffectsUncertain: error.sideEffectsUncertain,
+        },
+      };
+    }
+    throw error;
+  }
 }
 
 /**

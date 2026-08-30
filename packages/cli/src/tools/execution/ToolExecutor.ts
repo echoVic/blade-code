@@ -348,7 +348,7 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
           },
           executeWithLock
         );
-        if (context.signal?.aborted) {
+        if (context.signal?.aborted && !hasClassifiedSideEffectOutcome(result)) {
           return createCancellationResult(!invocationStarted);
         }
         if (result.metadata?.abortedBeforeLaunch === true) {
@@ -356,16 +356,16 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
         }
 
         await runPostToolUseHooks(tool, params, result, context, hookResult.toolUseId);
-        if (context.signal?.aborted) {
+        if (context.signal?.aborted && !hasClassifiedSideEffectOutcome(result)) {
           return createCancellationResult(false);
         }
 
         await this.lspManager?.afterToolUse(tool.name, params, result, context);
-        if (context.signal?.aborted) {
+        if (context.signal?.aborted && !hasClassifiedSideEffectOutcome(result)) {
           return createCancellationResult(false);
         }
         await this.autoVerifyRuntime?.verify(tool.name, params, context, result);
-        if (context.signal?.aborted) {
+        if (context.signal?.aborted && !hasClassifiedSideEffectOutcome(result)) {
           return createCancellationResult(false);
         }
         return formatToolResult(result, executionId, tool.name);
@@ -675,6 +675,13 @@ export interface ToolExecutorConfig {
   autoVerifyRuntime?: AutoVerifyRuntime;
   lspManager?: LspSessionManager;
   onDispose?: () => void;
+}
+
+function hasClassifiedSideEffectOutcome(result: ToolResult): boolean {
+  if (!result.metadata || typeof result.metadata !== 'object') {
+    return false;
+  }
+  return Object.hasOwn(result.metadata, 'sideEffectsUncertain');
 }
 
 export interface ExecutionStats {

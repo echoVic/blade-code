@@ -85,6 +85,9 @@ interface WriteMetadataFields extends DiffMetadataFields {
   encoding: string;
   created_directories?: boolean;
   has_diff?: boolean;
+  write_acknowledged?: boolean;
+  write_verified?: boolean;
+  sideEffectsUncertain?: boolean;
 }
 
 /**
@@ -100,6 +103,9 @@ interface EditMetadataFields extends DiffMetadataFields {
   new_size: number;
   size_diff: number;
   diff_snippet?: string | null;
+  write_acknowledged?: boolean;
+  write_verified?: boolean;
+  sideEffectsUncertain?: boolean;
 }
 
 export interface ApplyPatchChangeMetadata {
