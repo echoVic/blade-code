@@ -1780,10 +1780,15 @@ export const createSessionRouteController = (): SessionRouteController => {
     session: SessionInfo,
     pendingResume?: WebPendingResumeAttempt
   ) => Promise<void>;
+  const releasePendingResumeEpisodeLease = (state: WebPendingResumeState): void => {
+    const projectionLease = state.projectionLease;
+    state.projectionLease = undefined;
+    projectionLease?.release();
+  };
   const clearAllPendingResumeRecoveries = (): void => {
     for (const state of pendingResumeRecoveries.values()) {
       if (state.timer) clearTimeout(state.timer);
-      state.projectionLease?.release();
+      releasePendingResumeEpisodeLease(state);
     }
     pendingResumeRecoveries.clear();
   };
@@ -1828,7 +1833,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       return;
     }
     if (state.timer) clearTimeout(state.timer);
-    state.projectionLease?.release();
+    releasePendingResumeEpisodeLease(state);
     pendingResumeRecoveries.delete(key);
   };
 
@@ -1849,13 +1854,15 @@ export const createSessionRouteController = (): SessionRouteController => {
 
   const beginPendingResumeAttempt = (
     session: SessionInfo,
-    episodeLease?: SessionProjectionLease<SessionInfo>
+    candidateEpisodeLease?: SessionProjectionLease<SessionInfo>
   ): WebPendingResumeAttempt | undefined => {
     const key = sessionRefKey(sessionRefFromSession(session));
     let state = pendingResumeRecoveries.get(key);
-    if (state?.inFlight || state?.timer || state?.terminal) return undefined;
-    if (!state) {
-      if (!episodeLease) {
+    if (state) {
+      candidateEpisodeLease?.release();
+      if (state.inFlight || state.timer || state.terminal) return undefined;
+    } else {
+      if (!candidateEpisodeLease) {
         throw new ServiceUnavailableError();
       }
       state = {
@@ -1863,7 +1870,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         generation: nextPendingResumeGeneration++,
         inFlight: false,
         projectedInputIds: new Set<string>(),
-        projectionLease: episodeLease,
+        projectionLease: candidateEpisodeLease,
         startedAt: Date.now(),
         terminal: false,
         timer: undefined,
@@ -1920,6 +1927,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (deadlineExceeded) {
       state.inFlight = false;
       state.terminal = true;
+      releasePendingResumeEpisodeLease(state);
       publishPendingResume(ref, 'exhausted', attempt.attempt, evidence.taskFailure);
       return false;
     }
@@ -1933,8 +1941,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (decision.phase !== 'retry_scheduled') {
       state.inFlight = false;
       state.terminal = true;
-      state.projectionLease?.release();
-      state.projectionLease = undefined;
+      releasePendingResumeEpisodeLease(state);
       publishPendingResume(ref, decision.phase, attempt.attempt, evidence.taskFailure);
       return false;
     }
@@ -1951,7 +1958,7 @@ export const createSessionRouteController = (): SessionRouteController => {
           }
           state.timer = undefined;
           state.inFlight = false;
-          const nextAttempt = beginPendingResumeAttempt(session, state.projectionLease);
+          const nextAttempt = beginPendingResumeAttempt(session);
           if (!nextAttempt) return;
           try {
             await resumePendingSession(session, nextAttempt);
@@ -1960,39 +1967,43 @@ export const createSessionRouteController = (): SessionRouteController => {
             const taskFailure = toTaskFailure(error);
             state.inFlight = false;
             state.terminal = true;
-            const taskCompletedAt = new Date().toISOString();
-            let metadata: SessionMetadata | undefined;
             try {
-              metadata = await SessionService.updateSessionMetadata(
-                session.id,
-                session.projectPath,
-                {
-                  taskStatus: 'failed',
-                  taskStatusReason: taskFailure.message,
-                  taskFailure,
-                  taskCompletedAt,
-                  taskOwnerPid: null,
-                  taskQueuePosition: null,
-                  taskQueueDepth: null,
-                }
-              );
-            } catch {
-              logger.error(
-                `[SessionRoutes] Failed to persist terminal pending input state for ${session.id}`
-              );
+              const taskCompletedAt = new Date().toISOString();
+              let metadata: SessionMetadata | undefined;
+              try {
+                metadata = await SessionService.updateSessionMetadata(
+                  session.id,
+                  session.projectPath,
+                  {
+                    taskStatus: 'failed',
+                    taskStatusReason: taskFailure.message,
+                    taskFailure,
+                    taskCompletedAt,
+                    taskOwnerPid: null,
+                    taskQueuePosition: null,
+                    taskQueueDepth: null,
+                  }
+                );
+              } catch {
+                logger.error(
+                  `[SessionRoutes] Failed to persist terminal pending input state for ${session.id}`
+                );
+              }
+              if (pendingResumeRecoveries.get(key) !== state || !state.terminal) return;
+              session.taskStatus = 'failed';
+              session.taskStatusReason = taskFailure.message;
+              session.taskFailure = taskFailure;
+              session.taskCompletedAt = taskCompletedAt;
+              if (metadata) syncSessionTaskMetadata(session, metadata);
+              publishPendingResume(ref, 'failed', nextAttempt.attempt, taskFailure);
+              Bus.publish(ref, 'session.error', {
+                error: taskFailure.message,
+                taskFailure,
+              });
+              Bus.publish(ref, 'session.status', { status: 'error' });
+            } finally {
+              releasePendingResumeEpisodeLease(state);
             }
-            if (pendingResumeRecoveries.get(key) !== state || !state.terminal) return;
-            session.taskStatus = 'failed';
-            session.taskStatusReason = taskFailure.message;
-            session.taskFailure = taskFailure;
-            session.taskCompletedAt = taskCompletedAt;
-            if (metadata) syncSessionTaskMetadata(session, metadata);
-            publishPendingResume(ref, 'failed', nextAttempt.attempt, taskFailure);
-            Bus.publish(ref, 'session.error', {
-              error: taskFailure.message,
-              taskFailure,
-            });
-            Bus.publish(ref, 'session.status', { status: 'error' });
           }
         });
       })().catch((error) => {
@@ -3215,9 +3226,9 @@ export const createSessionRouteController = (): SessionRouteController => {
     session: SessionInfo,
     reservedAttempt?: WebPendingResumeAttempt
   ): Promise<void> => {
-    const recoveryState = pendingResumeRecoveries.get(
-      sessionRefKey(sessionRefFromSession(session))
-    );
+    const ref = sessionRefFromSession(session);
+    const key = sessionRefKey(ref);
+    const recoveryState = pendingResumeRecoveries.get(key);
     if (!reservedAttempt && recoveryState?.terminal) return;
     const currentRun = getRun(session.currentRunId);
     if (isActiveRun(currentRun)) {
@@ -3271,6 +3282,8 @@ export const createSessionRouteController = (): SessionRouteController => {
     }
     const runtimeLease = await acquireRuntime(session);
     let transferred = false;
+    let runProjectionLease: SessionProjectionLease<SessionInfo> | undefined;
+    let createdPendingResume: WebPendingResumeAttempt | undefined;
     try {
       const runtime = runtimeLease.value;
       const initializedRun = getRun(session.currentRunId);
@@ -3315,20 +3328,30 @@ export const createSessionRouteController = (): SessionRouteController => {
         }
         return;
       }
-      const pendingResume =
-        hasPending && !session.taskIsolation
-          ? reservedAttempt
-            ? reservedAttempt
-            : beginPendingResumeAttempt(
-                session,
-                await acquirePinnedProjectionLease(sessionRefFromSession(session))
-              )
-          : undefined;
+      let pendingResume = reservedAttempt;
+      if (hasPending && !session.taskIsolation && !pendingResume) {
+        let candidateEpisodeLease: SessionProjectionLease<SessionInfo> | undefined =
+          await acquirePinnedProjectionLease(ref);
+        try {
+          pendingResume = beginPendingResumeAttempt(session, candidateEpisodeLease);
+          const acceptedState = pendingResumeRecoveries.get(key);
+          if (
+            pendingResume &&
+            acceptedState?.generation === pendingResume.generation &&
+            acceptedState.projectionLease === candidateEpisodeLease
+          ) {
+            createdPendingResume = pendingResume;
+            candidateEpisodeLease = undefined;
+          }
+        } finally {
+          candidateEpisodeLease?.release();
+        }
+      }
       if (hasPending && !session.taskIsolation && !pendingResume) return;
       if (reservedAttempt && !isPendingResumeAttemptCurrent(session, reservedAttempt)) {
         return;
       }
-      const runProjectionLease = reservedAttempt
+      runProjectionLease = reservedAttempt
         ? (() => {
             const episodeProjectionLease = recoveryState?.projectionLease;
             if (!episodeProjectionLease) {
@@ -3344,8 +3367,14 @@ export const createSessionRouteController = (): SessionRouteController => {
         projectionLease: runProjectionLease,
         pendingResume: hasPending ? pendingResume : undefined,
       });
+      runProjectionLease = undefined;
+      createdPendingResume = undefined;
       transferred = true;
     } finally {
+      runProjectionLease?.release();
+      if (createdPendingResume) {
+        clearPendingResumeRecovery(ref, createdPendingResume.generation);
+      }
       if (!transferred) runtimeLease.release();
     }
   };
@@ -3720,16 +3749,24 @@ export const createSessionRouteController = (): SessionRouteController => {
         throw new BadRequestError('Invalid request body');
       }
       const sourceProjectPath = normalizeProjectPathInput(parsed.data.projectPath);
+      const childSessionId = createSessionId('fork');
       let childProjectionLease: SessionProjectionLease<SessionInfo> | undefined;
       const fork = await structuralOperations.runExclusive(async () => {
+        const sourceMetadata = await SessionService.findSessionMetadata(
+          sessionId,
+          sourceProjectPath
+        );
+        if (!sourceMetadata) {
+          throw new NotFoundError('Session', sessionId);
+        }
         let reservation:
           | ReturnType<SessionProjectionResidency<SessionInfo, SessionInfo>['reserve']>
           | undefined;
         try {
           reservation = sessionProjectionResidency.reserve(
             sessionRefKey({
-              sessionId: 'forked-session',
-              projectPath: sourceProjectPath,
+              sessionId: childSessionId,
+              projectPath: sourceMetadata.projectPath,
             })
           );
         } catch (error) {
@@ -3739,8 +3776,9 @@ export const createSessionRouteController = (): SessionRouteController => {
         }
         try {
           const created = await SessionService.forkSession(sessionId, {
-            sourceProjectPath,
-            targetProjectPath: sourceProjectPath,
+            newSessionId: childSessionId,
+            sourceProjectPath: sourceMetadata.projectPath,
+            targetProjectPath: sourceMetadata.projectPath,
           });
           if (reservation) {
             const childSession = sessionInfoFromMetadata(created.metadata);

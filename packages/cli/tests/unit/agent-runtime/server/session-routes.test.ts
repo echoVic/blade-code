@@ -536,21 +536,28 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
     forkSession: vi.fn(
       async (
         sessionId: string,
-        options: { sourceProjectPath: string; targetProjectPath: string }
-      ) => ({
-        sessionId: 'forked-session',
-        parentSessionId: sessionId,
-        projectPath: options.targetProjectPath,
-        messages: makeMessages(),
-        metadata: makeSessionMetadata({
-          sessionId: 'forked-session',
+        options: {
+          newSessionId?: string;
+          sourceProjectPath: string;
+          targetProjectPath: string;
+        }
+      ) => {
+        const childSessionId = options.newSessionId ?? 'forked-session';
+        return {
+          sessionId: childSessionId,
+          parentSessionId: sessionId,
           projectPath: options.targetProjectPath,
-          parentId: sessionId,
-          relationType: 'fork',
-          rootId: sessionId,
-          lastMessageTime: new Date(0).toISOString(),
-        }),
-      })
+          messages: makeMessages(),
+          metadata: makeSessionMetadata({
+            sessionId: childSessionId,
+            projectPath: options.targetProjectPath,
+            parentId: sessionId,
+            relationType: 'fork',
+            rootId: sessionId,
+            lastMessageTime: new Date(0).toISOString(),
+          }),
+        };
+      }
     ),
     deleteSession: vi.fn(async () => {
       /* noop */
@@ -3682,12 +3689,21 @@ describe('SessionRoutes runtime reuse', () => {
     const destroyGate = new Promise<undefined>((resolve) => {
       releaseDestroy = () => resolve(undefined);
     });
+    let markSecondDestroyStarted!: () => void;
+    const secondDestroyStarted = new Promise<void>((resolve) => {
+      markSecondDestroyStarted = resolve;
+    });
     let destroyCalls = 0;
     const destroy = agentState.destroy.mockReset().mockImplementation(async () => {
       destroyCalls++;
       if (destroyCalls === 1) await destroyGate;
+      else markSecondDestroyStarted();
     });
     let attempts = 0;
+    let markSecondAttemptStarted!: () => void;
+    const secondAttemptStarted = new Promise<void>((resolve) => {
+      markSecondAttemptStarted = resolve;
+    });
     const leaseHandoffOrder: string[] = [];
     const chatStream = agentState.chatStream
       .mockReset()
@@ -3708,6 +3724,7 @@ describe('SessionRoutes runtime reuse', () => {
             metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
           };
         }
+        markSecondAttemptStarted();
         if (Date.now() < 0) yield undefined;
         pendingSteeringCount = 0;
         return {
@@ -3859,6 +3876,7 @@ describe('SessionRoutes runtime reuse', () => {
       expect(destroy).toHaveBeenCalledTimes(1);
       expect(chatStream).toHaveBeenCalledTimes(1);
       releaseDestroy();
+      await secondAttemptStarted;
       await vi.advanceTimersByTimeAsync(0);
       expect(markDelivered).toHaveBeenCalledTimes(3);
       expect(controller.getCoordinationStats().messageSubmissions).toEqual({
@@ -3866,18 +3884,19 @@ describe('SessionRoutes runtime reuse', () => {
         operations: 0,
       });
       expect(chatStream).toHaveBeenCalledTimes(2);
-      await vi.waitFor(() => {
-        expect(
-          busState.publish.mock.calls.filter(
-            ([, type, properties]) =>
-              type === 'pending.resume' && properties.phase === 'recovered'
-          )
-        ).toHaveLength(1);
-        expect(
-          busState.publish.mock.calls.filter(([, type]) => type === 'session.completed')
-        ).toHaveLength(1);
-      });
+      expect(
+        busState.publish.mock.calls.filter(
+          ([, type, properties]) =>
+            type === 'pending.resume' && properties.phase === 'recovered'
+        )
+      ).toHaveLength(1);
+      expect(
+        busState.publish.mock.calls.filter(([, type]) => type === 'session.completed')
+      ).toHaveLength(1);
       expect(leaseHandoffOrder).toEqual(['chat:1', 'first-lease:release', 'chat:2']);
+      await secondDestroyStarted;
+      await Promise.resolve();
+      expect(controller.getProjectionResidencyStats().pinned).toBe(0);
     } finally {
       releaseStatus();
       releaseDestroy();
@@ -3885,8 +3904,8 @@ describe('SessionRoutes runtime reuse', () => {
       await Promise.all(
         responses.map((response) => response.body?.cancel().catch(() => undefined))
       );
-      vi.useRealTimers();
       await controller.shutdown();
+      vi.useRealTimers();
       markDelivered.mockRestore();
       reserveRuntime.mockRestore();
       createAgent.mockReset().mockImplementation(defaultCreateAgent);
@@ -3993,6 +4012,7 @@ describe('SessionRoutes runtime reuse', () => {
                 'runtime'
           )
         ).toHaveLength(1);
+        expect(controller.getProjectionResidencyStats().pinned).toBe(0);
       });
       expect(JSON.stringify(busState.publish.mock.calls)).not.toContain(
         'private retry startup details'
@@ -4005,7 +4025,6 @@ describe('SessionRoutes runtime reuse', () => {
           taskFailure: expect.objectContaining({ code: 'runtime' }),
         })
       );
-
       const secondEventsController = new AbortController();
       const secondResponse = await controller.app.request(
         '/retry-startup-failure/events',
@@ -4099,6 +4118,7 @@ describe('SessionRoutes runtime reuse', () => {
                 'runtime'
           )
         ).toHaveLength(1);
+        expect(controller.getProjectionResidencyStats().pinned).toBe(0);
       });
       expect(JSON.stringify(busState.publish.mock.calls)).not.toContain('private');
 
@@ -4204,6 +4224,9 @@ describe('SessionRoutes runtime reuse', () => {
       expect(
         busState.publish.mock.calls.some(([, type]) => type === 'session.completed')
       ).toBe(false);
+      await vi.waitFor(() => {
+        expect(controller.getProjectionResidencyStats().pinned).toBe(0);
+      });
 
       const pendingChecks = vi.mocked(SessionRuntime.hasPendingInbox).mock.calls.length;
       const reconnectController = new AbortController();
@@ -4517,6 +4540,49 @@ describe('SessionRoutes runtime reuse', () => {
       }
     }
   );
+
+  it('releases pending resume owners when shutdown closes admission during handoff', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'shutdown-before-pending-start-run';
+    const projectPath = '/persisted-workspace';
+    const metadata = metadataFor(sessionId, projectPath, { permissionMode: 'yolo' });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+
+    const controller = createSessionRouteController();
+    let shutdownPromise: Promise<void> | undefined;
+    let markShutdownStarted!: () => void;
+    const shutdownStarted = new Promise<void>((resolve) => {
+      markShutdownStarted = resolve;
+    });
+    runtimeState.runtime.hasTurnOwner.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        shutdownPromise = controller.shutdown('test-shutdown');
+        markShutdownStarted();
+      });
+      return false;
+    });
+    const eventsController = new AbortController();
+    const response = await controller.app.request(
+      `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+      { signal: eventsController.signal }
+    );
+    try {
+      await shutdownStarted;
+      await shutdownPromise;
+
+      expect(Agent.createWithRuntime).not.toHaveBeenCalled();
+      expect(controller.getProjectionResidencyStats().pinned).toBe(0);
+    } finally {
+      eventsController.abort();
+      await response.body?.cancel().catch(() => undefined);
+      await controller.shutdown();
+    }
+  });
 
   it('invalidates a pending resume attempt when abort arrives during its disk probe', async () => {
     vi.useFakeTimers();
@@ -6446,11 +6512,7 @@ describe('SessionRoutes runtime reuse', () => {
     );
     projectionResidencyConfig.maxResident = 1;
     const source = metadataFor('fork-source-session', '/tmp/task4-fork-source');
-    const durableChild = metadataFor('forked-session', source.projectPath, {
-      parentId: source.sessionId,
-      relationType: 'fork',
-      rootId: source.sessionId,
-    });
+    let durableChild: SessionMetadata | undefined;
     let releaseHydration!: () => void;
     const hydrationGate = new Promise<void>((resolve) => {
       releaseHydration = resolve;
@@ -6459,15 +6521,40 @@ describe('SessionRoutes runtime reuse', () => {
     const hydrationStarted = new Promise<void>((resolve) => {
       markHydrationStarted = resolve;
     });
-    vi.mocked(SessionService.listSessions).mockResolvedValue([source, durableChild]);
+    vi.mocked(SessionService.listSessions).mockImplementation(async () =>
+      durableChild ? [source, durableChild] : [source]
+    );
+    let sourceMetadataLookups = 0;
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId, projectPath) => {
         if (sessionId === source.sessionId && projectPath === source.projectPath) {
-          markHydrationStarted();
-          await hydrationGate;
+          sourceMetadataLookups++;
+          if (sourceMetadataLookups === 1) {
+            markHydrationStarted();
+            await hydrationGate;
+          }
           return source;
         }
         return undefined;
+      }
+    );
+    vi.mocked(SessionService.forkSession).mockImplementationOnce(
+      async (sessionId, options) => {
+        if (!options.newSessionId) {
+          throw new Error('Expected the route to allocate the fork Session ID');
+        }
+        durableChild = metadataFor(options.newSessionId, options.targetProjectPath, {
+          parentId: sessionId,
+          relationType: 'fork',
+          rootId: sessionId,
+        });
+        return {
+          sessionId: options.newSessionId,
+          parentSessionId: sessionId,
+          projectPath: options.targetProjectPath,
+          messages: [],
+          metadata: durableChild,
+        };
       }
     );
     const controller = createSessionRouteController();
@@ -6495,15 +6582,20 @@ describe('SessionRoutes runtime reuse', () => {
       });
 
       expect(forkResponse.status).toBe(201);
-      await expect(forkResponse.json()).resolves.toMatchObject({
+      const fork = (await forkResponse.json()) as {
+        session: { sessionId: string };
+        messages: unknown[];
+      };
+      expect(fork).toMatchObject({
         session: expect.objectContaining({
-          sessionId: 'forked-session',
+          sessionId: expect.stringMatching(/^fork-/),
           parentId: source.sessionId,
           relationType: 'fork',
         }),
         messages: [],
       });
       expect(SessionService.forkSession).toHaveBeenCalledWith(source.sessionId, {
+        newSessionId: fork.session.sessionId,
         sourceProjectPath: source.projectPath,
         targetProjectPath: source.projectPath,
       });
@@ -6514,7 +6606,10 @@ describe('SessionRoutes runtime reuse', () => {
         isActive?: boolean;
       }>;
       expect(sessions).toContainEqual(
-        expect.objectContaining({ sessionId: 'forked-session', isActive: false })
+        expect.objectContaining({
+          sessionId: fork.session.sessionId,
+          isActive: false,
+        })
       );
       expect(controller.getProjectionResidencyStats()).toMatchObject({
         resident: 0,
@@ -6527,6 +6622,71 @@ describe('SessionRoutes runtime reuse', () => {
       expect(residentResponse.status).toBe(200);
     } finally {
       releaseHydration();
+      await controller.shutdown();
+    }
+  });
+
+  it('commits a successful fork projection under the generated child identity', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const source = metadataFor('fork-projection-source', '/tmp/fork-projection-source');
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) =>
+        sessionId === source.sessionId && projectPath === source.projectPath
+          ? source
+          : undefined
+    );
+    vi.mocked(SessionService.forkSession).mockImplementationOnce(
+      async (sessionId, options) => {
+        if (!options.newSessionId) {
+          throw new Error('Expected the route to allocate the fork Session ID');
+        }
+        return {
+          sessionId: options.newSessionId,
+          parentSessionId: sessionId,
+          projectPath: options.targetProjectPath,
+          messages: [],
+          metadata: metadataFor(options.newSessionId, options.targetProjectPath, {
+            parentId: sessionId,
+            relationType: 'fork',
+            rootId: sessionId,
+          }),
+        };
+      }
+    );
+    const controller = createSessionRouteController();
+
+    try {
+      const forkResponse = await controller.app.request(`/${source.sessionId}/fork`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectPath: source.projectPath }),
+      });
+      expect(forkResponse.status).toBe(201);
+      const fork = (await forkResponse.json()) as {
+        session: { sessionId: string; projectPath: string };
+      };
+      expect(fork.session.sessionId).toMatch(/^fork-/);
+      expect(SessionService.forkSession).toHaveBeenCalledWith(source.sessionId, {
+        sourceProjectPath: source.projectPath,
+        targetProjectPath: source.projectPath,
+        newSessionId: fork.session.sessionId,
+      });
+
+      vi.mocked(SessionService.findSessionMetadata).mockRejectedValue(
+        new Error('Fork projection unexpectedly missed')
+      );
+      const childResponse = await controller.app.request(
+        `/${fork.session.sessionId}/browser/reset?projectPath=${encodeURIComponent(source.projectPath)}`,
+        { method: 'POST' }
+      );
+      expect(childResponse.status).toBe(200);
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        resident: 1,
+        pinned: 0,
+      });
+    } finally {
       await controller.shutdown();
     }
   });
