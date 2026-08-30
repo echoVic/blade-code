@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
@@ -63,6 +64,12 @@ import {
   MAX_BROWSER_TITLE_BYTES,
 } from '../../browser/constants.js';
 import { isBrowserToolName } from '../../browser/types.js';
+import {
+  DEFAULT_MAX_RESIDENT_SESSION_PROJECTIONS,
+  DEFAULT_SESSION_PROJECTION_IDLE_MS,
+  SESSION_PROJECTION_DRAIN_MS,
+  SESSION_PROJECTION_SWEEP_MS,
+} from '../../config/sessionProjectionResidency.js';
 import {
   DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
   DEFAULT_SESSION_RUNTIME_IDLE_MS,
@@ -165,6 +172,12 @@ import {
   TooManyRequestsError,
 } from '../error.js';
 import { OrderedSseEgress, type SerializedSseMessage } from '../OrderedSseEgress.js';
+import {
+  SessionProjectionCapacityError,
+  type SessionProjectionLease,
+  type SessionProjectionReservation,
+  SessionProjectionResidency,
+} from '../SessionProjectionResidency.js';
 import { normalizeSessionRef, type SessionRef, sessionRefKey } from '../sessionRef.js';
 import { WebBrowserSessionRegistry } from '../WebBrowserSessionRegistry.js';
 import { BrowserRoutes } from './browser.js';
@@ -185,6 +198,7 @@ interface WebPendingResumeState {
   generation: number;
   inFlight: boolean;
   projectedInputIds: Set<string>;
+  projectionLease: SessionProjectionLease<SessionInfo> | undefined;
   startedAt: number;
   terminal: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
@@ -251,6 +265,7 @@ export interface RunState {
   taskAdmissionUpdate?: Promise<void>;
   disposeRuntimeOnSettle?: boolean;
   pendingResume?: WebPendingResumeAttempt;
+  projectionLease: SessionProjectionLease<SessionInfo>;
   completion?: Promise<void>;
   createdAt: Date;
 }
@@ -309,18 +324,26 @@ type SessionHydrationInvalidationReason =
   | 'server-shutdown';
 
 interface SessionHydrationState {
-  promise: Promise<SessionInfo>;
+  promise: Promise<void>;
+  cancelReservation?: () => void;
   invalidatedBy?: SessionHydrationInvalidationReason;
 }
 
 interface SessionHydrationOwner {
   accepting: boolean;
-  getOrHydrateSession(ref: SessionRef): Promise<SessionInfo>;
+  resolveSessionRef(
+    sessionId: string,
+    requestedProjectPath?: string
+  ): Promise<SessionRef>;
+  getProjectionSnapshot(ref: SessionRef): SessionInfo | undefined;
+  snapshotAll(): SessionInfo[];
+  acquireOrHydrateSession(
+    ref: SessionRef
+  ): Promise<SessionProjectionLease<SessionInfo>>;
   invalidateAll(reason: SessionHydrationInvalidationReason): void;
   resumeRecoveredInteraction(session: SessionInfo): Promise<void>;
 }
 
-const sessions = new Map<string, SessionInfo>();
 let activeSessionHydrationOwner: SessionHydrationOwner | undefined;
 let resetPendingResumeRecoveries: (() => void) | undefined;
 
@@ -330,6 +353,7 @@ const activeUserShellRuns = new Map<
   {
     controller: AbortController;
     completion: Promise<void>;
+    projectionLease?: SessionProjectionLease<SessionInfo>;
   }
 >();
 const activeReviewRuns = new Map<
@@ -338,12 +362,26 @@ const activeReviewRuns = new Map<
     reviewId: string;
     controller: AbortController;
     completion: Promise<void>;
+    projectionLease?: SessionProjectionLease<SessionInfo>;
   }
 >();
 const recentRuns = new LRUCache<string, RunState>({
   max: 100,
   ttl: 30 * 60 * 1000,
 });
+
+function cloneSessionInfo(session: SessionInfo): SessionInfo {
+  const cloned = structuredClone({
+    ...session,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: session.updatedAt.toISOString(),
+  });
+  return {
+    ...cloned,
+    createdAt: new Date(cloned.createdAt),
+    updatedAt: new Date(cloned.updatedAt),
+  };
+}
 
 function runRef(run: RunState): SessionRef {
   return { sessionId: run.sessionId, projectPath: run.projectPath };
@@ -460,10 +498,10 @@ function sessionBusEventSseMessage(
 }
 
 function resetSharedSessionRouteState(): void {
-  const previousHydrationOwner = activeSessionHydrationOwner;
-  if (previousHydrationOwner) {
-    previousHydrationOwner.accepting = false;
-    previousHydrationOwner.invalidateAll('route-reset');
+  const previousOwner = activeSessionHydrationOwner;
+  if (previousOwner) {
+    previousOwner.accepting = false;
+    previousOwner.invalidateAll('route-reset');
   }
   activeSessionHydrationOwner = undefined;
   for (const run of activeRuns.values()) {
@@ -477,7 +515,6 @@ function resetSharedSessionRouteState(): void {
   recentRuns.clear();
   resetPendingResumeRecoveries?.();
   resetPendingResumeRecoveries = undefined;
-  sessions.clear();
 }
 
 type Variables = {
@@ -1469,15 +1506,16 @@ export async function resolveSessionRef(
   sessionId: string,
   requestedProjectPath?: string
 ): Promise<SessionRef> {
+  const owner = activeSessionHydrationOwner;
+  if (owner?.accepting) {
+    return owner.resolveSessionRef(sessionId, requestedProjectPath);
+  }
   validateSessionIdOrThrow(sessionId);
   if (requestedProjectPath !== undefined) {
     const ref = normalizeSessionRef({
       sessionId,
       projectPath: normalizeProjectPathInput(requestedProjectPath),
     });
-    if (sessions.has(sessionRefKey(ref))) {
-      return ref;
-    }
     const metadata = await SessionService.findSessionMetadata(
       ref.sessionId,
       ref.projectPath
@@ -1492,11 +1530,6 @@ export async function resolveSessionRef(
   }
 
   const matches = new Map<string, SessionRef>();
-  for (const session of sessions.values()) {
-    if (session.id !== sessionId) continue;
-    const ref = sessionRefFromSession(session);
-    matches.set(sessionRefKey(ref), ref);
-  }
   for (const metadata of await SessionService.listSessions()) {
     if (metadata.sessionId !== sessionId) continue;
     const ref = normalizeSessionRef({
@@ -1630,6 +1663,15 @@ export interface SessionRouteController {
     pinned: number;
     maxResident: number;
   };
+  getProjectionResidencyStats(): {
+    resident: number;
+    closing: number;
+    reserved: number;
+    pinned: number;
+    retained: number;
+    maxResident: number;
+    idleMs: number;
+  };
   getCoordinationStats(): {
     messageSubmissions: { keys: number; operations: number };
     taskDeliveries: { keys: number; operations: number };
@@ -1654,6 +1696,14 @@ export const createSessionRouteController = (): SessionRouteController => {
       const overload = new TooManyRequestsError('Session runtime capacity is full', {
         resource: err.resource,
         limit: err.limit,
+      });
+      return c.json(overload.toObject(), 429);
+    }
+    if (err instanceof SessionProjectionCapacityError) {
+      const overload = new TooManyRequestsError('Session projection capacity is full', {
+        resource: err.resource,
+        limit: err.limit,
+        retryable: err.retryable,
       });
       return c.json(overload.toObject(), 429);
     }
@@ -1688,12 +1738,24 @@ export const createSessionRouteController = (): SessionRouteController => {
   const ownedSessionHydrations = new Set<SessionHydrationState>();
   const messageSubmissionLocks = new KeyedMutexRegistry<string>();
   const taskDeliveryLocks = new KeyedMutexRegistry<string>();
+  const structuralOperations = new Mutex();
   const startupConfig = getConfig();
   const runtimeResidency = new SessionRuntimeResidency<SessionRuntime>({
     maxResident:
       startupConfig?.maxResidentSessionRuntimes ??
       DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
     idleMs: startupConfig?.sessionRuntimeIdleMs ?? DEFAULT_SESSION_RUNTIME_IDLE_MS,
+  });
+  const sessionProjectionResidency = new SessionProjectionResidency<
+    SessionInfo,
+    SessionInfo
+  >({
+    maxResident:
+      startupConfig?.maxResidentSessionProjections ??
+      DEFAULT_MAX_RESIDENT_SESSION_PROJECTIONS,
+    idleMs:
+      startupConfig?.sessionProjectionIdleMs ?? DEFAULT_SESSION_PROJECTION_IDLE_MS,
+    toSnapshot: cloneSessionInfo,
   });
   const admissionGate = new ActiveOperationGate();
   const sseGate = new ActiveOperationGate();
@@ -1703,6 +1765,14 @@ export const createSessionRouteController = (): SessionRouteController => {
     });
   }, SESSION_RUNTIME_SWEEP_MS);
   runtimeSweepTimer.unref?.();
+  const projectionSweepTimer = setInterval(() => {
+    try {
+      sessionProjectionResidency.sweepIdle();
+    } catch (error) {
+      logger.warn('[SessionRoutes] Session projection idle sweep failed:', error);
+    }
+  }, SESSION_PROJECTION_SWEEP_MS);
+  projectionSweepTimer.unref?.();
   let shutdownPromise: Promise<void> | undefined;
   const pendingResumeRecoveries = new Map<string, WebPendingResumeState>();
   let nextPendingResumeGeneration = 1;
@@ -1713,6 +1783,7 @@ export const createSessionRouteController = (): SessionRouteController => {
   const clearAllPendingResumeRecoveries = (): void => {
     for (const state of pendingResumeRecoveries.values()) {
       if (state.timer) clearTimeout(state.timer);
+      state.projectionLease?.release();
     }
     pendingResumeRecoveries.clear();
   };
@@ -1757,6 +1828,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       return;
     }
     if (state.timer) clearTimeout(state.timer);
+    state.projectionLease?.release();
     pendingResumeRecoveries.delete(key);
   };
 
@@ -1776,17 +1848,22 @@ export const createSessionRouteController = (): SessionRouteController => {
   };
 
   const beginPendingResumeAttempt = (
-    session: SessionInfo
+    session: SessionInfo,
+    episodeLease?: SessionProjectionLease<SessionInfo>
   ): WebPendingResumeAttempt | undefined => {
     const key = sessionRefKey(sessionRefFromSession(session));
     let state = pendingResumeRecoveries.get(key);
     if (state?.inFlight || state?.timer || state?.terminal) return undefined;
     if (!state) {
+      if (!episodeLease) {
+        throw new ServiceUnavailableError();
+      }
       state = {
         attempt: 0,
         generation: nextPendingResumeGeneration++,
         inFlight: false,
         projectedInputIds: new Set<string>(),
+        projectionLease: episodeLease,
         startedAt: Date.now(),
         terminal: false,
         timer: undefined,
@@ -1856,7 +1933,12 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (decision.phase !== 'retry_scheduled') {
       state.inFlight = false;
       state.terminal = true;
+      state.projectionLease?.release();
+      state.projectionLease = undefined;
       publishPendingResume(ref, decision.phase, attempt.attempt, evidence.taskFailure);
+      return false;
+    }
+    if (!state.projectionLease) {
       return false;
     }
     const timer = setTimeout(() => {
@@ -1869,7 +1951,7 @@ export const createSessionRouteController = (): SessionRouteController => {
           }
           state.timer = undefined;
           state.inFlight = false;
-          const nextAttempt = beginPendingResumeAttempt(session);
+          const nextAttempt = beginPendingResumeAttempt(session, state.projectionLease);
           if (!nextAttempt) return;
           try {
             await resumePendingSession(session, nextAttempt);
@@ -1972,12 +2054,12 @@ export const createSessionRouteController = (): SessionRouteController => {
         }
         const ref = sessionRefFromSession(session);
         if (
-          sessions.get(key) === session &&
+          getProjectionSnapshot(ref)?.id === session.id &&
           !hasActiveRunForRef(ref) &&
           !activeUserShellRuns.has(key) &&
           !activeReviewRuns.has(key)
         ) {
-          sessions.delete(key);
+          await evictProjection(ref, 'route-reset').catch(() => undefined);
         }
         await runtime.dispose();
         if (runtimes.size === 0) {
@@ -2211,6 +2293,8 @@ export const createSessionRouteController = (): SessionRouteController => {
     const state = sessionHydrations.get(key);
     if (!state) return;
     state.invalidatedBy ??= reason;
+    state.cancelReservation?.();
+    state.cancelReservation = undefined;
     if (sessionHydrations.get(key) === state) {
       sessionHydrations.delete(key);
     }
@@ -2221,40 +2305,165 @@ export const createSessionRouteController = (): SessionRouteController => {
   ): void => {
     for (const state of ownedSessionHydrations) {
       state.invalidatedBy ??= reason;
+      state.cancelReservation?.();
+      state.cancelReservation = undefined;
     }
     sessionHydrations.clear();
   };
 
-  const getOrHydrateSession = async (ref: SessionRef): Promise<SessionInfo> => {
+  const getProjectionSnapshot = (ref: SessionRef): SessionInfo | undefined =>
+    sessionProjectionResidency.snapshot(sessionRefKey(ref));
+
+  const snapshotAllSessions = (): SessionInfo[] =>
+    sessionProjectionResidency.snapshotAll();
+
+  const evictProjection = async (
+    ref: SessionRef,
+    reason: SessionHydrationInvalidationReason
+  ): Promise<void> => {
+    invalidateSessionHydration(ref, reason);
+    const key = sessionRefKey(ref);
+    if (!getProjectionSnapshot(ref)) return;
+    const closeSet = sessionProjectionResidency.beginCloseMany([key], reason);
+    await closeSet.waitForIdle({
+      deadlineAt: Date.now() + SESSION_PROJECTION_DRAIN_MS,
+    });
+    closeSet.commit();
+  };
+
+  const resolveProjectionOperationRef = async (
+    sessionId: string,
+    requestedProjectPath?: string
+  ): Promise<SessionRef> => {
+    if (requestedProjectPath !== undefined) {
+      validateSessionIdOrThrow(sessionId);
+      return normalizeSessionRef({
+        sessionId,
+        projectPath: normalizeProjectPathInput(requestedProjectPath),
+      });
+    }
+    return resolveSessionRefOwned(sessionId, requestedProjectPath);
+  };
+
+  const resolveSessionRefOwned = async (
+    sessionId: string,
+    requestedProjectPath?: string
+  ): Promise<SessionRef> => {
+    validateSessionIdOrThrow(sessionId);
+    if (requestedProjectPath !== undefined) {
+      const ref = normalizeSessionRef({
+        sessionId,
+        projectPath: normalizeProjectPathInput(requestedProjectPath),
+      });
+      if (getProjectionSnapshot(ref)) {
+        return ref;
+      }
+      const metadata = await SessionService.findSessionMetadata(
+        ref.sessionId,
+        ref.projectPath
+      );
+      if (!metadata) {
+        throw new NotFoundError('Session', sessionId);
+      }
+      return normalizeSessionRef({
+        sessionId: metadata.sessionId,
+        projectPath: metadata.projectPath,
+      });
+    }
+
+    const matches = new Map<string, SessionRef>();
+    for (const session of snapshotAllSessions()) {
+      if (session.id !== sessionId) continue;
+      const ref = sessionRefFromSession(session);
+      matches.set(sessionRefKey(ref), ref);
+    }
+    for (const metadata of await SessionService.listSessions()) {
+      if (metadata.sessionId !== sessionId) continue;
+      const ref = normalizeSessionRef({
+        sessionId: metadata.sessionId,
+        projectPath: metadata.projectPath,
+      });
+      matches.set(sessionRefKey(ref), ref);
+    }
+    if (matches.size === 0) {
+      try {
+        const metadata = await SessionService.findSessionMetadata(sessionId);
+        if (!metadata) {
+          throw new NotFoundError('Session', sessionId);
+        }
+        return normalizeSessionRef({
+          sessionId: metadata.sessionId,
+          projectPath: metadata.projectPath,
+        });
+      } catch (error) {
+        if (error instanceof NotFoundError) {
+          throw error;
+        }
+        if (
+          error instanceof Error &&
+          error.message.startsWith('Ambiguous session ID:')
+        ) {
+          throw new AmbiguousSessionError();
+        }
+        throw error;
+      }
+    }
+    if (matches.size > 1) {
+      throw new AmbiguousSessionError();
+    }
+    return matches.values().next().value as SessionRef;
+  };
+
+  const acquireOrHydrateSession = async (
+    ref: SessionRef
+  ): Promise<SessionProjectionLease<SessionInfo>> => {
     const owner = activeSessionHydrationOwner;
-    if (!owner?.accepting || owner.getOrHydrateSession !== getOrHydrateSession) {
+    if (
+      !owner?.accepting ||
+      owner.acquireOrHydrateSession !== acquireOrHydrateSession
+    ) {
       throw new ServiceUnavailableError();
     }
     const key = sessionRefKey(ref);
-    const existing = sessions.get(key);
-    if (existing) return existing;
+    const existingLease = sessionProjectionResidency.acquire(key);
+    if (existingLease) return existingLease;
 
     let state = sessionHydrations.get(key);
     if (!state) {
       let createdState!: SessionHydrationState;
       const promise = Promise.resolve().then(async () => {
-        const metadata = await SessionService.findSessionMetadata(
-          ref.sessionId,
-          ref.projectPath
-        );
-        assertSessionHydrationCurrent(ref, key, createdState);
-        if (!metadata) {
-          throw new NotFoundError('Session', ref.sessionId);
+        const current = sessionProjectionResidency.acquire(key);
+        if (current) {
+          current.release();
+          return;
         }
-        const taskWorktree = await SessionService.findSessionTaskWorktree(
-          ref.sessionId,
-          ref.projectPath
-        );
         assertSessionHydrationCurrent(ref, key, createdState);
-        const session = sessionInfoFromMetadata(metadata, taskWorktree);
-        assertSessionHydrationCurrent(ref, key, createdState);
-        sessions.set(key, session);
-        return session;
+        const reservation = sessionProjectionResidency.reserve(key);
+        createdState.cancelReservation = () => reservation.cancel();
+        try {
+          const metadata = await SessionService.findSessionMetadata(
+            ref.sessionId,
+            ref.projectPath
+          );
+          assertSessionHydrationCurrent(ref, key, createdState);
+          if (!metadata) {
+            throw new NotFoundError('Session', ref.sessionId);
+          }
+          const taskWorktree = await SessionService.findSessionTaskWorktree(
+            ref.sessionId,
+            ref.projectPath
+          );
+          assertSessionHydrationCurrent(ref, key, createdState);
+          const session = sessionInfoFromMetadata(metadata, taskWorktree);
+          assertSessionHydrationCurrent(ref, key, createdState);
+          const initialLease = reservation.commit(session);
+          createdState.cancelReservation = undefined;
+          initialLease.release();
+        } catch (error) {
+          createdState.cancelReservation?.();
+          createdState.cancelReservation = undefined;
+          throw error;
+        }
       });
       createdState = { promise };
       state = createdState;
@@ -2263,20 +2472,37 @@ export const createSessionRouteController = (): SessionRouteController => {
     }
 
     try {
-      return await state.promise;
+      await state.promise;
     } finally {
       ownedSessionHydrations.delete(state);
       if (sessionHydrations.get(key) === state) {
         sessionHydrations.delete(key);
       }
     }
+    const hydratedLease = sessionProjectionResidency.acquire(key);
+    if (!hydratedLease) {
+      throw new ServiceUnavailableError();
+    }
+    return hydratedLease;
   };
 
-  const resolveSessionForWrite = async (
+  const withProjection = async <T>(
+    ref: SessionRef,
+    operation: (session: SessionInfo) => Promise<T> | T
+  ): Promise<T> => {
+    const lease = await acquireOrHydrateSession(ref);
+    try {
+      return await operation(lease.value);
+    } finally {
+      lease.release();
+    }
+  };
+
+  const acquireSessionForWrite = async (
     sessionId: string,
     requestedProjectPath: string | undefined
-  ): Promise<SessionInfo> => {
-    const ref = await resolveSessionRef(sessionId, requestedProjectPath);
+  ): Promise<SessionProjectionLease<SessionInfo>> => {
+    const ref = await resolveSessionRefOwned(sessionId, requestedProjectPath);
     try {
       await SessionService.assertSessionWritable(ref.sessionId, ref.projectPath);
     } catch (error) {
@@ -2285,7 +2511,62 @@ export const createSessionRouteController = (): SessionRouteController => {
       }
       throw error;
     }
-    return getOrHydrateSession(ref);
+    return acquireOrHydrateSession(ref);
+  };
+
+  const pinProjectionLease = (
+    lease: SessionProjectionLease<SessionInfo>
+  ): SessionProjectionLease<SessionInfo> => {
+    const pinned = sessionProjectionResidency.acquire(lease.key);
+    if (!pinned || pinned.generation !== lease.generation) {
+      pinned?.release();
+      throw new ServiceUnavailableError();
+    }
+    return pinned;
+  };
+
+  const acquirePinnedProjectionLease = async (
+    ref: SessionRef
+  ): Promise<SessionProjectionLease<SessionInfo>> => {
+    const lease = await acquireOrHydrateSession(ref);
+    try {
+      return pinProjectionLease(lease);
+    } finally {
+      lease.release();
+    }
+  };
+
+  const withWritableProjection = async <T>(
+    sessionId: string,
+    requestedProjectPath: string | undefined,
+    operation: (
+      session: SessionInfo,
+      ref: SessionRef,
+      lease: SessionProjectionLease<SessionInfo>
+    ) => Promise<T> | T
+  ): Promise<T> => {
+    const lease = await acquireSessionForWrite(sessionId, requestedProjectPath);
+    try {
+      const session = lease.value;
+      return await operation(session, sessionRefFromSession(session), lease);
+    } finally {
+      lease.release();
+    }
+  };
+
+  const withWritableProjectionRef = async <T>(
+    ref: SessionRef,
+    operation: (
+      session: SessionInfo,
+      lease: SessionProjectionLease<SessionInfo>
+    ) => Promise<T> | T
+  ): Promise<T> => {
+    const lease = await acquireSessionForWrite(ref.sessionId, ref.projectPath);
+    try {
+      return await operation(lease.value, lease);
+    } finally {
+      lease.release();
+    }
   };
 
   const persistSessionPermissionMode = async (
@@ -2314,9 +2595,10 @@ export const createSessionRouteController = (): SessionRouteController => {
       preparedInputTurn?: PreparedInputTurn;
       goalContinuationOnly?: boolean;
       runtimeLease?: SessionRuntimeResidencyLease<SessionRuntime>;
+      projectionLease: SessionProjectionLease<SessionInfo>;
       outputSchema?: SessionTaskDispatch['outputSchema'];
       pendingResume?: WebPendingResumeAttempt;
-    } = {}
+    }
   ): RunState => {
     if (!admissionGate.stats().accepting) {
       throw new ServiceUnavailableError();
@@ -2331,6 +2613,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       disposeRuntimeOnSettle:
         session.taskIsolation !== undefined && options.runtimeLease !== undefined,
       pendingResume: options.pendingResume,
+      projectionLease: options.projectionLease,
       createdAt: new Date(),
     };
     if (session.taskIsolation && options.runtimeLease) {
@@ -2385,6 +2668,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         outputSchema: options.outputSchema,
         taskAdmission: run.taskAdmission,
         runtimeLease: options.runtimeLease,
+        projectionLease: options.projectionLease,
         disposeRuntime,
         pendingResume: options.pendingResume,
         onPendingResumeFailure: (
@@ -2515,25 +2799,59 @@ export const createSessionRouteController = (): SessionRouteController => {
     let taskWorktree: SessionTaskWorktree | undefined;
     let session: SessionInfo | undefined;
     let runtimeLease: SessionRuntimeResidencyLease<SessionRuntime> | undefined;
+    let taskProjectionLease: SessionProjectionLease<SessionInfo> | undefined;
+    let taskProjectionReservation:
+      | SessionProjectionReservation<SessionInfo>
+      | undefined;
+    let taskProjectionReservationKey: string | undefined;
 
     try {
-      const created = await SessionTaskService.createSessionTask({
-        sessionId,
-        prompt: input.prompt,
-        title: input.title,
-        taskPriority: input.taskPriority,
-        taskKind: input.taskKind,
-        taskDueAt: input.taskDueAt,
-        sourceProjectPath,
-        isolation: input.isolation,
-        dispatch,
-        retriedFrom: input.retriedFrom,
+      const created = await structuralOperations.runExclusive(async () => {
+        taskProjectionReservationKey = sessionRefKey(
+          normalizeSessionRef({
+            sessionId,
+            projectPath: sourceProjectPath,
+          })
+        );
+        taskProjectionReservation = sessionProjectionResidency.reserve(
+          taskProjectionReservationKey
+        );
+        try {
+          return await SessionTaskService.createSessionTask({
+            sessionId,
+            prompt: input.prompt,
+            title: input.title,
+            taskPriority: input.taskPriority,
+            taskKind: input.taskKind,
+            taskDueAt: input.taskDueAt,
+            sourceProjectPath,
+            isolation: input.isolation,
+            dispatch,
+            retriedFrom: input.retriedFrom,
+          });
+        } catch (error) {
+          taskProjectionReservation?.cancel();
+          taskProjectionReservation = undefined;
+          throw error;
+        }
       });
       const { metadata } = created;
       taskWorktree = created.taskWorktree;
       session = sessionInfoFromMetadata(metadata, taskWorktree);
+      if (!taskProjectionReservation) {
+        throw new ServiceUnavailableError();
+      }
+      const taskProjectionKey = sessionRefKey(sessionRefFromSession(session));
+      if (taskProjectionReservationKey !== taskProjectionKey) {
+        taskProjectionReservation.cancel();
+        taskProjectionReservation =
+          sessionProjectionResidency.reserve(taskProjectionKey);
+        taskProjectionReservationKey = taskProjectionKey;
+      }
+      taskProjectionLease = taskProjectionReservation.commit(session);
+      taskProjectionReservation = undefined;
+      taskProjectionReservationKey = undefined;
       const sessionRef = sessionRefFromSession(session);
-      sessions.set(sessionRefKey(sessionRef), session);
       Bus.publish(sessionRef, 'task.status', {
         taskStatus: metadata.taskStatus,
         updatedAt: metadata.lastMessageTime,
@@ -2548,11 +2866,16 @@ export const createSessionRouteController = (): SessionRouteController => {
       if (!preparation.accepted) {
         throw new ConflictError(`Task prompt was not accepted: ${preparation.reason}`);
       }
+      if (!taskProjectionLease) {
+        throw new ServiceUnavailableError();
+      }
       const run = startRun(session, userContent, input.permissionMode, {
         preparedInputTurn: preparation,
         runtimeLease,
+        projectionLease: taskProjectionLease,
         outputSchema,
       });
+      taskProjectionLease = undefined;
       runtimeLease = undefined;
       await run.taskAdmissionUpdate;
       return {
@@ -2565,15 +2888,26 @@ export const createSessionRouteController = (): SessionRouteController => {
         maxConcurrentTasks: session.taskConcurrencyLimit,
       };
     } catch (error) {
+      taskProjectionReservation?.cancel();
+      taskProjectionReservation = undefined;
+      taskProjectionReservationKey = undefined;
+      taskProjectionLease?.release();
+      taskProjectionLease = undefined;
       runtimeLease?.release();
       runtimeLease = undefined;
+      if (error instanceof SessionProjectionCapacityError && !session) {
+        throw new TooManyRequestsError('Session projection capacity is full', {
+          resource: error.resource,
+          limit: error.limit,
+          retryable: error.retryable,
+        });
+      }
       if (
         (error instanceof TaskAdmissionQueueFullError ||
-          error instanceof SessionRuntimeCapacityError) &&
+          error instanceof SessionRuntimeCapacityError ||
+          error instanceof SessionProjectionCapacityError) &&
         session
       ) {
-        const ref = sessionRefFromSession(session);
-        const key = sessionRefKey(ref);
         if (taskWorktree) {
           await worktreeManager
             .exit({
@@ -2587,14 +2921,18 @@ export const createSessionRouteController = (): SessionRouteController => {
         await SessionService.deleteSession(session.id, session.projectPath).catch(
           () => undefined
         );
-        sessions.delete(key);
         throw new TooManyRequestsError(
-          error instanceof SessionRuntimeCapacityError
-            ? 'Session runtime capacity is full'
-            : 'Task admission capacity is full',
+          error instanceof SessionProjectionCapacityError
+            ? 'Session projection capacity is full'
+            : error instanceof SessionRuntimeCapacityError
+              ? 'Session runtime capacity is full'
+              : 'Task admission capacity is full',
           {
             resource: error.resource,
             limit: error.limit,
+            ...(error instanceof SessionProjectionCapacityError
+              ? { retryable: error.retryable }
+              : {}),
           }
         );
       }
@@ -2707,7 +3045,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         ref.projectPath,
         update
       );
-      const session = sessions.get(sessionRefKey(ref));
+      const session = getProjectionSnapshot(ref);
       if (session) syncSessionTaskMetadata(session, metadata);
       Bus.publish(ref, 'session.updated', {
         ...(metadata.title ? { title: metadata.title } : {}),
@@ -2727,26 +3065,27 @@ export const createSessionRouteController = (): SessionRouteController => {
     sessionId: string,
     projectPath?: string
   ): Promise<SessionTaskDiffArtifact> => {
-    const session = await resolveSessionForWrite(sessionId, projectPath);
-    if (!session.taskWorktree) {
-      throw new BadRequestError('Session does not have a task worktree');
-    }
-    try {
-      await worktreeManager.restoreSession(session.taskWorktree);
-      const artifact = await worktreeManager.getDiffArtifact(session.id);
-      if (!artifact) {
+    return withWritableProjection(sessionId, projectPath, async (session) => {
+      if (!session.taskWorktree) {
+        throw new BadRequestError('Session does not have a task worktree');
+      }
+      try {
+        await worktreeManager.restoreSession(session.taskWorktree);
+        const artifact = await worktreeManager.getDiffArtifact(session.id);
+        if (!artifact) {
+          throw new ConflictError('Task diff artifact is unavailable');
+        }
+        return {
+          sessionId: session.id,
+          projectPath: session.projectPath,
+          ...artifact,
+        };
+      } catch (error) {
+        if (error instanceof ConflictError) throw error;
+        logger.error('[SessionRoutes] Failed to load task diff artifact:', error);
         throw new ConflictError('Task diff artifact is unavailable');
       }
-      return {
-        sessionId: session.id,
-        projectPath: session.projectPath,
-        ...artifact,
-      };
-    } catch (error) {
-      if (error instanceof ConflictError) throw error;
-      logger.error('[SessionRoutes] Failed to load task diff artifact:', error);
-      throw new ConflictError('Task diff artifact is unavailable');
-    }
+    });
   };
 
   const deliverTaskOwned = async (
@@ -2756,111 +3095,112 @@ export const createSessionRouteController = (): SessionRouteController => {
   ): Promise<SessionMetadata & { isActive: boolean }> => {
     const ref = await resolveSessionRef(sessionId, projectPath);
     return withTaskDeliveryLock(ref, async () => {
-      const session = await resolveSessionForWrite(ref.sessionId, ref.projectPath);
-      if (['queued', 'running'].includes(session.taskStatus)) {
-        throw new ConflictError(
-          `Task artifacts cannot be delivered while status is ${session.taskStatus}`
-        );
-      }
-      if (session.taskDelivery?.status === 'applied') {
-        throw new ConflictError('Task changes have already been applied');
-      }
-      if (session.taskDelivery?.status === 'discarded') {
-        throw new ConflictError('Task changes have already been discarded');
-      }
-      if (!session.taskWorktree) {
-        throw new ConflictError('Task worktree is unavailable');
-      }
+      return withWritableProjectionRef(ref, async (session) => {
+        if (['queued', 'running'].includes(session.taskStatus)) {
+          throw new ConflictError(
+            `Task artifacts cannot be delivered while status is ${session.taskStatus}`
+          );
+        }
+        if (session.taskDelivery?.status === 'applied') {
+          throw new ConflictError('Task changes have already been applied');
+        }
+        if (session.taskDelivery?.status === 'discarded') {
+          throw new ConflictError('Task changes have already been discarded');
+        }
+        if (!session.taskWorktree) {
+          throw new ConflictError('Task worktree is unavailable');
+        }
 
-      const persistDelivery = async (
-        delivery: SessionTaskDelivery,
-        removeWorktree = false
-      ) => {
-        const metadata = await SessionService.updateSessionMetadata(
-          session.id,
-          session.projectPath,
-          {
+        const persistDelivery = async (
+          delivery: SessionTaskDelivery,
+          removeWorktree = false
+        ) => {
+          const metadata = await SessionService.updateSessionMetadata(
+            session.id,
+            session.projectPath,
+            {
+              taskDelivery: delivery,
+              ...(removeWorktree ? { taskWorktree: null } : {}),
+            }
+          );
+          syncSessionTaskMetadata(session, metadata);
+          if (removeWorktree) session.taskWorktree = undefined;
+          Bus.publish(ref, 'task.delivery', {
             taskDelivery: delivery,
-            ...(removeWorktree ? { taskWorktree: null } : {}),
-          }
-        );
-        syncSessionTaskMetadata(session, metadata);
-        if (removeWorktree) session.taskWorktree = undefined;
-        Bus.publish(ref, 'task.delivery', {
-          taskDelivery: delivery,
-          ...(removeWorktree ? { taskWorktreeRemoved: true } : {}),
-          updatedAt: metadata.lastMessageTime,
-        });
-        return projectActiveSession(session);
-      };
+            ...(removeWorktree ? { taskWorktreeRemoved: true } : {}),
+            updatedAt: metadata.lastMessageTime,
+          });
+          return projectActiveSession(session);
+        };
 
-      try {
-        if (action === 'discard') {
-          try {
-            await worktreeManager.restoreSession(session.taskWorktree);
-          } catch (error) {
-            logger.warn(
-              `[SessionRoutes] Abandoning unavailable task worktree for ${session.id}:`,
-              error
-            );
+        try {
+          if (action === 'discard') {
+            try {
+              await worktreeManager.restoreSession(session.taskWorktree);
+            } catch (error) {
+              logger.warn(
+                `[SessionRoutes] Abandoning unavailable task worktree for ${session.id}:`,
+                error
+              );
+              return persistDelivery(
+                {
+                  status: 'discarded',
+                  updatedAt: new Date().toISOString(),
+                  changedFiles: session.taskDiffStat?.changedFiles ?? 0,
+                  message: 'Task artifact discarded; worktree was unavailable',
+                },
+                true
+              );
+            }
+            const result = await worktreeManager.exit({
+              sessionId: session.id,
+              action: 'remove',
+              discardChanges: true,
+            });
             return persistDelivery(
               {
                 status: 'discarded',
                 updatedAt: new Date().toISOString(),
-                changedFiles: session.taskDiffStat?.changedFiles ?? 0,
-                message: 'Task artifact discarded; worktree was unavailable',
+                changedFiles: result.discardedFiles ?? 0,
+                message: 'Task worktree removed',
               },
               true
             );
           }
-          const result = await worktreeManager.exit({
-            sessionId: session.id,
-            action: 'remove',
-            discardChanges: true,
-          });
-          return persistDelivery(
-            {
-              status: 'discarded',
-              updatedAt: new Date().toISOString(),
-              changedFiles: result.discardedFiles ?? 0,
-              message: 'Task worktree removed',
-            },
-            true
-          );
-        }
 
-        try {
-          await worktreeManager.restoreSession(session.taskWorktree);
-        } catch (error) {
-          logger.warn(
-            `[SessionRoutes] Task worktree is unavailable for ${session.id}:`,
-            error
-          );
-          throw new WorktreeDeliveryConflict(
-            'artifact_unavailable',
-            'Task worktree is unavailable'
-          );
-        }
+          try {
+            await worktreeManager.restoreSession(session.taskWorktree);
+          } catch (error) {
+            logger.warn(
+              `[SessionRoutes] Task worktree is unavailable for ${session.id}:`,
+              error
+            );
+            throw new WorktreeDeliveryConflict(
+              'artifact_unavailable',
+              'Task worktree is unavailable'
+            );
+          }
 
-        const result = await worktreeManager.apply(session.id);
-        return persistDelivery({
-          status: 'applied',
-          updatedAt: new Date().toISOString(),
-          sourceCommit: result.sourceCommit,
-          changedFiles: result.changedFiles,
-          message: 'Task changes applied to the source workspace',
-        });
-      } catch (error) {
-        if (error instanceof WorktreeDeliveryConflict) {
-          await persistDelivery({
-            status: 'conflicted',
+          const result = await worktreeManager.apply(session.id);
+          return persistDelivery({
+            status: 'applied',
             updatedAt: new Date().toISOString(),
-            message: error.message,
+            sourceCommit: result.sourceCommit,
+            changedFiles: result.changedFiles,
+            message: 'Task changes applied to the source workspace',
           });
-          throw new ConflictError(error.message);
+        } catch (error) {
+          if (error instanceof WorktreeDeliveryConflict) {
+            await persistDelivery({
+              status: 'conflicted',
+              updatedAt: new Date().toISOString(),
+              message: error.message,
+            });
+            throw new ConflictError(error.message);
+          }
+          throw error;
         }
-        throw error;
-      }
+      });
     });
   };
 
@@ -2977,16 +3317,31 @@ export const createSessionRouteController = (): SessionRouteController => {
       }
       const pendingResume =
         hasPending && !session.taskIsolation
-          ? (reservedAttempt ?? beginPendingResumeAttempt(session))
+          ? reservedAttempt
+            ? reservedAttempt
+            : beginPendingResumeAttempt(
+                session,
+                await acquirePinnedProjectionLease(sessionRefFromSession(session))
+              )
           : undefined;
       if (hasPending && !session.taskIsolation && !pendingResume) return;
       if (reservedAttempt && !isPendingResumeAttemptCurrent(session, reservedAttempt)) {
         return;
       }
+      const runProjectionLease = reservedAttempt
+        ? (() => {
+            const episodeProjectionLease = recoveryState?.projectionLease;
+            if (!episodeProjectionLease) {
+              throw new ServiceUnavailableError();
+            }
+            return pinProjectionLease(episodeProjectionLease);
+          })()
+        : await acquirePinnedProjectionLease(sessionRefFromSession(session));
       startRun(session, '', session.permissionMode ?? PermissionMode.DEFAULT, {
         pendingInputOnly: hasPending,
         goalContinuationOnly: hasActiveGoal,
         runtimeLease,
+        projectionLease: runProjectionLease,
         pendingResume: hasPending ? pendingResume : undefined,
       });
       transferred = true;
@@ -3026,7 +3381,10 @@ export const createSessionRouteController = (): SessionRouteController => {
   };
   const sessionHydrationOwner: SessionHydrationOwner = {
     accepting: true,
-    getOrHydrateSession,
+    resolveSessionRef: resolveSessionRefOwned,
+    getProjectionSnapshot,
+    snapshotAll: snapshotAllSessions,
+    acquireOrHydrateSession,
     invalidateAll: invalidateAllSessionHydrations,
     resumeRecoveredInteraction: resumePendingSession,
   };
@@ -3078,7 +3436,9 @@ export const createSessionRouteController = (): SessionRouteController => {
           continue;
         }
 
-        const session = await getOrHydrateSession(ref);
+        const sessionLease = await acquireOrHydrateSession(ref);
+        const session = sessionLease.value;
+        sessionLease.release();
         await resumePendingSession(session);
         if (session.currentRunId) result.scheduled++;
       } catch (error) {
@@ -3104,15 +3464,26 @@ export const createSessionRouteController = (): SessionRouteController => {
     BrowserRoutes({
       withAdmission,
       resolveSessionRef: async (sessionId, projectPath) => {
-        const ref = await resolveSessionRef(sessionId, projectPath);
-        await getOrHydrateSession(ref);
-        return ref;
+        try {
+          const ref = await resolveProjectionOperationRef(sessionId, projectPath);
+          const sessionLease = await acquireOrHydrateSession(ref);
+          sessionLease.release();
+          return ref;
+        } catch (error) {
+          if (error instanceof SessionProjectionCapacityError) {
+            throw new TooManyRequestsError('Session projection capacity is full', {
+              resource: error.resource,
+              limit: error.limit,
+              retryable: error.retryable,
+            });
+          }
+          throw error;
+        }
       },
       getRuntime: (ref) => webBrowserSessions.get(ref),
       captureAgentScreenshot: async (ref, options) => {
-        const session = await getOrHydrateSession(ref);
-        return withRuntime(session, (runtime) =>
-          runtime.captureBrowserScreenshot(options)
+        return withProjection(ref, (session) =>
+          withRuntime(session, (runtime) => runtime.captureBrowserScreenshot(options))
         );
       },
       resetRuntime: (ref) => webBrowserSessions.reset(ref),
@@ -3131,7 +3502,7 @@ export const createSessionRouteController = (): SessionRouteController => {
           )
       );
 
-      const activeSessionsList = Array.from(sessions.values())
+      const activeSessionsList = snapshotAllSessions()
         .filter(
           (s) =>
             !subagentSessionKeys.has(sessionRefKey(sessionRefFromSession(s))) &&
@@ -3162,7 +3533,13 @@ export const createSessionRouteController = (): SessionRouteController => {
         return true;
       });
 
-      const allSessions = [...activeSessionsList, ...deduplicatedPersisted];
+      const allSessions = [
+        ...activeSessionsList,
+        ...deduplicatedPersisted.map((session) => ({
+          ...session,
+          isActive: false,
+        })),
+      ];
       return c.json(allSessions);
     } catch (error) {
       logger.error('[SessionRoutes] Failed to list sessions:', error);
@@ -3193,7 +3570,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         archived,
       });
       const activeByKey = new Map(
-        (archived ? [] : Array.from(sessions.values()))
+        (archived ? [] : snapshotAllSessions())
           .filter((session) => session.relationType !== 'subagent')
           .map((session) => [
             sessionRefKey(sessionRefFromSession(session)),
@@ -3242,17 +3619,29 @@ export const createSessionRouteController = (): SessionRouteController => {
         projectPath || c.get('directory') || getCwd(),
         projectPath ? 'projectPath' : 'directory'
       );
-      const metadata = await SessionService.createSessionMetadata(
-        sessionId,
-        directory,
-        {
-          title,
-          taskStatus: 'completed',
+      const sessionRef = normalizeSessionRef({ sessionId, projectPath: directory });
+      const projectionLease = await structuralOperations.runExclusive(async () => {
+        const reservation = sessionProjectionResidency.reserve(
+          sessionRefKey(sessionRef)
+        );
+        try {
+          const metadata = await SessionService.createSessionMetadata(
+            sessionId,
+            directory,
+            {
+              title,
+              taskStatus: 'completed',
+            }
+          );
+          const session = sessionInfoFromMetadata(metadata);
+          return reservation.commit(session);
+        } catch (error) {
+          reservation.cancel();
+          throw error;
         }
-      );
-      const session = sessionInfoFromMetadata(metadata);
-      const sessionRef = sessionRefFromSession(session);
-      sessions.set(sessionRefKey(sessionRef), session);
+      });
+      const session = projectionLease.value;
+      projectionLease.release();
       Bus.publish(sessionRef, 'session.created', {});
 
       return c.json({
@@ -3263,7 +3652,13 @@ export const createSessionRouteController = (): SessionRouteController => {
       });
     } catch (error) {
       logger.error('[SessionRoutes] Failed to create session:', error);
-      if (error instanceof BadRequestError) throw error;
+      if (
+        error instanceof BadRequestError ||
+        error instanceof BladeServerError ||
+        error instanceof SessionProjectionCapacityError
+      ) {
+        throw error;
+      }
       throw new InternalServerError('Failed to create session');
     }
   });
@@ -3325,20 +3720,41 @@ export const createSessionRouteController = (): SessionRouteController => {
         throw new BadRequestError('Invalid request body');
       }
       const sourceProjectPath = normalizeProjectPathInput(parsed.data.projectPath);
-      const sourceMetadata = await SessionService.findSessionMetadata(
-        sessionId,
-        sourceProjectPath
-      );
-      if (!sourceMetadata) {
-        throw new NotFoundError('Session', sessionId);
-      }
-      const fork = await SessionService.forkSession(sessionId, {
-        sourceProjectPath: sourceMetadata.projectPath,
-        targetProjectPath: sourceMetadata.projectPath,
+      let childProjectionLease: SessionProjectionLease<SessionInfo> | undefined;
+      const fork = await structuralOperations.runExclusive(async () => {
+        let reservation:
+          | ReturnType<SessionProjectionResidency<SessionInfo, SessionInfo>['reserve']>
+          | undefined;
+        try {
+          reservation = sessionProjectionResidency.reserve(
+            sessionRefKey({
+              sessionId: 'forked-session',
+              projectPath: sourceProjectPath,
+            })
+          );
+        } catch (error) {
+          if (!(error instanceof SessionProjectionCapacityError)) {
+            throw error;
+          }
+        }
+        try {
+          const created = await SessionService.forkSession(sessionId, {
+            sourceProjectPath,
+            targetProjectPath: sourceProjectPath,
+          });
+          if (reservation) {
+            const childSession = sessionInfoFromMetadata(created.metadata);
+            childProjectionLease = reservation.commit(childSession);
+          }
+          return created;
+        } catch (error) {
+          reservation?.cancel();
+          throw error;
+        }
       });
       const childSession = sessionInfoFromMetadata(fork.metadata);
       const childRef = sessionRefFromSession(childSession);
-      sessions.set(sessionRefKey(childRef), childSession);
+      childProjectionLease?.release();
       Bus.publish(childRef, 'task.status', {
         taskStatus: fork.metadata.taskStatus,
         ...(fork.metadata.taskCompletedAt
@@ -3374,7 +3790,7 @@ export const createSessionRouteController = (): SessionRouteController => {
 
     try {
       const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
-      const session = sessions.get(sessionRefKey(ref));
+      const session = getProjectionSnapshot(ref);
       if (session) {
         return c.json(projectActiveSession(session));
       }
@@ -3420,10 +3836,15 @@ export const createSessionRouteController = (): SessionRouteController => {
         ref.projectPath,
         { title: parsed.data.title }
       );
-      const session = sessions.get(sessionRefKey(ref));
-      if (session) {
-        session.title = metadata.title ?? session.title;
-        session.updatedAt = new Date(metadata.lastMessageTime);
+      const sessionLease = sessionProjectionResidency.acquire(sessionRefKey(ref));
+      try {
+        const session = sessionLease?.value;
+        if (session) {
+          session.title = metadata.title ?? session.title;
+          session.updatedAt = new Date(metadata.lastMessageTime);
+        }
+      } finally {
+        sessionLease?.release();
       }
       // Broadcast so other connected surfaces (sidebar in other tabs) reflect
       // the rename live without a manual reload.
@@ -3446,57 +3867,57 @@ export const createSessionRouteController = (): SessionRouteController => {
   });
 
   app.get('/:sessionId/rewind', async (c) => {
-    const session = await resolveSessionForWrite(
+    return withWritableProjection(
       c.req.param('sessionId'),
-      c.req.query('projectPath')
-    );
-    return withRuntime(session, async (runtime) =>
-      c.json({
-        checkpoints: await runtime.listRewindCheckpoints(),
-      })
+      c.req.query('projectPath'),
+      (session) =>
+        withRuntime(session, async (runtime) =>
+          c.json({
+            checkpoints: await runtime.listRewindCheckpoints(),
+          })
+        )
     );
   });
 
   app.post('/:sessionId/rewind', async (c) => {
     const parsed = safeParseSchema(SessionRewindRequestSchema, await c.req.json());
     if (!parsed.success) throw new BadRequestError('Invalid rewind request');
-    const session = await resolveSessionForWrite(
+    return withWritableProjection(
       c.req.param('sessionId'),
-      c.req.query('projectPath')
-    );
-    const ref = sessionRefFromSession(session);
-
-    return withMessageSubmissionLock(ref, async () => {
-      const currentRun = getRun(session.currentRunId);
-      if (isActiveRun(currentRun)) {
-        throw new ConflictError('Cannot rewind while a run is active');
-      }
-
-      return withRuntime(session, async (runtime) => {
-        let result: RewoundSession;
-        try {
-          result = await runtime.rewindSession(parsed.data);
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            error.message.startsWith('Cannot rewind while')
-          ) {
-            throw new ConflictError(error.message);
+      c.req.query('projectPath'),
+      async (session, ref, sessionLease) =>
+        withMessageSubmissionLock(ref, async () => {
+          const currentRun = getRun(session.currentRunId);
+          if (isActiveRun(currentRun)) {
+            throw new ConflictError('Cannot rewind while a run is active');
           }
-          throw error;
-        }
-        await refreshSessionTaskMetadata(session);
-        const clientMessages = projectClientMessages(result.messages);
-        Bus.publish(ref, 'session.rewound', {
-          targetMessageId: result.checkpoint.messageId,
-          mode: result.mode,
-          removedTurns: result.removedTurns,
-          restoredFiles: result.restoredFiles,
-          messages: clientMessages,
-        });
-        return c.json({ ...result, messages: clientMessages });
-      });
-    });
+
+          return withRuntime(session, async (runtime) => {
+            let result: RewoundSession;
+            try {
+              result = await runtime.rewindSession(parsed.data);
+            } catch (error) {
+              if (
+                error instanceof Error &&
+                error.message.startsWith('Cannot rewind while')
+              ) {
+                throw new ConflictError(error.message);
+              }
+              throw error;
+            }
+            await refreshSessionTaskMetadata(session);
+            const clientMessages = projectClientMessages(result.messages);
+            Bus.publish(ref, 'session.rewound', {
+              targetMessageId: result.checkpoint.messageId,
+              mode: result.mode,
+              removedTurns: result.removedTurns,
+              restoredFiles: result.restoredFiles,
+              messages: clientMessages,
+            });
+            return c.json({ ...result, messages: clientMessages });
+          });
+        })
+    );
   });
 
   app.get('/:sessionId/review', async (c) => {
@@ -3519,173 +3940,189 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (!parsed.success) {
       throw new BadRequestError('Invalid code review request');
     }
-    const session = await resolveSessionForWrite(sessionId, parsed.data.projectPath);
+    const sessionLease = await acquireSessionForWrite(
+      sessionId,
+      parsed.data.projectPath
+    );
+    const session = sessionLease.value;
     const ref = sessionRefFromSession(session);
     const key = sessionRefKey(ref);
-
-    return withMessageSubmissionLock(ref, async () => {
-      if (isActiveRun(getRun(session.currentRunId))) {
-        throw new ConflictError('Cannot start a review during an active turn');
-      }
-      if (activeReviewRuns.has(key)) {
-        throw new ConflictError('Session already has an active review');
-      }
-      return withRuntime(session, async (runtime) => {
-        await CodeReviewService.recoverInterrupted(
-          ref.projectPath,
-          ref.sessionId,
-          runtime
-        );
-        if (parsed.data.modelId && !runtime.getModelById(parsed.data.modelId)) {
-          throw new BadRequestError(`Model not found: ${parsed.data.modelId}`);
+    try {
+      return await withMessageSubmissionLock(ref, async () => {
+        if (isActiveRun(getRun(session.currentRunId))) {
+          throw new ConflictError('Cannot start a review during an active turn');
         }
-        if (
-          parsed.data.modelId &&
-          runtime.getCurrentModelId() !== parsed.data.modelId
-        ) {
-          await runtime.refresh({ modelId: parsed.data.modelId });
+        if (activeReviewRuns.has(key)) {
+          throw new ConflictError('Session already has an active review');
         }
-        if (parsed.data.modelId && session.selectedModelId !== parsed.data.modelId) {
-          const metadata = await SessionService.updateSessionMetadata(
-            session.id,
-            session.projectPath,
-            { selectedModelId: parsed.data.modelId }
+        return withRuntime(session, async (runtime) => {
+          await CodeReviewService.recoverInterrupted(
+            ref.projectPath,
+            ref.sessionId,
+            runtime
           );
-          syncSessionTaskMetadata(session, metadata);
-        }
-        const controller = new AbortController();
-        let run: CodeReviewRun | undefined;
-        try {
-          run = await CodeReviewService.start({
-            sessionId: ref.sessionId,
-            projectPath: ref.projectPath,
-            runtime,
-            request: {
-              kind: parsed.data.kind,
-              ...(parsed.data.ref ? { ref: parsed.data.ref } : {}),
-              ...(parsed.data.instructions
-                ? { instructions: parsed.data.instructions }
-                : {}),
-            },
-            signal: controller.signal,
-            onEvent: (event) => {
-              if (event.kind === 'tool_start') {
-                Bus.publish(ref, 'review.tool.started', {
-                  reviewId: run?.reviewId,
-                  toolCallId: event.toolCall.id,
-                  toolName: event.toolCall.function.name,
-                });
-              } else if (event.kind === 'tool_progress') {
-                Bus.publish(ref, 'review.tool.progress', {
-                  reviewId: run?.reviewId,
-                  toolCallId: event.toolCall.id,
-                  message: event.update.message.slice(0, 1_000),
-                });
-              } else if (event.kind === 'tool_result') {
-                Bus.publish(ref, 'review.tool.completed', {
-                  reviewId: run?.reviewId,
-                  toolCallId: event.toolCall.id,
-                  success: event.result.success,
-                });
-              }
-            },
-          });
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            (error.message.includes('active review') ||
-              error.message.includes('interrupted review') ||
-              error.message.includes('active turn'))
-          ) {
-            throw new ConflictError(error.message);
+          if (parsed.data.modelId && !runtime.getModelById(parsed.data.modelId)) {
+            throw new BadRequestError(`Model not found: ${parsed.data.modelId}`);
           }
           if (
-            error instanceof Error &&
-            (error.message.includes('review') ||
-              error.message.includes('Git') ||
-              error.message.includes('changes') ||
-              error.message.includes('ref'))
+            parsed.data.modelId &&
+            runtime.getCurrentModelId() !== parsed.data.modelId
           ) {
-            throw new BadRequestError(error.message);
+            await runtime.refresh({ modelId: parsed.data.modelId });
           }
-          throw error;
-        }
-        if (!run) throw new InternalServerError('Code review failed to start');
-        await refreshSessionTaskMetadata(session);
-        Bus.publish(ref, 'review.started', {
-          reviewId: run.reviewId,
-          kind: parsed.data.kind,
-        });
-        Bus.publish(ref, 'task.status', {
-          taskStatus: session.taskStatus,
-          ...(session.taskStatusReason
-            ? { taskStatusReason: session.taskStatusReason }
-            : {}),
-          ...(session.taskStartedAt ? { taskStartedAt: session.taskStartedAt } : {}),
-          ...(session.taskPromptSummary
-            ? { taskPromptSummary: session.taskPromptSummary }
-            : {}),
-          updatedAt: new Date().toISOString(),
-        });
-        const completion = run.completion
-          .then(async (result) => {
-            await refreshSessionTaskMetadata(session);
-            Bus.publish(ref, 'task.status', {
-              taskStatus: session.taskStatus,
-              ...(session.taskStatusReason
-                ? { taskStatusReason: session.taskStatusReason }
-                : {}),
-              ...(session.taskFailure ? { taskFailure: session.taskFailure } : {}),
-              ...(session.taskStartedAt
-                ? { taskStartedAt: session.taskStartedAt }
-                : {}),
-              ...(session.taskCompletedAt
-                ? { taskCompletedAt: session.taskCompletedAt }
-                : {}),
-              ...(session.taskPromptSummary
-                ? { taskPromptSummary: session.taskPromptSummary }
-                : {}),
-              updatedAt: new Date().toISOString(),
+          if (parsed.data.modelId && session.selectedModelId !== parsed.data.modelId) {
+            const metadata = await SessionService.updateSessionMetadata(
+              session.id,
+              session.projectPath,
+              { selectedModelId: parsed.data.modelId }
+            );
+            syncSessionTaskMetadata(session, metadata);
+          }
+          const controller = new AbortController();
+          let reviewProjectionLease: SessionProjectionLease<SessionInfo> | undefined;
+          let run: CodeReviewRun | undefined;
+          try {
+            reviewProjectionLease = pinProjectionLease(sessionLease);
+            run = await CodeReviewService.start({
+              sessionId: ref.sessionId,
+              projectPath: ref.projectPath,
+              runtime,
+              request: {
+                kind: parsed.data.kind,
+                ...(parsed.data.ref ? { ref: parsed.data.ref } : {}),
+                ...(parsed.data.instructions
+                  ? { instructions: parsed.data.instructions }
+                  : {}),
+              },
+              signal: controller.signal,
+              onEvent: (event) => {
+                if (event.kind === 'tool_start') {
+                  Bus.publish(ref, 'review.tool.started', {
+                    reviewId: run?.reviewId,
+                    toolCallId: event.toolCall.id,
+                    toolName: event.toolCall.function.name,
+                  });
+                } else if (event.kind === 'tool_progress') {
+                  Bus.publish(ref, 'review.tool.progress', {
+                    reviewId: run?.reviewId,
+                    toolCallId: event.toolCall.id,
+                    message: event.update.message.slice(0, 1_000),
+                  });
+                } else if (event.kind === 'tool_result') {
+                  Bus.publish(ref, 'review.tool.completed', {
+                    reviewId: run?.reviewId,
+                    toolCallId: event.toolCall.id,
+                    success: event.result.success,
+                  });
+                }
+              },
             });
-            Bus.publish(ref, 'review.completed', {
-              reviewId: run.reviewId,
-              status: result.status,
-              findings: result.findings.length,
-            });
-          })
-          .catch((error) => {
-            logger.error(`[SessionRoutes] Code review ${run.reviewId} failed:`, error);
-          })
-          .finally(() => {
-            if (activeReviewRuns.get(key)?.reviewId === run.reviewId) {
-              activeReviewRuns.delete(key);
+          } catch (error) {
+            reviewProjectionLease?.release();
+            if (
+              error instanceof Error &&
+              (error.message.includes('active review') ||
+                error.message.includes('interrupted review') ||
+                error.message.includes('active turn'))
+            ) {
+              throw new ConflictError(error.message);
             }
-          });
-        activeReviewRuns.set(key, {
-          reviewId: run.reviewId,
-          controller,
-          completion,
-        });
-        return c.json(
-          {
+            if (
+              error instanceof Error &&
+              (error.message.includes('review') ||
+                error.message.includes('Git') ||
+                error.message.includes('changes') ||
+                error.message.includes('ref'))
+            ) {
+              throw new BadRequestError(error.message);
+            }
+            throw error;
+          }
+          if (!run) throw new InternalServerError('Code review failed to start');
+          await refreshSessionTaskMetadata(session);
+          Bus.publish(ref, 'review.started', {
             reviewId: run.reviewId,
-            status: 'running',
-          },
-          202
-        );
+            kind: parsed.data.kind,
+          });
+          Bus.publish(ref, 'task.status', {
+            taskStatus: session.taskStatus,
+            ...(session.taskStatusReason
+              ? { taskStatusReason: session.taskStatusReason }
+              : {}),
+            ...(session.taskStartedAt ? { taskStartedAt: session.taskStartedAt } : {}),
+            ...(session.taskPromptSummary
+              ? { taskPromptSummary: session.taskPromptSummary }
+              : {}),
+            updatedAt: new Date().toISOString(),
+          });
+          const completion = run.completion
+            .then(async (result) => {
+              await refreshSessionTaskMetadata(session);
+              Bus.publish(ref, 'task.status', {
+                taskStatus: session.taskStatus,
+                ...(session.taskStatusReason
+                  ? { taskStatusReason: session.taskStatusReason }
+                  : {}),
+                ...(session.taskFailure ? { taskFailure: session.taskFailure } : {}),
+                ...(session.taskStartedAt
+                  ? { taskStartedAt: session.taskStartedAt }
+                  : {}),
+                ...(session.taskCompletedAt
+                  ? { taskCompletedAt: session.taskCompletedAt }
+                  : {}),
+                ...(session.taskPromptSummary
+                  ? { taskPromptSummary: session.taskPromptSummary }
+                  : {}),
+                updatedAt: new Date().toISOString(),
+              });
+              Bus.publish(ref, 'review.completed', {
+                reviewId: run.reviewId,
+                status: result.status,
+                findings: result.findings.length,
+              });
+            })
+            .catch((error) => {
+              logger.error(
+                `[SessionRoutes] Code review ${run.reviewId} failed:`,
+                error
+              );
+            })
+            .finally(() => {
+              if (activeReviewRuns.get(key)?.reviewId === run.reviewId) {
+                activeReviewRuns.delete(key);
+              }
+              reviewProjectionLease?.release();
+            });
+          activeReviewRuns.set(key, {
+            reviewId: run.reviewId,
+            controller,
+            completion,
+            projectionLease: reviewProjectionLease,
+          });
+          return c.json(
+            {
+              reviewId: run.reviewId,
+              status: 'running',
+            },
+            202
+          );
+        });
       });
-    });
+    } finally {
+      sessionLease.release();
+    }
   });
 
   app.get('/:sessionId/subagents', async (c) => {
-    const session = await resolveSessionForWrite(
+    return withWritableProjection(
       c.req.param('sessionId'),
-      c.req.query('projectPath')
-    );
-    return withRuntime(session, (runtime) =>
-      c.json({
-        subagents: runtime.listSubagents().map(toPublicAgentSession),
-      })
+      c.req.query('projectPath'),
+      (session) =>
+        withRuntime(session, (runtime) =>
+          c.json({
+            subagents: runtime.listSubagents().map(toPublicAgentSession),
+          })
+        )
     );
   });
 
@@ -3695,205 +4132,216 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (!parsed.success) {
       throw new BadRequestError('Invalid subagent resume request');
     }
-    const session = await resolveSessionForWrite(
+    return withWritableProjection(
       c.req.param('sessionId'),
-      c.req.query('projectPath')
+      c.req.query('projectPath'),
+      async (session, ref, sessionLease) =>
+        withMessageSubmissionLock(ref, async () => {
+          const currentRun = getRun(session.currentRunId);
+          if (isActiveRun(currentRun)) {
+            throw new ConflictError(
+              'Cannot resume a subagent while a parent run is active'
+            );
+          }
+
+          return withRuntime(session, async (runtime) => {
+            let announced = false;
+            let pendingCompletion: AgentSession | undefined;
+            const publishCompletion = (child: AgentSession) => {
+              Bus.publish(ref, 'subagent.complete', {
+                subagentSessionId: child.id,
+                success: child.status === 'completed',
+                status: child.status,
+                summary: child.result?.message?.slice(0, 500),
+                type: child.subagentType,
+                verificationVerdict: child.result?.verificationVerdict,
+                resumedFrom: child.resumedFrom,
+                rootAgentId: child.rootAgentId,
+                resumeDepth: child.resumeDepth,
+              });
+            };
+            let result: ResumedSubagent;
+            try {
+              result = runtime.resumeSubagent({
+                agentId: c.req.param('agentId'),
+                prompt: parsed.data.prompt,
+                onEvent: (event, childId) => {
+                  publishSubagentLoopEvent(ref, childId, event);
+                },
+                onCompleted: (child) => {
+                  if (announced) publishCompletion(child);
+                  else pendingCompletion = child;
+                },
+              });
+            } catch (error) {
+              if (
+                error instanceof Error &&
+                (error.message.startsWith('Cannot resume') ||
+                  error.message.startsWith('Subagent cannot'))
+              ) {
+                throw new ConflictError(error.message);
+              }
+              if (
+                error instanceof Error &&
+                error.message.startsWith('Subagent not found')
+              ) {
+                throw new NotFoundError(error.message);
+              }
+              throw error;
+            }
+            Bus.publish(ref, 'subagent.start', {
+              subagentSessionId: result.session.id,
+              type: result.session.subagentType,
+              description: result.session.description,
+              resumedFrom: result.source.id,
+              rootAgentId: result.session.rootAgentId,
+              resumeDepth: result.session.resumeDepth,
+            });
+            announced = true;
+            if (pendingCompletion) publishCompletion(pendingCompletion);
+            return c.json({
+              source: toPublicAgentSession(result.source),
+              session: toPublicAgentSession(result.session),
+            });
+          });
+        })
     );
-    const ref = sessionRefFromSession(session);
-
-    return withMessageSubmissionLock(ref, async () => {
-      const currentRun = getRun(session.currentRunId);
-      if (isActiveRun(currentRun)) {
-        throw new ConflictError(
-          'Cannot resume a subagent while a parent run is active'
-        );
-      }
-
-      return withRuntime(session, async (runtime) => {
-        let announced = false;
-        let pendingCompletion: AgentSession | undefined;
-        const publishCompletion = (child: AgentSession) => {
-          Bus.publish(ref, 'subagent.complete', {
-            subagentSessionId: child.id,
-            success: child.status === 'completed',
-            status: child.status,
-            summary: child.result?.message?.slice(0, 500),
-            type: child.subagentType,
-            verificationVerdict: child.result?.verificationVerdict,
-            resumedFrom: child.resumedFrom,
-            rootAgentId: child.rootAgentId,
-            resumeDepth: child.resumeDepth,
-          });
-        };
-        let result: ResumedSubagent;
-        try {
-          result = runtime.resumeSubagent({
-            agentId: c.req.param('agentId'),
-            prompt: parsed.data.prompt,
-            onEvent: (event, childId) => {
-              publishSubagentLoopEvent(ref, childId, event);
-            },
-            onCompleted: (child) => {
-              if (announced) publishCompletion(child);
-              else pendingCompletion = child;
-            },
-          });
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            (error.message.startsWith('Cannot resume') ||
-              error.message.startsWith('Subagent cannot'))
-          ) {
-            throw new ConflictError(error.message);
-          }
-          if (
-            error instanceof Error &&
-            error.message.startsWith('Subagent not found')
-          ) {
-            throw new NotFoundError(error.message);
-          }
-          throw error;
-        }
-        Bus.publish(ref, 'subagent.start', {
-          subagentSessionId: result.session.id,
-          type: result.session.subagentType,
-          description: result.session.description,
-          resumedFrom: result.source.id,
-          rootAgentId: result.session.rootAgentId,
-          resumeDepth: result.session.resumeDepth,
-        });
-        announced = true;
-        if (pendingCompletion) publishCompletion(pendingCompletion);
-        return c.json({
-          source: toPublicAgentSession(result.source),
-          session: toPublicAgentSession(result.session),
-        });
-      });
-    });
   });
 
   app.get('/:sessionId/goal', async (c) => {
-    const session = await resolveSessionForWrite(
+    return withWritableProjection(
       c.req.param('sessionId'),
-      c.req.query('projectPath')
+      c.req.query('projectPath'),
+      async (session) =>
+        c.json({
+          goal: await new GoalStore(session.projectPath, session.id).get(),
+        })
     );
-    return c.json({
-      goal: await new GoalStore(session.projectPath, session.id).get(),
-    });
   });
 
   app.put('/:sessionId/goal', async (c) => {
     const parsed = safeParseSchema(CreateGoalSchema, await c.req.json());
     if (!parsed.success) throw new BadRequestError('Invalid goal request');
-    const session = await resolveSessionForWrite(
+    return withWritableProjection(
       c.req.param('sessionId'),
-      c.req.query('projectPath')
+      c.req.query('projectPath'),
+      async (session, ref, sessionLease) =>
+        withMessageSubmissionLock(ref, async () => {
+          const currentRun = getRun(session.currentRunId);
+          if (isActiveRun(currentRun)) {
+            return c.json({ status: 'rejected', reason: 'run_active' }, 409);
+          }
+
+          const requestedPermissionMode = parsed.data.permissionMode as
+            | PermissionMode
+            | undefined;
+          const permissionMode =
+            requestedPermissionMode ?? session.permissionMode ?? PermissionMode.DEFAULT;
+          if (session.permissionMode !== permissionMode) {
+            await persistSessionPermissionMode(session, permissionMode);
+          }
+          const runtimeLease = await acquireRuntime(session);
+          let transferred = false;
+          let projectionLease: SessionProjectionLease<SessionInfo> | undefined;
+          try {
+            const goal = await runtimeLease.value.createGoal(parsed.data);
+            Bus.publish(ref, 'goal.updated', { goal });
+            projectionLease = pinProjectionLease(sessionLease);
+            const run = startRun(session, '', permissionMode, {
+              goalContinuationOnly: true,
+              runtimeLease,
+              projectionLease,
+            });
+            transferred = true;
+            projectionLease = undefined;
+            await run.taskAdmissionUpdate;
+            return c.json(
+              {
+                status: run.status === 'queued' ? 'queued' : 'running',
+                runId: run.id,
+                goal,
+                queuePosition: session.taskQueuePosition,
+                queueDepth: session.taskQueueDepth,
+                maxConcurrentTasks: session.taskConcurrencyLimit,
+              },
+              202
+            );
+          } finally {
+            projectionLease?.release();
+            if (!transferred) runtimeLease.release();
+          }
+        })
     );
-    const ref = sessionRefFromSession(session);
-
-    return withMessageSubmissionLock(ref, async () => {
-      const currentRun = getRun(session.currentRunId);
-      if (isActiveRun(currentRun)) {
-        return c.json({ status: 'rejected', reason: 'run_active' }, 409);
-      }
-
-      const requestedPermissionMode = parsed.data.permissionMode as
-        | PermissionMode
-        | undefined;
-      const permissionMode =
-        requestedPermissionMode ?? session.permissionMode ?? PermissionMode.DEFAULT;
-      if (session.permissionMode !== permissionMode) {
-        await persistSessionPermissionMode(session, permissionMode);
-      }
-      const runtimeLease = await acquireRuntime(session);
-      let transferred = false;
-      try {
-        const goal = await runtimeLease.value.createGoal(parsed.data);
-        Bus.publish(ref, 'goal.updated', { goal });
-        const run = startRun(session, '', permissionMode, {
-          goalContinuationOnly: true,
-          runtimeLease,
-        });
-        transferred = true;
-        await run.taskAdmissionUpdate;
-        return c.json(
-          {
-            status: run.status === 'queued' ? 'queued' : 'running',
-            runId: run.id,
-            goal,
-            queuePosition: session.taskQueuePosition,
-            queueDepth: session.taskQueueDepth,
-            maxConcurrentTasks: session.taskConcurrencyLimit,
-          },
-          202
-        );
-      } finally {
-        if (!transferred) runtimeLease.release();
-      }
-    });
   });
 
   app.patch('/:sessionId/goal', async (c) => {
     const parsed = safeParseSchema(UpdateGoalSchema, await c.req.json());
     if (!parsed.success) throw new BadRequestError('Invalid goal update');
-    const session = await resolveSessionForWrite(
+    return withWritableProjection(
       c.req.param('sessionId'),
-      c.req.query('projectPath')
+      c.req.query('projectPath'),
+      async (session, ref, sessionLease) =>
+        withMessageSubmissionLock(ref, async () => {
+          const runtimeLease = await acquireRuntime(session);
+          let transferred = false;
+          let projectionLease: SessionProjectionLease<SessionInfo> | undefined;
+          try {
+            const runtime = runtimeLease.value;
+            let goal: GoalSnapshot;
+            if (parsed.data.action === 'pause') {
+              goal = await runtime.pauseGoal();
+            } else if (parsed.data.action === 'edit') {
+              goal = await runtime.editGoal(parsed.data.objective);
+            } else {
+              goal = await runtime.resumeGoal();
+            }
+            Bus.publish(ref, 'goal.updated', { goal });
+
+            if (
+              goal.status === 'active' &&
+              !isActiveRun(getRun(session.currentRunId))
+            ) {
+              projectionLease = pinProjectionLease(sessionLease);
+              const run = startRun(session, '', PermissionMode.DEFAULT, {
+                goalContinuationOnly: true,
+                runtimeLease,
+                projectionLease,
+              });
+              transferred = true;
+              projectionLease = undefined;
+              await run.taskAdmissionUpdate;
+              return c.json(
+                {
+                  status: run.status === 'queued' ? 'queued' : 'running',
+                  runId: run.id,
+                  goal,
+                  queuePosition: session.taskQueuePosition,
+                  queueDepth: session.taskQueueDepth,
+                  maxConcurrentTasks: session.taskConcurrencyLimit,
+                },
+                202
+              );
+            }
+            return c.json({ status: goal.status, goal });
+          } finally {
+            projectionLease?.release();
+            if (!transferred) runtimeLease.release();
+          }
+        })
     );
-    const ref = sessionRefFromSession(session);
-
-    return withMessageSubmissionLock(ref, async () => {
-      const runtimeLease = await acquireRuntime(session);
-      let transferred = false;
-      try {
-        const runtime = runtimeLease.value;
-        let goal: GoalSnapshot;
-        if (parsed.data.action === 'pause') {
-          goal = await runtime.pauseGoal();
-        } else if (parsed.data.action === 'edit') {
-          goal = await runtime.editGoal(parsed.data.objective);
-        } else {
-          goal = await runtime.resumeGoal();
-        }
-        Bus.publish(ref, 'goal.updated', { goal });
-
-        if (goal.status === 'active' && !isActiveRun(getRun(session.currentRunId))) {
-          const run = startRun(session, '', PermissionMode.DEFAULT, {
-            goalContinuationOnly: true,
-            runtimeLease,
-          });
-          transferred = true;
-          await run.taskAdmissionUpdate;
-          return c.json(
-            {
-              status: run.status === 'queued' ? 'queued' : 'running',
-              runId: run.id,
-              goal,
-              queuePosition: session.taskQueuePosition,
-              queueDepth: session.taskQueueDepth,
-              maxConcurrentTasks: session.taskConcurrencyLimit,
-            },
-            202
-          );
-        }
-        return c.json({ status: goal.status, goal });
-      } finally {
-        if (!transferred) runtimeLease.release();
-      }
-    });
   });
 
   app.delete('/:sessionId/goal', async (c) => {
-    const session = await resolveSessionForWrite(
+    return withWritableProjection(
       c.req.param('sessionId'),
-      c.req.query('projectPath')
+      c.req.query('projectPath'),
+      (session, ref) =>
+        withRuntime(session, async (runtime) => {
+          const cleared = await runtime.clearGoal();
+          if (cleared) Bus.publish(ref, 'goal.cleared', {});
+          return c.json({ cleared });
+        })
     );
-    const ref = sessionRefFromSession(session);
-    return withRuntime(session, async (runtime) => {
-      const cleared = await runtime.clearGoal();
-      if (cleared) Bus.publish(ref, 'goal.cleared', {});
-      return c.json({ cleared });
-    });
   });
 
   app.post('/:sessionId/archive', async (c) => {
@@ -3910,7 +4358,7 @@ export const createSessionRouteController = (): SessionRouteController => {
           sessionId: member.sessionId,
           projectPath: member.projectPath,
         });
-        const active = sessions.get(sessionRefKey(memberRef));
+        const active = getProjectionSnapshot(memberRef);
         if (isActiveRun(getRun(active?.currentRunId))) {
           throw new ConflictError(
             `Stop session ${member.sessionId} before archiving this session tree`
@@ -3923,7 +4371,7 @@ export const createSessionRouteController = (): SessionRouteController => {
           sessionId: member.sessionId,
           projectPath: member.projectPath,
         });
-        const active = sessions.get(sessionRefKey(memberRef));
+        const active = getProjectionSnapshot(memberRef);
         if (active) {
           await disposeRuntime(active);
         }
@@ -3940,7 +4388,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         });
         const key = sessionRefKey(memberRef);
         invalidateSessionHydration(memberRef, 'archive');
-        sessions.delete(key);
+        await evictProjection(memberRef, 'archive').catch(() => undefined);
         runtimeInitializations.delete(key);
         Bus.publish(memberRef, 'session.archived', {
           archiveRootId: ref.sessionId,
@@ -4022,14 +4470,17 @@ export const createSessionRouteController = (): SessionRouteController => {
       const ref = await resolveSessionRef(sessionId, requestedProjectPath);
       clearPendingResumeRecovery(ref);
       const key = sessionRefKey(ref);
-      const session = sessions.get(key);
+      const sessionLease = sessionProjectionResidency.acquire(key);
+      const session = sessionLease?.value;
+      const currentRunId = session?.currentRunId;
       const runtime = runtimes.get(key);
       const taskWorktree =
         session?.taskWorktree ??
         (await SessionService.findSessionTaskWorktree(ref.sessionId, ref.projectPath));
+      sessionLease?.release();
       let cancelledRunId: string | undefined;
-      if (session?.currentRunId) {
-        const run = getRun(session.currentRunId);
+      if (currentRunId) {
+        const run = getRun(currentRunId);
         if (run) {
           cancelRun(run);
           await run.completion;
@@ -4052,7 +4503,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       if (cancelledRunId) {
         forgetRun(cancelledRunId);
       }
-      sessions.delete(key);
+      await evictProjection(ref, 'delete').catch(() => undefined);
       runtimeInitializations.delete(key);
       Bus.publish(ref, 'session.deleted', {});
       const residentRuntime = runtimes.get(key);
@@ -4134,7 +4585,8 @@ export const createSessionRouteController = (): SessionRouteController => {
         }
         throw error;
       }
-      const session = await getOrHydrateSession(ref);
+      const sessionLease = await acquireOrHydrateSession(ref);
+      const session = sessionLease.value;
       // Last-Event-ID enables durable resume: the client's cursor is the seq of
       // the last committed event it saw. Replay everything after it before live
       // delivery. The browser EventSource cannot set request headers on a fresh
@@ -4488,6 +4940,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         }
       });
       handedOff = true;
+      sessionLease.release();
       return response;
     } catch (error) {
       if (!handedOff) sseLease.release();
@@ -4550,336 +5003,351 @@ export const createSessionRouteController = (): SessionRouteController => {
     const requestedPermissionMode = requestedMode as PermissionMode | undefined;
     const userContent = buildUserMessageContent(content, attachments);
 
-    const session = await resolveSessionForWrite(
+    const sessionLease = await acquireSessionForWrite(
       sessionId,
       projectPath ?? c.req.query('projectPath')
     );
+    const session = sessionLease.value;
+    const sessionRef = sessionRefFromSession(session);
     const permissionMode =
       requestedPermissionMode ?? session.permissionMode ?? PermissionMode.DEFAULT;
-    const sessionRef = sessionRefFromSession(session);
 
-    return withMessageSubmissionLock(sessionRef, async () => {
-      const currentRun = getRun(session.currentRunId);
-      if (isActiveRun(currentRun)) {
-        if (outputSchema) {
-          throw new ConflictError(
-            'Wait for the active turn to finish before setting an output schema'
-          );
+    try {
+      return await withMessageSubmissionLock(sessionRef, async () => {
+        const currentRun = getRun(session.currentRunId);
+        if (isActiveRun(currentRun)) {
+          if (outputSchema) {
+            throw new ConflictError(
+              'Wait for the active turn to finish before setting an output schema'
+            );
+          }
+          return withRuntime(session, async (runtime) => {
+            if (requestedModelId && !runtime.getModelById(requestedModelId)) {
+              throw new BadRequestError(`Model not found: ${requestedModelId}`);
+            }
+            if (requestedModelId && runtime.getCurrentModelId() !== requestedModelId) {
+              throw new ConflictError(
+                'Wait for the active turn to finish before switching models'
+              );
+            }
+            if (
+              requestedReasoningEffort &&
+              runtime.getReasoningConfiguration().selection !== requestedReasoningEffort
+            ) {
+              throw new ConflictError(
+                'Wait for the active turn to finish before switching reasoning effort'
+              );
+            }
+            if (
+              requestedServiceTier &&
+              runtime.getServiceTierConfiguration().selection !== requestedServiceTier
+            ) {
+              throw new ConflictError(
+                'Wait for the active turn to finish before switching service tier'
+              );
+            }
+            if (
+              requestedResponseVerbosity &&
+              runtime.getResponseVerbosityConfiguration().selection !==
+                requestedResponseVerbosity
+            ) {
+              throw new ConflictError(
+                'Wait for the active turn to finish before switching response verbosity'
+              );
+            }
+            if (
+              requestedCommunicationStyle &&
+              runtime.getCommunicationStyleConfiguration().selection !==
+                requestedCommunicationStyle
+            ) {
+              throw new ConflictError(
+                'Wait for the active turn to finish before switching communication style'
+              );
+            }
+            if (
+              requestedPermissionMode &&
+              session.permissionMode !== requestedPermissionMode
+            ) {
+              throw new ConflictError(
+                'Wait for the active turn to finish before switching permission mode'
+              );
+            }
+            const steering = await runtime.enqueueSteering(userContent, {
+              allowBeforeTurn: true,
+            });
+            if (!steering.accepted) {
+              return c.json(
+                { status: 'rejected', reason: steering.reason ?? 'turn_unavailable' },
+                409
+              );
+            }
+
+            const messageId = steering.messageId ?? nanoid(12);
+            const queued = steering.queued;
+            Bus.publish(sessionRef, 'message.created', {
+              messageId,
+              role: 'user',
+              content: getDisplayContent(userContent),
+            });
+            const queuedEvent =
+              steering.delivery === 'next_turn'
+                ? 'follow_up.queued'
+                : 'steering.queued';
+            Bus.publish(sessionRef, queuedEvent, {
+              runId: currentRun.id,
+              messageId,
+              queued,
+            });
+            if (
+              steering.delivery === 'next_turn' &&
+              currentRun.status !== 'running' &&
+              currentRun.status !== 'waiting_permission'
+            ) {
+              void resumePendingSession(session).catch((error) => {
+                logger.error(
+                  `[SessionRoutes] Failed to wake queued follow-up for ${sessionId}:`,
+                  error
+                );
+              });
+            }
+            if (steering.delivery === 'next_turn') {
+              currentRun.pendingFollowUpRequested = true;
+            }
+            return c.json(
+              {
+                runId: currentRun.id,
+                messageId,
+                status:
+                  steering.delivery === 'next_turn'
+                    ? 'follow_up_queued'
+                    : 'steering_queued',
+                queued,
+              },
+              202
+            );
+          });
         }
-        return withRuntime(session, async (runtime) => {
+
+        clearPendingResumeRecovery(sessionRef);
+
+        if (session.permissionMode !== permissionMode) {
+          await persistSessionPermissionMode(session, permissionMode);
+        }
+        const runtimeLease = await acquireRuntime(session, {
+          permissionMode,
+          ...(requestedCommunicationStyle && !requestedCommunicationStyle.includes(':')
+            ? { communicationStyle: requestedCommunicationStyle }
+            : {}),
+        });
+        let transferred = false;
+        let runProjectionLease: SessionProjectionLease<SessionInfo> | undefined;
+        try {
+          const runtime = runtimeLease.value;
           if (requestedModelId && !runtime.getModelById(requestedModelId)) {
             throw new BadRequestError(`Model not found: ${requestedModelId}`);
           }
-          if (requestedModelId && runtime.getCurrentModelId() !== requestedModelId) {
-            throw new ConflictError(
-              'Wait for the active turn to finish before switching models'
-            );
+          if (requestedReasoningEffort) {
+            try {
+              runtime.resolveReasoningConfiguration(
+                requestedReasoningEffort,
+                requestedModelId
+              );
+            } catch (error) {
+              throw new BadRequestError(
+                error instanceof Error ? error.message : 'Invalid reasoning effort'
+              );
+            }
           }
+          if (requestedServiceTier) {
+            try {
+              runtime.resolveServiceTierConfiguration(
+                requestedServiceTier,
+                requestedModelId
+              );
+            } catch (error) {
+              throw new BadRequestError(
+                error instanceof Error ? error.message : 'Invalid service tier'
+              );
+            }
+          }
+          if (requestedResponseVerbosity) {
+            try {
+              runtime.resolveResponseVerbosityConfiguration(
+                requestedResponseVerbosity,
+                requestedModelId
+              );
+            } catch (error) {
+              throw new BadRequestError(
+                error instanceof Error ? error.message : 'Invalid response verbosity'
+              );
+            }
+          }
+          const requestedCommunicationStyleConfiguration:
+            | CommunicationStyleConfiguration
+            | undefined = requestedCommunicationStyle
+            ? runtime.resolveCommunicationStyleConfiguration(
+                requestedCommunicationStyle
+              )
+            : undefined;
           if (
-            requestedReasoningEffort &&
-            runtime.getReasoningConfiguration().selection !== requestedReasoningEffort
+            requestedCommunicationStyleConfiguration?.source !== undefined &&
+            requestedCommunicationStyleConfiguration.source !== 'built-in' &&
+            !requestedCommunicationStyleConfiguration.contentSha256
           ) {
-            throw new ConflictError(
-              'Wait for the active turn to finish before switching reasoning effort'
-            );
+            throw new BadRequestError('Custom communication style has no provenance');
           }
+          const previousModelId = runtime.getCurrentModelId();
+          const previousReasoning = runtime.getReasoningConfiguration();
+          const previousServiceTier = runtime.getServiceTierConfiguration();
+          const previousResponseVerbosity = runtime.getResponseVerbosityConfiguration();
+          const previousCommunicationStyle =
+            runtime.getCommunicationStyleConfiguration();
+          const switchedModel =
+            Boolean(requestedModelId) && previousModelId !== requestedModelId;
+          const switchedReasoning =
+            Boolean(requestedReasoningEffort) &&
+            previousReasoning.selection !== requestedReasoningEffort;
+          const switchedServiceTier =
+            Boolean(requestedServiceTier) &&
+            previousServiceTier.selection !== requestedServiceTier;
+          const switchedResponseVerbosity =
+            Boolean(requestedResponseVerbosity) &&
+            previousResponseVerbosity.selection !== requestedResponseVerbosity;
+          const switchedCommunicationStyle =
+            Boolean(requestedCommunicationStyle) &&
+            previousCommunicationStyle.selection !== requestedCommunicationStyle;
           if (
-            requestedServiceTier &&
-            runtime.getServiceTierConfiguration().selection !== requestedServiceTier
+            switchedModel ||
+            switchedReasoning ||
+            switchedServiceTier ||
+            switchedResponseVerbosity ||
+            switchedCommunicationStyle
           ) {
-            throw new ConflictError(
-              'Wait for the active turn to finish before switching service tier'
-            );
+            await runtime.refresh({
+              ...(requestedModelId ? { modelId: requestedModelId } : {}),
+              ...(requestedReasoningEffort
+                ? { reasoningEffort: requestedReasoningEffort }
+                : {}),
+              ...(requestedServiceTier ? { serviceTier: requestedServiceTier } : {}),
+              ...(requestedResponseVerbosity
+                ? { responseVerbosity: requestedResponseVerbosity }
+                : {}),
+              ...(requestedCommunicationStyle
+                ? { communicationStyle: requestedCommunicationStyle }
+                : {}),
+            });
           }
-          if (
-            requestedResponseVerbosity &&
-            runtime.getResponseVerbosityConfiguration().selection !==
-              requestedResponseVerbosity
-          ) {
-            throw new ConflictError(
-              'Wait for the active turn to finish before switching response verbosity'
-            );
+          const metadataUpdate = {
+            ...(requestedModelId && session.selectedModelId !== requestedModelId
+              ? { selectedModelId: requestedModelId }
+              : {}),
+            ...(requestedReasoningEffort &&
+            session.reasoningEffort !== requestedReasoningEffort
+              ? { reasoningEffort: requestedReasoningEffort }
+              : {}),
+            ...(requestedServiceTier && session.serviceTier !== requestedServiceTier
+              ? { serviceTier: requestedServiceTier }
+              : {}),
+            ...(requestedResponseVerbosity &&
+            session.responseVerbosity !== requestedResponseVerbosity
+              ? { responseVerbosity: requestedResponseVerbosity }
+              : {}),
+            ...(requestedCommunicationStyleConfiguration &&
+            (session.communicationStyle !== requestedCommunicationStyle ||
+              session.communicationStyleDigest !==
+                requestedCommunicationStyleConfiguration.contentSha256)
+              ? {
+                  communicationStyle: requestedCommunicationStyle,
+                  communicationStyleDigest:
+                    requestedCommunicationStyleConfiguration.source === 'built-in'
+                      ? null
+                      : requestedCommunicationStyleConfiguration.contentSha256,
+                }
+              : {}),
+          };
+          if (Object.keys(metadataUpdate).length > 0) {
+            try {
+              const metadata = await SessionService.updateSessionMetadata(
+                session.id,
+                session.projectPath,
+                metadataUpdate
+              );
+              session.permissionMode = metadata.permissionMode as
+                | PermissionMode
+                | undefined;
+              session.selectedModelId = metadata.selectedModelId;
+              session.reasoningEffort = metadata.reasoningEffort;
+              session.serviceTier = metadata.serviceTier;
+              session.responseVerbosity = metadata.responseVerbosity;
+              session.communicationStyle = metadata.communicationStyle;
+              session.communicationStyleDigest = metadata.communicationStyleDigest;
+              session.updatedAt = new Date(metadata.lastMessageTime);
+              Bus.publish(sessionRef, 'session.updated', metadataUpdate);
+            } catch (error) {
+              if (
+                switchedModel ||
+                switchedReasoning ||
+                switchedServiceTier ||
+                switchedResponseVerbosity ||
+                switchedCommunicationStyle
+              ) {
+                await runtime
+                  .refresh({
+                    ...(previousModelId ? { modelId: previousModelId } : {}),
+                    reasoningEffort: previousReasoning.selection,
+                    serviceTier: previousServiceTier.selection,
+                    responseVerbosity: previousResponseVerbosity.selection,
+                    communicationStyle: previousCommunicationStyle.selection,
+                  })
+                  .catch((rollbackError) =>
+                    logger.error(
+                      '[SessionRoutes] Failed to roll back non-durable model settings:',
+                      rollbackError
+                    )
+                  );
+              }
+              throw error;
+            }
           }
-          if (
-            requestedCommunicationStyle &&
-            runtime.getCommunicationStyleConfiguration().selection !==
-              requestedCommunicationStyle
-          ) {
-            throw new ConflictError(
-              'Wait for the active turn to finish before switching communication style'
-            );
-          }
-          if (
-            requestedPermissionMode &&
-            session.permissionMode !== requestedPermissionMode
-          ) {
-            throw new ConflictError(
-              'Wait for the active turn to finish before switching permission mode'
-            );
-          }
-          const steering = await runtime.enqueueSteering(userContent, {
-            allowBeforeTurn: true,
-          });
-          if (!steering.accepted) {
+          const preparation = outputSchema
+            ? await runtime.prepareInputTurn(userContent, { outputSchema })
+            : await runtime.prepareInputTurn(userContent);
+          if (!preparation.accepted) {
             return c.json(
-              { status: 'rejected', reason: steering.reason ?? 'turn_unavailable' },
-              409
+              { status: 'rejected', reason: preparation.reason },
+              preparation.reason === 'queue_full' ? 429 : 409
             );
           }
 
-          const messageId = steering.messageId ?? nanoid(12);
-          const queued = steering.queued;
-          Bus.publish(sessionRef, 'message.created', {
-            messageId,
-            role: 'user',
-            content: getDisplayContent(userContent),
+          runProjectionLease = pinProjectionLease(sessionLease);
+          const run = startRun(session, userContent, permissionMode, {
+            preparedInputTurn: preparation,
+            outputSchema,
+            runtimeLease,
+            projectionLease: runProjectionLease,
           });
-          const queuedEvent =
-            steering.delivery === 'next_turn' ? 'follow_up.queued' : 'steering.queued';
-          Bus.publish(sessionRef, queuedEvent, {
-            runId: currentRun.id,
-            messageId,
-            queued,
-          });
-          if (
-            steering.delivery === 'next_turn' &&
-            currentRun.status !== 'running' &&
-            currentRun.status !== 'waiting_permission'
-          ) {
-            void resumePendingSession(session).catch((error) => {
-              logger.error(
-                `[SessionRoutes] Failed to wake queued follow-up for ${sessionId}:`,
-                error
-              );
-            });
-          }
-          if (steering.delivery === 'next_turn') {
-            currentRun.pendingFollowUpRequested = true;
-          }
+          transferred = true;
+          runProjectionLease = undefined;
+          await run.taskAdmissionUpdate;
           return c.json(
             {
-              runId: currentRun.id,
-              messageId,
-              status:
-                steering.delivery === 'next_turn'
-                  ? 'follow_up_queued'
-                  : 'steering_queued',
-              queued,
+              runId: run.id,
+              messageId: preparation.messageId,
+              status: run.status === 'queued' ? 'queued' : 'running',
+              queuePosition: session.taskQueuePosition,
+              queueDepth: session.taskQueueDepth,
+              maxConcurrentTasks: session.taskConcurrencyLimit,
             },
             202
           );
-        });
-      }
-
-      clearPendingResumeRecovery(sessionRef);
-
-      if (session.permissionMode !== permissionMode) {
-        await persistSessionPermissionMode(session, permissionMode);
-      }
-      const runtimeLease = await acquireRuntime(session, {
-        permissionMode,
-        ...(requestedCommunicationStyle && !requestedCommunicationStyle.includes(':')
-          ? { communicationStyle: requestedCommunicationStyle }
-          : {}),
+        } finally {
+          runProjectionLease?.release();
+          if (!transferred) runtimeLease.release();
+        }
       });
-      let transferred = false;
-      try {
-        const runtime = runtimeLease.value;
-        if (requestedModelId && !runtime.getModelById(requestedModelId)) {
-          throw new BadRequestError(`Model not found: ${requestedModelId}`);
-        }
-        if (requestedReasoningEffort) {
-          try {
-            runtime.resolveReasoningConfiguration(
-              requestedReasoningEffort,
-              requestedModelId
-            );
-          } catch (error) {
-            throw new BadRequestError(
-              error instanceof Error ? error.message : 'Invalid reasoning effort'
-            );
-          }
-        }
-        if (requestedServiceTier) {
-          try {
-            runtime.resolveServiceTierConfiguration(
-              requestedServiceTier,
-              requestedModelId
-            );
-          } catch (error) {
-            throw new BadRequestError(
-              error instanceof Error ? error.message : 'Invalid service tier'
-            );
-          }
-        }
-        if (requestedResponseVerbosity) {
-          try {
-            runtime.resolveResponseVerbosityConfiguration(
-              requestedResponseVerbosity,
-              requestedModelId
-            );
-          } catch (error) {
-            throw new BadRequestError(
-              error instanceof Error ? error.message : 'Invalid response verbosity'
-            );
-          }
-        }
-        const requestedCommunicationStyleConfiguration:
-          | CommunicationStyleConfiguration
-          | undefined = requestedCommunicationStyle
-          ? runtime.resolveCommunicationStyleConfiguration(requestedCommunicationStyle)
-          : undefined;
-        if (
-          requestedCommunicationStyleConfiguration?.source !== undefined &&
-          requestedCommunicationStyleConfiguration.source !== 'built-in' &&
-          !requestedCommunicationStyleConfiguration.contentSha256
-        ) {
-          throw new BadRequestError('Custom communication style has no provenance');
-        }
-        const previousModelId = runtime.getCurrentModelId();
-        const previousReasoning = runtime.getReasoningConfiguration();
-        const previousServiceTier = runtime.getServiceTierConfiguration();
-        const previousResponseVerbosity = runtime.getResponseVerbosityConfiguration();
-        const previousCommunicationStyle = runtime.getCommunicationStyleConfiguration();
-        const switchedModel =
-          Boolean(requestedModelId) && previousModelId !== requestedModelId;
-        const switchedReasoning =
-          Boolean(requestedReasoningEffort) &&
-          previousReasoning.selection !== requestedReasoningEffort;
-        const switchedServiceTier =
-          Boolean(requestedServiceTier) &&
-          previousServiceTier.selection !== requestedServiceTier;
-        const switchedResponseVerbosity =
-          Boolean(requestedResponseVerbosity) &&
-          previousResponseVerbosity.selection !== requestedResponseVerbosity;
-        const switchedCommunicationStyle =
-          Boolean(requestedCommunicationStyle) &&
-          previousCommunicationStyle.selection !== requestedCommunicationStyle;
-        if (
-          switchedModel ||
-          switchedReasoning ||
-          switchedServiceTier ||
-          switchedResponseVerbosity ||
-          switchedCommunicationStyle
-        ) {
-          await runtime.refresh({
-            ...(requestedModelId ? { modelId: requestedModelId } : {}),
-            ...(requestedReasoningEffort
-              ? { reasoningEffort: requestedReasoningEffort }
-              : {}),
-            ...(requestedServiceTier ? { serviceTier: requestedServiceTier } : {}),
-            ...(requestedResponseVerbosity
-              ? { responseVerbosity: requestedResponseVerbosity }
-              : {}),
-            ...(requestedCommunicationStyle
-              ? { communicationStyle: requestedCommunicationStyle }
-              : {}),
-          });
-        }
-        const metadataUpdate = {
-          ...(requestedModelId && session.selectedModelId !== requestedModelId
-            ? { selectedModelId: requestedModelId }
-            : {}),
-          ...(requestedReasoningEffort &&
-          session.reasoningEffort !== requestedReasoningEffort
-            ? { reasoningEffort: requestedReasoningEffort }
-            : {}),
-          ...(requestedServiceTier && session.serviceTier !== requestedServiceTier
-            ? { serviceTier: requestedServiceTier }
-            : {}),
-          ...(requestedResponseVerbosity &&
-          session.responseVerbosity !== requestedResponseVerbosity
-            ? { responseVerbosity: requestedResponseVerbosity }
-            : {}),
-          ...(requestedCommunicationStyleConfiguration &&
-          (session.communicationStyle !== requestedCommunicationStyle ||
-            session.communicationStyleDigest !==
-              requestedCommunicationStyleConfiguration.contentSha256)
-            ? {
-                communicationStyle: requestedCommunicationStyle,
-                communicationStyleDigest:
-                  requestedCommunicationStyleConfiguration.source === 'built-in'
-                    ? null
-                    : requestedCommunicationStyleConfiguration.contentSha256,
-              }
-            : {}),
-        };
-        if (Object.keys(metadataUpdate).length > 0) {
-          try {
-            const metadata = await SessionService.updateSessionMetadata(
-              session.id,
-              session.projectPath,
-              metadataUpdate
-            );
-            session.permissionMode = metadata.permissionMode as
-              | PermissionMode
-              | undefined;
-            session.selectedModelId = metadata.selectedModelId;
-            session.reasoningEffort = metadata.reasoningEffort;
-            session.serviceTier = metadata.serviceTier;
-            session.responseVerbosity = metadata.responseVerbosity;
-            session.communicationStyle = metadata.communicationStyle;
-            session.communicationStyleDigest = metadata.communicationStyleDigest;
-            session.updatedAt = new Date(metadata.lastMessageTime);
-            Bus.publish(sessionRef, 'session.updated', metadataUpdate);
-          } catch (error) {
-            if (
-              switchedModel ||
-              switchedReasoning ||
-              switchedServiceTier ||
-              switchedResponseVerbosity ||
-              switchedCommunicationStyle
-            ) {
-              await runtime
-                .refresh({
-                  ...(previousModelId ? { modelId: previousModelId } : {}),
-                  reasoningEffort: previousReasoning.selection,
-                  serviceTier: previousServiceTier.selection,
-                  responseVerbosity: previousResponseVerbosity.selection,
-                  communicationStyle: previousCommunicationStyle.selection,
-                })
-                .catch((rollbackError) =>
-                  logger.error(
-                    '[SessionRoutes] Failed to roll back non-durable model settings:',
-                    rollbackError
-                  )
-                );
-            }
-            throw error;
-          }
-        }
-        const preparation = outputSchema
-          ? await runtime.prepareInputTurn(userContent, { outputSchema })
-          : await runtime.prepareInputTurn(userContent);
-        if (!preparation.accepted) {
-          return c.json(
-            { status: 'rejected', reason: preparation.reason },
-            preparation.reason === 'queue_full' ? 429 : 409
-          );
-        }
-
-        const run = startRun(session, userContent, permissionMode, {
-          preparedInputTurn: preparation,
-          outputSchema,
-          runtimeLease,
-        });
-        transferred = true;
-        await run.taskAdmissionUpdate;
-        return c.json(
-          {
-            runId: run.id,
-            messageId: preparation.messageId,
-            status: run.status === 'queued' ? 'queued' : 'running',
-            queuePosition: session.taskQueuePosition,
-            queueDepth: session.taskQueueDepth,
-            maxConcurrentTasks: session.taskConcurrencyLimit,
-          },
-          202
-        );
-      } finally {
-        if (!transferred) runtimeLease.release();
-      }
-    });
+    } finally {
+      sessionLease.release();
+    }
   });
 
   app.post('/:sessionId/side-question', async (c) => {
@@ -4888,22 +5356,22 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (!parsed.success) {
       throw new BadRequestError('Invalid side conversation request');
     }
-    const session = await resolveSessionForWrite(
+    return withWritableProjection(
       sessionId,
-      parsed.data.projectPath ?? c.req.query('projectPath')
+      parsed.data.projectPath ?? c.req.query('projectPath'),
+      (session) =>
+        withRuntime(session, async (runtime) => {
+          const result = await runtime.askSideQuestion(parsed.data.question, {
+            signal: c.req.raw.signal,
+          });
+          return c.json({
+            ...result,
+            ...(runtime.getCurrentModelId()
+              ? { modelId: runtime.getCurrentModelId() }
+              : {}),
+          });
+        })
     );
-
-    return withRuntime(session, async (runtime) => {
-      const result = await runtime.askSideQuestion(parsed.data.question, {
-        signal: c.req.raw.signal,
-      });
-      return c.json({
-        ...result,
-        ...(runtime.getCurrentModelId()
-          ? { modelId: runtime.getCurrentModelId() }
-          : {}),
-      });
-    });
   });
 
   app.post('/:sessionId/shell', async (c) => {
@@ -4912,57 +5380,59 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (!parsed.success) {
       throw new BadRequestError('Invalid user shell command');
     }
-    const session = await resolveSessionForWrite(
+    return withWritableProjection(
       sessionId,
-      parsed.data.projectPath ?? c.req.query('projectPath')
+      parsed.data.projectPath ?? c.req.query('projectPath'),
+      (session, ref, sessionLease) => {
+        const key = sessionRefKey(ref);
+        return withMessageSubmissionLock(ref, async () => {
+          if (activeUserShellRuns.has(key)) {
+            throw new ConflictError(
+              'A user shell command is already running in this Session'
+            );
+          }
+          const runtimeLease = await acquireRuntime(session);
+          const projectionLease = pinProjectionLease(sessionLease);
+          const runtime = runtimeLease.value;
+          const controller = new AbortController();
+          let resolveCompletion!: () => void;
+          const completion = new Promise<void>((resolve) => {
+            resolveCompletion = resolve;
+          });
+          activeUserShellRuns.set(key, { controller, completion, projectionLease });
+          try {
+            const result = await runtime.executeUserShellCommand(parsed.data.command, {
+              signal: controller.signal,
+            });
+            await refreshSessionTaskMetadata(session);
+            const currentRun = getRun(session.currentRunId);
+            if (result.delivery === 'next_turn' && isActiveRun(currentRun)) {
+              currentRun.pendingFollowUpRequested = true;
+            }
+            return c.json({
+              executionId: result.executionId,
+              messageId: result.messageId,
+              record: result.record,
+              auxiliary: result.auxiliary,
+              ...(result.delivery ? { delivery: result.delivery } : {}),
+              ...(result.queued !== undefined ? { queued: result.queued } : {}),
+            });
+          } finally {
+            activeUserShellRuns.delete(key);
+            resolveCompletion();
+            runtimeLease.release();
+            projectionLease.release();
+          }
+        });
+      }
     );
-    const ref = sessionRefFromSession(session);
-    const key = sessionRefKey(ref);
-
-    return withMessageSubmissionLock(ref, async () => {
-      if (activeUserShellRuns.has(key)) {
-        throw new ConflictError(
-          'A user shell command is already running in this Session'
-        );
-      }
-      const runtimeLease = await acquireRuntime(session);
-      const runtime = runtimeLease.value;
-      const controller = new AbortController();
-      let resolveCompletion!: () => void;
-      const completion = new Promise<void>((resolve) => {
-        resolveCompletion = resolve;
-      });
-      activeUserShellRuns.set(key, { controller, completion });
-      try {
-        const result = await runtime.executeUserShellCommand(parsed.data.command, {
-          signal: controller.signal,
-        });
-        await refreshSessionTaskMetadata(session);
-        const currentRun = getRun(session.currentRunId);
-        if (result.delivery === 'next_turn' && isActiveRun(currentRun)) {
-          currentRun.pendingFollowUpRequested = true;
-        }
-        return c.json({
-          executionId: result.executionId,
-          messageId: result.messageId,
-          record: result.record,
-          auxiliary: result.auxiliary,
-          ...(result.delivery ? { delivery: result.delivery } : {}),
-          ...(result.queued !== undefined ? { queued: result.queued } : {}),
-        });
-      } finally {
-        activeUserShellRuns.delete(key);
-        resolveCompletion();
-        runtimeLease.release();
-      }
-    });
   });
 
   app.post('/:sessionId/abort', async (c) => {
     const sessionId = c.req.param('sessionId');
     const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
     clearPendingResumeRecovery(ref);
-    const session = sessions.get(sessionRefKey(ref));
+    const session = getProjectionSnapshot(ref);
     if (session?.currentRunId) {
       const run = getRun(session.currentRunId);
       if (run) {
@@ -4987,7 +5457,7 @@ export const createSessionRouteController = (): SessionRouteController => {
   app.get('/:sessionId/status', async (c) => {
     const sessionId = c.req.param('sessionId');
     const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
-    const session = sessions.get(sessionRefKey(ref));
+    const session = getProjectionSnapshot(ref);
     const reviewRun = activeReviewRuns.get(sessionRefKey(ref));
     if (reviewRun) {
       return c.json({
@@ -5020,6 +5490,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       [...ownedSessionHydrations].map((state) => state.promise)
     );
     clearInterval(runtimeSweepTimer);
+    clearInterval(projectionSweepTimer);
     clearAllPendingResumeRecoveries();
 
     shutdownPromise = (async () => {
@@ -5082,7 +5553,6 @@ export const createSessionRouteController = (): SessionRouteController => {
       ownedSessionHydrations.clear();
       if (activeSessionHydrationOwner === sessionHydrationOwner) {
         activeSessionHydrationOwner = undefined;
-        sessions.clear();
       }
       if (resetPendingResumeRecoveries === clearAllPendingResumeRecoveries) {
         resetPendingResumeRecoveries = undefined;
@@ -5102,6 +5572,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     deliverTask,
     recoverQueuedTasks,
     getRuntimeResidencyStats: () => runtimeResidency.getStats(),
+    getProjectionResidencyStats: () => sessionProjectionResidency.getStats(),
     getCoordinationStats: () => ({
       messageSubmissions: messageSubmissionLocks.getStats(),
       taskDeliveries: taskDeliveryLocks.getStats(),
@@ -5128,6 +5599,7 @@ async function executeRunAsync(
     outputSchema?: SessionTaskDispatch['outputSchema'];
     taskAdmission?: TaskAdmissionHandle;
     runtimeLease?: SessionRuntimeResidencyLease<SessionRuntime>;
+    projectionLease?: SessionProjectionLease<SessionInfo>;
     disposeRuntime?: (session: SessionInfo, runtime?: SessionRuntime) => Promise<void>;
     pendingResume?: WebPendingResumeAttempt;
     onPendingResumeFailure?: (
@@ -5150,6 +5622,7 @@ async function executeRunAsync(
     ? undefined
     : nanoid(12);
   let runtimeLease = options.runtimeLease;
+  const projectionLease = options.projectionLease;
   let runtime: SessionRuntime | undefined;
   let agent: Agent | undefined;
   let outputStarted = false;
@@ -5961,6 +6434,7 @@ async function executeRunAsync(
     }
     await agent?.destroy().catch(() => undefined);
     runtimeLease?.release();
+    projectionLease?.release();
     if (run.disposeRuntimeOnSettle && options.disposeRuntime) {
       await options.disposeRuntime(session, runtime).catch((error) => {
         logger.warn(
@@ -6028,9 +6502,10 @@ export async function respondToPermission(
   const owner = activeSessionHydrationOwner;
   if (!owner?.accepting) return true;
 
-  const key = sessionRefKey(ref);
-  let session = sessions.get(key);
-  if (session) {
+  let sessionLease: SessionProjectionLease<SessionInfo> | undefined;
+  try {
+    sessionLease = await owner.acquireOrHydrateSession(ref);
+    const session = sessionLease.value;
     const metadata = await SessionService.findSessionMetadata(
       ref.sessionId,
       ref.projectPath
@@ -6038,30 +6513,22 @@ export async function respondToPermission(
     if (
       activeSessionHydrationOwner !== owner ||
       !owner.accepting ||
-      sessions.get(key) !== session
+      !sessionLease.isCurrent()
     ) {
       return true;
     }
     if (metadata) syncSessionTaskMetadata(session, metadata);
-  } else {
-    try {
-      session = await owner.getOrHydrateSession(ref);
-    } catch (error) {
-      if (activeSessionHydrationOwner !== owner || !owner.accepting) return true;
-      throw error;
-    }
-  }
-  if (
-    activeSessionHydrationOwner === owner &&
-    owner.accepting &&
-    sessions.get(key) === session
-  ) {
     void owner.resumeRecoveredInteraction(session).catch((error: unknown) => {
       logger.error(
         `[SessionRoutes] Failed to resume recovered interaction ${permissionId}:`,
         error
       );
     });
+  } catch (error) {
+    if (activeSessionHydrationOwner !== owner || !owner.accepting) return true;
+    throw error;
+  } finally {
+    sessionLease?.release();
   }
   return true;
 }

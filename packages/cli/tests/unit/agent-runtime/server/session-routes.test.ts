@@ -32,6 +32,8 @@ type EventReplaySubscriber = {
   onCommitted(event: SessionEvent): void | Promise<void>;
 };
 
+type RequestableApp = Pick<Hono<{ Variables: { directory: string } }>, 'request'>;
+
 type CreateMetadataInitial = Pick<
   SessionMetadataUpdate,
   | 'title'
@@ -252,6 +254,10 @@ const runtimeResidencyConfig = vi.hoisted(() => ({
   maxResident: 256,
   idleMs: 300_000,
 }));
+const projectionResidencyConfig = vi.hoisted(() => ({
+  maxResident: 256,
+  idleMs: 300_000,
+}));
 
 const busState = vi.hoisted(() => ({
   subscribers: new Set<
@@ -384,6 +390,8 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
     modelProviders: {},
     maxResidentSessionRuntimes: runtimeResidencyConfig.maxResident,
     sessionRuntimeIdleMs: runtimeResidencyConfig.idleMs,
+    maxResidentSessionProjections: projectionResidencyConfig.maxResident,
+    sessionProjectionIdleMs: projectionResidencyConfig.idleMs,
   }),
   getCurrentModel: () => modelState.current,
   getModelById: (modelId: string) =>
@@ -645,6 +653,8 @@ describe('SessionRoutes runtime reuse', () => {
     };
     runtimeResidencyConfig.maxResident = 256;
     runtimeResidencyConfig.idleMs = 300_000;
+    projectionResidencyConfig.maxResident = 256;
+    projectionResidencyConfig.idleMs = 300_000;
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
     runtimeState.runtime.getResponseVerbosityConfiguration.mockClear();
@@ -1110,6 +1120,81 @@ describe('SessionRoutes runtime reuse', () => {
     }
   });
 
+  it('returns projection capacity 429 for metadata-only after projection eviction Browser hydrate', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    projectionResidencyConfig.maxResident = 1;
+    const idleA = metadataFor('projection-browser-idle-a', '/tmp/projection-browser');
+    const idleB = metadataFor('projection-browser-idle-b', '/tmp/projection-browser');
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([idleA, idleB]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) => {
+        const match = [idleA, idleB].find(
+          (candidate) =>
+            candidate.sessionId === sessionId && candidate.projectPath === projectPath
+        );
+        if (match?.sessionId === idleA.sessionId) {
+          markHydrationStarted();
+          await hydrationGate;
+        }
+        return match;
+      }
+    );
+    const controller = createSessionRouteController();
+    let firstResponse: Response | undefined;
+
+    try {
+      const firstResponsePromise = Promise.resolve(
+        controller.app.request(
+          `/${idleA.sessionId}/browser/reset?projectPath=${encodeURIComponent(idleA.projectPath)}`,
+          { method: 'POST' }
+        )
+      );
+      await hydrationStarted;
+
+      const second = await controller.app.request(
+        `/${idleB.sessionId}/browser/reset?projectPath=${encodeURIComponent(idleB.projectPath)}`,
+        { method: 'POST' }
+      );
+
+      expect(second.status).toBe(429);
+      await expect(second.json()).resolves.toEqual({
+        error: {
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Session projection capacity is full',
+          details: {
+            resource: 'resident_session_projections',
+            limit: 1,
+            retryable: true,
+          },
+        },
+      });
+      expect(SessionRuntime.create).not.toHaveBeenCalled();
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        resident: 0,
+        reserved: 1,
+        retained: 1,
+        maxResident: 1,
+      });
+
+      releaseHydration();
+      firstResponse = await firstResponsePromise;
+      expect(firstResponse.status).toBe(200);
+    } finally {
+      releaseHydration();
+      await controller.shutdown();
+    }
+  });
+
   it('loads and filters durable messages after an SSE projection already exists', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'
@@ -1170,6 +1255,85 @@ describe('SessionRoutes runtime reuse', () => {
     } finally {
       requestController.abort();
       await collector.cancel();
+      await controller.shutdown();
+    }
+  });
+
+  it('rehydrates metadata-only after projection eviction and keeps GET /message durable fresh', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    projectionResidencyConfig.maxResident = 1;
+    const sessionId = 'projection-evicted-sse';
+    const projectPath = '/tmp/projection-evicted-sse';
+    const metadata = metadataFor(sessionId, projectPath, { messageCount: 2 });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) =>
+        requestedSessionId === metadata.sessionId &&
+        requestedProjectPath === metadata.projectPath
+          ? metadata
+          : undefined
+    );
+    vi.mocked(SessionService.loadSession).mockResolvedValue(
+      makeMessages(
+        { role: 'user', content: 'fresh durable after eviction' },
+        { role: 'assistant', content: 'fresh assistant after eviction' }
+      )
+    );
+
+    let controller = createSessionRouteController();
+    const firstRequestController = new AbortController();
+    const firstEvents = await controller.app.request(
+      `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+      { signal: firstRequestController.signal }
+    );
+    const firstCollector = createSseCollector(firstEvents);
+    let secondRequestController: AbortController | undefined;
+    let secondCollector: ReturnType<typeof createSseCollector> | undefined;
+
+    try {
+      await expect(firstCollector.next()).resolves.toMatchObject({ type: 'connected' });
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        resident: 1,
+        maxResident: 1,
+      });
+      firstRequestController.abort();
+      await firstCollector.cancel();
+      await controller.shutdown();
+      controller = createSessionRouteController();
+      secondRequestController = new AbortController();
+
+      const secondEvents = await controller.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+        { signal: secondRequestController.signal }
+      );
+      secondCollector = createSseCollector(secondEvents);
+      await expect(secondCollector.next()).resolves.toMatchObject({
+        type: 'connected',
+      });
+
+      const messagesResponse = await controller.app.request(
+        `/${sessionId}/message?projectPath=${encodeURIComponent(projectPath)}`
+      );
+      expect(messagesResponse.status).toBe(200);
+      await expect(messagesResponse.json()).resolves.toEqual([
+        { role: 'user', content: 'fresh durable after eviction' },
+        { role: 'assistant', content: 'fresh assistant after eviction' },
+      ]);
+      expect(SessionService.findSessionMetadata).toHaveBeenCalledWith(
+        sessionId,
+        projectPath
+      );
+      expect(SessionService.findSessionTaskWorktree).toHaveBeenCalledWith(
+        sessionId,
+        projectPath
+      );
+      expect(SessionService.loadSession).toHaveBeenCalledWith(sessionId, projectPath);
+    } finally {
+      firstRequestController.abort();
+      secondRequestController?.abort();
+      await secondCollector?.cancel();
       await controller.shutdown();
     }
   });
@@ -2612,6 +2776,62 @@ describe('SessionRoutes runtime reuse', () => {
     await controller.shutdown();
   });
 
+  it('loads durable model context for a cold follow-up after projection eviction', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    runtimeResidencyConfig.maxResident = 1;
+    const sessionA = metadataFor('projection-cold-follow-up-a', '/tmp/projection-cold');
+    const sessionB = metadataFor('projection-cold-follow-up-b', '/tmp/projection-cold');
+    vi.mocked(SessionService.listSessions).mockResolvedValue([sessionA, sessionB]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) =>
+        [sessionA, sessionB].find(
+          (candidate) =>
+            candidate.sessionId === sessionId && candidate.projectPath === projectPath
+        )
+    );
+    vi.mocked(SessionService.loadSessionModelContext).mockResolvedValue(
+      makeMessages(
+        { role: 'user', content: 'durable cold question' },
+        { role: 'assistant', content: 'durable cold answer' }
+      )
+    );
+
+    const controller = createSessionRouteController();
+    const send = async (sessionId: string, content: string) => {
+      const response = await controller.app.request(
+        `/${sessionId}/message?projectPath=${encodeURIComponent('/tmp/projection-cold')}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content }),
+        }
+      );
+      expect(response.status).toBe(202);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    await send(sessionA.sessionId, 'warm A');
+    await send(sessionB.sessionId, 'evict A');
+    vi.mocked(SessionService.loadSessionModelContext).mockClear();
+    await send(sessionA.sessionId, 'cold follow-up');
+
+    expect(SessionService.loadSessionModelContext).toHaveBeenCalledWith(
+      sessionA.sessionId,
+      sessionA.projectPath
+    );
+    expect(SessionRuntime.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sessionId: sessionA.sessionId,
+        workspaceRoot: sessionA.projectPath,
+        permissionMode: PermissionMode.DEFAULT,
+      })
+    );
+
+    await controller.shutdown();
+  });
+
   it('reclaims high-cardinality message and task-delivery coordination keys', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'
@@ -3572,27 +3792,21 @@ describe('SessionRoutes runtime reuse', () => {
           { signal: eventControllers[0].signal }
         )
       );
-      await vi.waitFor(() => {
-        expect(CurrentSessionService.findSessionMetadata).toHaveBeenCalled();
-        expect(CurrentSessionRuntime.hasPendingInbox).toHaveBeenCalled();
-        expect(CurrentSessionRuntime.create).toHaveBeenCalled();
-        expect(CurrentAgent.createWithRuntime).toHaveBeenCalled();
-      });
-      await vi.waitFor(() => {
-        expect(chatStream).toHaveBeenCalledTimes(1);
-      });
-      await vi.waitFor(() => {
-        expect(
-          busState.publish.mock.calls.filter(
-            ([, type, properties]) =>
-              type === 'pending.resume' && properties.phase === 'retry_scheduled'
-          )
-        ).toHaveLength(1);
-      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(CurrentSessionService.findSessionMetadata).toHaveBeenCalled();
+      expect(CurrentSessionRuntime.hasPendingInbox).toHaveBeenCalled();
+      expect(CurrentSessionRuntime.create).toHaveBeenCalled();
+      expect(CurrentAgent.createWithRuntime).toHaveBeenCalled();
+      expect(chatStream).toHaveBeenCalledTimes(1);
+      expect(
+        busState.publish.mock.calls.filter(
+          ([, type, properties]) =>
+            type === 'pending.resume' && properties.phase === 'retry_scheduled'
+        )
+      ).toHaveLength(1);
 
       await vi.advanceTimersByTimeAsync(5_000);
       expect(chatStream).toHaveBeenCalledTimes(1);
-
       responses.push(
         ...(await Promise.all(
           eventControllers
@@ -3630,57 +3844,40 @@ describe('SessionRoutes runtime reuse', () => {
         expect(enqueueSteering).toHaveBeenCalledTimes(3);
       });
       expect(chatStream).toHaveBeenCalledTimes(1);
+      expect(
+        busState.publish.mock.calls.filter(
+          ([eventRef, type, properties]) =>
+            eventRef.sessionId === sessionId &&
+            eventRef.projectPath === projectPath &&
+            type === 'pending.resume' &&
+            properties.phase === 'retry_scheduled'
+        )
+      ).toHaveLength(1);
 
       releaseStatus();
       await vi.advanceTimersByTimeAsync(0);
       expect(destroy).toHaveBeenCalledTimes(1);
       expect(chatStream).toHaveBeenCalledTimes(1);
       releaseDestroy();
-      await vi.waitFor(() => {
-        expect(chatStream).toHaveBeenCalledTimes(2);
-        expect(leaseHandoffOrder).toEqual(['chat:1', 'first-lease:release', 'chat:2']);
-        expect(
-          busState.publish.mock.calls.filter(
-            ([eventRef, type, properties]) =>
-              eventRef.sessionId === sessionId &&
-              eventRef.projectPath === projectPath &&
-              type === 'pending.resume' &&
-              properties.phase === 'recovered'
-          )
-        ).toHaveLength(1);
-        expect(
-          busState.publish.mock.calls.filter(
-            ([eventRef, type]) =>
-              eventRef.sessionId === sessionId &&
-              eventRef.projectPath === projectPath &&
-              type === 'session.completed'
-          )
-        ).toHaveLength(1);
-        expect(markDelivered).toHaveBeenCalledTimes(3);
-        expect(controller.getCoordinationStats().messageSubmissions).toEqual({
-          keys: 0,
-          operations: 0,
-        });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(markDelivered).toHaveBeenCalledTimes(3);
+      expect(controller.getCoordinationStats().messageSubmissions).toEqual({
+        keys: 0,
+        operations: 0,
       });
-      await vi.advanceTimersByTimeAsync(30_000);
-
-      const pendingResumeEvents = busState.publish.mock.calls.filter(
-        ([eventRef, type]) =>
-          eventRef.sessionId === sessionId &&
-          eventRef.projectPath === projectPath &&
-          type === 'pending.resume'
-      );
       expect(chatStream).toHaveBeenCalledTimes(2);
-      expect(
-        pendingResumeEvents.filter(
-          ([, , properties]) => properties.phase === 'retry_scheduled'
-        )
-      ).toHaveLength(1);
-      expect(
-        pendingResumeEvents.filter(
-          ([, , properties]) => properties.phase === 'recovered'
-        )
-      ).toHaveLength(1);
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.filter(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'recovered'
+          )
+        ).toHaveLength(1);
+        expect(
+          busState.publish.mock.calls.filter(([, type]) => type === 'session.completed')
+        ).toHaveLength(1);
+      });
+      expect(leaseHandoffOrder).toEqual(['chat:1', 'first-lease:release', 'chat:2']);
     } finally {
       releaseStatus();
       releaseDestroy();
@@ -3688,13 +3885,13 @@ describe('SessionRoutes runtime reuse', () => {
       await Promise.all(
         responses.map((response) => response.body?.cancel().catch(() => undefined))
       );
+      vi.useRealTimers();
       await controller.shutdown();
       markDelivered.mockRestore();
       reserveRuntime.mockRestore();
       createAgent.mockReset().mockImplementation(defaultCreateAgent);
       hasPendingInbox.mockReset().mockImplementation(defaultHasPendingInbox);
       createRuntime.mockReset().mockImplementation(defaultCreateRuntime);
-      vi.useRealTimers();
     }
   });
 
@@ -4494,6 +4691,102 @@ describe('SessionRoutes runtime reuse', () => {
       }
     }
   );
+
+  it('keeps a scheduled pending resume projection pinned across the retry gap and releases on cleanup', async () => {
+    vi.useFakeTimers();
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    projectionResidencyConfig.maxResident = 1;
+    const sessionId = 'pending-resume-projection-pin';
+    const projectPath = '/persisted-workspace';
+    const metadata = metadataFor(sessionId, projectPath, {
+      permissionMode: 'yolo',
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: false,
+        error: {
+          type: 'api_error' as const,
+          message: 'Provider request failed.',
+          details: Object.assign(new Error('opaque'), {
+            code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+          }),
+        },
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const controller = createSessionRouteController();
+    const eventsController = new AbortController();
+    const response = await controller.app.request(
+      `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+      {
+        signal: eventsController.signal,
+      }
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      const retryScheduledCall = busState.publish.mock.calls.find(
+        ([, type, properties]) =>
+          type === 'pending.resume' && properties.phase === 'retry_scheduled'
+      );
+      expect(retryScheduledCall).toBeDefined();
+      const retryScheduled = retryScheduledCall?.[2] as
+        | { delayMs?: number; nextRetryAt?: number }
+        | undefined;
+      expect(retryScheduled?.delayMs).toBeTypeOf('number');
+      const retryDelayMs = retryScheduled?.delayMs ?? 0;
+      expect(retryDelayMs).toBeGreaterThan(0);
+      expect(retryScheduled?.nextRetryAt).toBeTypeOf('number');
+      const retryScheduledAt = (retryScheduled?.nextRetryAt ?? 0) - retryDelayMs;
+      expect(retryScheduledAt).toBeLessThanOrEqual(Date.now());
+      expect(retryScheduledAt).toBeGreaterThanOrEqual(Date.now() - retryDelayMs);
+
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        resident: 1,
+        pinned: 1,
+        maxResident: 1,
+      });
+      await vi.advanceTimersByTimeAsync(retryDelayMs - 1);
+      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        resident: 1,
+        pinned: 1,
+        maxResident: 1,
+      });
+
+      const firstAbort = await controller.app.request(
+        `/${sessionId}/abort?projectPath=${encodeURIComponent(projectPath)}`,
+        { method: 'POST' }
+      );
+      expect(firstAbort.status).toBe(200);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        pinned: 0,
+      });
+
+      const secondAbort = await controller.app.request(
+        `/${sessionId}/abort?projectPath=${encodeURIComponent(projectPath)}`,
+        { method: 'POST' }
+      );
+      expect(secondAbort.status).toBe(200);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        pinned: 0,
+      });
+    } finally {
+      eventsController.abort();
+      await response.body?.cancel().catch(() => undefined);
+      await controller.shutdown();
+      vi.useRealTimers();
+    }
+  });
 
   it.each(['Goal-only', 'task-isolated'] as const)(
     'does not attach Web pending recovery to a %s run',
@@ -5986,6 +6279,258 @@ describe('SessionRoutes runtime reuse', () => {
     );
   });
 
+  it('returns projection capacity 429 before POST create durable write', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    projectionResidencyConfig.maxResident = 1;
+    const resident = metadataFor(
+      'projection-create-resident',
+      '/tmp/task4-create-capacity-resident'
+    );
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([resident]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) => {
+        if (sessionId === resident.sessionId && projectPath === resident.projectPath) {
+          markHydrationStarted();
+          await hydrationGate;
+          return resident;
+        }
+        return undefined;
+      }
+    );
+    const controller = createSessionRouteController();
+    let residentResponse: Response | undefined;
+
+    try {
+      const residentResponsePromise = Promise.resolve(
+        controller.app.request(
+          `/${resident.sessionId}/browser/reset?projectPath=${encodeURIComponent(resident.projectPath)}`,
+          { method: 'POST' }
+        )
+      );
+      await hydrationStarted;
+
+      const second = await controller.app.request('/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Create B',
+          projectPath: '/tmp/task4-create-capacity-b',
+        }),
+      });
+
+      expect(second.status).toBe(429);
+      await expect(second.json()).resolves.toEqual({
+        error: {
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Session projection capacity is full',
+          details: {
+            resource: 'resident_session_projections',
+            limit: 1,
+            retryable: true,
+          },
+        },
+      });
+      expect(SessionService.createSessionMetadata).not.toHaveBeenCalled();
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        resident: 0,
+        reserved: 1,
+        retained: 1,
+        maxResident: 1,
+      });
+
+      releaseHydration();
+      residentResponse = await residentResponsePromise;
+      expect(residentResponse.status).toBe(200);
+    } finally {
+      releaseHydration();
+      await controller.shutdown();
+    }
+  });
+
+  it('pins the active message projection until the run settles', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    projectionResidencyConfig.maxResident = 1;
+    const active = metadataFor('projection-pinned-message', '/tmp/projection-pin');
+    const blocked = metadataFor('projection-capacity-blocked', '/tmp/projection-pin');
+    vi.mocked(SessionService.listSessions).mockResolvedValue([active, blocked]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) =>
+        [active, blocked].find(
+          (candidate) =>
+            candidate.sessionId === sessionId && candidate.projectPath === projectPath
+        )
+    );
+    let releaseRun: () => void = () => undefined;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'turn_start' as const, turn: 1, maxTurns: 10 };
+      await runGate;
+      return {
+        success: true,
+        finalMessage: 'projection pinned run complete',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const controller = createSessionRouteController();
+
+    try {
+      const activeResponse = await controller.app.request(
+        `/${active.sessionId}/message?projectPath=${encodeURIComponent(active.projectPath)}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: 'hold this projection lease' }),
+        }
+      );
+      expect(activeResponse.status).toBe(202);
+      await vi.waitFor(() => {
+        expect(controller.getProjectionResidencyStats()).toMatchObject({
+          resident: 1,
+          pinned: 1,
+          maxResident: 1,
+        });
+      });
+
+      const blockedResponse = await controller.app.request(
+        `/${blocked.sessionId}/browser/reset?projectPath=${encodeURIComponent(blocked.projectPath)}`,
+        { method: 'POST' }
+      );
+      expect(blockedResponse.status).toBe(429);
+      await expect(blockedResponse.json()).resolves.toMatchObject({
+        error: {
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Session projection capacity is full',
+          details: {
+            resource: 'resident_session_projections',
+            limit: 1,
+            retryable: true,
+          },
+        },
+      });
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        resident: 1,
+        pinned: 1,
+        maxResident: 1,
+      });
+
+      releaseRun();
+      await vi.waitFor(() => {
+        expect(controller.getProjectionResidencyStats()).toMatchObject({
+          pinned: 0,
+          maxResident: 1,
+        });
+      });
+    } finally {
+      releaseRun();
+      await controller.shutdown();
+    }
+  });
+
+  it('creates a durable child without a projection when fork projection capacity is full', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    projectionResidencyConfig.maxResident = 1;
+    const source = metadataFor('fork-source-session', '/tmp/task4-fork-source');
+    const durableChild = metadataFor('forked-session', source.projectPath, {
+      parentId: source.sessionId,
+      relationType: 'fork',
+      rootId: source.sessionId,
+    });
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([source, durableChild]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) => {
+        if (sessionId === source.sessionId && projectPath === source.projectPath) {
+          markHydrationStarted();
+          await hydrationGate;
+          return source;
+        }
+        return undefined;
+      }
+    );
+    const controller = createSessionRouteController();
+    let residentResponse: Response | undefined;
+
+    try {
+      const residentResponsePromise = Promise.resolve(
+        controller.app.request(
+          `/${source.sessionId}/browser/reset?projectPath=${encodeURIComponent(source.projectPath)}`,
+          { method: 'POST' }
+        )
+      );
+      await hydrationStarted;
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        resident: 0,
+        reserved: 1,
+        retained: 1,
+        maxResident: 1,
+      });
+
+      const forkResponse = await controller.app.request(`/${source.sessionId}/fork`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectPath: source.projectPath }),
+      });
+
+      expect(forkResponse.status).toBe(201);
+      await expect(forkResponse.json()).resolves.toMatchObject({
+        session: expect.objectContaining({
+          sessionId: 'forked-session',
+          parentId: source.sessionId,
+          relationType: 'fork',
+        }),
+        messages: [],
+      });
+      expect(SessionService.forkSession).toHaveBeenCalledWith(source.sessionId, {
+        sourceProjectPath: source.projectPath,
+        targetProjectPath: source.projectPath,
+      });
+
+      const sessionsResponse = await controller.app.request('/');
+      const sessions = (await sessionsResponse.json()) as Array<{
+        sessionId: string;
+        isActive?: boolean;
+      }>;
+      expect(sessions).toContainEqual(
+        expect.objectContaining({ sessionId: 'forked-session', isActive: false })
+      );
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        resident: 0,
+        reserved: 1,
+        retained: 1,
+        maxResident: 1,
+      });
+      releaseHydration();
+      residentResponse = await residentResponsePromise;
+      expect(residentResponse.status).toBe(200);
+    } finally {
+      releaseHydration();
+      await controller.shutdown();
+    }
+  });
+
   it('starts a native read-only review for an exact Session workspace', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const app = SessionRoutes();
@@ -6030,6 +6575,131 @@ describe('SessionRoutes runtime reuse', () => {
       })
     );
   });
+
+  it.each([
+    {
+      label: 'shell',
+      invoke: async (app: RequestableApp) =>
+        app.request('/owner-pin-shell/shell', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            command: 'pwd',
+            projectPath: '/tmp/owner-pin-shell',
+          }),
+        }),
+      configure: () => {
+        const metadata = makeSessionMetadata({
+          sessionId: 'owner-pin-shell',
+          projectPath: '/tmp/owner-pin-shell',
+        });
+        vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+        let release: () => void = () => undefined;
+        const shellGate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        runtimeState.runtime.executeUserShellCommand.mockImplementationOnce(
+          async () => {
+            await shellGate;
+            return {
+              executionId: 'shell-owner-pin',
+              messageId: 'shell-owner-pin-message',
+              record: {
+                version: 1,
+                command: 'pwd',
+                status: 'completed' as const,
+                exitCode: 0,
+                durationMs: 4,
+                stdout: '/tmp/owner-pin-shell',
+                stderr: '',
+                stdoutOmittedBytes: 0,
+                stderrOmittedBytes: 0,
+                binaryOutput: false,
+                truncated: false,
+              },
+              modelContent: '<user_shell_command>pwd</user_shell_command>',
+              auxiliary: false,
+            };
+          }
+        );
+        return { release };
+      },
+    },
+    {
+      label: 'review',
+      invoke: async (app: RequestableApp) =>
+        app.request('/owner-pin-review/review', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            projectPath: '/tmp/owner-pin-review',
+            kind: 'base',
+            ref: 'main',
+            modelId: 'model-1',
+          }),
+        }),
+      configure: () => {
+        const metadata = makeSessionMetadata({
+          sessionId: 'owner-pin-review',
+          projectPath: '/tmp/owner-pin-review',
+        });
+        vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+        let release: () => void = () => undefined;
+        const reviewGate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        reviewState.start.mockImplementationOnce(async () => ({
+          reviewId: 'review-owner-pin',
+          completion: (async () => {
+            await reviewGate;
+            return {
+              reviewId: 'review-owner-pin',
+              status: 'completed' as const,
+              overallExplanation: 'done',
+              findings: [],
+              completedAt: new Date(0).toISOString(),
+            };
+          })(),
+        }));
+        return { release };
+      },
+    },
+  ])(
+    'pins the active $label owner projection until completion',
+    async ({ label, invoke, configure }) => {
+      projectionResidencyConfig.maxResident = 1;
+      const { createSessionRouteController } = await import(
+        '../../../../src/server/routes/session.js'
+      );
+      const { release } = configure();
+      const controller = createSessionRouteController();
+      const app = controller.app;
+
+      try {
+        const responsePromise = Promise.resolve(invoke(app));
+        await vi.waitFor(() => {
+          expect(controller.getProjectionResidencyStats()).toMatchObject({
+            resident: 1,
+            pinned: 1,
+            maxResident: 1,
+          });
+        });
+
+        release();
+        const response = await responsePromise;
+        expect(response.status).toBe(label === 'review' ? 202 : 200);
+        await vi.waitFor(() => {
+          expect(controller.getProjectionResidencyStats()).toMatchObject({
+            pinned: 0,
+            maxResident: 1,
+          });
+        });
+      } finally {
+        release();
+        await controller.shutdown();
+      }
+    }
+  );
 
   it.each([
     { isolation: 'local' as const, executionPath: '/tmp/task-source' },
@@ -7131,6 +7801,82 @@ describe('SessionRoutes runtime reuse', () => {
     expect(SessionRuntime.create).not.toHaveBeenCalled();
   });
 
+  it('rejects task creation before durable writes when projection capacity is reserved elsewhere', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    projectionResidencyConfig.maxResident = 1;
+    const resident = metadataFor(
+      'task-capacity-resident',
+      '/tmp/task-capacity-resident'
+    );
+    let releaseHydration: () => void = () => undefined;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([resident]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) => {
+        if (sessionId === resident.sessionId && projectPath === resident.projectPath) {
+          markHydrationStarted();
+          await hydrationGate;
+          return resident;
+        }
+        return undefined;
+      }
+    );
+    const controller = createSessionRouteController();
+
+    try {
+      const residentResponsePromise = Promise.resolve(
+        controller.app.request(
+          `/${resident.sessionId}/browser/reset?projectPath=${encodeURIComponent(resident.projectPath)}`,
+          { method: 'POST' }
+        )
+      );
+      await hydrationStarted;
+
+      await expect(
+        controller.dispatchTask({
+          prompt: 'Must fail before durable task create',
+          sourceProjectPath: '/tmp/task-capacity-source',
+          isolation: 'worktree',
+          permissionMode: PermissionMode.DEFAULT,
+        })
+      ).rejects.toMatchObject({
+        code: 'TOO_MANY_REQUESTS',
+        statusCode: 429,
+        details: {
+          resource: 'resident_session_projections',
+          limit: 1,
+          retryable: true,
+        },
+      });
+      expect(SessionService.createSessionMetadata).not.toHaveBeenCalled();
+      expect(worktreeState.enter).not.toHaveBeenCalled();
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        resident: 0,
+        reserved: 1,
+        pinned: 0,
+        retained: 1,
+        maxResident: 1,
+      });
+
+      releaseHydration();
+      expect((await residentResponsePromise).status).toBe(200);
+      expect(controller.getProjectionResidencyStats()).toMatchObject({
+        pinned: 0,
+      });
+    } finally {
+      releaseHydration();
+      await controller.shutdown();
+    }
+  });
+
   it('keeps an active session visible when another workspace persists the same id as a subagent', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
 
@@ -7699,7 +8445,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(observed).toEqual({
       subscribers: 0,
       unsubscribeCalls: 1,
-      timers: 1,
+      timers: 2,
       ended: true,
     });
   });
@@ -7765,7 +8511,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(observed).toEqual({
       subscribers: 0,
       unsubscribeCalls: 1,
-      timers: 1,
+      timers: 2,
       ended: true,
     });
   });

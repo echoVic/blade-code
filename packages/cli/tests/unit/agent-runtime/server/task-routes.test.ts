@@ -30,6 +30,15 @@ function createController(
       pinned: 0,
       maxResident: 32,
     })),
+    getProjectionResidencyStats: vi.fn(() => ({
+      resident: 0,
+      closing: 0,
+      reserved: 0,
+      pinned: 0,
+      retained: 0,
+      maxResident: 32,
+      idleMs: 300_000,
+    })),
     getCoordinationStats: vi.fn(() => ({
       messageSubmissions: { keys: 0, operations: 0 },
       taskDeliveries: { keys: 0, operations: 0 },

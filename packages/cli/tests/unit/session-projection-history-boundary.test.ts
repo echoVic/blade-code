@@ -50,13 +50,50 @@ describe('history-free Web Session projection source boundary', () => {
       (node): node is ts.VariableDeclaration =>
         ts.isVariableDeclaration(node) &&
         ts.isIdentifier(node.name) &&
-        node.name.text === 'getOrHydrateSession'
+        node.name.text === 'acquireOrHydrateSession'
     );
-    if (!hydration) throw new Error('Expected getOrHydrateSession declaration');
+    if (!hydration) throw new Error('Expected acquireOrHydrateSession declaration');
     const hydrationSource = hydration.getText(sessionRoutes);
 
     expect(hydrationSource).toContain('SessionService.findSessionMetadata(');
     expect(hydrationSource).toContain('SessionService.findSessionTaskWorktree(');
     expect(hydrationSource).not.toContain('SessionService.loadSession(');
+  });
+
+  it('keeps Session projection residency controller-local instead of in a module-global session map', () => {
+    const sessionRoutes = source('../../src/server/routes/session.ts');
+
+    expect(sessionRoutes).not.toContain(
+      'const sessions = new Map<string, SessionInfo>();'
+    );
+    expect(sessionRoutes).toContain(
+      'const sessionProjectionResidency = new SessionProjectionResidency<'
+    );
+    expect(sessionRoutes).toContain('SessionInfo,');
+    expect(sessionRoutes).toContain('SessionInfo');
+    expect(sessionRoutes).toContain('toSnapshot: cloneSessionInfo');
+  });
+
+  it('exposes projection residency stats through the controller surface', () => {
+    const sessionRoutes = parse('../../src/server/routes/session.ts');
+    const controller = findNode(
+      sessionRoutes,
+      (node): node is ts.InterfaceDeclaration =>
+        ts.isInterfaceDeclaration(node) && node.name.text === 'SessionRouteController'
+    );
+    if (!controller) throw new Error('Expected SessionRouteController interface');
+    const members = controller.members.map((member) => member.getText(sessionRoutes));
+
+    expect(members).toContain(
+      `getProjectionResidencyStats(): {
+    resident: number;
+    closing: number;
+    reserved: number;
+    pinned: number;
+    retained: number;
+    maxResident: number;
+    idleMs: number;
+  };`
+    );
   });
 });
