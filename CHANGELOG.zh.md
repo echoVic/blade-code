@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.125] - 2026-08-30
+
+### 新增
+- 新增有界 Web Session projection 驻留：支持配置条目上限与空闲时间，按空闲 LRU/TTL 回收，并返回类型化容量错误。
+
+### 修复
+- 为 hydration、active run、review、shell、Browser 操作、破坏性 Session 变更、controller replacement 与 shutdown 建立 projection generation 和长生命周期 owner fencing。
+- 保持 pending-resume projection 所有权在并发 SSE wake 下 single-flight，并在恢复、取消、启动失败和预算耗尽时释放 episode lease。
+- 保留 Session fork 的 exact-workspace `404` 语义，并将成功 fork 的 projection 提交到生成出的真实 child identity。
+
+### 测试
+- 新增 residency、capacity、hydration、Browser operation、close/rollback、replacement、shutdown 与 pending-resume ownership 的确定性回归。
+
 ## [0.10.124] - 2026-08-30
 
 ### 修复

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.125] - 2026-08-30
+
+### Added
+- Added bounded Web Session projection residency with configurable entry and idle-time limits, idle LRU/TTL reclamation, and typed capacity failures.
+
+### Fixed
+- Fenced projection generations and long-lived owners across hydration, active runs, reviews, shells, Browser operations, destructive Session changes, controller replacement, and shutdown.
+- Kept pending-resume projection ownership single-flight across concurrent SSE wakes and released episode leases on recovery, cancellation, startup failure, and budget exhaustion.
+- Preserved exact-workspace `404` behavior for Session forks and committed successful fork projections under their generated child identity.
+
+### Tests
+- Added deterministic residency, capacity, hydration, Browser-operation, close/rollback, replacement, shutdown, and pending-resume ownership regressions.
+
 ## [0.10.124] - 2026-08-30
 
 ### Fixed
