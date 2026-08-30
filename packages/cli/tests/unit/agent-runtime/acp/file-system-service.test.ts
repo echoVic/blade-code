@@ -877,6 +877,48 @@ describe('AcpFileSystemService remote ownership', () => {
     requestSpy.mockRestore();
   });
 
+  it('does not register dispose-signal listeners when the caller signal is already aborted before combined-signal setup', async () => {
+    const clientApp = acp
+      .client({ name: 'file-system-combined-abort-pairing-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      writeTextFile: true,
+    });
+    const requestSpy = vi.spyOn(harness.agentConnection, 'request');
+    const controller = new AbortController();
+    controller.abort(new DOMException('caller already aborted', 'AbortError'));
+    const disposeController = Reflect.get(service, 'disposeController');
+    if (!(disposeController instanceof AbortController)) {
+      throw new Error('expected service dispose controller');
+    }
+    const disposeSignal = disposeController.signal;
+
+    const addSpy = vi.spyOn(disposeSignal, 'addEventListener');
+    const removeSpy = vi.spyOn(disposeSignal, 'removeEventListener');
+    try {
+      await expect(
+        service.writeTextFile('/workspace/already-aborted.ts', 'alpha', {
+          signal: controller.signal,
+        })
+      ).rejects.toMatchObject({
+        name: 'AcpRemoteFileBoundaryError',
+        reason: 'aborted',
+        operation: 'write',
+        dispatched: false,
+        requestPending: false,
+      });
+      expect(requestSpy).not.toHaveBeenCalled();
+      expect(addSpy).not.toHaveBeenCalled();
+      expect(removeSpy).not.toHaveBeenCalled();
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+      requestSpy.mockRestore();
+    }
+  });
+
   it('does not mark a no-options write as uncertain when the deadline is already expired before dispatch', async () => {
     const clientApp = acp
       .client({ name: 'file-system-write-expired-deadline-client' })

@@ -375,11 +375,19 @@ export function createMutationLease(
   sessionId: string
 ): AcpRemoteMutationLease {
   const activeLeaseId = Symbol('acp-mutation-lease');
+  const activeMetadata: ActiveLeaseMetadata = {
+    kind: 'active',
+    sessionId,
+    leaseId: activeLeaseId,
+    generations: new Map<string, number>(),
+    released: false,
+  };
   const generations = new Map<string, number>();
   for (const pathIdentity of pathIdentities) {
     const existing = state.mutationStates.get(pathIdentity);
     const generation = (existing?.generation ?? 0) + 1;
     generations.set(pathIdentity, generation);
+    activeMetadata.generations.set(pathIdentity, generation);
   }
   for (const pathIdentity of pathIdentities) {
     const existing = state.mutationStates.get(pathIdentity);
@@ -401,6 +409,23 @@ export function createMutationLease(
 
   let released = false;
   let verified = false;
+  const getExactCurrentActiveState = (
+    pathIdentity: string
+  ): MutationPathState | undefined => {
+    const generation = generations.get(pathIdentity);
+    const mutationState = state.mutationStates.get(pathIdentity);
+    if (
+      generation === undefined ||
+      !mutationState ||
+      mutationState.sessionId !== sessionId ||
+      mutationState.generation !== generation ||
+      mutationState.leaseKind !== 'active' ||
+      mutationState.leaseId !== activeLeaseId
+    ) {
+      return undefined;
+    }
+    return mutationState;
+  };
   const lease: AcpRemoteMutationLease = {
     sessionId,
     pathIdentities,
@@ -409,59 +434,42 @@ export function createMutationLease(
     },
     isCurrent(filePath: string): boolean {
       const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
-      const mutationState = state.mutationStates.get(pathIdentity);
-      return (
-        !released &&
-        mutationState?.sessionId === sessionId &&
-        mutationState.generation === generations.get(pathIdentity)
-      );
+      return !released && getExactCurrentActiveState(pathIdentity) !== undefined;
     },
     markForwardVerified(filePath: string): void {
+      if (released) {
+        return;
+      }
       const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
-      const mutationState = state.mutationStates.get(pathIdentity);
-      if (
-        mutationState &&
-        mutationState.sessionId === sessionId &&
-        mutationState.generation === generations.get(pathIdentity)
-      ) {
-        mutationState.kind = 'needs-read';
+      const mutationState = getExactCurrentActiveState(pathIdentity);
+      if (mutationState) {
+        mutationState.kind = 'active-mutation';
         mutationState.forwardVerified = true;
       }
     },
     markDefinite(filePath: string): void {
+      if (released) {
+        return;
+      }
       const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
-      const mutationState = state.mutationStates.get(pathIdentity);
-      if (
-        mutationState &&
-        mutationState.sessionId === sessionId &&
-        mutationState.generation === generations.get(pathIdentity)
-      ) {
+      const mutationState = getExactCurrentActiveState(pathIdentity);
+      if (mutationState) {
         state.mutationStates.delete(pathIdentity);
       }
     },
     markUncertain(filePath: string): void {
+      if (released) {
+        return;
+      }
       const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
-      const mutationState = state.mutationStates.get(pathIdentity);
-      if (
-        mutationState &&
-        mutationState.sessionId === sessionId &&
-        mutationState.generation === generations.get(pathIdentity)
-      ) {
+      const mutationState = getExactCurrentActiveState(pathIdentity);
+      if (mutationState) {
         mutationState.kind = 'needs-read';
         mutationState.forwardVerified = false;
       }
     },
     beginRecovery(filePath: string): AcpRemoteMutationRecoveryLease {
-      const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
-      const mutationState = state.mutationStates.get(pathIdentity);
-      const generation = generations.get(pathIdentity);
-      if (
-        !mutationState ||
-        generation === undefined ||
-        mutationState.sessionId !== sessionId ||
-        mutationState.generation !== generation ||
-        mutationState.kind === 'pending-write'
-      ) {
+      if (released) {
         throw new AcpRemoteFileBoundaryError(
           'stale-reconciliation',
           'read',
@@ -469,9 +477,21 @@ export function createMutationLease(
           false
         );
       }
+      const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
+      const mutationState = getExactCurrentActiveState(pathIdentity);
+      if (!mutationState || mutationState.kind === 'pending-write') {
+        throw new AcpRemoteFileBoundaryError(
+          'stale-reconciliation',
+          'read',
+          false,
+          false
+        );
+      }
+      const generation = mutationState.generation;
       const nextGeneration = generation + 1;
       const recoveryLeaseId = Symbol('acp-recovery-lease');
       generations.set(pathIdentity, nextGeneration);
+      activeMetadata.generations.set(pathIdentity, nextGeneration);
       const retiredGenerations = new Set(mutationState.retiredGenerations ?? []);
       retiredGenerations.add(generation);
       mutationState.generation = nextGeneration;
@@ -519,48 +539,40 @@ export function createMutationLease(
       if (released) {
         return;
       }
-      released = true;
       for (const pathIdentity of pathIdentities) {
-        const mutationState = state.mutationStates.get(pathIdentity);
-        if (
-          !mutationState ||
-          mutationState.sessionId !== sessionId ||
-          mutationState.generation !== generations.get(pathIdentity)
-        ) {
+        const mutationState = getExactCurrentActiveState(pathIdentity);
+        if (!mutationState) {
           continue;
         }
         if (mutationState.kind === 'active-mutation') {
-          state.mutationStates.delete(pathIdentity);
+          if (!mutationState.forwardVerified) {
+            state.mutationStates.delete(pathIdentity);
+            continue;
+          }
+          if (verified) {
+            state.mutationStates.delete(pathIdentity);
+            continue;
+          }
+          mutationState.kind = 'needs-read';
+          mutationState.forwardVerified = false;
           continue;
         }
         if (mutationState.kind === 'pending-write') {
           continue;
         }
         if (mutationState.kind === 'needs-read') {
-          if (verified && mutationState.forwardVerified) {
-            state.mutationStates.delete(pathIdentity);
-          }
+          mutationState.forwardVerified = false;
           continue;
         }
         if (verified) {
           state.mutationStates.delete(pathIdentity);
         }
       }
+      released = true;
+      activeMetadata.released = true;
     },
   };
-  const activeMetadata: ActiveLeaseMetadata = {
-    kind: 'active',
-    sessionId,
-    leaseId: activeLeaseId,
-    generations,
-    released: false,
-  };
   leaseMetadata.set(lease, activeMetadata);
-  const originalRelease = lease.release;
-  lease.release = (): void => {
-    activeMetadata.released = true;
-    originalRelease();
-  };
   return lease;
 }
 
@@ -795,6 +807,7 @@ export function handleSettlementState<T>(
     mutationState.leaseKind === token.writeLeaseSnapshot.leaseKind
   ) {
     mutationState.kind = 'needs-read';
+    mutationState.forwardVerified = false;
   }
 }
 

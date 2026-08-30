@@ -261,6 +261,53 @@ describe('ApplyPatch ACP remote transaction', () => {
     lease.release();
   });
 
+  it('self-owned remote mutations release their lease when write preflight fails before dispatch', async () => {
+    const client = new ControlledFileClient();
+    client.files.set('/remote/file.ts', 'const value = false;\n');
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'self-owned-expired-deadline',
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      }
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+
+    await expect(
+      commitVerifiedRemoteTextMutation({
+        service,
+        filePath: '/remote/file.ts',
+        previous: { exists: true, content: 'const value = false;\n' },
+        intendedContent: 'const value = true;\n',
+        operation: 'edit',
+        deadlineAt: Date.now() - 1,
+        recordAccess: false,
+      })
+    ).rejects.toMatchObject({
+      name: 'AcpRemoteMutationError',
+      writeAcknowledged: false,
+      writeVerified: false,
+      sideEffectsUncertain: false,
+      requiresRead: false,
+      message: 'edit did not complete before the remote boundary rejected it',
+    });
+
+    expect(client.requests).toEqual([]);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    const lease = service.tryAcquireMutationLease(['/remote/file.ts']);
+    expect(lease.isCurrent('/remote/file.ts')).toBe(true);
+    lease.release();
+  });
+
   it('detects preflight content races before publishing any remote write', async () => {
     const files = new Map([
       ['/remote/first.ts', 'const first = false;\n'],

@@ -517,6 +517,15 @@ function createCombinedAbortSignal(...signals: Array<AbortSignal | undefined>): 
       cleanup: noop,
     };
   }
+  const alreadyAborted = activeSignals.find((signal) => signal.aborted);
+  if (alreadyAborted) {
+    const controller = new AbortController();
+    controller.abort(alreadyAborted.reason);
+    return {
+      signal: controller.signal,
+      cleanup: noop,
+    };
+  }
 
   const controller = new AbortController();
   const listeners = new Map<AbortSignal, () => void>();
@@ -527,13 +536,6 @@ function createCombinedAbortSignal(...signals: Array<AbortSignal | undefined>): 
   };
 
   for (const signal of activeSignals) {
-    if (signal.aborted) {
-      abortFrom(signal);
-      return {
-        signal: controller.signal,
-        cleanup: noop,
-      };
-    }
     const listener = () => {
       abortFrom(signal);
     };

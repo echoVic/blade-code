@@ -56,41 +56,41 @@ export async function commitVerifiedRemoteTextMutation(options: {
   const writePurpose = options.purpose ?? 'mutation';
   let writeAcknowledged = false;
   try {
-    await options.service.writeTextFile(options.filePath, options.intendedContent, {
-      signal: options.signal,
-      deadlineAt,
-      purpose: writePurpose,
-      lease,
-    });
-    writeAcknowledged = true;
-  } catch (error) {
-    if (
-      error instanceof AcpRemoteFileBoundaryError &&
-      error.dispatched &&
-      error.requestPending
-    ) {
-      throw new AcpRemoteMutationError(
-        `${options.operation} remote outcome is uncertain until a fresh Read completes`,
-        false,
-        true,
-        true
-      );
+    try {
+      await options.service.writeTextFile(options.filePath, options.intendedContent, {
+        signal: options.signal,
+        deadlineAt,
+        purpose: writePurpose,
+        lease,
+      });
+      writeAcknowledged = true;
+    } catch (error) {
+      if (
+        error instanceof AcpRemoteFileBoundaryError &&
+        error.dispatched &&
+        error.requestPending
+      ) {
+        throw new AcpRemoteMutationError(
+          `${options.operation} remote outcome is uncertain until a fresh Read completes`,
+          false,
+          true,
+          true
+        );
+      }
+      if (error instanceof AcpRemoteFileBoundaryError) {
+        throw new AcpRemoteMutationError(
+          `${options.operation} did not complete before the remote boundary rejected it`,
+          false,
+          false,
+          Boolean(
+            (error as AcpRemoteFileBoundaryError & { requiresRead?: boolean })
+              .requiresRead
+          )
+        );
+      }
+      writeAcknowledged = false;
     }
-    if (error instanceof AcpRemoteFileBoundaryError) {
-      throw new AcpRemoteMutationError(
-        `${options.operation} did not complete before the remote boundary rejected it`,
-        false,
-        false,
-        Boolean(
-          (error as AcpRemoteFileBoundaryError & { requiresRead?: boolean })
-            .requiresRead
-        )
-      );
-    }
-    writeAcknowledged = false;
-  }
 
-  try {
     const activeLease = getActiveLease(lease);
     const readback = await readBackWithDeadline(
       options.service,

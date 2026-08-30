@@ -680,28 +680,45 @@ describe('AcpFileRequestCoordinator', () => {
     });
   });
 
-  it('keeps a forward-verified lease fenced until commitVerified plus release, then clears the path', async () => {
+  it('keeps a forward-verified caller-owned multi-path lease fenced until commitVerified plus release, then clears all held paths', async () => {
     const harness = trackHarness(
       createPairedAcpAppHarness(
         acp.client({ name: 'coordinator-forward-verified-release-client' })
       )
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
-    const path = '/repo/verified.txt';
-    const lease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    const firstPath = '/repo/verified-a.txt';
+    const secondPath = '/repo/verified-b.txt';
+    const lease = coordinator.tryAcquireMutationLease(
+      [firstPath, secondPath],
+      'session-a'
+    );
 
-    lease.markForwardVerified(path);
+    lease.markForwardVerified(firstPath);
     expect(coordinator.getStatsForTests()).toMatchObject({
-      mutationPaths: 1,
-      needsRead: 1,
-      activeMutations: 0,
+      mutationPaths: 2,
+      needsRead: 0,
+      activeMutations: 2,
       pendingWrites: 0,
     });
+    expect(lease.isCurrent(firstPath)).toBe(true);
+    expect(lease.isCurrent(secondPath)).toBe(true);
 
     await expect(
-      Promise.resolve().then(() =>
-        coordinator.tryAcquireMutationLease([path], 'session-b')
-      )
+      Promise.resolve().then(() => coordinator.beginUserRead(firstPath, 'session-a'))
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 2,
+      needsRead: 0,
+      activeMutations: 2,
+      pendingWrites: 0,
+    });
+    await expect(
+      Promise.resolve().then(() => coordinator.beginUserRead(firstPath, 'session-b'))
     ).rejects.toMatchObject({
       reason: 'busy',
       dispatched: false,
@@ -710,9 +727,9 @@ describe('AcpFileRequestCoordinator', () => {
 
     lease.commitVerified();
     expect(coordinator.getStatsForTests()).toMatchObject({
-      mutationPaths: 1,
-      needsRead: 1,
-      activeMutations: 0,
+      mutationPaths: 2,
+      needsRead: 0,
+      activeMutations: 2,
       pendingWrites: 0,
     });
 
@@ -724,9 +741,226 @@ describe('AcpFileRequestCoordinator', () => {
       pendingWrites: 0,
     });
 
-    const nextLease = coordinator.tryAcquireMutationLease([path], 'session-b');
-    expect(nextLease.isCurrent(path)).toBe(true);
+    const nextLease = coordinator.tryAcquireMutationLease(
+      [firstPath, secondPath],
+      'session-b'
+    );
+    expect(nextLease.isCurrent(firstPath)).toBe(true);
+    expect(nextLease.isCurrent(secondPath)).toBe(true);
     nextLease.release();
+  });
+
+  it('lets a current unreleased forward-verified lease begin recovery but rejects recovery after release', async () => {
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp.client({ name: 'coordinator-forward-verified-recovery-client' })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const path = '/repo/forward-verified-recovery.txt';
+    const lease = coordinator.tryAcquireMutationLease([path], 'session-a');
+
+    lease.markForwardVerified(path);
+    const recoveryLease = lease.beginRecovery(path);
+    expect(recoveryLease.pathIdentity).toBe(makeIdentity(path));
+    recoveryLease.finish('restored');
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    const releasedLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    releasedLease.markForwardVerified(path);
+    releasedLease.release();
+    await expect(
+      Promise.resolve().then(() => releasedLease.beginRecovery(path))
+    ).rejects.toMatchObject({
+      reason: 'stale-reconciliation',
+      dispatched: false,
+      requestPending: false,
+    });
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 1,
+    });
+  });
+
+  it('turns uncommitted forward-verified paths into genuine needs-read only on release and leaves untouched paths clean', async () => {
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp.client({ name: 'coordinator-forward-verified-needs-read-client' })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const firstPath = '/repo/reconcile-a.txt';
+    const secondPath = '/repo/reconcile-b.txt';
+    const lease = coordinator.tryAcquireMutationLease(
+      [firstPath, secondPath],
+      'session-a'
+    );
+
+    lease.markForwardVerified(firstPath);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 2,
+      activeMutations: 2,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    lease.release();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 1,
+    });
+
+    const permit = coordinator.beginUserRead(firstPath, 'session-a');
+    expect(permit.lane).toBe('recovery');
+    await expect(
+      Promise.resolve().then(() => coordinator.beginUserRead(firstPath, 'session-b'))
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+
+    const cleanLease = coordinator.tryAcquireMutationLease([secondPath], 'session-b');
+    expect(cleanLease.isCurrent(secondPath)).toBe(true);
+    cleanLease.release();
+    permit.fail();
+  });
+
+  it('ignores stale active-lease mutators and recovery after release plus reacquire on the same session/path', async () => {
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp.client({ name: 'coordinator-stale-active-lease-client' })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const path = '/repo/stale-active-lease.txt';
+
+    const staleUncertainLease = coordinator.tryAcquireMutationLease(
+      [path],
+      'session-a'
+    );
+    staleUncertainLease.release();
+    const currentAfterUncertain = coordinator.tryAcquireMutationLease(
+      [path],
+      'session-a'
+    );
+    expect(staleUncertainLease.isCurrent(path)).toBe(false);
+    expect(currentAfterUncertain.isCurrent(path)).toBe(true);
+    staleUncertainLease.markUncertain(path);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+    currentAfterUncertain.release();
+
+    const staleForwardVerifiedLease = coordinator.tryAcquireMutationLease(
+      [path],
+      'session-a'
+    );
+    staleForwardVerifiedLease.release();
+    const currentAfterForwardVerified = coordinator.tryAcquireMutationLease(
+      [path],
+      'session-a'
+    );
+    staleForwardVerifiedLease.markForwardVerified(path);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+    currentAfterForwardVerified.release();
+
+    const staleDefiniteLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    staleDefiniteLease.release();
+    const currentAfterDefinite = coordinator.tryAcquireMutationLease(
+      [path],
+      'session-a'
+    );
+    staleDefiniteLease.markDefinite(path);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+    currentAfterDefinite.release();
+
+    const staleRecoveryLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    staleRecoveryLease.release();
+    const currentAfterRecovery = coordinator.tryAcquireMutationLease(
+      [path],
+      'session-a'
+    );
+    await expect(
+      Promise.resolve().then(() => staleRecoveryLease.beginRecovery(path))
+    ).rejects.toMatchObject({
+      reason: 'stale-reconciliation',
+      dispatched: false,
+      requestPending: false,
+    });
+    staleRecoveryLease.release();
+    expect(currentAfterRecovery.isCurrent(path)).toBe(true);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+    currentAfterRecovery.release();
+  });
+
+  it('does not let a stale active lease release delete a new lease after markDefinite removed the old state', async () => {
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp.client({ name: 'coordinator-stale-release-after-definite-client' })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const path = '/repo/stale-release-after-definite.txt';
+
+    const staleLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    staleLease.markDefinite(path);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    const currentLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    expect(staleLease.isCurrent(path)).toBe(false);
+    expect(currentLease.isCurrent(path)).toBe(true);
+
+    staleLease.commitVerified();
+    staleLease.release();
+
+    expect(currentLease.isCurrent(path)).toBe(true);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    currentLease.release();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
   });
 
   it('cleans up reserved but never dispatched expired normal and recovery requests', async () => {
@@ -1275,13 +1509,12 @@ describe('AcpFileRequestCoordinator', () => {
         needsRead: 1,
       });
     });
-    writeLease.release();
-    writeLease.release();
-
     const stalePermit = coordinator.beginUserRead('/repo/file.txt', 'session-a');
     expect(stalePermit.lane).toBe('recovery');
     const recoveryLease = writeLease.beginRecovery('/repo/file.txt');
     recoveryLease.finish('uncertain');
+    writeLease.release();
+    writeLease.release();
     try {
       stalePermit.complete('content', () => {
         throw new Error('stale generation should not update');
