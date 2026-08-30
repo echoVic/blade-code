@@ -20,7 +20,9 @@ import {
 } from '../services/FileSystemService.js';
 import {
   ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+  AcpRemoteFileBoundaryError,
   type AcpRemoteFileRequestPurpose,
+  type AcpRemoteMutationLease,
   type AcpRemoteUserReadPermit,
   createAcpRemoteConnectionPathIdentity,
   getAcpFileRequestCoordinator,
@@ -155,21 +157,69 @@ export class AcpFileSystemService implements FileSystemService {
    *
    * 如果 IDE 不支持 writeTextFile，则 fail-closed。
    */
-  async writeTextFile(filePath: string, content: string): Promise<void> {
+  async writeTextFile(
+    filePath: string,
+    content: string,
+    options?: {
+      signal?: AbortSignal;
+      deadlineAt?: number;
+      purpose?: AcpRemoteFileRequestPurpose;
+      lease?: AcpRemoteMutationLease;
+    }
+  ): Promise<void> {
     if (!this.capabilities.writeTextFile) {
       throw new AcpFileSystemCapabilityError('writeTextFile');
     }
 
+    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const coordinator = getAcpFileRequestCoordinator(this.connection);
+    const lease =
+      options?.lease ??
+      coordinator.tryAcquireMutationLease([normalizedPath], this.sessionId);
+    const ownsLease = options?.lease === undefined;
+    const combinedSignal = createCombinedAbortSignal(
+      this.disposeController.signal,
+      options?.signal
+    );
+    const deadlineAt =
+      options?.deadlineAt ?? Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS;
+
     try {
-      logger.debug(`[AcpFileSystem] writeTextFile via ACP: ${filePath}`);
-      await this.connection.writeTextFile({
-        path: filePath,
-        content,
+      await coordinator.runRequest({
+        operation: 'write',
+        purpose: options?.purpose ?? 'mutation',
         sessionId: this.sessionId,
+        pathIdentity: createAcpRemoteConnectionPathIdentity(normalizedPath),
+        deadlineAt,
+        signal: combinedSignal.signal,
+        lease,
+        dispatch: (cancellationSignal) =>
+          this.connection.request(
+            acp.CLIENT_METHODS.fs_write_text_file,
+            {
+              path: normalizedPath,
+              content,
+              sessionId: this.sessionId,
+            },
+            {
+              cancellationSignal,
+            }
+          ),
       });
+      if (ownsLease) {
+        lease.markDefinite(normalizedPath);
+      }
     } catch (error) {
       logger.warn('[AcpFileSystem] writeTextFile ACP request failed');
+      if (ownsLease && shouldMarkWriteUncertain(error)) {
+        lease.markUncertain(normalizedPath);
+      }
       throw error;
+    } finally {
+      if (ownsLease) {
+        lease.release();
+      }
+      combinedSignal.cleanup();
     }
   }
 
@@ -202,7 +252,7 @@ export class AcpFileSystemService implements FileSystemService {
    * ACP 协议目前只支持文本文件读取，二进制文件 fail-closed。
    */
   async readBinaryFile(filePath: string): Promise<Buffer> {
-    logger.debug(`[AcpFileSystem] readBinaryFile unsupported: ${filePath}`);
+    void filePath;
     throw new AcpFileSystemCapabilityError('readBinaryFile');
   }
 
@@ -212,7 +262,7 @@ export class AcpFileSystemService implements FileSystemService {
    * ACP 协议暂不支持 stat 操作，fail-closed。
    */
   async stat(filePath: string): Promise<FileStat | null> {
-    logger.debug(`[AcpFileSystem] stat unsupported: ${filePath}`);
+    void filePath;
     throw new AcpFileSystemCapabilityError('stat');
   }
 
@@ -225,7 +275,7 @@ export class AcpFileSystemService implements FileSystemService {
     dirPath: string,
     _options?: { recursive?: boolean; mode?: number }
   ): Promise<void> {
-    logger.debug(`[AcpFileSystem] mkdir unsupported: ${dirPath}`);
+    void dirPath;
     throw new AcpFileSystemCapabilityError('mkdir');
   }
 
@@ -409,6 +459,13 @@ function isRequestErrorWithCode(
 
 function sha256(content: string): string {
   return createHash('sha256').update(content).digest('hex');
+}
+
+function shouldMarkWriteUncertain(error: unknown): boolean {
+  if (!(error instanceof AcpRemoteFileBoundaryError)) {
+    return true;
+  }
+  return !error.dispatched && !error.requestPending;
 }
 
 function createCombinedAbortSignal(...signals: Array<AbortSignal | undefined>): {

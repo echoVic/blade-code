@@ -180,6 +180,36 @@ describe('ACP remote Read builtin tool', () => {
     await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
   });
 
+  it('remote Read records the ACP ledger exactly once via the service permit', async () => {
+    const root = await createTempRoot('blade-acp-remote-ledger-once-');
+    const filePath = path.join(root, 'ledger-once.txt');
+    const remoteContent = 'alpha\nbeta\ngamma\n';
+    await fs.writeFile(filePath, 'host canary\n', 'utf8');
+
+    const client = new ControlledFileClient();
+    client.files.set(filePath, remoteContent);
+    const sessionId = 'remote-read-ledger-once';
+    initializeRemoteSession(client, sessionId, root);
+
+    const service = getAcpFileSystemService(sessionId);
+    expect(service).toBeInstanceOf(AcpFileSystemService);
+    if (!(service instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    const recordSpy = vi.spyOn(service, 'recordRemoteAccess');
+
+    const result = await executeRead(filePath, sessionId, { offset: 1, limit: 1 });
+
+    expect(result).toMatchObject({
+      success: true,
+      llmContent: '     2|beta',
+    });
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(recordSpy).toHaveBeenCalledWith(filePath, remoteContent, 'read');
+    expect(service.checkRemoteAccess(filePath, remoteContent)).toBe('current');
+    recordSpy.mockRestore();
+  });
+
   it('remote Read maps ACP resourceNotFound to File not found without host fallback', async () => {
     const root = await createTempRoot('blade-acp-remote-missing-');
     const filePath = path.join(root, 'missing.txt');

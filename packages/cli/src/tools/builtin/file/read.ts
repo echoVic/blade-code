@@ -183,8 +183,6 @@ export const readTool = createTool({
           signal.throwIfAborted();
         }
 
-        fsService.recordRemoteAccess(file_path, fullContent, 'read');
-
         let content = fullContent;
         const metadata: ReadMetadata = {
           file_path,

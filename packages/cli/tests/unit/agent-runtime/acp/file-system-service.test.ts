@@ -3,34 +3,18 @@ import * as acp from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-interface LoggerSpy {
-  info: ReturnType<typeof vi.fn>;
-  debug: ReturnType<typeof vi.fn>;
-  warn: ReturnType<typeof vi.fn>;
-  error: ReturnType<typeof vi.fn>;
-}
-
-const loggerSpy = vi.hoisted<LoggerSpy>(() => ({
-  info: vi.fn(),
-  debug: vi.fn(),
-  warn: vi.fn(),
-  error: vi.fn(),
-}));
-
-vi.mock('../../../../src/logging/Logger.js', () => ({
-  createLogger: vi.fn(() => loggerSpy),
-  LogCategory: {
-    AGENT: 'AGENT',
-  },
-}));
-
-import { ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS } from '../../../../src/acp/AcpFileRequestCoordinator.js';
+import {
+  ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+  AcpRemoteFileBoundaryError,
+  getAcpFileRequestCoordinator,
+} from '../../../../src/acp/AcpFileRequestCoordinator.js';
 import {
   AcpFileSystemCapabilityError,
   AcpFileSystemService,
   isAcpResourceNotFoundError,
   normalizeAcpRemotePath,
 } from '../../../../src/acp/AcpFileSystemService.js';
+import { Logger } from '../../../../src/logging/Logger.js';
 import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
 import {
   createPairedAcpAppHarness,
@@ -39,29 +23,40 @@ import {
   type PairedAcpHarness,
 } from '../../../support/acp/createPairedAcpHarness.js';
 
+const infoSpy = vi.spyOn(Logger.prototype, 'info').mockImplementation(() => undefined);
+const debugSpy = vi
+  .spyOn(Logger.prototype, 'debug')
+  .mockImplementation(() => undefined);
+const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+const errorSpy = vi
+  .spyOn(Logger.prototype, 'error')
+  .mockImplementation(() => undefined);
+
 describe('AcpFileSystemService remote ownership', () => {
   const harnesses: Array<PairedAcpHarness | PairedAcpAppHarness> = [];
 
   afterEach(async () => {
-    loggerSpy.info.mockReset();
-    loggerSpy.debug.mockReset();
-    loggerSpy.warn.mockReset();
-    loggerSpy.error.mockReset();
+    infoSpy.mockClear();
+    debugSpy.mockClear();
+    warnSpy.mockClear();
+    errorSpy.mockClear();
     await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
   });
 
   function serializeWarnCalls(): string {
-    return JSON.stringify(loggerSpy.warn.mock.calls);
+    return JSON.stringify(warnSpy.mock.calls);
   }
 
   it('fails closed instead of writing locally after an advertised remote failure', async () => {
-    const client = new ControlledFileClient();
-    const harness = createPairedAcpHarness(client);
-    harnesses.push(harness);
     const remoteWriteRejected = new RequestError(-32010, 'remote write rejected');
-    const writeSpy = vi
-      .spyOn(client, 'writeTextFile')
-      .mockRejectedValueOnce(remoteWriteRejected);
+    const clientApp = acp
+      .client({ name: 'file-system-write-fail-closed-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => {
+        throw remoteWriteRejected;
+      });
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const requestSpy = vi.spyOn(harness.agentConnection, 'request');
     const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
       writeTextFile: true,
     });
@@ -73,9 +68,9 @@ describe('AcpFileSystemService remote ownership', () => {
         message: 'remote write rejected',
       }
     );
-    expect(writeSpy).toHaveBeenCalledTimes(1);
-    expect(client.requests).toEqual([]);
+    expect(requestSpy).toHaveBeenCalledTimes(1);
     expect(service.usesRemoteFiles()).toBe(true);
+    requestSpy.mockRestore();
   });
 
   it('fails closed instead of reading a same-named local file after a remote failure', async () => {
@@ -292,7 +287,7 @@ describe('AcpFileSystemService remote ownership', () => {
       },
     });
 
-    expect(loggerSpy.warn).toHaveBeenCalledWith(
+    expect(warnSpy).toHaveBeenCalledWith(
       '[AcpFileSystem] readTextFile ACP request failed'
     );
     expect(serializeWarnCalls()).not.toContain(sentinel);
@@ -301,15 +296,18 @@ describe('AcpFileSystemService remote ownership', () => {
   });
 
   it('redacts sensitive remote write errors from logs while rethrowing them', async () => {
-    const client = new ControlledFileClient();
-    const harness = createPairedAcpHarness(client);
-    harnesses.push(harness);
     const sentinel = 'SENTINEL_PRIVATE_REMOTE_WRITE';
     const remoteError = new RequestError(-32031, sentinel, {
       secret: sentinel,
       path: '/remote/private.txt',
     });
-    vi.spyOn(client, 'writeTextFile').mockRejectedValueOnce(remoteError);
+    const clientApp = acp
+      .client({ name: 'file-system-write-sanitize-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => {
+        throw remoteError;
+      });
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
     const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
       writeTextFile: true,
     });
@@ -326,7 +324,7 @@ describe('AcpFileSystemService remote ownership', () => {
       },
     });
 
-    expect(loggerSpy.warn).toHaveBeenCalledWith(
+    expect(warnSpy).toHaveBeenCalledWith(
       '[AcpFileSystem] writeTextFile ACP request failed'
     );
     expect(serializeWarnCalls()).not.toContain(sentinel);
@@ -657,5 +655,181 @@ describe('AcpFileSystemService remote ownership', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('bounds the no-options write compatibility call without bypassing mutation fencing', async () => {
+    const blockedWrite = Promise.withResolvers<void>();
+    let mode: 'ack' | 'error' | 'blocked' = 'ack';
+    const clientApp = acp
+      .client({ name: 'file-system-write-compat-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async ({ params, signal }) => {
+        expect(params.sessionId).toBe('session-a');
+        expect(signal).toBeInstanceOf(AbortSignal);
+        if (mode === 'ack') {
+          return {};
+        }
+        if (mode === 'error') {
+          throw new RequestError(-32041, 'compat settled error');
+        }
+        await blockedWrite.promise;
+        return {};
+      });
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      writeTextFile: true,
+    });
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const requestSpy = vi.spyOn(harness.agentConnection, 'request');
+
+    await expect(
+      service.writeTextFile('/workspace/compat-ack.ts', 'alpha')
+    ).resolves.toBeUndefined();
+    expect(requestSpy).toHaveBeenCalledWith(
+      acp.CLIENT_METHODS.fs_write_text_file,
+      {
+        path: '/workspace/compat-ack.ts',
+        content: 'alpha',
+        sessionId: 'session-a',
+      },
+      expect.objectContaining({
+        cancellationSignal: expect.any(AbortSignal),
+      })
+    );
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    mode = 'error';
+    await expect(
+      service.writeTextFile('/workspace/compat-error.ts', 'beta')
+    ).rejects.toMatchObject({
+      name: 'RequestError',
+      code: -32041,
+      message: 'compat settled error',
+    });
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      pendingWrites: 0,
+      needsRead: 1,
+    });
+    const recoveryPermit = coordinator.beginUserRead(
+      '/workspace/compat-error.ts',
+      'session-a'
+    );
+    expect(recoveryPermit.lane).toBe('recovery');
+    recoveryPermit.fail();
+
+    mode = 'blocked';
+    vi.useFakeTimers({ now: 20_000 });
+    try {
+      const pendingWrite = service.writeTextFile(
+        '/workspace/compat-pending.ts',
+        'gamma'
+      );
+      const pendingRejection = expect(pendingWrite).rejects.toMatchObject({
+        name: 'AcpRemoteFileBoundaryError',
+        reason: 'timeout',
+        operation: 'write',
+        dispatched: true,
+        requestPending: true,
+      });
+      await Promise.resolve();
+      await expect(
+        service.writeTextFile('/workspace/compat-pending.ts', 'delta')
+      ).rejects.toMatchObject({
+        name: 'AcpRemoteFileBoundaryError',
+        reason: 'busy',
+        dispatched: false,
+        requestPending: false,
+      });
+      await vi.advanceTimersByTimeAsync(ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS + 1);
+      await pendingRejection;
+      expect(coordinator.getStatsForTests()).toMatchObject({
+        pendingWrites: 1,
+      });
+
+      blockedWrite.resolve();
+      await vi.runAllTimersAsync();
+      expect(coordinator.getStatsForTests()).toMatchObject({
+        pendingWrites: 0,
+        needsRead: 2,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reuses a caller-owned write lease without reacquiring or releasing it', async () => {
+    const clientApp = acp
+      .client({ name: 'file-system-write-owned-lease-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      writeTextFile: true,
+    });
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const lease = coordinator.tryAcquireMutationLease(
+      ['/workspace/caller-owned.ts'],
+      'session-a'
+    );
+    const acquireLeaseSpy = vi.spyOn(coordinator, 'tryAcquireMutationLease');
+
+    await expect(
+      service.writeTextFile('/workspace/caller-owned.ts', 'owned', {
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        lease,
+        purpose: 'mutation',
+      })
+    ).resolves.toBeUndefined();
+    expect(acquireLeaseSpy).not.toHaveBeenCalled();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    lease.release();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+    });
+    acquireLeaseSpy.mockRestore();
+  });
+
+  it('does not log remote raw paths or payloads for task2 adapter operations', async () => {
+    const clientApp = acp
+      .client({ name: 'file-system-log-sanitize-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
+      writeTextFile: true,
+    });
+    const sentinelPath = '/remote/private/SENTINEL_WRITE.txt';
+    const sentinelContent = 'SENTINEL_REMOTE_PAYLOAD';
+
+    await expect(
+      service.writeTextFile(sentinelPath, sentinelContent)
+    ).resolves.toBeUndefined();
+    await expect(service.readBinaryFile(sentinelPath)).rejects.toBeInstanceOf(
+      AcpFileSystemCapabilityError
+    );
+    await expect(service.stat(sentinelPath)).rejects.toBeInstanceOf(
+      AcpFileSystemCapabilityError
+    );
+    await expect(service.mkdir(sentinelPath)).rejects.toBeInstanceOf(
+      AcpFileSystemCapabilityError
+    );
+
+    const debugCalls = JSON.stringify(debugSpy.mock.calls);
+    const warnCalls = JSON.stringify(warnSpy.mock.calls);
+    expect(debugCalls).not.toContain(sentinelPath);
+    expect(debugCalls).not.toContain(sentinelContent);
+    expect(warnCalls).not.toContain(sentinelPath);
+    expect(warnCalls).not.toContain(sentinelContent);
   });
 });

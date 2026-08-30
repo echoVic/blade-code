@@ -84,7 +84,9 @@ describe('ToolExecutor — file lock logic', () => {
     );
   }
 
-  function createWriteExecutor(execute: () => Promise<void>): ToolExecutor {
+  function createWriteExecutor(
+    execute: (context: { signal?: AbortSignal }) => Promise<void>
+  ): ToolExecutor {
     const registry = new ToolRegistry();
     registry.register(
       createTool({
@@ -97,8 +99,8 @@ describe('ToolExecutor — file lock logic', () => {
           file_path: Type.String(),
         }),
         description: { short: 'write for file lock coverage' },
-        async execute() {
-          await execute();
+        async execute(_params, context) {
+          await execute({ signal: context.signal });
           return { success: true, llmContent: 'ok' };
         },
       }) as Tool
@@ -108,7 +110,9 @@ describe('ToolExecutor — file lock logic', () => {
     });
   }
 
-  function createReadExecutor(execute: () => Promise<void>): ToolExecutor {
+  function createReadExecutor(
+    execute: (context: { signal?: AbortSignal }) => Promise<void>
+  ): ToolExecutor {
     const registry = new ToolRegistry();
     registry.register(
       createTool({
@@ -121,8 +125,8 @@ describe('ToolExecutor — file lock logic', () => {
           file_path: Type.String(),
         }),
         description: { short: 'read for file lock coverage' },
-        async execute() {
-          await execute();
+        async execute(_params, context) {
+          await execute({ signal: context.signal });
           return { success: true, llmContent: 'ok' };
         },
       }) as Tool
@@ -465,6 +469,151 @@ describe('ToolExecutor — file lock logic', () => {
       expect(opaqueSpy).not.toHaveBeenCalled();
       acquireLockSpy.mockRestore();
       opaqueSpy.mockRestore();
+    });
+
+    it('同一 ACP session 的 remote Read 会阻塞同路径 mutation，直到读取完成', async () => {
+      const root = 'C:\\workspace';
+      const executionOrder: string[] = [];
+      let releaseRead!: () => void;
+      const blockedRead = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+
+      initializeRemoteSession('remote-lock-session-a', root);
+
+      const readExecutor = createReadExecutor(async () => {
+        executionOrder.push('read:start');
+        await blockedRead;
+        executionOrder.push('read:end');
+      });
+      const writeExecutor = createWriteExecutor(async () => {
+        executionOrder.push('write:start');
+        executionOrder.push('write:end');
+      });
+
+      const readRun = readExecutor.execute(
+        'Read',
+        { file_path: 'C:\\workspace\\shared.ts' },
+        { sessionId: 'remote-lock-session-a' }
+      );
+      await waitFor(() => executionOrder.length === 1);
+
+      const writeRun = writeExecutor.execute(
+        'Write',
+        { file_path: 'C:\\workspace\\shared.ts' },
+        { sessionId: 'remote-lock-session-a' }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(executionOrder).toEqual(['read:start']);
+
+      releaseRead();
+      const [readResult, writeResult] = await Promise.all([readRun, writeRun]);
+
+      expect(readResult.success).toBe(true);
+      expect(writeResult.success).toBe(true);
+      expect(executionOrder).toEqual([
+        'read:start',
+        'read:end',
+        'write:start',
+        'write:end',
+      ]);
+    });
+
+    it('remote Read 在本地取消后释放 opaque lock，使后续同路径读取可以继续', async () => {
+      const root = 'C:\\workspace';
+      const executionOrder: string[] = [];
+      let releaseFirst!: () => void;
+      const blockedFirst = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+
+      initializeRemoteSession('remote-lock-session-a', root);
+
+      const remoteExecutor = createReadExecutor(async ({ signal }) => {
+        if (executionOrder.length === 0) {
+          executionOrder.push('first:start');
+          await Promise.race([
+            blockedFirst,
+            new Promise<void>((_, reject) => {
+              signal?.addEventListener(
+                'abort',
+                () => {
+                  reject(signal.reason ?? new Error('aborted'));
+                },
+                { once: true }
+              );
+            }),
+          ]);
+          executionOrder.push('first:end');
+          return;
+        }
+        executionOrder.push('second:start');
+        executionOrder.push('second:end');
+      });
+
+      const controller = new AbortController();
+      const first = remoteExecutor.execute(
+        'Read',
+        { file_path: 'C:\\workspace\\shared.ts' },
+        { sessionId: 'remote-lock-session-a', signal: controller.signal }
+      );
+      await waitFor(() => executionOrder.length === 1);
+
+      controller.abort();
+      await expect(first).resolves.toMatchObject({
+        success: false,
+        error: expect.objectContaining({
+          message: expect.stringContaining('aborted'),
+        }),
+      });
+
+      const second = await remoteExecutor.execute(
+        'Read',
+        { file_path: 'C:\\workspace\\shared.ts' },
+        { sessionId: 'remote-lock-session-a' }
+      );
+
+      expect(second.success).toBe(true);
+      expect(executionOrder).toEqual(['first:start', 'second:start', 'second:end']);
+
+      releaseFirst();
+    });
+
+    it('同一 ACP session 的 remote Read 访问不同路径时允许并发', async () => {
+      const root = 'C:\\workspace';
+      const executionOrder: string[] = [];
+      let releaseBoth!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        releaseBoth = resolve;
+      });
+
+      initializeRemoteSession('remote-lock-session-a', root);
+
+      const remoteExecutor = createReadExecutor(async () => {
+        executionOrder.push(`start:${executionOrder.length}`);
+        await blocked;
+        executionOrder.push(`end:${executionOrder.length}`);
+      });
+
+      const first = remoteExecutor.execute(
+        'Read',
+        { file_path: 'C:\\workspace\\a.ts' },
+        { sessionId: 'remote-lock-session-a' }
+      );
+      const second = remoteExecutor.execute(
+        'Read',
+        { file_path: 'C:\\workspace\\b.ts' },
+        { sessionId: 'remote-lock-session-a' }
+      );
+
+      await waitFor(() => executionOrder.length === 2);
+      expect(executionOrder).toEqual(['start:0', 'start:1']);
+
+      releaseBoth();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      expect(firstResult.success).toBe(true);
+      expect(secondResult.success).toBe(true);
     });
   });
 
