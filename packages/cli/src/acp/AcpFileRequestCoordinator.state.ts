@@ -222,7 +222,10 @@ export function cleanupToken<T>(
   } else if (state.recoveryToken === (token as RequestToken<unknown>)) {
     state.recoveryToken = undefined;
   }
-  if (token.readToken?.settled) {
+  if (
+    token.readToken?.settled &&
+    state.readTokens.get(token.pathIdentity) === token.readToken
+  ) {
     state.readTokens.delete(token.pathIdentity);
   }
 }
@@ -744,4 +747,24 @@ export function handleSettlementState<T>(
   ) {
     mutationState.kind = 'needs-read';
   }
+}
+
+export function cleanupReservedButUndispatchedToken<T>(
+  state: AcpCoordinatorMutableState,
+  token: RequestToken<T>
+): void {
+  if (token.operation === 'read' && token.readToken) {
+    if (token.kind === 'recovery') {
+      const mutationState = state.mutationStates.get(token.pathIdentity);
+      if (mutationState?.kind === 'reconciling') {
+        mutationState.kind = 'needs-read';
+      }
+      state.recoveryPermits.delete(token.pathIdentity);
+    }
+    token.readToken.settled = true;
+  }
+  if (token.readToken && state.readTokens.get(token.pathIdentity) === token.readToken) {
+    state.readTokens.delete(token.pathIdentity);
+  }
+  cleanupToken(state, token);
 }

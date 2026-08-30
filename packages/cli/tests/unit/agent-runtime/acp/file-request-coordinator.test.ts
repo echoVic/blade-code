@@ -670,6 +670,127 @@ describe('AcpFileRequestCoordinator', () => {
     });
   });
 
+  it('cleans up reserved but never dispatched expired normal and recovery requests', async () => {
+    let dispatchCount = 0;
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp
+          .client({ name: 'coordinator-expired-after-reserve-client' })
+          .onRequest(acp.CLIENT_METHODS.fs_read_text_file, async () => {
+            dispatchCount += 1;
+            return { content: 'late' };
+          })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+
+    const normalExpired = coordinator.runRequest({
+      operation: 'read',
+      purpose: 'user-read',
+      sessionId: 'normal-expired',
+      pathIdentity: makeIdentity('/repo/expired-normal.txt'),
+      deadlineAt: Date.now(),
+      dispatch: (cancellationSignal) =>
+        harness.agentConnection.request(
+          acp.CLIENT_METHODS.fs_read_text_file,
+          { path: '/repo/expired-normal.txt', sessionId: 'normal-expired' },
+          { cancellationSignal }
+        ),
+    });
+    await expect(normalExpired).rejects.toMatchObject({
+      reason: 'timeout',
+      dispatched: false,
+      requestPending: false,
+    });
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      pendingNormal: 0,
+      pendingRecovery: 0,
+      activeNormalReads: 0,
+    });
+    expect(dispatchCount).toBe(0);
+
+    await expect(
+      coordinator.runRequest({
+        operation: 'read',
+        purpose: 'user-read',
+        sessionId: 'reused-normal',
+        pathIdentity: makeIdentity('/repo/expired-normal.txt'),
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        dispatch: (cancellationSignal) =>
+          harness.agentConnection.request(
+            acp.CLIENT_METHODS.fs_read_text_file,
+            { path: '/repo/expired-normal.txt', sessionId: 'reused-normal' },
+            { cancellationSignal }
+          ),
+      })
+    ).resolves.toEqual({ content: 'late' });
+    expect(dispatchCount).toBe(1);
+
+    const mutationLease = coordinator.tryAcquireMutationLease(
+      ['/repo/recovery-expired.txt'],
+      'session-a'
+    );
+    mutationLease.markUncertain('/repo/recovery-expired.txt');
+    const recoveryPermit = coordinator.beginUserRead(
+      '/repo/recovery-expired.txt',
+      'session-a'
+    );
+
+    const recoveryExpired = coordinator.runRequest({
+      operation: 'read',
+      purpose: 'user-read',
+      sessionId: 'session-a',
+      pathIdentity: makeIdentity('/repo/recovery-expired.txt'),
+      deadlineAt: Date.now(),
+      userReadPermit: recoveryPermit,
+      dispatch: (cancellationSignal) =>
+        harness.agentConnection.request(
+          acp.CLIENT_METHODS.fs_read_text_file,
+          { path: '/repo/recovery-expired.txt', sessionId: 'session-a' },
+          { cancellationSignal }
+        ),
+    });
+    await expect(recoveryExpired).rejects.toMatchObject({
+      reason: 'timeout',
+      dispatched: false,
+      requestPending: false,
+    });
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      pendingRecovery: 0,
+      needsRead: 1,
+      reconciling: 0,
+    });
+    expect(dispatchCount).toBe(1);
+
+    await expect(
+      coordinator.runRequest({
+        operation: 'read',
+        purpose: 'user-read',
+        sessionId: 'session-a',
+        pathIdentity: makeIdentity('/repo/recovery-expired.txt'),
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        userReadPermit: coordinator.beginUserRead(
+          '/repo/recovery-expired.txt',
+          'session-a'
+        ),
+        dispatch: (cancellationSignal) =>
+          harness.agentConnection.request(
+            acp.CLIENT_METHODS.fs_read_text_file,
+            { path: '/repo/recovery-expired.txt', sessionId: 'session-a' },
+            { cancellationSignal }
+          ),
+      })
+    ).resolves.toEqual({ content: 'late' });
+    expect(dispatchCount).toBe(2);
+
+    await vi.runAllTimersAsync();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      pendingNormal: 0,
+      pendingRecovery: 0,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('rejects writes without a matching active or recovery lease before dispatch', async () => {
     let dispatchCount = 0;
     const harness = trackHarness(
@@ -923,6 +1044,120 @@ describe('AcpFileRequestCoordinator', () => {
 
     blockedWrite.resolve();
     await vi.runAllTimersAsync();
+  });
+
+  it('does not let a late detached normal read clear the active recovery token', async () => {
+    const detachedReadGate = deferred<void>();
+    const recoveryGate = deferred<void>();
+    let readDispatchCount = 0;
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp
+          .client({ name: 'coordinator-read-aba-client' })
+          .onRequest(acp.CLIENT_METHODS.fs_read_text_file, async (ctx) => {
+            readDispatchCount += 1;
+            if (ctx.params.sessionId === 'session-detached') {
+              await detachedReadGate.promise;
+              return { content: 'late detached content' };
+            }
+            await recoveryGate.promise;
+            return { content: 'late recovery content' };
+          })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const path = '/repo/aba.txt';
+    const pathIdentity = makeIdentity(path);
+
+    const detachedRead = coordinator.runRequest({
+      operation: 'read',
+      purpose: 'user-read',
+      sessionId: 'session-detached',
+      pathIdentity,
+      deadlineAt: Date.now() + 25,
+      dispatch: (cancellationSignal) =>
+        harness.agentConnection.request(
+          acp.CLIENT_METHODS.fs_read_text_file,
+          { path, sessionId: 'session-detached' },
+          { cancellationSignal }
+        ),
+    });
+
+    await vi.advanceTimersByTimeAsync(26);
+    await expect(detachedRead).rejects.toMatchObject({
+      reason: 'timeout',
+      dispatched: true,
+      requestPending: true,
+    });
+
+    const lease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    lease.markUncertain(path);
+    const permit = coordinator.beginUserRead(path, 'session-a');
+    const recoveryRead = coordinator.runRequest({
+      operation: 'read',
+      purpose: 'user-read',
+      sessionId: 'session-a',
+      pathIdentity,
+      deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+      userReadPermit: permit,
+      dispatch: (cancellationSignal) =>
+        harness.agentConnection.request(
+          acp.CLIENT_METHODS.fs_read_text_file,
+          { path, sessionId: 'session-a' },
+          { cancellationSignal }
+        ),
+    });
+
+    await Promise.resolve();
+    detachedReadGate.resolve();
+    await Promise.resolve();
+
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      pendingRecovery: 1,
+      reconciling: 1,
+    });
+    await expect(
+      coordinator.runRequest({
+        operation: 'read',
+        purpose: 'user-read',
+        sessionId: 'session-b',
+        pathIdentity,
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        dispatch: () => Promise.resolve({ content: 'duplicate-normal' }),
+      })
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+    await expect(
+      coordinator.runRequest({
+        operation: 'read',
+        purpose: 'user-read',
+        sessionId: 'session-a',
+        pathIdentity,
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        userReadPermit: permit,
+        dispatch: () => Promise.resolve({ content: 'duplicate-recovery' }),
+      })
+    ).rejects.toMatchObject({
+      reason: 'stale-reconciliation',
+      dispatched: false,
+      requestPending: false,
+    });
+
+    recoveryGate.resolve();
+    await expect(recoveryRead).resolves.toEqual({ content: 'late recovery content' });
+    await vi.runAllTimersAsync();
+    expect(readDispatchCount).toBe(2);
+  });
+
+  it('surfaces unexpected modern harness close errors after the bounded wait', async () => {
+    const harness = createPairedAcpAppHarness(
+      acp.client({ name: 'coordinator-close-error' })
+    );
+    harness.clientConnection.close(new Error('unexpected close'));
+    await expect(closePairedAcpHarness(harness)).rejects.toThrow('unexpected close');
   });
 
   it('rejects opposite or stale generation settlement and makes repeated release idempotent', async () => {

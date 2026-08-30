@@ -26,6 +26,7 @@ import {
   beginUserReadPermit,
   boundaryRejectToken,
   buildStatsForTests,
+  cleanupReservedButUndispatchedToken,
   cleanupToken,
   clearLocalBoundaryResources,
   closeRejectToken,
@@ -101,7 +102,7 @@ export class AcpFileRequestCoordinator {
     let token: RequestToken<T>;
     try {
       this.assertOpen(spec.operation);
-      this.assertBeforeBoundary(spec.signal, spec.deadlineAt, spec.operation);
+      this.assertBeforeBoundary(spec.signal, spec.operation);
       this.assertPathAvailability(spec);
       token = this.reserveRequestToken(spec);
     } catch (error) {
@@ -129,6 +130,7 @@ export class AcpFileRequestCoordinator {
     const now = Date.now();
     if (spec.deadlineAt <= now) {
       this.boundaryReject(token, 'timeout', false);
+      this.cleanupReservedButUndispatchedToken(token);
       childController.abort();
       return token.localPromise;
     }
@@ -148,7 +150,7 @@ export class AcpFileRequestCoordinator {
       this.observeUnderlyingSettlement(token, pending, spec);
     } catch (error) {
       this.clearLocalBoundaryResources(token);
-      this.cleanupToken(token);
+      this.cleanupReservedButUndispatchedToken(token);
       token.reject(error);
       return token.localPromise;
     }
@@ -163,7 +165,8 @@ export class AcpFileRequestCoordinator {
 
   precheckMutationPaths(normalizedPaths: readonly string[], sessionId: string): void {
     const identities = dedupeNormalizedPathIdentities(normalizedPaths);
-    this.assertMutationPathsAvailable(identities, sessionId);
+    this.assertMutationPathsAvailable(identities);
+    void sessionId;
   }
 
   tryAcquireMutationLease(
@@ -172,7 +175,7 @@ export class AcpFileRequestCoordinator {
   ): AcpRemoteMutationLease {
     this.assertOpen('write');
     const pathIdentities = dedupeNormalizedPathIdentities(normalizedPaths);
-    this.assertMutationPathsAvailable(pathIdentities, sessionId);
+    this.assertMutationPathsAvailable(pathIdentities);
     return createMutationLease(this.state, pathIdentities, sessionId);
   }
 
@@ -194,14 +197,10 @@ export class AcpFileRequestCoordinator {
 
   private assertBeforeBoundary(
     signal: AbortSignal | undefined,
-    deadlineAt: number,
     operation: 'read' | 'write'
   ): void {
     if (signal?.aborted) {
       throw new AcpRemoteFileBoundaryError('aborted', operation, false, false);
-    }
-    if (deadlineAt <= Date.now()) {
-      throw new AcpRemoteFileBoundaryError('timeout', operation, false, false);
     }
   }
 
@@ -281,6 +280,10 @@ export class AcpFileRequestCoordinator {
     cleanupToken(this.state, token);
   }
 
+  private cleanupReservedButUndispatchedToken<T>(token: RequestToken<T>): void {
+    cleanupReservedButUndispatchedToken(this.state, token);
+  }
+
   private clearLocalBoundaryResources<T>(token: RequestToken<T>): void {
     if (token.deadlineAbortHandler) {
       this.connection.signal.removeEventListener('abort', token.deadlineAbortHandler);
@@ -302,12 +305,8 @@ export class AcpFileRequestCoordinator {
     return 'aborted';
   }
 
-  private assertMutationPathsAvailable(
-    pathIdentities: readonly string[],
-    sessionId: string
-  ): void {
+  private assertMutationPathsAvailable(pathIdentities: readonly string[]): void {
     assertMutationPathsAvailable(this.state, pathIdentities);
-    void sessionId;
   }
 
   private handleConnectionClosed(): void {

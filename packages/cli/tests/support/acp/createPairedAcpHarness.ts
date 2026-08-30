@@ -56,6 +56,18 @@ async function closeWriter(writable: WritableStream<Uint8Array>): Promise<void> 
   }
 }
 
+function isBenignCloseError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.name === 'TypeError' ||
+    /already closed|already-closing|lock|locked|close requested|stream is closed/i.test(
+      error.message
+    )
+  );
+}
+
 async function settleWithin(promise: Promise<unknown>, timeoutMs = 50): Promise<void> {
   await Promise.race([
     promise.then(
@@ -77,6 +89,7 @@ function createClosableHarness<
   clientToAgent: TransformStream<Uint8Array, Uint8Array>;
   agentToClient: TransformStream<Uint8Array, Uint8Array>;
   closeClientConnection?: () => void;
+  getClientCloseError?: () => unknown;
 }): {
   clientConnection: TClientConnection;
   agentConnection: acp.AgentSideConnection;
@@ -89,6 +102,7 @@ function createClosableHarness<
     agentConnection: input.agentConnection,
     close: () => {
       closePromise ??= (async () => {
+        const closeError = input.getClientCloseError?.();
         input.closeClientConnection?.();
         await Promise.all([
           closeWriter(input.clientToAgent.writable),
@@ -98,6 +112,9 @@ function createClosableHarness<
           settleWithin(input.clientConnection.closed),
           settleWithin(input.agentConnection.closed),
         ]);
+        if (closeError !== undefined && !isBenignCloseError(closeError)) {
+          throw closeError;
+        }
       })();
       return closePromise;
     },
@@ -149,5 +166,6 @@ export function createPairedAcpAppHarness(
     closeClientConnection: () => {
       clientConnection.close();
     },
+    getClientCloseError: () => clientConnection.signal.reason,
   });
 }
