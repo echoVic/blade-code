@@ -19,7 +19,7 @@
 - Modify `packages/cli/src/acp/RemoteTextMutation.ts`: classify bounded write/read-back results against a mutation lease and preserve truthful uncertainty.
 - Modify `packages/cli/src/acp/AcpServiceContext.ts`: dispose Session-local waits while allowing a rebuilt service on the same connection to inherit coordinator state.
 - Modify `packages/cli/src/tools/builtin/file/read.ts`, `write.ts`, and `edit.ts`: use the specialized ACP service APIs, stable boundary-error guidance, and acquire mutation leases before remote preflight.
-- Modify `packages/cli/src/tools/execution/ToolExecutor.ts`: add an opaque lock only for remote-owned `Read`; local and ACP-local Reads remain concurrency-safe.
+- Modify `packages/cli/src/tools/execution/ToolExecutor.ts`: route remote-owned `Read` through the existing `FileLockManager.acquireOpaqueLock`; do not create a second lock mechanism, and keep local and ACP-local Reads concurrency-safe.
 - Keep `packages/cli/src/services/FileSystemService.ts` unchanged. Its local interface remains `readTextFile(path)` / `writeTextFile(path, content)` and never accepts ACP-specific options.
 - Modify `packages/cli/src/tools/builtin/file/applyPatch.ts`: quarantine precheck before host-private locking, then workspace lock, sorted opaque locks, and atomic coordinator lease acquisition.
 - Modify `packages/cli/src/tools/builtin/file/applyPatchTransaction.ts`: absolute forward/compensation budgets, recovery-lane rollback, pending-write skip, reverse compensation, AggregateError ordering, and ledger commit barrier.
@@ -212,6 +212,36 @@ Every `Critical` or `Important` finding must first receive a focused failing reg
   ): PairedAcpAppHarness;
   ```
 
+  Its implementation intentionally mixes the modern client half with the production-compatible
+  legacy agent half:
+
+  ```ts
+  export function createPairedAcpAppHarness(
+    clientApp: acp.ClientApp
+  ): PairedAcpAppHarness {
+    const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
+    const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
+    const clientConnection = clientApp.connect(
+      acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
+    );
+    const agentConnection = new acp.AgentSideConnection(
+      () => new MinimalAgent(),
+      acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
+    );
+    return createClosableHarness({
+      clientConnection,
+      agentConnection,
+      clientToAgent,
+      agentToClient,
+    });
+  }
+  ```
+
+  `clientApp.connect(ndJsonStream(...))` returns `acp.ClientConnection` and is required so the
+  registered modern handlers observe public `ctx.signal`. The agent half deliberately remains
+  `new acp.AgentSideConnection(...)`, the same legacy public connection type used by production
+  `AcpFileSystemService`; do not replace this transport with `AgentApp.connect(ClientApp)`.
+
   The cancellation test must register the real built-in method and capture the public handler signal:
 
   ```ts
@@ -366,6 +396,18 @@ Every `Critical` or `Important` finding must first receive a focused failing reg
     options?: Pick<AcpRemoteFileRequestOptions, 'signal' | 'deadlineAt'>
   ): Promise<string>;
   ```
+
+  The no-options compatibility signatures are bounded entry points, never coordinator bypasses.
+  `readTextFile(filePath)` runs the normal bounded internal/preflight primitive with a 30-second
+  absolute deadline and does not update the ledger. `writeTextFile(filePath, content)` must
+  internally acquire a one-path mutation lease, dispatch with the default 30-second deadline, mark
+  a successful acknowledgement as definite, mark any settled response error as uncertain because
+  it cannot prove absence of side effects, retain `pending-write` after a boundary with a pending
+  request, and release/detach in `finally`. Add the test
+  `bounds the no-options write compatibility call without bypassing mutation fencing`, covering ack,
+  settled error, and boundary-pending outcomes. Tool and ApplyPatch callers always pass their
+  already-acquired matching lease in `options.lease`, so the service does not acquire a second
+  lease or invert the path-lock ordering.
 
   Each service owns an `AbortController`; `dispose()` aborts that controller and clears only its Session ledger. Combine that service signal with `options.signal` for the local wait, without aborting shared coordinator state. Build the effective absolute deadline once as `options.deadlineAt ?? Date.now() + 30_000`. Dispatch with the public SDK method exactly:
 
@@ -822,6 +864,10 @@ Every `Critical` or `Important` finding must first receive a focused failing reg
   }
   ```
 
+  Keep `requestId` typed as SDK `acp.JsonRpcId`, including its declared `null` member; do not narrow
+  or cast it. A request handler receives a concrete JSON-RPC request ID in practice, but the fixture
+  should preserve the public SDK type rather than inventing a stronger contract.
+
   The blocked behavior supports both `cooperate-with-cancel` and `ignore-cancel-until-release`. Record cancellation from `ctx.signal` without storing error payloads in production. Late fulfill/reject gates must remain explicitly releasable so tests can settle them after the Blade tool has returned. Use `createPairedAcpAppHarness(client.createApp())`; do not mock a private SDK pending map.
 
 - [ ] **Step 4: Harden real qualification and hash-only evidence**
@@ -865,7 +911,7 @@ Every `Critical` or `Important` finding must first receive a focused failing reg
   ```bash
   cd packages/cli
   REAL_API_TEST=1 REAL_API_RELEASE_MATRIX=1 bun x vitest run \
-    --config vitest.config.ts --project=real-api \
+    --config vitest.config.ts --project=real-api --retry=0 \
     tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts
   ```
 
@@ -979,6 +1025,7 @@ Every `Critical` or `Important` finding must first receive a focused failing reg
   bun run lint
   bun run build
   bun run test:all
+  git diff --check
   git diff --check 39b23105..HEAD
   ```
 
@@ -989,7 +1036,7 @@ Every `Critical` or `Important` finding must first receive a focused failing reg
   ```bash
   cd packages/cli
   REAL_API_TEST=1 REAL_API_RELEASE_MATRIX=1 bun x vitest run \
-    --config vitest.config.ts --project=real-api \
+    --config vitest.config.ts --project=real-api --retry=0 \
     tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts
   ```
 
@@ -1012,6 +1059,7 @@ Every `Critical` or `Important` finding must first receive a focused failing reg
     docs/en/testing/acp-filesystem-request-lifecycle-evidence.md \
     docs/_sidebar.md docs/en/_sidebar.md \
     CHANGELOG.md CHANGELOG.zh.md packages/cli/package.json
+  git diff --cached --check
   git commit -m 'chore: release v0.10.127'
   git status --short
   ```
