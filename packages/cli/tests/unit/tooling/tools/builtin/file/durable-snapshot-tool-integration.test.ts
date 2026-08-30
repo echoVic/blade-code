@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../../../../../src/acp/AcpServiceContext.js', () => ({
   isAcpMode: vi.fn(() => false),
+  isAcpRemoteFileSystem: vi.fn(() => false),
+  getAcpFileSystemService: vi.fn(),
   AcpServiceContext: {
     initializeSession: vi.fn(),
     destroySession: vi.fn(),
