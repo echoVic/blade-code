@@ -16,6 +16,13 @@ import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { type BladeConfig, PermissionMode } from '../../../src/config/types.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import {
+  buildCanonicalRemoteFilesystemQualificationEvidence,
+  digestCanonicalRemoteFilesystemQualificationEvidence,
+  isBenignPairedAcpWriterCloseError,
+  runRemoteFilesystemQualificationCleanup,
+  withRemainingDeadline,
+} from '../../support/acp/remoteFilesystemQualification.js';
 import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
@@ -29,15 +36,6 @@ interface LoggedFileRequest {
   sessionId: string;
   path: string;
   contentSha256?: string;
-}
-
-interface HashOnlyEvidence {
-  qualificationId: string;
-  requestSequence: string[];
-  notificationCount: number;
-  writeResultCount: number;
-  finalRemoteSha256: string;
-  sourceCanarySha256: string;
 }
 
 interface NotificationSummary {
@@ -100,7 +98,7 @@ class RemoteFilesystemClient implements acp.Client {
 interface PairedHarness {
   client: RemoteFilesystemClient;
   connection: acp.ClientSideConnection;
-  close(deadlineAt: number): Promise<void>;
+  close(input: { deadlineAt: number; bodyError?: unknown }): Promise<void>;
 }
 
 const ACP_REMOTE_TRAJECTORY_TIMEOUT_MS = 240_000;
@@ -119,6 +117,7 @@ function createPairedHarness(): PairedHarness {
   const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
   const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
   let agent: BladeAgent | undefined;
+  let closePromise: Promise<void> | undefined;
   const connection = new acp.ClientSideConnection(
     () => client,
     acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
@@ -138,15 +137,20 @@ function createPairedHarness(): PairedHarness {
     writable: WritableStream<Uint8Array>,
     deadlineAt: number
   ): Promise<void> => {
-    const remaining = Math.max(1, deadlineAt - Date.now());
-    const writer = writable.getWriter();
+    let writer: WritableStreamDefaultWriter<Uint8Array>;
     try {
-      await Promise.race([
-        writer.close(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('ACP writable close timed out')), remaining)
-        ),
-      ]);
+      writer = writable.getWriter();
+    } catch (error) {
+      if (isBenignPairedAcpWriterCloseError(error)) return;
+      throw error;
+    }
+    try {
+      await withRemainingDeadline(async () => writer.close(), {
+        deadlineAt,
+        timeoutMessage: 'ACP writable close timed out',
+      });
+    } catch (error) {
+      if (!isBenignPairedAcpWriterCloseError(error)) throw error;
     } finally {
       writer.releaseLock();
     }
@@ -156,52 +160,65 @@ function createPairedHarness(): PairedHarness {
     target: Promise<void>,
     deadlineAt: number
   ): Promise<void> => {
-    const remaining = Math.max(1, deadlineAt - Date.now());
-    await Promise.race([
-      target,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('ACP transport close timed out')), remaining)
-      ),
-    ]);
+    await withRemainingDeadline(async () => target, {
+      deadlineAt,
+      timeoutMessage: 'ACP transport close timed out',
+    });
   };
 
   return {
     client,
     connection,
-    close: async (deadlineAt) => {
-      const closeDeadline = Math.max(
-        Date.now() + 1,
-        deadlineAt - ACP_REMOTE_CLOSE_RESERVE_MS
-      );
-      let firstError: unknown;
-      try {
-        if (!agent) {
-          throw new Error('ACP remote filesystem trajectory agent was not created');
-        }
-        await agent.destroy();
-      } catch (error) {
-        firstError ??= error;
-      }
-      for (const writable of [clientToAgent.writable, agentToClient.writable]) {
-        try {
-          await closeWritable(writable, closeDeadline);
-        } catch (error) {
-          firstError ??= error;
-        }
-      }
-      for (const target of [
-        connection.closed.catch(() => undefined),
-        agentConnection.closed.catch(() => undefined),
-      ]) {
-        try {
-          await awaitClosed(target, deadlineAt);
-        } catch (error) {
-          firstError ??= error;
-        }
-      }
-      if (firstError !== undefined) {
-        throw firstError;
-      }
+    close: ({ deadlineAt, bodyError }) => {
+      closePromise ??= (async () => {
+        const closeDeadline = Math.max(
+          Date.now() + 1,
+          deadlineAt - ACP_REMOTE_CLOSE_RESERVE_MS
+        );
+        await runRemoteFilesystemQualificationCleanup({
+          bodyError,
+          deadlineAt,
+          operations: [
+            {
+              phase: 'agent_destroy',
+              run: async () => {
+                const createdAgent = agent;
+                if (!createdAgent) {
+                  throw new Error(
+                    'ACP remote filesystem trajectory agent was not created'
+                  );
+                }
+                await withRemainingDeadline(async () => createdAgent.destroy(), {
+                  deadlineAt: closeDeadline,
+                  timeoutMessage: 'ACP agent destroy timed out',
+                });
+              },
+              timeoutMessage: 'ACP agent destroy timed out',
+            },
+            {
+              phase: 'client_to_agent_close',
+              run: async () => closeWritable(clientToAgent.writable, closeDeadline),
+              timeoutMessage: 'ACP client-to-agent writable close timed out',
+            },
+            {
+              phase: 'agent_to_client_close',
+              run: async () => closeWritable(agentToClient.writable, closeDeadline),
+              timeoutMessage: 'ACP agent-to-client writable close timed out',
+            },
+            {
+              phase: 'client_connection_closed',
+              run: async () => awaitClosed(connection.closed, deadlineAt),
+              timeoutMessage: 'ACP client connection close timed out',
+            },
+            {
+              phase: 'agent_connection_closed',
+              run: async () => awaitClosed(agentConnection.closed, deadlineAt),
+              timeoutMessage: 'ACP agent connection close timed out',
+            },
+          ],
+        });
+      })();
+      return closePromise;
     },
   };
 }
@@ -272,10 +289,6 @@ function buildPrompt(input: {
   ].join(' ');
 }
 
-function serializeEvidence(evidence: HashOnlyEvidence): string {
-  return JSON.stringify(evidence);
-}
-
 function summarizeNotifications(
   updates: readonly acp.SessionNotification[]
 ): NotificationSummary[] {
@@ -289,6 +302,12 @@ function summarizeNotifications(
         ? update.content.map((content) => content.type)
         : undefined,
   }));
+}
+
+function normalizeFrameworkRetryBudget(context: TestContext): number {
+  const retry = context.task.retry;
+  if (typeof retry === 'number') return retry;
+  return retry?.count ?? 0;
 }
 
 const deepseekModels = isRealApiTestEnabled()
@@ -368,6 +387,7 @@ describeReal('paired ACP remote filesystem qualification (real API)', () => {
         harness.client.files.set(sourcePath, remoteSource);
         const deadlineAt = Date.now() + ACP_REMOTE_TRAJECTORY_TIMEOUT_MS;
         const originalConfig = getState().config.config;
+        let bodyError: unknown;
 
         try {
           getState().config.actions.setConfig(runtimeConfig);
@@ -389,23 +409,22 @@ describeReal('paired ACP remote filesystem qualification (real API)', () => {
               sessionId: created.sessionId,
               modeId: 'yolo',
             });
-            const result = await Promise.race([
-              harness.connection.prompt({
-                sessionId: created.sessionId,
-                prompt: [
-                  {
-                    type: 'text',
-                    text: buildPrompt({ sourcePath, outputPath, finalMarker }),
-                  },
-                ],
-              }),
-              new Promise<never>((_, reject) =>
-                setTimeout(
-                  () => reject(new Error('ACP remote filesystem prompt timed out')),
-                  Math.max(1, deadlineAt - Date.now())
-                )
-              ),
-            ]);
+            const result = await withRemainingDeadline(
+              async () =>
+                harness.connection.prompt({
+                  sessionId: created.sessionId,
+                  prompt: [
+                    {
+                      type: 'text',
+                      text: buildPrompt({ sourcePath, outputPath, finalMarker }),
+                    },
+                  ],
+                }),
+              {
+                deadlineAt,
+                timeoutMessage: 'ACP remote filesystem prompt timed out',
+              }
+            );
             expect(result.stopReason).toBe('end_turn');
 
             const output = harness.client.files.get(outputPath);
@@ -434,15 +453,29 @@ describeReal('paired ACP remote filesystem qualification (real API)', () => {
               sourceCanary: hostSource,
             });
 
-            const evidence: HashOnlyEvidence = {
-              qualificationId: model.qualificationId,
-              requestSequence: harness.client.requests.map(
-                (request) => `${request.kind}:${request.path}`
-              ),
+            const canonicalEvidence =
+              buildCanonicalRemoteFilesystemQualificationEvidence({
+                qualificationId: model.qualificationId,
+                frameworkRetryBudget: normalizeFrameworkRetryBudget(context),
+                sourcePath,
+                outputPath,
+                requests: harness.client.requests.map((request) => ({
+                  kind: request.kind,
+                  path: request.path,
+                })),
+                writeResultCount: writeResults.length,
+                hostSourcePreserved: true,
+                hostOutputParentAbsent: true,
+                outputContainsFinalMarker: true,
+                outputExcludesHostCanary: true,
+              });
+            const evidenceDigest =
+              digestCanonicalRemoteFilesystemQualificationEvidence(canonicalEvidence);
+            const evidence = {
+              ...canonicalEvidence,
               notificationCount: harness.client.updates.length,
               writeResultCount: writeResults.length,
-              finalRemoteSha256: sha256(output),
-              sourceCanarySha256: sha256(hostSource),
+              evidenceDigest,
             };
             assertNoSecrets(
               {
@@ -452,13 +485,25 @@ describeReal('paired ACP remote filesystem qualification (real API)', () => {
               },
               [model.apiKey, remoteSource]
             );
-            expect(serializeEvidence(evidence)).toContain('"finalRemoteSha256"');
+            expect(evidenceDigest).toMatch(/^[a-f0-9]{64}$/);
           });
+        } catch (error) {
+          bodyError = error;
         } finally {
-          if (originalConfig) {
-            getState().config.actions.setConfig(originalConfig);
+          if (originalConfig !== null) {
+            try {
+              getState().config.actions.setConfig(originalConfig);
+            } catch (error) {
+              bodyError =
+                bodyError === undefined
+                  ? error
+                  : new AggregateError(
+                      [bodyError, error],
+                      'ACP remote filesystem qualification cleanup failed'
+                    );
+            }
           }
-          await harness.close(deadlineAt);
+          await harness.close({ deadlineAt, bodyError });
         }
       },
       ACP_REMOTE_TRAJECTORY_TIMEOUT_MS
