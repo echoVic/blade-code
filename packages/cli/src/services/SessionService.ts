@@ -7,6 +7,13 @@ import type { BigIntStats } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
+import {
+  type AcpRemoteStateScope,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+  parseAcpRemoteWorkspaceDescriptor,
+  withValidatedAcpRemoteStateScope,
+} from '../acp/AcpRemoteWorkspace.js';
 import { SessionInUseError, SessionLease } from '../agent/runtime/SessionLease.js';
 import {
   collectUserPromptArtifactIds,
@@ -38,6 +45,7 @@ import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js'
 import {
   assertValidSessionId,
   detectGitBranch,
+  getAcpRemoteSessionFilePath,
   getBladeStorageRoot,
   getProjectStoragePath,
   getSessionFilePath,
@@ -57,6 +65,7 @@ import {
 } from '../context/TokenBudgetHandoff.js';
 import { isSessionTaskFailure, toTaskFailure } from '../context/taskFailure.js';
 import type {
+  AcpRemoteWorkspaceDescriptorV1,
   SessionEvent,
   SessionPendingInteraction,
   SessionPermissionMode,
@@ -488,6 +497,7 @@ export function __resetSessionSnapshotIOForTesting(): void {
 export interface SessionMetadata {
   sessionId: string;
   projectPath: string;
+  remoteWorkspace?: AcpRemoteWorkspaceDescriptorV1;
   gitBranch?: string;
   rootId: string;
   parentId?: string;
@@ -614,6 +624,27 @@ export class SessionArchiveConflictError extends Error {
   }
 }
 
+class RemoteSessionStateError extends Error {
+  readonly code = 'acp_remote_workspace_state_invalid';
+
+  constructor() {
+    super('ACP remote workspace durable state is invalid');
+    this.name = 'RemoteSessionStateError';
+  }
+}
+
+class RemoteSessionMismatchError extends Error {
+  readonly code = 'acp_remote_workspace_mismatch';
+  readonly reason = 'exact-identity-mismatch';
+
+  constructor() {
+    super(
+      'ACP remote workspace durable session does not match the requested workspace'
+    );
+    this.name = 'RemoteSessionMismatchError';
+  }
+}
+
 export interface ForkSessionOptions {
   newSessionId?: string;
   sourceProjectPath: string;
@@ -647,6 +678,24 @@ export interface RewoundSession {
 
 function archiveKey(projectPath: string, sessionId: string): string {
   return `${projectPath}\0${sessionId}`;
+}
+
+function sanitizeRemoteStateError(_error: unknown): Error {
+  return new RemoteSessionStateError();
+}
+
+function exactRemoteIdentityMatches(
+  left: AcpRemoteWorkspaceDescriptorV1,
+  right: AcpRemoteWorkspaceDescriptorV1
+): boolean {
+  return (
+    left.version === right.version &&
+    left.kind === right.kind &&
+    left.style === right.style &&
+    left.wirePath === right.wirePath &&
+    left.exactIdentity === right.exactIdentity &&
+    left.collisionIdentity === right.collisionIdentity
+  );
 }
 
 function reviewPromptFromTarget(target: SessionReviewTargetInfo): string {
@@ -1981,6 +2030,130 @@ export class SessionService {
     );
   }
 
+  static async createRemoteSessionMetadata(
+    sessionId: string,
+    hostStateRoot: string,
+    descriptor: AcpRemoteWorkspaceDescriptorV1,
+    initial: Pick<
+      SessionMetadataUpdate,
+      | 'title'
+      | 'taskStatus'
+      | 'taskPromptSummary'
+      | 'taskPriority'
+      | 'taskKind'
+      | 'taskDueAt'
+      | 'taskModelId'
+      | 'selectedModelId'
+      | 'permissionMode'
+      | 'reasoningEffort'
+      | 'serviceTier'
+      | 'responseVerbosity'
+      | 'communicationStyle'
+      | 'communicationStyleDigest'
+      | 'projectInstructionsDigest'
+    > = {}
+  ): Promise<SessionMetadata> {
+    assertValidSessionId(sessionId);
+    SessionService.validateTaskMetadataUpdate(initial, sessionId);
+
+    let validatedDescriptor: AcpRemoteWorkspaceDescriptorV1;
+    try {
+      validatedDescriptor = parseAcpRemoteWorkspaceDescriptor(descriptor);
+    } catch (error) {
+      throw sanitizeRemoteStateError(error);
+    }
+    const expectedHostStateRoot = deriveAcpRemoteHostStateRoot(
+      validatedDescriptor.collisionIdentity
+    );
+    if (expectedHostStateRoot !== hostStateRoot) {
+      throw new RemoteSessionStateError();
+    }
+
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const now = new Date().toISOString();
+    return withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      const filePath = getAcpRemoteSessionFilePath(scope, sessionId);
+      const entry: Extract<SessionEvent, { type: 'session_created' }> = {
+        id: nanoid(),
+        sessionId,
+        projectPath: hostStateRoot,
+        timestamp: now,
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: getVersion(),
+        data: {
+          sessionId,
+          rootId: sessionId,
+          remoteWorkspace: validatedDescriptor,
+          ...(initial.title !== undefined ? { title: initial.title } : {}),
+          taskStatus: initial.taskStatus ?? 'queued',
+          ...(initial.taskPromptSummary !== undefined
+            ? { taskPromptSummary: initial.taskPromptSummary }
+            : {}),
+          ...(initial.taskPriority !== undefined
+            ? { taskPriority: initial.taskPriority }
+            : {}),
+          ...(initial.taskKind !== undefined ? { taskKind: initial.taskKind } : {}),
+          ...(typeof initial.taskDueAt === 'string'
+            ? { taskDueAt: new Date(initial.taskDueAt).toISOString() }
+            : {}),
+          ...(initial.taskModelId !== undefined
+            ? { taskModelId: initial.taskModelId }
+            : {}),
+          ...(initial.selectedModelId !== undefined
+            ? { selectedModelId: initial.selectedModelId }
+            : {}),
+          ...(initial.permissionMode !== undefined
+            ? { permissionMode: initial.permissionMode }
+            : {}),
+          ...(initial.reasoningEffort !== undefined
+            ? { reasoningEffort: initial.reasoningEffort }
+            : {}),
+          ...(initial.serviceTier !== undefined
+            ? { serviceTier: initial.serviceTier }
+            : {}),
+          ...(initial.responseVerbosity !== undefined
+            ? { responseVerbosity: initial.responseVerbosity }
+            : {}),
+          ...(initial.communicationStyle !== undefined
+            ? { communicationStyle: initial.communicationStyle }
+            : {}),
+          ...(initial.communicationStyleDigest !== undefined
+            ? { communicationStyleDigest: initial.communicationStyleDigest }
+            : {}),
+          ...(initial.projectInstructionsDigest !== undefined
+            ? { projectInstructionsDigest: initial.projectInstructionsDigest }
+            : {}),
+          createdAt: now,
+          updatedAt: now,
+        },
+      };
+
+      try {
+        await new JSONLStore(filePath).createExclusive([entry]);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+          throw error;
+        }
+        return this.assertRemoteSessionWritableInScope(
+          sessionId,
+          hostStateRoot,
+          validatedDescriptor,
+          scope
+        );
+      }
+
+      return SessionService.toPublicMetadata(
+        SessionService.projectMetadataFromEntries(
+          [entry],
+          sessionId,
+          hostStateRoot,
+          filePath
+        )
+      );
+    });
+  }
+
   static async assertSessionWritable(
     sessionId: string,
     projectPath: string
@@ -1996,6 +2169,35 @@ export class SessionService {
       );
     }
     return metadata;
+  }
+
+  static async assertRemoteSessionWritable(
+    sessionId: string,
+    hostStateRoot: string,
+    requestedDescriptor: AcpRemoteWorkspaceDescriptorV1
+  ): Promise<SessionMetadata> {
+    assertValidSessionId(sessionId);
+    let validatedDescriptor: AcpRemoteWorkspaceDescriptorV1;
+    try {
+      validatedDescriptor = parseAcpRemoteWorkspaceDescriptor(requestedDescriptor);
+    } catch (error) {
+      throw sanitizeRemoteStateError(error);
+    }
+    const expectedHostStateRoot = deriveAcpRemoteHostStateRoot(
+      validatedDescriptor.collisionIdentity
+    );
+    if (expectedHostStateRoot !== hostStateRoot) {
+      throw new RemoteSessionStateError();
+    }
+
+    return withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      return this.assertRemoteSessionWritableInScope(
+        sessionId,
+        hostStateRoot,
+        validatedDescriptor,
+        scope
+      );
+    });
   }
 
   private static async findArchivedAncestor(
@@ -3173,6 +3375,11 @@ export class SessionService {
       committedProjectPath === undefined
         ? projectPath
         : path.resolve(committedProjectPath);
+    const remoteWorkspace = this.parseRemoteWorkspaceFromCreated(
+      created,
+      sessionId,
+      resolvedProjectPath
+    );
     const parsedTaskWorktree = parseTaskWorktree(durable.taskWorktree);
     const taskWorktree =
       parsedTaskWorktree?.sessionId === sessionId &&
@@ -3277,6 +3484,7 @@ export class SessionService {
     return {
       sessionId,
       projectPath: resolvedProjectPath,
+      remoteWorkspace,
       gitBranch: created.gitBranch,
       rootId: durable.rootId || sessionId,
       parentId: durable.parentId,
@@ -3347,6 +3555,63 @@ export class SessionService {
       hasErrors: hasErrors || taskStatus === 'failed',
       filePath,
     };
+  }
+
+  private static parseRemoteWorkspaceFromCreated(
+    created: Extract<SessionEvent, { type: 'session_created' }>,
+    sessionId: string,
+    resolvedProjectPath: string
+  ): AcpRemoteWorkspaceDescriptorV1 | undefined {
+    if (!Object.hasOwn(created.data, 'remoteWorkspace')) {
+      return undefined;
+    }
+    let descriptor: AcpRemoteWorkspaceDescriptorV1;
+    try {
+      descriptor = parseAcpRemoteWorkspaceDescriptor(created.data.remoteWorkspace);
+    } catch (error) {
+      throw sanitizeRemoteStateError(error);
+    }
+    const expectedHostStateRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.collisionIdentity
+    );
+    if (expectedHostStateRoot !== resolvedProjectPath) {
+      throw new RemoteSessionStateError();
+    }
+    return descriptor;
+  }
+
+  private static async assertRemoteSessionWritableInScope(
+    sessionId: string,
+    hostStateRoot: string,
+    requestedDescriptor: AcpRemoteWorkspaceDescriptorV1,
+    scope: AcpRemoteStateScope
+  ): Promise<SessionMetadata> {
+    const filePath = getAcpRemoteSessionFilePath(scope, sessionId);
+    const entries = await this.readStableSessionSnapshot(filePath, sessionId);
+    let stored: StoredSessionMetadata;
+    try {
+      stored = this.projectMetadataFromEntries(
+        entries,
+        sessionId,
+        hostStateRoot,
+        filePath
+      );
+    } catch (error) {
+      throw sanitizeRemoteStateError(error);
+    }
+    if (stored.archivedAt) {
+      throw new SessionArchivedError(
+        sessionId,
+        stored.archivedBySessionId ?? sessionId
+      );
+    }
+    if (!stored.remoteWorkspace) {
+      throw new RemoteSessionStateError();
+    }
+    if (!exactRemoteIdentityMatches(stored.remoteWorkspace, requestedDescriptor)) {
+      throw new RemoteSessionMismatchError();
+    }
+    return this.toPublicMetadata(stored);
   }
 
   private static toPublicMetadata(session: StoredSessionMetadata): SessionMetadata {
