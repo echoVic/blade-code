@@ -28,6 +28,12 @@ export function isolateManagedGitAttributionEnvironment(environment) {
   delete environment[`GIT_CONFIG_VALUE_${slot}`];
   if (slot === 0) delete environment.GIT_CONFIG_COUNT;
   else environment.GIT_CONFIG_COUNT = String(slot);
+  if (environment.TRAE_GIT_ATTRIBUTION_ORIGINAL_CONFIG_PARAMETERS_PRESENT === '1') {
+    environment.GIT_CONFIG_PARAMETERS =
+      environment.TRAE_GIT_ATTRIBUTION_ORIGINAL_CONFIG_PARAMETERS;
+  } else {
+    delete environment.GIT_CONFIG_PARAMETERS;
+  }
 
   for (const key of Object.keys(environment)) {
     if (key.startsWith(MANAGED_GIT_ATTRIBUTION_PREFIX)) {

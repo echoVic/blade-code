@@ -294,10 +294,13 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       GIT_CONFIG_VALUE_1: 'Blade Test',
       GIT_CONFIG_KEY_2: 'core.hooksPath',
       GIT_CONFIG_VALUE_2: '/tmp/trae-managed-hooks',
+      GIT_CONFIG_PARAMETERS: "'core.hooksPath=/tmp/trae-managed-hooks'",
       TRAE_GIT_ATTRIBUTION_CONFIG_SLOT: '2',
       TRAE_GIT_ATTRIBUTION_FILE: '/tmp/trae-attribution',
       TRAE_GIT_ATTRIBUTION_HELPER: '/tmp/traex',
       TRAE_GIT_ATTRIBUTION_MANAGED_HOOK: '1',
+      TRAE_GIT_ATTRIBUTION_ORIGINAL_CONFIG_PARAMETERS: '',
+      TRAE_GIT_ATTRIBUTION_ORIGINAL_CONFIG_PARAMETERS_PRESENT: '0',
     };
 
     isolateManagedGitAttributionEnvironment(environment);
@@ -312,10 +315,31 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     });
     expect(environment.GIT_CONFIG_KEY_2).toBeUndefined();
     expect(environment.GIT_CONFIG_VALUE_2).toBeUndefined();
+    expect(environment.GIT_CONFIG_PARAMETERS).toBeUndefined();
     expect(environment.TRAE_GIT_ATTRIBUTION_CONFIG_SLOT).toBeUndefined();
     expect(environment.TRAE_GIT_ATTRIBUTION_FILE).toBeUndefined();
     expect(environment.TRAE_GIT_ATTRIBUTION_HELPER).toBeUndefined();
     expect(environment.TRAE_GIT_ATTRIBUTION_MANAGED_HOOK).toBeUndefined();
+  });
+
+  it('restores user Git config parameters after removing the managed overlay', () => {
+    const originalParameters = "'credential.helper=safe-helper'";
+    const environment: NodeJS.ProcessEnv = {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.hooksPath',
+      GIT_CONFIG_VALUE_0: '/tmp/trae-managed-hooks',
+      GIT_CONFIG_PARAMETERS: "'core.hooksPath=/tmp/trae-managed-hooks'",
+      TRAE_GIT_ATTRIBUTION_CONFIG_SLOT: '0',
+      TRAE_GIT_ATTRIBUTION_MANAGED_HOOK: '1',
+      TRAE_GIT_ATTRIBUTION_ORIGINAL_CONFIG_PARAMETERS: originalParameters,
+      TRAE_GIT_ATTRIBUTION_ORIGINAL_CONFIG_PARAMETERS_PRESENT: '1',
+    };
+
+    isolateManagedGitAttributionEnvironment(environment);
+
+    expect(environment).toEqual({
+      GIT_CONFIG_PARAMETERS: originalParameters,
+    });
   });
 
   it('preserves user-owned Git hook overlays without the managed marker', () => {
@@ -323,6 +347,7 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       GIT_CONFIG_COUNT: '1',
       GIT_CONFIG_KEY_0: 'core.hooksPath',
       GIT_CONFIG_VALUE_0: '/tmp/user-hooks',
+      GIT_CONFIG_PARAMETERS: "'core.hooksPath=/tmp/user-hooks'",
     };
 
     isolateManagedGitAttributionEnvironment(environment);
@@ -331,6 +356,7 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       GIT_CONFIG_COUNT: '1',
       GIT_CONFIG_KEY_0: 'core.hooksPath',
       GIT_CONFIG_VALUE_0: '/tmp/user-hooks',
+      GIT_CONFIG_PARAMETERS: "'core.hooksPath=/tmp/user-hooks'",
     });
   });
 
