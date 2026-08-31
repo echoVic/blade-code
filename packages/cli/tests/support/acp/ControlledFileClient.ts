@@ -223,16 +223,21 @@ export class ControlledFileClient implements acp.Client {
       if (observation.signal.aborted) {
         throw observation.signal.reason ?? new Error('controlled request aborted');
       }
+      let removeAbortListener = () => {};
       const abortPromise = new Promise<never>((_, reject) => {
         const onAbort = () => {
           reject(observation.signal.reason ?? new Error('controlled request aborted'));
         };
         observation.signal.addEventListener('abort', onAbort, { once: true });
-        behavior.outcome.promise.finally(() => {
+        removeAbortListener = () => {
           observation.signal.removeEventListener('abort', onAbort);
-        });
+        };
       });
-      await Promise.race([behavior.outcome.promise, abortPromise]);
+      try {
+        await Promise.race([behavior.outcome.promise, abortPromise]);
+      } finally {
+        removeAbortListener();
+      }
       return;
     }
     await behavior.outcome.promise;
