@@ -112,6 +112,13 @@ export const testTypes = {
     name: '所有测试',
     project: null,
     timeout: 600_000,
+    coverageTimeout: 900_000,
     coverageExcludedProjects: ['performance'],
   },
 };
+
+export function resolveTestTimeout(config, options) {
+  return options.coverage
+    ? (config.coverageTimeout ?? config.timeout)
+    : config.timeout;
+}

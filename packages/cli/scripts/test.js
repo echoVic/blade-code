@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { testTypes } from './test-config.js';
+import { resolveTestTimeout, testTypes } from './test-config.js';
 import {
   createTestProcessEnvironment,
   removeOwnedTestTemporaryRoot,
@@ -138,12 +138,13 @@ async function runTest(testType, options = {}) {
       process.env,
       testTemporaryRoot
     );
+    const timeoutMs = resolveTestTimeout(config, options);
     const result = await runOwnedCommand({
       command: process.execPath,
       args: [vitestPath, ...baseArgs],
       cwd: process.cwd(),
       env: testEnvironment,
-      timeoutMs: config.timeout,
+      timeoutMs,
       signal: controller.signal,
     });
 
@@ -151,7 +152,7 @@ async function runTest(testType, options = {}) {
       throw new Error(`测试运行被 ${interruptedBy} 中断`);
     }
     if (result.timedOut) {
-      throw new Error(`测试运行超过 ${config.timeout}ms，已终止完整进程树`);
+      throw new Error(`测试运行超过 ${timeoutMs}ms，已终止完整进程树`);
     }
     if (result.signal) {
       throw new Error(`测试进程被 ${result.signal} 终止`);

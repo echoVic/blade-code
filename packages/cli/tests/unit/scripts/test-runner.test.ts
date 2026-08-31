@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { testTypes } from '../../../scripts/test-config.js';
+import { resolveTestTimeout, testTypes } from '../../../scripts/test-config.js';
 import {
   createTestProcessEnvironment,
   isolateManagedGitAttributionEnvironment,
@@ -51,6 +51,27 @@ afterEach(async () => {
   await Promise.all(
     tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
   );
+});
+
+describe('test runner timeout selection', () => {
+  it('keeps ordinary all-suite runs on the standard process budget', () => {
+    expect(resolveTestTimeout(testTypes.all, { coverage: false })).toBe(600_000);
+  });
+
+  it('uses the extended process budget for all-suite coverage runs', () => {
+    expect(resolveTestTimeout(testTypes.all, { coverage: true })).toBe(900_000);
+  });
+
+  it('falls back to the standard budget without a coverage-specific timeout', () => {
+    expect(
+      resolveTestTimeout(
+        {
+          timeout: 123_000,
+        },
+        { coverage: true }
+      )
+    ).toBe(123_000);
+  });
 });
 
 describe.skipIf(process.platform === 'win32')('test runner process ownership', () => {
