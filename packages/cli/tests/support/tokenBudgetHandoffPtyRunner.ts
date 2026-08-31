@@ -15,10 +15,7 @@ import {
   finalAssistantText,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
-import {
-  createTuiPtyComposerReadyHandshake,
-  writeBracketedPaste,
-} from './ptyInput.js';
+import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 import { classifyTokenBudgetPtyFinal } from './tokenBudgetHandoffPtyDriver.js';
 
 const MAX_PROJECTED_OUTPUT_CHARS = 12_000;

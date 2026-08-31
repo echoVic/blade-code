@@ -9,10 +9,7 @@ import {
   type ForegroundCommandHandoffFixture,
   releaseForegroundCommandHandoffFixture,
 } from './foregroundCommandHandoffFixtureDriver.js';
-import {
-  createTuiPtyComposerReadyHandshake,
-  writeBracketedPaste,
-} from './ptyInput.js';
+import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 
 interface RunnerInput {
   cliEntry: string;

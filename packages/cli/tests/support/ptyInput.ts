@@ -21,9 +21,7 @@ export function createTuiPtyEnvironment(
   );
 }
 
-export function createTuiPtyComposerReadyHandshake(
-  overrides: NodeJS.ProcessEnv = {}
-): {
+export function createTuiPtyComposerReadyHandshake(overrides: NodeJS.ProcessEnv = {}): {
   env: Record<string, string>;
   marker: string;
 } {

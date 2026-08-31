@@ -6,10 +6,7 @@ import {
   appendBoundedPtyEvidence,
   waitForPtyExit,
 } from './foregroundBoundedOutputPtyDriver.js';
-import {
-  createTuiPtyComposerReadyHandshake,
-  writeBracketedPaste,
-} from './ptyInput.js';
+import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 import {
   driveToolAdmissionFixture,
   TOOL_ADMISSION_CALL_IDS,

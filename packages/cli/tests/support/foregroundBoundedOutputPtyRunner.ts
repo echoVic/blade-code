@@ -4,10 +4,7 @@ import {
   latchForegroundBoundedPtyMarkers,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
-import {
-  createTuiPtyComposerReadyHandshake,
-  writeBracketedPaste,
-} from './ptyInput.js';
+import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();

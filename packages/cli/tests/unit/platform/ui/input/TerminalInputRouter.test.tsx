@@ -145,13 +145,10 @@ describe('TerminalInputRouter', () => {
     const onRegistered = vi.fn();
 
     function InactiveHandler() {
-      useTerminalInput(
-        () => true,
-        {
-          isActive: false,
-          onRegistered,
-        }
-      );
+      useTerminalInput(() => true, {
+        isActive: false,
+        onRegistered,
+      });
       return null;
     }
 
@@ -180,16 +177,19 @@ describe('TerminalInputRouter', () => {
     '0123456789abcdef0123456789abcde',
     '0123456789abcdef0123456789abcdef0',
     '0123456789abcdef0123456789abcdeg',
-  ])('does not read or emit a composer-ready marker for malformed nonce %j', (nonce) => {
-    const write = vi.fn<(value: string) => void>();
-    const env = {
-      BLADE_TUI_COMPOSER_READY_NONCE: nonce,
-    } satisfies NodeJS.ProcessEnv;
+  ])(
+    'does not read or emit a composer-ready marker for malformed nonce %j',
+    (nonce) => {
+      const write = vi.fn<(value: string) => void>();
+      const env = {
+        BLADE_TUI_COMPOSER_READY_NONCE: nonce,
+      } satisfies NodeJS.ProcessEnv;
 
-    expect(readTuiComposerReadyMarker(env)).toBeUndefined();
-    expect(emitTuiComposerReadyMarker(env, write)).toBe(false);
-    expect(write).not.toHaveBeenCalled();
-  });
+      expect(readTuiComposerReadyMarker(env)).toBeUndefined();
+      expect(emitTuiComposerReadyMarker(env, write)).toBe(false);
+      expect(write).not.toHaveBeenCalled();
+    }
+  );
 
   it('reads and emits the exact composer-ready OSC marker for a valid nonce', () => {
     const nonce = '0123456789abcdef0123456789abcdef';
@@ -197,7 +197,8 @@ describe('TerminalInputRouter', () => {
       BLADE_TUI_COMPOSER_READY_NONCE: nonce,
     } satisfies NodeJS.ProcessEnv;
     const write = vi.fn<(value: string) => void>();
-    const marker = '\u001b]99;blade-composer-ready=0123456789abcdef0123456789abcdef\u0007';
+    const marker =
+      '\u001b]99;blade-composer-ready=0123456789abcdef0123456789abcdef\u0007';
 
     expect(formatTuiComposerReadyMarker(nonce)).toBe(marker);
     expect(readTuiComposerReadyMarker(env)).toBe(marker);

@@ -6,10 +6,7 @@ import {
   processIdentityMatches,
 } from '../../src/utils/process/ProcessIdentity.js';
 import { findSessionTranscript } from '../integration/real-api/sessionForkTrajectoryHarness.js';
-import {
-  createTuiPtyComposerReadyHandshake,
-  writeBracketedPaste,
-} from './ptyInput.js';
+import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 
 interface RunnerInput {
   cliEntry: string;

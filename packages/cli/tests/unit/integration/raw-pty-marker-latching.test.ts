@@ -70,41 +70,50 @@ describe('raw PTY marker latching source contract', () => {
   );
 
   it.each([
-    ['browserToolPtyRunner.ts', 'await waitFor(() => output.includes(handshake.marker)'],
+    [
+      'browserToolPtyRunner.ts',
+      'await waitFor(() => output.includes(handshake.marker)',
+    ],
     [
       'foregroundBoundedOutputPtyRunner.ts',
-      "await waitFor(\n      () => output.includes(handshake.marker),",
+      'await waitFor(\n      () => output.includes(handshake.marker),',
     ],
     [
       'foregroundCommandHandoffPtyRunner.ts',
-      "await waitFor(\n      () => output.includes(handshake.marker),",
+      'await waitFor(\n      () => output.includes(handshake.marker),',
     ],
     [
       'foregroundProviderRecoveryPtyRunner.ts',
-      "waitFor(\n        () => output.includes(handshake.marker),",
+      'waitFor(\n        () => output.includes(handshake.marker),',
     ],
     [
       'goalFinalizationPtyRunner.ts',
-      "await waitFor(\n      () => sawInitial && sawCompleteGoal && output.includes(handshake.marker),",
+      'await waitFor(\n      () => sawInitial && sawCompleteGoal && output.includes(handshake.marker),',
     ],
     [
       'gracefulShutdownPtyRunner.ts',
-      "waitFor(\n        () => output.includes(handshake.marker),",
+      'waitFor(\n        () => output.includes(handshake.marker),',
     ],
     [
       'sessionRuntimeResidencyPtyRunner.ts',
-      "waitFor(\n        () => output.includes(handshake.marker),",
+      'waitFor(\n        () => output.includes(handshake.marker),',
     ],
-    ['toolAdmissionPtyRunner.ts', "await waitFor(\n      () => output.includes(handshake.marker),"],
+    [
+      'toolAdmissionPtyRunner.ts',
+      'await waitFor(\n      () => output.includes(handshake.marker),',
+    ],
     ['tuiPtyRunner.ts', 'await waitFor(() => output.includes(handshake.marker)'],
-  ] as const)('%s waits for the exact ready marker before writing paste', (fileName, markerWait) => {
-    const source = readRunner(fileName);
-    const markerWaitIndex = source.indexOf(markerWait);
-    const pasteWriteIndex = source.indexOf('await writeBracketedPaste(');
+  ] as const)(
+    '%s waits for the exact ready marker before writing paste',
+    (fileName, markerWait) => {
+      const source = readRunner(fileName);
+      const markerWaitIndex = source.indexOf(markerWait);
+      const pasteWriteIndex = source.indexOf('await writeBracketedPaste(');
 
-    expect(markerWaitIndex).toBeGreaterThanOrEqual(0);
-    expect(pasteWriteIndex).toBeGreaterThan(markerWaitIndex);
-  });
+      expect(markerWaitIndex).toBeGreaterThanOrEqual(0);
+      expect(pasteWriteIndex).toBeGreaterThan(markerWaitIndex);
+    }
+  );
 
   it.each(runnerInventory)(
     '%s forces interactive rendering in its PTY child',

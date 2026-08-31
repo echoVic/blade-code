@@ -1,10 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { spawn } from 'bun-pty';
 import { appendBoundedPtyEvidence } from './foregroundBoundedOutputPtyDriver.js';
-import {
-  createTuiPtyComposerReadyHandshake,
-  writeBracketedPaste,
-} from './ptyInput.js';
+import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 
 interface RunnerInput {
   cliEntry: string;
