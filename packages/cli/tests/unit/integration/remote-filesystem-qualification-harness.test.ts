@@ -1,7 +1,11 @@
+import * as acp from '@agentclientprotocol/sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
+import { PermissionMode } from '../../../src/config/types.js';
 import {
   AcpCleanupError,
   buildCanonicalRemoteFilesystemQualificationEvidence,
+  buildRemoteFilesystemQualificationRuntimeConfig,
   digestCanonicalRemoteFilesystemQualificationEvidence,
   isBenignPairedAcpWriterCloseError,
   runRemoteFilesystemQualificationCleanup,
@@ -169,7 +173,7 @@ describe('remote filesystem qualification harness helpers', () => {
     ).toBe(false);
   });
 
-  it('produces a stable canonical digest while excluding volatile paths and ids', () => {
+  it('produces stable canonical evidence and digest across volatile roots', () => {
     const first = buildCanonicalRemoteFilesystemQualificationEvidence({
       qualificationId: 'deepseek:deepseek-v4-flash',
       frameworkRetryBudget: 0,
@@ -211,11 +215,113 @@ describe('remote filesystem qualification harness helpers', () => {
       'write:output',
       'read:output',
     ]);
+    expect(first.requestMethodOrder).toEqual([
+      acp.CLIENT_METHODS.fs_read_text_file,
+      acp.CLIENT_METHODS.fs_read_text_file,
+      acp.CLIENT_METHODS.fs_write_text_file,
+      acp.CLIENT_METHODS.fs_read_text_file,
+    ]);
+    expect(first.requestPathIdentities).toHaveLength(4);
+    expect(first.requestPathIdentities[0]).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(first.requestPathIdentities[1]).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(first.requestPathIdentities[0]).not.toBe(first.requestPathIdentities[1]);
+    expect(first.requestPathIdentities[1]).toBe(first.requestPathIdentities[2]);
     expect(digestCanonicalRemoteFilesystemQualificationEvidence(first)).toBe(
       digestCanonicalRemoteFilesystemQualificationEvidence(second)
     );
     expect(digestCanonicalRemoteFilesystemQualificationEvidence(first)).toMatch(
       /^[a-f0-9]{64}$/
     );
+  });
+
+  it('records exact ACP method order without params and never serializes raw paths or secrets', () => {
+    const sourcePath =
+      '/tmp/volatile-root-a/workspace/inputs/source-secret-sentinel.txt';
+    const outputPath =
+      '/tmp/volatile-root-a/workspace/remote/output-secret-sentinel.txt';
+    const evidence = buildCanonicalRemoteFilesystemQualificationEvidence({
+      qualificationId: 'deepseek:deepseek-v4-pro',
+      frameworkRetryBudget: 0,
+      sourcePath,
+      outputPath,
+      requests: [
+        { kind: 'read', path: sourcePath },
+        { kind: 'read', path: outputPath },
+        { kind: 'write', path: outputPath },
+        { kind: 'read', path: outputPath },
+      ],
+      writeResultCount: 1,
+      hostSourcePreserved: true,
+      hostOutputParentAbsent: true,
+      outputContainsFinalMarker: true,
+      outputExcludesHostCanary: true,
+    });
+
+    expect(evidence.requestMethodOrder).toEqual([
+      acp.CLIENT_METHODS.fs_read_text_file,
+      acp.CLIENT_METHODS.fs_read_text_file,
+      acp.CLIENT_METHODS.fs_write_text_file,
+      acp.CLIENT_METHODS.fs_read_text_file,
+    ]);
+    for (const method of evidence.requestMethodOrder) {
+      expect(method).not.toContain('{');
+      expect(method).not.toContain(sourcePath);
+      expect(method).not.toContain(outputPath);
+    }
+
+    const serialized = JSON.stringify(evidence);
+    expect(serialized).not.toContain(sourcePath);
+    expect(serialized).not.toContain(outputPath);
+    expect(serialized).not.toContain('volatile-root-a');
+    expect(serialized).not.toContain('secret-sentinel');
+    expect(serialized).not.toContain('HOST_CANARY_SECRET');
+    expect(serialized).not.toContain('FINAL_MARKER_SECRET');
+    expect(serialized).not.toContain('contentSha256');
+  });
+
+  it('forces model maxRetries=0 while preserving existing overrides', () => {
+    const runtimeConfig = buildRemoteFilesystemQualificationRuntimeConfig({
+      ...DEFAULT_CONFIG,
+      currentModelId: 'selected-model',
+      models: [
+        {
+          id: 'selected-model',
+          provider: 'deepseek',
+          model: 'deepseek-v4-flash',
+          overrides: {
+            timeout: 180_000,
+            streamIdleTimeout: 90_000,
+            maxRetries: 7,
+          },
+        },
+        {
+          id: 'fallback-model',
+          provider: 'deepseek',
+          model: 'deepseek-v4-pro',
+        },
+      ],
+      permissionMode: PermissionMode.DEFAULT,
+      hooks: { enabled: true },
+      disableAllHooks: false,
+      mcpServers: {
+        demo: {
+          type: 'stdio',
+          command: 'demo',
+          timeout: 1_000,
+        },
+      },
+    });
+
+    expect(runtimeConfig.permissionMode).toBe(PermissionMode.YOLO);
+    expect(runtimeConfig.hooks).toMatchObject({ enabled: false });
+    expect(runtimeConfig.disableAllHooks).toBe(true);
+    expect(runtimeConfig.mcpServers).toEqual({});
+    expect(runtimeConfig.models).toHaveLength(2);
+    expect(runtimeConfig.models[0].overrides).toMatchObject({
+      timeout: 180_000,
+      streamIdleTimeout: 90_000,
+      maxRetries: 0,
+    });
+    expect(runtimeConfig.models[1].overrides).toEqual({ maxRetries: 0 });
   });
 });

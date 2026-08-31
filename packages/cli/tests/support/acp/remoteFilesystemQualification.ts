@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import * as acp from '@agentclientprotocol/sdk';
+import { type BladeConfig, PermissionMode } from '../../../src/config/types.js';
 
 export type RemoteFilesystemCleanupPhase =
   | 'agent_destroy'
@@ -29,10 +31,16 @@ export interface QualificationRequestRecord {
   path: string;
 }
 
+export type CanonicalRemoteFilesystemRequestMethod =
+  | typeof acp.CLIENT_METHODS.fs_read_text_file
+  | typeof acp.CLIENT_METHODS.fs_write_text_file;
+
 export interface CanonicalRemoteFilesystemQualificationEvidence {
   qualificationId: string;
   frameworkRetryBudget: number;
   requestSequence: string[];
+  requestMethodOrder: CanonicalRemoteFilesystemRequestMethod[];
+  requestPathIdentities: string[];
   writeResultCount: number;
   hostSourcePreserved: boolean;
   hostOutputParentAbsent: boolean;
@@ -68,6 +76,42 @@ function classifyEvidencePath(
   if (candidatePath === input.sourcePath) return 'source';
   if (candidatePath === input.outputPath) return 'output';
   return 'other';
+}
+
+function requestMethodForKind(
+  kind: QualificationRequestRecord['kind']
+): CanonicalRemoteFilesystemRequestMethod {
+  return kind === 'read'
+    ? acp.CLIENT_METHODS.fs_read_text_file
+    : acp.CLIENT_METHODS.fs_write_text_file;
+}
+
+function stablePathRoleIdentity(input: {
+  classifiedPath: 'source' | 'output' | 'other';
+}): string {
+  return `sha256:${createHash('sha256')
+    .update(
+      JSON.stringify({
+        role: input.classifiedPath,
+      })
+    )
+    .digest('hex')}`;
+}
+
+export function buildRemoteFilesystemQualificationRuntimeConfig(
+  base: BladeConfig
+): BladeConfig {
+  return {
+    ...base,
+    permissionMode: PermissionMode.YOLO,
+    hooks: { ...base.hooks, enabled: false },
+    disableAllHooks: true,
+    mcpServers: {},
+    models: base.models.map((entry) => ({
+      ...entry,
+      overrides: { ...entry.overrides, maxRetries: 0 },
+    })),
+  };
 }
 
 export async function withRemainingDeadline<T>(
@@ -137,6 +181,14 @@ export function buildCanonicalRemoteFilesystemQualificationEvidence(input: {
       const label = classifyEvidencePath(request.path, input);
       return `${request.kind}:${label}`;
     }),
+    requestMethodOrder: input.requests.map((request) =>
+      requestMethodForKind(request.kind)
+    ),
+    requestPathIdentities: input.requests.map((request) =>
+      stablePathRoleIdentity({
+        classifiedPath: classifyEvidencePath(request.path, input),
+      })
+    ),
     writeResultCount: input.writeResultCount,
     hostSourcePreserved: input.hostSourcePreserved,
     hostOutputParentAbsent: input.hostOutputParentAbsent,
@@ -155,6 +207,8 @@ export function digestCanonicalRemoteFilesystemQualificationEvidence(
     outputContainsFinalMarker: evidence.outputContainsFinalMarker,
     outputExcludesHostCanary: evidence.outputExcludesHostCanary,
     qualificationId: evidence.qualificationId,
+    requestMethodOrder: [...evidence.requestMethodOrder],
+    requestPathIdentities: [...evidence.requestPathIdentities],
     requestSequence: [...evidence.requestSequence],
     writeResultCount: evidence.writeResultCount,
   };

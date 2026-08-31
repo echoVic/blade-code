@@ -18,6 +18,7 @@ import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js'
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
   buildCanonicalRemoteFilesystemQualificationEvidence,
+  buildRemoteFilesystemQualificationRuntimeConfig,
   digestCanonicalRemoteFilesystemQualificationEvidence,
   isBenignPairedAcpWriterCloseError,
   runRemoteFilesystemQualificationCleanup,
@@ -224,14 +225,9 @@ function createPairedHarness(): PairedHarness {
 }
 
 function createRuntimeConfig(model: TestModelConfig): BladeConfig {
-  const base = buildRealApiRuntimeConfig(model);
-  return {
-    ...base,
-    permissionMode: PermissionMode.YOLO,
-    hooks: { ...base.hooks, enabled: false },
-    disableAllHooks: true,
-    mcpServers: {},
-  };
+  return buildRemoteFilesystemQualificationRuntimeConfig(
+    buildRealApiRuntimeConfig(model)
+  );
 }
 
 function finalAssistantText(updates: readonly acp.SessionNotification[]): string {
@@ -365,6 +361,11 @@ describeReal('paired ACP remote filesystem qualification (real API)', () => {
         writeFileSync(sourcePath, hostSource, 'utf8');
 
         const runtimeConfig = createRuntimeConfig(model);
+        const selectedModel = runtimeConfig.models.find(
+          (entry) => entry.id === runtimeConfig.currentModelId
+        );
+        expect(selectedModel).toBeDefined();
+        expect(selectedModel?.overrides?.maxRetries).toBe(0);
         writeFileSync(
           path.join(home, '.blade', 'config.json'),
           `${JSON.stringify(
