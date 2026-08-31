@@ -7,6 +7,10 @@
 - 实现提交范围：`d94afa48` 到 `5cc23972`
 - release-candidate closure commit：`1f13637a`，对 13 个 PTY helper / test 文件做
   Biome 纯格式修复，用于关闭首次 tag CI 的 format gate；不改变 ACP runtime 行为。
+- release-candidate closure commits：
+  `059e9930` 为 coverage-only budget 修复，保持 ordinary all `600s`，把 coverage
+  提升到 `900s`，并保留 fallback；
+  `1626bf48` 恢复 managed Git 的 `GIT_CONFIG_PARAMETERS` 隔离。
 - 范围：记录 ACP filesystem request lifecycle 的 release-metadata 证据，
   覆盖 Tasks 1-5 的因果 RED、实现职责、focused fresh 结果、真实 qualification、
   独立审查结论，以及最终仓库级验证结果。
@@ -133,6 +137,8 @@ characterization 不是这一阶段的因果 RED，真实 real-api 也不用于�
 | `17c28954` | 修复 reject-first cancel listener 与 unhandled regression |
 | `5cc23972` | 以 lint-compatible no-op helper 收口实现细节 |
 | `1f13637a` | 对 13 个 PTY helper / test 文件做 Biome format-only 修复，关闭首次 tag CI format gate，不改变 ACP 行为 |
+| `059e9930` | release-candidate closure：coverage-only budget 修复，保持 ordinary all `600s`、coverage `900s` 与 fallback，不改变 ACP 行为 |
+| `1626bf48` | release-candidate closure：恢复 managed Git 的 `GIT_CONFIG_PARAMETERS` 隔离，不改变 ACP 行为 |
 
 ## 这轮实现证明了什么
 
@@ -302,7 +308,19 @@ canonical evidence fields：
 raw path、raw content 或其他 client-private material。
 
 这组 real `2/2` qualification 仍然对应 ACP runtime 最终行为变更后的资格验证；
-其后新增的仅有 `1f13637a` 的 format-only 修复和当前双语文档 / release metadata 更新。
+其后新增的仅有 `1f13637a` 的 format-only 修复、`059e9930` 的 coverage-only budget
+修复、`1626bf48` 的 managed Git 环境隔离恢复，以及当前双语文档 / release metadata
+更新。
+
+## Release-candidate closure TDD
+
+- `1f13637a`：首次 tag CI 在 format gate 失败后，以 Biome 纯格式修复闭环；
+  不引入 ACP 行为变化。
+- `059e9930`：TDD RED 是第二次 tag CI 的 coverage 在 `600s` 超时退出，且日志中没有
+  新的 assertion failure；GREEN 是把 coverage 独立预算提升到 `900s`，同时保留
+  ordinary all `600s` 与 fallback，关闭该类 release-candidate 失败。
+- `1626bf48`：恢复 managed Git 的 `GIT_CONFIG_PARAMETERS` 隔离，确保 release
+  candidate 环境回到受管边界；该修复不改变 ACP contract。
 
 ### Final real rerun after release metadata
 
@@ -354,6 +372,8 @@ Release-metadata verification completed with no failed commands in the recorded 
 - `bun run build`: exit `0`; backend, Web, and VSCode builds succeeded. Only the
   existing non-fatal Browserslist `caniuse-lite` age warning and Web chunk-size
   warning remained.
+- `bun run --filter blade-code test:coverage`: exit `0`; all tests completed,
+  duration `313.58s`.
 - `bun run test:all`: exit `0`.
   non-performance: `Test Files 456 passed | 92 skipped (548)`,
   `Tests 4990 passed | 84 skipped (5074)`, duration `403.94s`.
@@ -362,6 +382,10 @@ Release-metadata verification completed with no failed commands in the recorded 
 - Final real qualification rerun: exit `0`, `1 file`, `2 tests passed`,
   Flash `6.015s`, Pro `4.380s`, overall `13.35s`, framework retry `0`,
   model override retry `0`.
+- The second tag CI coverage run timed out at `600s` without a new assertion
+  failure; `059e9930` closed that release-candidate issue by separating the
+  coverage budget from ordinary all. The first format failure was already
+  closed by `1f13637a`.
 
 - `git diff --check`：退出码 `0`。
 - `git diff --check 39b23105..HEAD`：退出码 `0`。

@@ -10,6 +10,10 @@
 - Release-candidate closure commit: `1f13637a`, a Biome format-only fix across
   13 PTY helper/test files to close the first tag CI format gate. It does not
   change ACP runtime behavior.
+- Release-candidate closure commits:
+  `059e9930` is the coverage-only budget fix that keeps ordinary all at `600s`,
+  raises coverage to `900s`, and preserves the fallback;
+  `1626bf48` restores managed Git `GIT_CONFIG_PARAMETERS` isolation.
 - Scope: record the release-metadata evidence for ACP filesystem request
   lifecycle, covering the causal REDs for Tasks 1-5, implementation
   responsibilities, focused fresh results, real qualification, independent
@@ -145,6 +149,8 @@ test was not used merely to manufacture RED.
 | `17c28954` | Fix the reject-first cancel-listener and unhandled regression |
 | `5cc23972` | Close the patch with a lint-compatible no-op helper |
 | `1f13637a` | Apply a Biome format-only fix across 13 PTY helper/test files to close the first tag CI format gate without changing ACP behavior |
+| `059e9930` | Release-candidate closure: apply the coverage-only budget fix, keeping ordinary all at `600s`, coverage at `900s`, and the fallback without changing ACP behavior |
+| `1626bf48` | Release-candidate closure: restore managed Git `GIT_CONFIG_PARAMETERS` isolation without changing ACP behavior |
 
 ## What This Implementation Proves
 
@@ -328,8 +334,22 @@ not values printed directly by real-API stdout. The evidence retains no raw
 path, raw content, or other client-private material.
 
 This real `2/2` qualification still corresponds to the ACP runtime's final
-behavioral change set. After it, only the format-only `1f13637a` closure and
-the current bilingual documentation/release-metadata updates were added.
+behavioral change set. After it, only the format-only `1f13637a` closure, the
+coverage-only `059e9930` budget fix, the managed Git isolation restore in
+`1626bf48`, and the current bilingual documentation/release-metadata updates
+were added.
+
+## Release-candidate closure TDD
+
+- `1f13637a`: after the first tag CI failed its format gate, the closure was a
+  Biome format-only fix. It introduced no ACP behavioral change.
+- `059e9930`: the TDD RED was the second tag CI coverage run timing out at
+  `600s` with no new assertion failure in the logs. The GREEN change raised the
+  dedicated coverage budget to `900s` while keeping ordinary all at `600s` and
+  preserving the fallback.
+- `1626bf48`: restores managed Git `GIT_CONFIG_PARAMETERS` isolation so the
+  release-candidate environment returns to the managed boundary. It does not
+  change the ACP contract.
 
 ### Final real rerun after release metadata
 
@@ -385,6 +405,8 @@ runs:
 - `bun run build`: exit `0`; backend, Web, and VSCode builds succeeded. Only
   the existing non-fatal Browserslist `caniuse-lite` age warning and Web
   chunk-size warning remained.
+- `bun run --filter blade-code test:coverage`: exit `0`; all tests completed,
+  duration `313.58s`.
 - `bun run test:all`: exit `0`.
   non-performance: `Test Files 456 passed | 92 skipped (548)`,
   `Tests 4990 passed | 84 skipped (5074)`, duration `403.94s`.
@@ -393,6 +415,10 @@ runs:
 - Final real qualification rerun: exit `0`, `1 file`, `2 tests passed`,
   Flash `6.015s`, Pro `4.380s`, overall `13.35s`, framework retry `0`,
   model override retry `0`.
+- The second tag CI coverage run timed out at `600s` without a new assertion
+  failure; `059e9930` closed that release-candidate issue by separating the
+  coverage budget from ordinary all. The first format failure was already
+  closed by `1f13637a`.
 
 - `git diff --check`: exit code `0`.
 - `git diff --check 39b23105..HEAD`: exit code `0`.
