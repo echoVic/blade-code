@@ -13,7 +13,10 @@
 - Release-candidate closure commits:
   `059e9930` is the coverage-only budget fix that keeps ordinary all at `600s`,
   raises coverage to `900s`, and preserves the fallback;
-  `1626bf48` restores managed Git `GIT_CONFIG_PARAMETERS` isolation.
+  `1626bf48` restores managed Git `GIT_CONFIG_PARAMETERS` isolation;
+  `53af7c59` is a tests-only fix that makes `startPagerHarness` use
+  `debug: true` for Ink render, eliminating CI dynamic-frame stdout
+  suppression.
 - Scope: record the release-metadata evidence for ACP filesystem request
   lifecycle, covering the causal REDs for Tasks 1-5, implementation
   responsibilities, focused fresh results, real qualification, independent
@@ -151,6 +154,7 @@ test was not used merely to manufacture RED.
 | `1f13637a` | Apply a Biome format-only fix across 13 PTY helper/test files to close the first tag CI format gate without changing ACP behavior |
 | `059e9930` | Release-candidate closure: apply the coverage-only budget fix, keeping ordinary all at `600s`, coverage at `900s`, and the fallback without changing ACP behavior |
 | `1626bf48` | Release-candidate closure: restore managed Git `GIT_CONFIG_PARAMETERS` isolation without changing ACP behavior |
+| `53af7c59` | Release-candidate closure: tests-only, enable `debug: true` for Ink render in `startPagerHarness` to fix CI dynamic-frame stdout suppression without changing ACP behavior |
 
 ## What This Implementation Proves
 
@@ -336,8 +340,8 @@ path, raw content, or other client-private material.
 This real `2/2` qualification still corresponds to the ACP runtime's final
 behavioral change set. After it, only the format-only `1f13637a` closure, the
 coverage-only `059e9930` budget fix, the managed Git isolation restore in
-`1626bf48`, and the current bilingual documentation/release-metadata updates
-were added.
+`1626bf48`, the tests-only stdout-suppression fix in `53af7c59`, and the
+current bilingual documentation/release-metadata updates were added.
 
 ## Release-candidate closure TDD
 
@@ -350,6 +354,11 @@ were added.
 - `1626bf48`: restores managed Git `GIT_CONFIG_PARAMETERS` isolation so the
   release-candidate environment returns to the managed boundary. It does not
   change the ACP contract.
+- `53af7c59`: the TDD RED was a `CI=true` coverage failure where stdout no
+  longer contained the Transcript. The failing assertions were target `1/1` and
+  whole file `4/4`. The same failure was reproduced on unchanged sources in the
+  third tag run and the failed-job rerun before the GREEN fix changed
+  `startPagerHarness` to use Ink render `debug: true` as a tests-only closure.
 
 ### Final real rerun after release metadata
 
@@ -405,8 +414,8 @@ runs:
 - `bun run build`: exit `0`; backend, Web, and VSCode builds succeeded. Only
   the existing non-fatal Browserslist `caniuse-lite` age warning and Web
   chunk-size warning remained.
-- `bun run --filter blade-code test:coverage`: exit `0`; all tests completed,
-  duration `313.58s`.
+- `CI=true bun run --filter blade-code test:coverage`: exit `0`; all tests
+  completed, duration `458.84s`.
 - `bun run test:all`: exit `0`.
   non-performance: `Test Files 456 passed | 92 skipped (548)`,
   `Tests 4990 passed | 84 skipped (5074)`, duration `403.94s`.
@@ -419,6 +428,9 @@ runs:
   failure; `059e9930` closed that release-candidate issue by separating the
   coverage budget from ordinary all. The first format failure was already
   closed by `1f13637a`.
+- The later `CI=true` coverage regression around pager stdout also completed
+  green locally after `53af7c59`: target assertions `1/1`, whole-file
+  assertions `4/4`.
 
 - `git diff --check`: exit code `0`.
 - `git diff --check 39b23105..HEAD`: exit code `0`.

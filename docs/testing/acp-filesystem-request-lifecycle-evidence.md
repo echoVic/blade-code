@@ -10,7 +10,9 @@
 - release-candidate closure commits：
   `059e9930` 为 coverage-only budget 修复，保持 ordinary all `600s`，把 coverage
   提升到 `900s`，并保留 fallback；
-  `1626bf48` 恢复 managed Git 的 `GIT_CONFIG_PARAMETERS` 隔离。
+  `1626bf48` 恢复 managed Git 的 `GIT_CONFIG_PARAMETERS` 隔离；
+  `53af7c59` 为 tests-only 修复，让 `startPagerHarness` 对 Ink render 使用
+  `debug: true`，根治 CI 动态帧导致的 stdout suppression。
 - 范围：记录 ACP filesystem request lifecycle 的 release-metadata 证据，
   覆盖 Tasks 1-5 的因果 RED、实现职责、focused fresh 结果、真实 qualification、
   独立审查结论，以及最终仓库级验证结果。
@@ -139,6 +141,7 @@ characterization 不是这一阶段的因果 RED，真实 real-api 也不用于�
 | `1f13637a` | 对 13 个 PTY helper / test 文件做 Biome format-only 修复，关闭首次 tag CI format gate，不改变 ACP 行为 |
 | `059e9930` | release-candidate closure：coverage-only budget 修复，保持 ordinary all `600s`、coverage `900s` 与 fallback，不改变 ACP 行为 |
 | `1626bf48` | release-candidate closure：恢复 managed Git 的 `GIT_CONFIG_PARAMETERS` 隔离，不改变 ACP 行为 |
+| `53af7c59` | release-candidate closure：tests-only，`startPagerHarness` 对 Ink render 启用 `debug: true`，修复 CI 动态帧 stdout suppression，不改变 ACP 行为 |
 
 ## 这轮实现证明了什么
 
@@ -309,8 +312,8 @@ raw path、raw content 或其他 client-private material。
 
 这组 real `2/2` qualification 仍然对应 ACP runtime 最终行为变更后的资格验证；
 其后新增的仅有 `1f13637a` 的 format-only 修复、`059e9930` 的 coverage-only budget
-修复、`1626bf48` 的 managed Git 环境隔离恢复，以及当前双语文档 / release metadata
-更新。
+修复、`1626bf48` 的 managed Git 环境隔离恢复、`53af7c59` 的 tests-only stdout
+suppression 修复，以及当前双语文档 / release metadata 更新。
 
 ## Release-candidate closure TDD
 
@@ -321,6 +324,10 @@ raw path、raw content 或其他 client-private material。
   ordinary all `600s` 与 fallback，关闭该类 release-candidate 失败。
 - `1626bf48`：恢复 managed Git 的 `GIT_CONFIG_PARAMETERS` 隔离，确保 release
   candidate 环境回到受管边界；该修复不改变 ACP contract。
+- `53af7c59`：TDD RED 是 `CI=true` 的 coverage 测试里 stdout 没有 Transcript，
+  具体表现为 target `1/1` 与 whole file `4/4` 断言都失败；第三次 tag run 和 failed-job
+  rerun 都在 unchanged source 上重现同一失败后，GREEN 才以 tests-only 方式把
+  `startPagerHarness` 的 Ink render 改为 `debug: true`，根治动态帧 stdout suppression。
 
 ### Final real rerun after release metadata
 
@@ -372,8 +379,8 @@ Release-metadata verification completed with no failed commands in the recorded 
 - `bun run build`: exit `0`; backend, Web, and VSCode builds succeeded. Only the
   existing non-fatal Browserslist `caniuse-lite` age warning and Web chunk-size
   warning remained.
-- `bun run --filter blade-code test:coverage`: exit `0`; all tests completed,
-  duration `313.58s`.
+- `CI=true bun run --filter blade-code test:coverage`: exit `0`; all tests
+  completed, duration `458.84s`.
 - `bun run test:all`: exit `0`.
   non-performance: `Test Files 456 passed | 92 skipped (548)`,
   `Tests 4990 passed | 84 skipped (5074)`, duration `403.94s`.
@@ -386,6 +393,9 @@ Release-metadata verification completed with no failed commands in the recorded 
   failure; `059e9930` closed that release-candidate issue by separating the
   coverage budget from ordinary all. The first format failure was already
   closed by `1f13637a`.
+- The later `CI=true` coverage regression around pager stdout also completed
+  green locally after `53af7c59`: target assertions `1/1`, whole-file
+  assertions `4/4`.
 
 - `git diff --check`：退出码 `0`。
 - `git diff --check 39b23105..HEAD`：退出码 `0`。
