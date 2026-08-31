@@ -1,6 +1,14 @@
 import { execSync } from 'node:child_process';
-import * as os from 'node:os';
+import { readdir } from 'node:fs/promises';
 import * as path from 'node:path';
+import {
+  type AcpRemoteStateScope,
+  isAcpRemoteWorkspaceDigest,
+  listValidatedAcpRemoteStateScopes,
+} from '../../acp/AcpRemoteWorkspace.js';
+import { getBladeStorageRoot } from './BladeStorageRoot.js';
+
+export { getBladeStorageRoot } from './BladeStorageRoot.js';
 
 /**
  * 路径转义工具 - 将项目路径转为目录名
@@ -56,6 +64,27 @@ export function getProjectStoragePath(projectPath: string): string {
   return path.join(getBladeStorageRoot(), 'projects', escaped);
 }
 
+export function isAcpRemoteHostStateRoot(value: string): boolean {
+  const storageRoot = path.resolve(getBladeStorageRoot());
+  const resolved = path.resolve(value);
+  const relative = path.relative(storageRoot, resolved);
+  if (relative === '' || path.isAbsolute(relative)) return false;
+  const segments = relative.split(path.sep);
+  return (
+    segments.length === 2 &&
+    segments[0] === 'acp-remote-workspaces' &&
+    isAcpRemoteWorkspaceDigest(segments[1] ?? '')
+  );
+}
+
+export function getSessionStoragePath(projectPath: string): string {
+  return getProjectStoragePath(projectPath);
+}
+
+export function getAcpRemoteSessionStoragePath(scope: AcpRemoteStateScope): string {
+  return String(scope);
+}
+
 export function isValidSessionId(sessionId: unknown): sessionId is string {
   return (
     typeof sessionId === 'string' &&
@@ -80,7 +109,15 @@ export function assertValidSessionId(sessionId: string): void {
  */
 export function getSessionFilePath(projectPath: string, sessionId: string): string {
   assertValidSessionId(sessionId);
-  return path.join(getProjectStoragePath(projectPath), `${sessionId}.jsonl`);
+  return path.join(getSessionStoragePath(projectPath), `${sessionId}.jsonl`);
+}
+
+export function getAcpRemoteSessionFilePath(
+  scope: AcpRemoteStateScope,
+  sessionId: string
+): string {
+  assertValidSessionId(sessionId);
+  return path.join(getAcpRemoteSessionStoragePath(scope), `${sessionId}.jsonl`);
 }
 
 export function getSessionInboxFilePath(
@@ -88,12 +125,28 @@ export function getSessionInboxFilePath(
   sessionId: string
 ): string {
   assertValidSessionId(sessionId);
-  return path.join(getProjectStoragePath(projectPath), `${sessionId}.inbox.json`);
+  return path.join(getSessionStoragePath(projectPath), `${sessionId}.inbox.json`);
+}
+
+export function getAcpRemoteSessionInboxFilePath(
+  scope: AcpRemoteStateScope,
+  sessionId: string
+): string {
+  assertValidSessionId(sessionId);
+  return path.join(getAcpRemoteSessionStoragePath(scope), `${sessionId}.inbox.json`);
 }
 
 export function getSessionGoalFilePath(projectPath: string, sessionId: string): string {
   assertValidSessionId(sessionId);
-  return path.join(getProjectStoragePath(projectPath), `${sessionId}.goal.json`);
+  return path.join(getSessionStoragePath(projectPath), `${sessionId}.goal.json`);
+}
+
+export function getAcpRemoteSessionGoalFilePath(
+  scope: AcpRemoteStateScope,
+  sessionId: string
+): string {
+  assertValidSessionId(sessionId);
+  return path.join(getAcpRemoteSessionStoragePath(scope), `${sessionId}.goal.json`);
 }
 
 /**
@@ -115,19 +168,10 @@ export function detectGitBranch(projectPath: string): string | undefined {
 }
 
 /**
- * 获取 Blade 根存储目录
- * @returns ~/.blade/
- */
-export function getBladeStorageRoot(): string {
-  return process.env.BLADE_STORAGE_ROOT || path.join(os.homedir(), '.blade');
-}
-
-/**
  * 获取所有项目目录列表
  * @returns 项目目录名称数组
  */
 export async function listProjectDirectories(): Promise<string[]> {
-  const { readdir } = await import('node:fs/promises');
   try {
     const projectsDir = path.join(getBladeStorageRoot(), 'projects');
     const entries = await readdir(projectsDir, { withFileTypes: true });
@@ -135,4 +179,29 @@ export async function listProjectDirectories(): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+export async function listSessionStorageScopes(): Promise<
+  Array<{ storagePath: string; projectPath: string; kind: 'local' | 'acp-remote' }>
+> {
+  const storageRoot = path.resolve(getBladeStorageRoot());
+  const localScopes = await listProjectDirectories()
+    .then((directories) =>
+      directories.map((directory) => ({
+        storagePath: path.join(storageRoot, 'projects', directory),
+        projectPath: unescapeProjectPath(directory),
+        kind: 'local' as const,
+      }))
+    )
+    .catch(() => []);
+
+  const remoteScopes = await listValidatedAcpRemoteStateScopes().then((scopes) =>
+    scopes.map((scope) => ({
+      storagePath: String(scope),
+      projectPath: String(scope),
+      kind: 'acp-remote' as const,
+    }))
+  );
+
+  return [...localScopes, ...remoteScopes];
 }

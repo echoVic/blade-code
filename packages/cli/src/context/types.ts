@@ -2,6 +2,7 @@
  * 上下文管理模块的核心类型定义
  */
 
+import type { AcpRemotePathStyle } from '../acp/AcpRemotePath.js';
 import type {
   CommunicationStyleSelection,
   ReasoningEffortSelection,
@@ -395,6 +396,15 @@ export interface SessionTaskWorktree {
   sourceStateFingerprint?: string;
 }
 
+export interface AcpRemoteWorkspaceDescriptorV1 {
+  readonly version: 1;
+  readonly kind: 'acp-remote';
+  readonly style: AcpRemotePathStyle;
+  readonly wirePath: string;
+  readonly exactIdentity: `acp-remote-exact-path:${string}`;
+  readonly collisionIdentity: `acp-remote-collision-path:${string}`;
+}
+
 export interface SessionInfo {
   sessionId: string;
   rootId: string;
@@ -434,6 +444,7 @@ export interface SessionInfo {
   communicationStyle?: CommunicationStyleSelection | null;
   communicationStyleDigest?: string | null;
   projectInstructionsDigest?: string | null;
+  remoteWorkspace?: AcpRemoteWorkspaceDescriptorV1;
   pendingInteraction?: SessionPendingInteraction | null;
   archivedAt?: string | null;
   agentType?: string;
