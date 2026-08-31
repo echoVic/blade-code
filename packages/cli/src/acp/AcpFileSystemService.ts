@@ -113,9 +113,20 @@ export class AcpFileSystemService implements FileSystemService {
    *
    * 如果 IDE 不支持 readTextFile，则 fail-closed。
    */
-  async readTextFile(filePath: string): Promise<string> {
+  async readTextFile(
+    filePath: string,
+    options?: {
+      signal?: AbortSignal;
+      deadlineAt?: number;
+      purpose?: AcpRemoteFileRequestPurpose;
+      lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
+    }
+  ): Promise<string> {
     return this.runBoundedTextRead(filePath, {
-      purpose: 'preflight',
+      signal: options?.signal,
+      deadlineAt: options?.deadlineAt,
+      purpose: options?.purpose ?? 'preflight',
+      lease: options?.lease,
     });
   }
 

@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import * as Diff from 'diff';
-import { AcpRemoteFileBoundaryError } from '../../../acp/AcpFileRequestCoordinator.js';
+import {
+  ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS,
+  AcpRemoteFileBoundaryError,
+} from '../../../acp/AcpFileRequestCoordinator.js';
 import {
   AcpFileSystemCapabilityError,
   AcpFileSystemService,
@@ -156,15 +159,20 @@ export const applyPatchTool = createTool({
         remote && context.sessionId
           ? createRemotePatchWorkspaceIdentity(context.sessionId, workspaceRoot)
           : await fs.realpath(workspaceRoot);
+      const patchPaths = safePatchPaths(params.patch);
+      const remoteTargetPaths = remote
+        ? patchPaths
+            .map((filePath) => resolveLockPath(workspaceRoot, filePath))
+            .sort((left, right) => left.localeCompare(right))
+        : [];
+      if (remote) {
+        remoteFileSystem!.precheckMutationPaths(remoteTargetPaths);
+      }
       const lockPaths = remote
-        ? safePatchPaths(params.patch).map((filePath) =>
-            remoteFileSystem!.createOpaqueLockKey(
-              resolveLockPath(workspaceRoot, filePath)
-            )
+        ? remoteTargetPaths.map((filePath) =>
+            remoteFileSystem!.createOpaqueLockKey(filePath)
           )
-        : safePatchPaths(params.patch).map((filePath) =>
-            resolveLockPath(workspaceIdentity, filePath)
-          );
+        : patchPaths.map((filePath) => resolveLockPath(workspaceIdentity, filePath));
       return await withPatchWorkspaceLock(workspaceIdentity, async () => {
         signal.throwIfAborted();
         if (!remote) {
@@ -181,12 +189,33 @@ export const applyPatchTool = createTool({
           let plan: PatchTransactionPlan;
           if (remote) {
             context.updateOutput?.('Preflighting remote patch...');
-            plan = await planRemotePatchTransaction(
-              operations,
-              workspaceRoot,
-              remoteFileSystem!,
-              signal
-            );
+            const lease = remoteFileSystem!.tryAcquireMutationLease(remoteTargetPaths);
+            const forwardDeadlineAt = Date.now() + ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS;
+            try {
+              plan = await planRemotePatchTransaction(
+                operations,
+                workspaceRoot,
+                remoteFileSystem!,
+                {
+                  signal,
+                  deadlineAt: forwardDeadlineAt,
+                  lease,
+                }
+              );
+              context.updateOutput?.(
+                `Applying ${plan.changes.length} atomic file change${
+                  plan.changes.length === 1 ? '' : 's'
+                }...`
+              );
+              await commitRemotePatchTransaction(plan, remoteFileSystem!, {
+                signal,
+                forwardDeadlineAt,
+                lease,
+              });
+              lease.commitVerified();
+            } finally {
+              lease.release();
+            }
           } else {
             context.updateOutput?.('Preflighting atomic patch...');
             plan = await planLocalPatchTransaction(
@@ -211,14 +240,12 @@ export const applyPatchTool = createTool({
             ? []
             : await createSnapshots(plan, context, workspaceIdentity);
           try {
-            context.updateOutput?.(
-              `Applying ${plan.changes.length} atomic file change${
-                plan.changes.length === 1 ? '' : 's'
-              }...`
-            );
-            if (remote) {
-              await commitRemotePatchTransaction(plan, remoteFileSystem!, signal);
-            } else {
+            if (!remote) {
+              context.updateOutput?.(
+                `Applying ${plan.changes.length} atomic file change${
+                  plan.changes.length === 1 ? '' : 's'
+                }...`
+              );
               await commitLocalPatchTransaction(plan, signal);
             }
           } catch (error) {

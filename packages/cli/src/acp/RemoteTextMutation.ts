@@ -1,4 +1,5 @@
 import {
+  ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
   ACP_REMOTE_READBACK_TIMEOUT_MS,
   AcpRemoteFileBoundaryError,
   type AcpRemoteMutationLease,
@@ -17,7 +18,8 @@ export class AcpRemoteMutationError extends Error {
     message: string,
     readonly writeAcknowledged: boolean,
     readonly sideEffectsUncertain: boolean,
-    requiresRead = sideEffectsUncertain
+    requiresRead = sideEffectsUncertain,
+    readonly requestPending = false
   ) {
     super(message);
     this.name = 'AcpRemoteMutationError';
@@ -57,9 +59,13 @@ export async function commitVerifiedRemoteTextMutation(options: {
   let writeAcknowledged = false;
   try {
     try {
+      const writeDeadlineAt = Math.min(
+        deadlineAt,
+        Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS
+      );
       await options.service.writeTextFile(options.filePath, options.intendedContent, {
         signal: options.signal,
-        deadlineAt,
+        deadlineAt: writeDeadlineAt,
         purpose: writePurpose,
         lease,
       });
@@ -74,6 +80,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
           `${options.operation} remote outcome is uncertain until a fresh Read completes`,
           false,
           true,
+          true,
           true
         );
       }
@@ -85,7 +92,8 @@ export async function commitVerifiedRemoteTextMutation(options: {
           Boolean(
             (error as AcpRemoteFileBoundaryError & { requiresRead?: boolean })
               .requiresRead
-          )
+          ),
+          false
         );
       }
       writeAcknowledged = false;

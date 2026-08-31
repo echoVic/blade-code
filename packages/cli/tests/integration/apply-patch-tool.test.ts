@@ -3,6 +3,10 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS,
+  getAcpFileRequestCoordinator,
+} from '../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
 import {
   AcpServiceContext,
@@ -10,9 +14,15 @@ import {
 } from '../../src/acp/AcpServiceContext.js';
 import { LocalFileSystemService } from '../../src/services/FileSystemService.js';
 import { applyPatchTool } from '../../src/tools/builtin/file/applyPatch.js';
+import * as applyPatchTransaction from '../../src/tools/builtin/file/applyPatchTransaction.js';
 import { FileAccessTracker } from '../../src/tools/builtin/file/FileAccessTracker.js';
-import { createRemotePatchWorkspaceIdentity } from '../../src/tools/builtin/file/PatchTransactionCoordinator.js';
+import * as patchTransactionCoordinator from '../../src/tools/builtin/file/PatchTransactionCoordinator.js';
+import {
+  createRemotePatchWorkspaceIdentity,
+  withPatchWorkspaceLock,
+} from '../../src/tools/builtin/file/PatchTransactionCoordinator.js';
 import { SnapshotManager } from '../../src/tools/builtin/file/SnapshotManager.js';
+import { FileLockManager } from '../../src/tools/execution/FileLockManager.js';
 import {
   ControlledFileClient,
   type ControlledWriteBehavior,
@@ -83,6 +93,9 @@ describe('ApplyPatch builtin tool', () => {
     ) => string | Error | undefined;
   }): {
     requests: RemotePatchRequest[];
+    client: ControlledFileClient;
+    service: AcpFileSystemService;
+    harness: PairedAcpHarness;
   } {
     const requests: RemotePatchRequest[] = [];
     const client = new ControlledFileClient();
@@ -136,7 +149,11 @@ describe('ApplyPatch builtin tool', () => {
       },
       options.workspaceRoot
     );
-    return { requests };
+    const service = getAcpFileSystemService(options.sessionId);
+    if (!(service instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    return { requests, client, service, harness };
   }
 
   function patchStateDirForWorkspaceIdentity(workspaceIdentity: string): string {
@@ -806,10 +823,10 @@ describe('ApplyPatch builtin tool', () => {
       sideEffectsUncertain: true,
       write_verified: false,
     });
-    expect(remoteFiles.get('C:\\workspace\\first.ts')).toBe('const first = false;\n');
-    expect(remoteFiles.get('C:\\workspace\\second.ts')).toBe(
+    expect(remoteFiles.get('C:\\workspace\\first.ts')).toBe(
       'const first = rollback mismatch;\n'
     );
+    expect(remoteFiles.get('C:\\workspace\\second.ts')).toBe('const second = false;\n');
     expect(FileAccessTracker.getInstance().getTrackedRecords()).toEqual([]);
     const service = getAcpFileSystemService(sessionId);
     expect(service).toBeInstanceOf(AcpFileSystemService);
@@ -821,5 +838,273 @@ describe('ApplyPatch builtin tool', () => {
     expect(result.metadata?.summary).toBe(
       'ApplyPatch failed; final remote state is uncertain, re-read affected files before retrying'
     );
+  });
+
+  it('rejects a quarantined target before creating the host-private workspace lock or sending ACP I/O', async () => {
+    const sessionId = 'remote-patch-precheck-before-workspace-lock';
+    const remoteFiles = new Map([
+      ['C:\\workspace\\source.ts', 'const value = false;\n'],
+    ]);
+    const { requests, service } = createRemotePatchSession({
+      sessionId,
+      workspaceRoot: 'C:\\workspace',
+      files: remoteFiles,
+    });
+    const quarantineLease = service.tryAcquireMutationLease([
+      'C:\\workspace\\source.ts',
+    ]);
+    quarantineLease.markUncertain('C:\\workspace\\source.ts');
+    quarantineLease.release();
+
+    const result = await applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: source.ts
+@@
+-const value = false;
++const value = true;
+*** End Patch`,
+      },
+      undefined,
+      {
+        sessionId,
+        messageId: 'remote-precheck-before-workspace-lock',
+        workspaceRoot: 'C:\\workspace',
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('execution_error');
+    expect(result.metadata).toMatchObject({
+      sideEffectsUncertain: true,
+      write_acknowledged: false,
+      write_verified: false,
+      requiresRead: true,
+    });
+    expect(result.llmContent).toContain(
+      'Use Read on the same file to refresh remote state before retrying ApplyPatch'
+    );
+    expect(requests).toEqual([]);
+    await expect(
+      fs.stat(path.join(root, '.storage', 'patch-transactions'))
+    ).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
+  it('acquires workspace and sorted opaque locks before atomically trying all coordinator leases', async () => {
+    const sessionId = 'remote-patch-lock-order';
+    createRemotePatchSession({
+      sessionId,
+      workspaceRoot: 'C:\\workspace',
+      files: new Map([
+        ['C:\\workspace\\alpha.ts', 'export const alpha = false;\n'],
+        ['C:\\workspace\\zeta.ts', 'export const zeta = false;\n'],
+      ]),
+    });
+    const service = getAcpFileSystemService(sessionId);
+    expect(service).toBeInstanceOf(AcpFileSystemService);
+    if (!(service instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    const events: string[] = [];
+    const opaqueKeys = [
+      service.createOpaqueLockKey('C:\\workspace\\zeta.ts'),
+      service.createOpaqueLockKey('C:\\workspace\\alpha.ts'),
+    ].sort();
+    const originalAcquireOpaqueLocks =
+      FileLockManager.getInstance().acquireOpaqueLocks.bind(
+        FileLockManager.getInstance()
+      );
+    const workspaceSpy = vi
+      .spyOn(patchTransactionCoordinator, 'withPatchWorkspaceLock')
+      .mockImplementation(async (workspaceIdentity, operation) => {
+        events.push(`workspace:${workspaceIdentity}`);
+        events.push('workspace:entered');
+        return operation();
+      });
+    const tryAcquireSpy = vi.spyOn(service, 'tryAcquireMutationLease');
+    const acquireOpaqueLocksSpy = vi
+      .spyOn(FileLockManager.getInstance(), 'acquireOpaqueLocks')
+      .mockImplementation(async (lockKeys, operation) => {
+        events.push(`opaque:${JSON.stringify([...lockKeys])}`);
+        return originalAcquireOpaqueLocks(lockKeys, operation);
+      });
+    tryAcquireSpy.mockImplementation((paths) => {
+      events.push(`lease:${JSON.stringify([...paths])}`);
+      return AcpFileSystemService.prototype.tryAcquireMutationLease.call(
+        service,
+        paths
+      );
+    });
+
+    const execution = applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: zeta.ts
+@@
+-export const zeta = false;
++export const zeta = true;
+*** Update File: alpha.ts
+@@
+-export const alpha = false;
++export const alpha = true;
+*** End Patch`,
+      },
+      undefined,
+      {
+        sessionId,
+        messageId: 'remote-lock-order',
+        workspaceRoot: 'C:\\workspace',
+      }
+    );
+
+    await expect(execution).resolves.toMatchObject({ success: true });
+    expect(acquireOpaqueLocksSpy).toHaveBeenCalledWith(
+      opaqueKeys,
+      expect.any(Function)
+    );
+    expect(tryAcquireSpy).toHaveBeenCalledTimes(1);
+    expect(tryAcquireSpy).toHaveBeenCalledWith([
+      'C:\\workspace\\alpha.ts',
+      'C:\\workspace\\zeta.ts',
+    ]);
+    expect(events).toEqual([
+      `workspace:${createRemotePatchWorkspaceIdentity(sessionId, 'C:\\workspace')}`,
+      'workspace:entered',
+      `opaque:${JSON.stringify(opaqueKeys)}`,
+      'lease:["C:\\\\workspace\\\\alpha.ts","C:\\\\workspace\\\\zeta.ts"]',
+    ]);
+    workspaceSpy.mockRestore();
+  });
+
+  it('releases every host and coordinator lock when one atomic lease acquisition conflicts', async () => {
+    const sessionId = 'remote-patch-atomic-lease-conflict';
+    const { requests, harness, service } = createRemotePatchSession({
+      sessionId,
+      workspaceRoot: 'C:\\workspace',
+      files: new Map([
+        ['C:\\workspace\\first.ts', 'export const first = false;\n'],
+        ['C:\\workspace\\second.ts', 'export const second = false;\n'],
+      ]),
+    });
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const conflictingLease = coordinator.tryAcquireMutationLease(
+      ['C:\\workspace\\first.ts'],
+      'foreign-session'
+    );
+    const workspaceIdentity = createRemotePatchWorkspaceIdentity(
+      sessionId,
+      'C:\\workspace'
+    );
+    const opaqueKeys = [
+      service.createOpaqueLockKey('C:\\workspace\\first.ts'),
+      service.createOpaqueLockKey('C:\\workspace\\second.ts'),
+    ].sort();
+
+    const result = await applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: first.ts
+@@
+-export const first = false;
++export const first = true;
+*** Update File: second.ts
+@@
+-export const second = false;
++export const second = true;
+*** End Patch`,
+      },
+      undefined,
+      {
+        sessionId,
+        messageId: 'remote-atomic-lease-conflict',
+        workspaceRoot: 'C:\\workspace',
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('execution_error');
+    expect(requests).toEqual([]);
+    await expect.poll(() => FileLockManager.getInstance().getLockedFiles()).toEqual([]);
+    await expect(
+      withPatchWorkspaceLock(workspaceIdentity, async () => 'workspace-unlocked')
+    ).resolves.toBe('workspace-unlocked');
+    await expect(
+      FileLockManager.getInstance().acquireOpaqueLocks(opaqueKeys, async () => 'ok')
+    ).resolves.toBe('ok');
+    const cleanLease = coordinator.tryAcquireMutationLease(
+      ['C:\\workspace\\second.ts'],
+      sessionId
+    );
+    expect(cleanLease.isCurrent('C:\\workspace\\second.ts')).toBe(true);
+    cleanLease.release();
+    conflictingLease.release();
+  });
+
+  it('starts the 120 second forward request budget after lock wait completes', async () => {
+    vi.useFakeTimers({ now: 5_000 });
+    try {
+      const sessionId = 'remote-patch-forward-budget-start';
+      const { service } = createRemotePatchSession({
+        sessionId,
+        workspaceRoot: 'C:\\workspace',
+        files: new Map([['C:\\workspace\\source.ts', 'const value = false;\n']]),
+      });
+      const opaqueLockKey = service.createOpaqueLockKey('C:\\workspace\\source.ts');
+      let releaseOpaque!: () => void;
+      const opaqueGate = new Promise<void>((resolve) => {
+        releaseOpaque = resolve;
+      });
+      const heldOpaque = FileLockManager.getInstance().acquireOpaqueLock(
+        opaqueLockKey,
+        async () => {
+          await opaqueGate;
+        }
+      );
+      const planSpy = vi.spyOn(applyPatchTransaction, 'planRemotePatchTransaction');
+      const commitSpy = vi.spyOn(applyPatchTransaction, 'commitRemotePatchTransaction');
+
+      const execution = applyPatchTool.execute(
+        {
+          patch: `*** Begin Patch
+*** Update File: source.ts
+@@
+-const value = false;
++const value = true;
+*** End Patch`,
+        },
+        undefined,
+        {
+          sessionId,
+          messageId: 'remote-forward-budget-start',
+          workspaceRoot: 'C:\\workspace',
+        }
+      );
+
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(planSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(planSpy).not.toHaveBeenCalled();
+
+      releaseOpaque();
+      await heldOpaque;
+      await Promise.resolve();
+      await Promise.resolve();
+      await expect(execution).resolves.toMatchObject({ success: true });
+
+      expect(planSpy).toHaveBeenCalledTimes(1);
+      expect(commitSpy).toHaveBeenCalledTimes(1);
+      expect(
+        (planSpy.mock.calls[0]?.[3] as { deadlineAt?: number } | undefined)?.deadlineAt
+      ).toBe(5_000 + 9_000 + ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS);
+      expect(
+        (commitSpy.mock.calls[0]?.[2] as { forwardDeadlineAt?: number } | undefined)
+          ?.forwardDeadlineAt
+      ).toBe(5_000 + 9_000 + ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

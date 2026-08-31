@@ -2,7 +2,10 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getAcpFileRequestCoordinator } from '../../src/acp/AcpFileRequestCoordinator.js';
+import {
+  ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+  getAcpFileRequestCoordinator,
+} from '../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
 import { commitVerifiedRemoteTextMutation } from '../../src/acp/RemoteTextMutation.js';
 import type {
@@ -572,8 +575,6 @@ describe('ApplyPatch ACP remote transaction', () => {
       'read',
       'write',
       'read',
-      'write',
-      'read',
     ]);
     expect(
       client.requests
@@ -583,11 +584,6 @@ describe('ApplyPatch ACP remote transaction', () => {
       {
         path: '/remote/first.ts',
         content: 'const first = true;\n',
-        sessionId: 'rollback-after-abort',
-      },
-      {
-        path: '/remote/second.ts',
-        content: 'const second = false;\n',
         sessionId: 'rollback-after-abort',
       },
       {
@@ -674,24 +670,16 @@ describe('ApplyPatch ACP remote transaction', () => {
       {
         kind: 'write',
         request: {
-          path: '/remote/second.ts',
-          content: 'const second = false;\n',
-          sessionId: 'rollback-after-abort-uncertain',
-        },
-      },
-      {
-        kind: 'write',
-        request: {
           path: '/remote/first.ts',
           content: 'const first = false;\n',
           sessionId: 'rollback-after-abort-uncertain',
         },
       },
     ]);
-    expect(client.files.get('/remote/first.ts')).toBe('const first = false;\n');
-    expect(client.files.get('/remote/second.ts')).toBe(
+    expect(client.files.get('/remote/first.ts')).toBe(
       'const first = rollback mismatch;\n'
     );
+    expect(client.files.get('/remote/second.ts')).toBe('const second = false;\n');
     expect(service.getRemoteAccessRecord('/remote/first.ts')?.lastOperation).toBe(
       'read'
     );
@@ -797,10 +785,10 @@ describe('ApplyPatch ACP remote transaction', () => {
       name: 'AcpRemotePatchTransactionError',
       sideEffectsUncertain: true,
     });
-    expect(client.files.get('/remote/first.ts')).toBe('const first = false;\n');
-    expect(client.files.get('/remote/second.ts')).toBe(
+    expect(client.files.get('/remote/first.ts')).toBe(
       'const first = rollback mismatch;\n'
     );
+    expect(client.files.get('/remote/second.ts')).toBe('const second = false;\n');
     expect(service.getRemoteAccessRecord('/remote/first.ts')?.lastOperation).toBe(
       'read'
     );
@@ -845,6 +833,135 @@ describe('ApplyPatch ACP remote transaction', () => {
       service.checkRemoteAccess('/remote/second.ts', 'const second = true;\n')
     ).toBe('current');
   });
+
+  it('caps each forward write request at 30 seconds instead of waiting for the entire mutation-plus-readback window', async () => {
+    vi.useFakeTimers({ now: 10_000 });
+    try {
+      const { client, service } = createAcpRemoteFileSystem(
+        new Map([['/remote/file.ts', 'const value = false;\n']]),
+        'forward-request-cap'
+      );
+      const blockedWrite = client.enqueueBlockedWrite();
+      const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: file.ts
+@@
+-const value = false;
++const value = true;
+*** End Patch`);
+      const plan = await planRemotePatchTransaction(operations, '/remote', service);
+      const commitPromise = commitRemotePatchTransaction(plan, service);
+      let settled = false;
+      void commitPromise.finally(() => {
+        settled = true;
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(settled).toBe(true);
+
+      blockedWrite.release();
+      await vi.runAllTimersAsync();
+      await expect(commitPromise).rejects.toBeInstanceOf(
+        AcpRemotePatchTransactionError
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not rollback the current path while its forward write remains pending and still compensates previously verified paths in reverse order', async () => {
+    vi.useFakeTimers({ now: 20_000 });
+    let releaseBlockedCurrentWrite: (() => void) | undefined;
+    try {
+      const { client, service, harness } = createAcpRemoteFileSystem(
+        new Map([
+          ['/remote/first.ts', 'const first = false;\n'],
+          ['/remote/second.ts', 'const second = false;\n'],
+          ['/remote/third.ts', 'const third = false;\n'],
+        ]),
+        'pending-current-no-rollback'
+      );
+      const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+      client.enqueueWriteBehavior({ kind: 'apply-and-ack' });
+      client.enqueueWriteBehavior({ kind: 'apply-and-ack' });
+      const blockedCurrentWrite = client.enqueueBlockedWrite();
+      releaseBlockedCurrentWrite = blockedCurrentWrite.release;
+      const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** Update File: third.ts
+@@
+-const third = false;
++const third = true;
+*** End Patch`);
+      const plan = await planRemotePatchTransaction(operations, '/remote', service);
+      const commitPromise = commitRemotePatchTransaction(plan, service);
+      let settled = false;
+      void commitPromise.finally(() => {
+        settled = true;
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS + 1);
+      expect(settled).toBe(true);
+      await expect(commitPromise).rejects.toBeInstanceOf(
+        AcpRemotePatchTransactionError
+      );
+
+      expect(
+        client.requests
+          .filter((request) => request.kind === 'write')
+          .map((request) => request.request)
+      ).toEqual([
+        {
+          path: '/remote/first.ts',
+          content: 'const first = true;\n',
+          sessionId: 'pending-current-no-rollback',
+        },
+        {
+          path: '/remote/second.ts',
+          content: 'const second = true;\n',
+          sessionId: 'pending-current-no-rollback',
+        },
+        {
+          path: '/remote/third.ts',
+          content: 'const third = true;\n',
+          sessionId: 'pending-current-no-rollback',
+        },
+        {
+          path: '/remote/second.ts',
+          content: 'const second = false;\n',
+          sessionId: 'pending-current-no-rollback',
+        },
+        {
+          path: '/remote/first.ts',
+          content: 'const first = false;\n',
+          sessionId: 'pending-current-no-rollback',
+        },
+      ]);
+      expect(client.files.get('/remote/first.ts')).toBe('const first = false;\n');
+      expect(client.files.get('/remote/second.ts')).toBe('const second = false;\n');
+      expect(client.files.get('/remote/third.ts')).toBe('const third = false;\n');
+      expect(coordinator.getStatsForTests()).toMatchObject({
+        pendingWrites: 1,
+        needsRead: 0,
+      });
+
+      blockedCurrentWrite.release();
+      await vi.runAllTimersAsync();
+    } finally {
+      releaseBlockedCurrentWrite?.();
+      vi.useRealTimers();
+    }
+  });
 });
 
 function createAcpRemoteFileSystem(
@@ -853,6 +970,7 @@ function createAcpRemoteFileSystem(
 ): {
   client: ControlledFileClient;
   service: AcpFileSystemService;
+  harness: PairedAcpHarness;
 } {
   const client = new ControlledFileClient();
   for (const [filePath, content] of files) {
@@ -862,6 +980,7 @@ function createAcpRemoteFileSystem(
   harnesses.push(harness);
   return {
     client,
+    harness,
     service: new AcpFileSystemService(harness.agentConnection, sessionId, {
       readTextFile: true,
       writeTextFile: true,
