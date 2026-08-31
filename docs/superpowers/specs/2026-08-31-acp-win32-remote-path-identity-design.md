@@ -177,6 +177,147 @@ construction and freezes it. Production construction must always provide the
 profile. Tests construct it from an explicit POSIX or Windows root as
 appropriate. This removes per-request platform guessing.
 
+### Remote Session root separation
+
+An ACP remote filesystem Session has three logical roots with distinct
+responsibilities. They must never collapse back into one untyped `cwd`:
+
+- `wireRoot` is `profile.workspace.wirePath`. It is the only root exposed to
+  the model, file tools, ApplyPatch, and an advertised ACP terminal. It is a
+  remote logical path and must never be passed to host `fs`, `path.resolve`,
+  Git, process spawning, workspace configuration, hooks, LSP, AutoVerify, or
+  plugin/skill discovery.
+- `hostStateRoot` is an absolute host-private scope at
+  `getBladeStorageRoot()/acp-remote-workspaces/<digest>/`, where `digest` is a
+  domain-separated SHA-256 of the workspace `collisionIdentity`. The digest is
+  computed by the remote-workspace module as
+  `SHA-256("acp-remote-host-state\0" + collisionIdentity)`. Session JSONL,
+  inboxes, goals, leases, browser artifacts, and other durable coordination use
+  this root. The directory name contains no raw remote path. It is a direct
+  Session storage scope: the existing project-path escaping layer must not wrap
+  it again below `projects/`. The storage helper recognizes only this exact
+  fixed namespace plus one lowercase 64-hex component and creates it with
+  private permissions. `getBladeStorageRoot()`, the
+  `acp-remote-workspaces` namespace, and the digest leaf are checked with
+  `lstat`; the created namespace and leaf use mode `0700`, no checked component
+  may be a symlink, and their post-create real paths must equal the expected
+  direct-child chain below the normalized storage root. Every Session storage
+  operation enters through `withValidatedAcpRemoteStateScope(root, operation)`,
+  which revalidates the scope before its first I/O and keeps all derived paths
+  inside the branded scope. In-process creation and lifecycle entry are
+  serialized by digest so a replacement observed between checks fails closed.
+  The configured storage root and the same OS account remain the local trust
+  boundary; defending against a trusted same-account process replacing a path
+  after the gate has opened would require descriptor-relative `openat` support
+  that Node does not expose and is not claimed by this patch.
+- `hostResourceRoot` is the trusted host invocation root captured by the Agent,
+  never derived from a Client request. It does not participate in model,
+  configuration, or workspace-resource discovery. Its only remote-Session use
+  is the host cwd of an explicit Client-supplied stdio MCP server; the
+  model/provider configuration comes from the already-loaded process Store.
+
+For remote ownership only, the Agent captures `hostResourceRoot` once when the
+ACP process-side Agent is constructed; a request can never replace it. Local
+and ACP-local Sessions preserve their existing behavior and set all three roots
+from the validated Session cwd, even when it differs from the process startup
+cwd. `AcpSession` receives an explicit roots object rather than another untyped
+remote `cwd`. The runtime keeps its existing `workspaceRoot` meaning for host
+state so local callers remain source-compatible, and adds `executionRoot` plus
+a typed remote-workspace capability profile. For an ACP remote filesystem
+Session, `workspaceRoot` is `hostStateRoot`, `executionRoot` is `wireRoot`, and
+`projectRoot` is `hostResourceRoot`.
+`ChatContext.workspaceRoot`, interaction ownership, persistence, and Bus keys
+remain host-state identities; `ChatContext.executionRoot` is copied only into
+the execution context of tools that are valid for the remote owner.
+Every durable Session event also suppresses host Git branch detection in remote
+mode. Treating the private state scope as a Git workspace would be harmless to
+remote data but would violate the no-host-workspace contract and add avoidable
+process I/O.
+
+The durable `session_created.data.remoteWorkspace` field stores this immutable
+descriptor:
+
+```ts
+export interface AcpRemoteWorkspaceDescriptorV1 {
+  readonly version: 1;
+  readonly kind: 'acp-remote';
+  readonly style: AcpRemotePathStyle;
+  readonly wirePath: string;
+  readonly exactIdentity: `acp-remote-exact-path:${string}`;
+  readonly collisionIdentity: `acp-remote-collision-path:${string}`;
+}
+```
+
+The `session_created.cwd`, `SessionMetadata.projectPath`, SQLite projection
+key, `SessionLease`, inbox, goal, artifact, and process-lease keys all retain a
+host-absolute value and use `hostStateRoot`. The descriptor is the sole durable
+authority for the Client-visible path; `session_created.cwd` is never parsed as
+a remote path. Descriptor validation reparses `wirePath` with the persisted
+style and requires both stored identities to equal the recomputed values. An
+invalid version, shape, or identity is durable corruption and cannot fall back
+to a host path. A legacy Session with no descriptor remains local only.
+
+The protected namespace is also included in Session catalog and SQLite
+projection scans. No schema migration is needed: `project_path` continues to
+store the host-absolute state scope while `metadata_json` carries the validated
+descriptor. A scoped ACP remote list first derives `hostStateRoot`, then filters
+the bucket by exact identity before pagination. An unscoped remote list returns
+only descriptor-bearing Sessions; an ACP-local list returns only local Sessions.
+Protocol responses map `cwd` back to `descriptor.wirePath`, never to
+`hostStateRoot`. Collision-equivalent but exact-distinct workspaces may share a
+bucket and must remain separate Session entries.
+
+On load, Blade derives the opaque `hostStateRoot` from the requested profile,
+reads the durable metadata there, validates the stored descriptor, and requires
+an exact-identity match before replacing a resident owner. On fork, the source
+descriptor is validated from the stable source snapshot before the durable copy
+and the child receives a copy of the validated descriptor while owning a new
+Session ID and lease. The first `session_created` record for a new remote
+Session contains the descriptor atomically; no descriptor may be backfilled by
+a later `session_updated` record. Remote creation uses a dedicated exclusive
+`createRemoteSessionMetadata()` boundary. If exclusive creation reports
+`EEXIST`, Blade rereads one stable first record and proceeds only when it already
+contains the same validated descriptor; a legacy/local record, an exact-distinct
+remote descriptor, or corrupt data fails closed. The generic permission-mode
+upsert cannot create or backfill a remote descriptor.
+
+Remote Sessions disable host-only workspace capabilities for which ACP 1.3.0
+has no equivalent: Glob, Grep, NotebookEdit, Task/subagent/team/worktree
+creation, TaskOutput, project memory, ConfigTool, Skill, SlashCommand, project
+custom/plugin commands, LSP, AutoVerify, Git/code review, local workspace and
+patch recovery, and local attachment expansion. This is enforced when building
+the Session-owned base ToolRegistry, so it covers declarations, direct crafted
+tool calls, and side conversations; an Agent-only blacklist is insufficient.
+Read is registered only with remote read capability. Write, Edit, and ApplyPatch
+require both remote read and write capability. Bash is registered only with
+terminal capability. Web, MCP, prompt-artifact, plan, goal, and task-list tools
+may remain when they operate only on bounded host-private state. Browser state
+may remain enabled only when it is keyed below `hostStateRoot` and never
+inspects `wireRoot`.
+
+Remote runtime construction snapshots the already-loaded process Store
+model/provider configuration without discovering workspace model, permission,
+hook, plugin, skill, command, instruction, LSP, or Auto Memory files at any of
+the three roots. `hostResourceRoot` is not treated as a project configuration
+root; it is available only as an explicit host cwd for Client-supplied stdio MCP
+servers. Hooks are disabled, project rules are empty, attachment expansion is
+absent, stale worktree/background-process recovery is skipped, and compaction
+does not run hooks or restore referenced files. The model's environment section
+may display `wireRoot`, but prompt building receives no project path from which
+host resources could be loaded. Explicit Session MCP servers remain supported;
+workspace/plugin MCP discovery is disabled and a stdio server uses the trusted
+`hostResourceRoot`, never `wireRoot`, as its host cwd.
+If the Client advertises terminal support, foreground Bash and user-shell
+execution receive `wireRoot` through the ACP terminal RPC. They do not create a
+host durable-process lease and cannot auto-handoff into a background shell. If
+remote filesystem ownership is selected but terminal support is absent, Bash
+is absent and user-shell execution uses an unavailable terminal service; neither
+path may use `LocalTerminalService`. Explicit background Bash, WriteStdin, and
+KillShell remain unavailable because standard ACP does not expose durable
+background-terminal ownership. Looking up an unknown explicit ACP Session also
+fails closed instead of returning a local terminal. ACP-local Sessions preserve
+their existing local fallback semantics.
+
 The frozen profile is derived from the final authoritative workspace before an
 `AcpSession` is constructed. These lifecycle checks apply only when negotiated
 fs capabilities select the remote owner; ACP-local sessions retain their
@@ -193,25 +334,35 @@ existing host-native lifecycle. The order is fixed:
   existing host worktree flow. If a future protocol capability supplies a
   remote task workspace and stable file identity, it requires a separate
   design;
-- `session/fork` parses its requested source/target cwd before the durable fork,
-  then uses and parses the returned `fork.projectPath` for the child. A later
-  runtime initialization failure continues to preserve the durable fork
-  transcript;
-- `session/load` calls `assertSessionWritable()` without closing the current
-  owner, parses `metadata.projectPath`, requires its exact normalized identity
-  to match the request cwd, and only then calls `closeResidentSession()`. A
-  collision-only match is insufficient because two distinct paths may exist on
-  a case-sensitive remote filesystem.
+- `session/fork` parses its requested source/target cwd, derives the opaque
+  host state root, and validates the source's persisted remote descriptor from
+  the same stable snapshot used for the durable fork.
+  `SessionService.forkSession()` receives only the host state root; it suppresses
+  local Git/task-worktree fields for a remote child and copies the validated
+  descriptor. A later runtime initialization failure continues to preserve the
+  durable fork transcript;
+- `session/load` derives the opaque host state root from the requested cwd and
+  calls `assertSessionWritable()` there without closing the current owner. It
+  reparses the persisted remote descriptor, requires its exact normalized
+  identity to match the request cwd, and only then calls
+  `closeResidentSession()`. A collision-only match is insufficient because two
+  distinct paths may exist on a case-sensitive remote filesystem.
 
-This ensures invalid or mismatched path profiles cannot destroy a working owner
-first. Duplicate `initializeSession()` remains a no-op and cannot replace or
-re-infer an existing service's frozen profile; only destroy plus rebuild creates
-a new one.
+This ensures invalid, corrupt, or mismatched path profiles cannot destroy a
+working owner first. A syntactically invalid request is a redacted
+`invalidParams` response; an exact descriptor mismatch is a redacted
+`RequestError.invalidParams` response whose data is exactly
+`{ code: 'acp_remote_workspace_mismatch', reason: 'exact-identity-mismatch' }`;
+its message and data include neither requested nor persisted paths. Malformed
+persisted descriptor data is an internal durable-state failure. Duplicate
+`initializeSession()` remains a no-op and cannot replace or re-infer an existing
+service's frozen profile; only destroy plus rebuild creates a new one.
 
-Only the deterministic setup input failures introduced by this design are
+Only deterministic request/setup failures introduced by this design are
 projected as ACP `RequestError.invalidParams`, with a stable redacted data
-object containing only `code` and `reason`: `AcpRemotePathError` and remote task
-isolation rejection. In particular, remote task isolation returns
+object containing only `code` and `reason`: `AcpRemotePathError`, exact remote
+workspace mismatch, and remote task-isolation rejection. In particular, remote
+task isolation returns
 `code: 'acp_remote_task_isolation_unsupported'`; it never includes the rejected
 cwd. Runtime capacity, persistence, task/fork I/O, and runtime initialization
 failures retain their existing internal or transient classifications.
@@ -302,6 +453,13 @@ Session-local adapter necessarily retains the normalized wire path in the
 existing bounded ledger record, but never logs it; the ledger remains capped at
 1024 exact entries. Its collision index uses an opaque hash rather than storing
 a second case-folded path string.
+
+The versioned remote workspace descriptor is the other intentional
+host-private retention point. It is stored only in the protected Session
+transcript so `session/load`, `session/fork`, and `session/list` can recover
+the Client-visible cwd across process restarts. Ordinary diagnostic logs omit
+both remote and host roots and record only Session IDs, path style, capability
+flags, and opaque identities when needed.
 
 ## Remote ApplyPatch boundary
 
@@ -398,6 +556,15 @@ Deterministic causal RED tests must cover:
 - remote local/worktree task rejection before runtime reservation, durable task
   creation, host Git/worktree calls, or Session construction; ACP-local task
   isolation remains unchanged.
+- a Windows `wireRoot` on a POSIX host never reaches host path resolution,
+  workspace config/resource discovery, Git, LSP, AutoVerify, attachment loading,
+  local shell spawn, or host-only file tools; durable state is created only
+  below the opaque `hostStateRoot` and remains loadable/forkable/listable after
+  a fresh Agent connection;
+- remote sessions without terminal capability reject foreground and background
+  Bash without spawning, while terminal-capable sessions send the exact
+  `wireRoot` through ACP; captured logs contain neither `wireRoot` nor
+  `hostStateRoot`.
 
 Focused verification runs the new path tests plus coordinator, file service,
 ToolExecutor lock, remote file tool, ApplyPatch tool/transaction/recovery, and

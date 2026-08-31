@@ -4,7 +4,7 @@
 
 **Goal:** Make ACP remote Windows paths use one fail-closed syntax boundary and separate exact authorization from conservative collision coordination, then release the change as `v0.10.128`.
 
-**Architecture:** Add a pure `AcpRemotePath` module that freezes path style from the Session workspace, preserves a case-sensitive wire path, and emits opaque exact and collision identities. `AcpFileSystemService` owns the exact ledger and delegates collision fencing to the existing connection coordinator; remote ApplyPatch consumes one ordered pure preflight before any lock, lease, or RPC. ACP Session setup validates remote path profiles before destructive/durable lifecycle boundaries, and remote task isolation is rejected because ACP exposes no remote worktree capability.
+**Architecture:** Add a pure `AcpRemotePath` module that freezes path style from the Session workspace, preserves a case-sensitive wire path, and emits opaque exact and collision identities. A remote Session uses a three-root contract: a collision-derived host-private state scope for persistence, the remote wire root for ACP file/terminal execution, and a trusted process-side root used only as the host cwd of explicit Client-supplied stdio MCP servers. Model/provider configuration comes from the already-loaded Store. A versioned descriptor restores exact remote identity across load/fork/list, while a capability-aware Runtime excludes host-only workspace facilities. `AcpFileSystemService` owns the exact ledger and delegates collision fencing to the existing connection coordinator; remote ApplyPatch consumes one ordered pure preflight before any lock, lease, or RPC.
 
 **Tech Stack:** TypeScript strict mode, Node `path` and `crypto`, ACP SDK 1.3.0 public APIs, TypeBox tools, Vitest, paired ACP NDJSON harnesses, GitHub Actions, npm trusted publishing.
 
@@ -17,8 +17,13 @@
 - Create `packages/cli/src/acp/AcpRemotePath.ts`: remote path profile, parsing, redacted typed errors, exact/collision hashes, and descendant resolution.
 - Create `packages/cli/tests/unit/agent-runtime/acp/remote-path.test.ts`: exhaustive pure path contract.
 - Modify `packages/cli/src/acp/AcpFileSystemService.ts`: frozen profile, case-preserving RPC path, exact ledger plus collision index, and compatibility re-export.
+- Create `packages/cli/src/acp/AcpRemoteWorkspace.ts`: versioned durable descriptor, opaque host state scope, and exact revalidation.
+- Modify `packages/cli/src/context/storage/pathUtils.ts`: direct protected state scopes and catalog enumeration.
+- Modify `packages/cli/src/context/types.ts` and `packages/cli/src/services/SessionService.ts`: descriptor persistence, projection, load/fork/list recovery, and remote-safe event creation.
 - Modify `packages/cli/src/acp/AcpFileRequestCoordinator.contracts.ts` and `.state.ts`: collision-keyed state plus exact-origin reconciliation.
 - Modify `packages/cli/src/acp/AcpServiceContext.ts`, `Session.ts`, and `BladeAgent.ts`: profile threading and setup ordering.
+- Modify `packages/cli/src/agent/runtime/SessionRuntime.ts`, `packages/cli/src/agent/types.ts`, and `packages/cli/src/tools/types/ExecutionTypes.ts`: keep host state ownership separate from remote tool execution.
+- Modify `packages/cli/src/prompts/builder.ts`, `packages/cli/src/agent/Agent.ts`, and ACP slash/terminal boundaries: disable host resource reads and local process fallback for remote owners.
 - Modify `packages/cli/src/tools/execution/ToolExecutor.ts` and remote branches of `read.ts`, `write.ts`, and `edit.ts`: initial/post-hook/direct path validation and stable error projection.
 - Modify `packages/cli/src/tools/builtin/file/applyPatch.ts`, `applyPatchTransaction.ts`, and `PatchTransactionCoordinator.ts`: one pre-lock remote preflight and one path source of truth.
 - Modify focused unit/integration tests and the existing real-API qualification evidence; no UI layout change is planned.
@@ -146,42 +151,242 @@
 
 ---
 
-### Task 2: Freeze profiles and close Session setup host-path gaps
+### Task 2: Add the durable remote workspace descriptor and protected state scope
+
+**Files:**
+- Create: `packages/cli/src/acp/AcpRemoteWorkspace.ts`
+- Create: `packages/cli/tests/unit/agent-runtime/acp/remote-workspace.test.ts`
+- Modify: `packages/cli/src/context/types.ts`
+- Modify: `packages/cli/src/context/storage/pathUtils.ts`
+- Modify: `packages/cli/src/context/storage/PersistentStore.ts`
+- Modify: `packages/cli/src/context/storage/sqlite/projection.ts`
+- Modify: `packages/cli/src/services/sessionCatalog.ts`
+- Modify: `packages/cli/src/services/SessionService.ts`
+- Modify: `packages/cli/tests/unit/agent-runtime/context/storage-path-utils.test.ts`
+- Modify: `packages/cli/tests/unit/services/session-service-catalog.test.ts`
+- Modify: `packages/cli/tests/unit/services/session-service-fork.test.ts`
+
+- [ ] **Step 1: Write descriptor and storage-scope RED tests**
+
+  Add exact tests for this public surface:
+
+  ```ts
+  export interface AcpRemoteWorkspaceDescriptorV1 {
+    readonly version: 1;
+    readonly kind: 'acp-remote';
+    readonly style: AcpRemotePathStyle;
+    readonly wirePath: string;
+    readonly exactIdentity: `acp-remote-exact-path:${string}`;
+    readonly collisionIdentity: `acp-remote-collision-path:${string}`;
+  }
+
+  export function createAcpRemoteWorkspaceDescriptor(
+    profile: AcpRemotePathProfile
+  ): AcpRemoteWorkspaceDescriptorV1;
+  export function parseAcpRemoteWorkspaceDescriptor(
+    value: unknown
+  ): AcpRemoteWorkspaceDescriptorV1;
+  export function deriveAcpRemoteHostStateRoot(
+    collisionIdentity: AcpRemotePath['collisionIdentity'],
+    storageRoot?: string
+  ): string;
+  export async function ensureAcpRemoteHostStateRoot(root: string): Promise<void>;
+  export async function withValidatedAcpRemoteStateScope<T>(
+    root: string,
+    operation: (scope: AcpRemoteStateScope) => Promise<T>
+  ): Promise<T>;
+  ```
+
+  Prove that the state root is exactly
+  `<storage>/acp-remote-workspaces/<64 lowercase hex>`, changes only with the
+  collision identity, contains no wire path fragment, is rejected outside that
+  namespace, and is created as a private non-symlink directory. Also reject a
+  symlinked namespace parent, a symlinked leaf, separator/`..` aliases, wrong
+  ownership or mode, and a parent/leaf replacement observed during creation.
+  Corrupt versions,
+  kinds, styles, hashes, and a descriptor whose identities do not equal a fresh
+  parse of `wirePath` must fail with one redacted durable-state error.
+
+  Add storage helper tests proving `getProjectStoragePath(hostStateRoot)` returns
+  that direct protected scope while ordinary local workspaces keep the existing
+  escaped `projects/` layout. Enumerating Session storage scopes must include
+  valid remote digest directories, ignore malformed names and symlinks, and not
+  expose the remote namespace from `listProjectDirectories()`.
+
+- [ ] **Step 2: Run the descriptor RED tests**
+
+  ```bash
+  cd packages/cli
+  bun x vitest run --config vitest.config.ts --project=unit \
+    tests/unit/agent-runtime/acp/remote-workspace.test.ts \
+    tests/unit/agent-runtime/context/storage-path-utils.test.ts
+  ```
+
+  Expected: imports fail because the descriptor, direct scope, and enumeration
+  APIs do not exist.
+
+- [ ] **Step 3: Implement the descriptor and one storage authority**
+
+  Define `AcpRemoteWorkspaceDescriptorV1` in `context/types.ts`; implement the
+  constructors and strict parser in `AcpRemoteWorkspace.ts`. Derive the leaf by
+  hashing `acp-remote-host-state\0${collisionIdentity}`. Add these path helpers:
+
+  ```ts
+  export function isAcpRemoteHostStateRoot(value: string): boolean;
+  export function getSessionStoragePath(projectPath: string): string;
+  export async function listSessionStorageScopes(): Promise<
+    Array<{ storagePath: string; projectPath: string; kind: 'local' | 'acp-remote' }>
+  >;
+  ```
+
+  `getSessionStoragePath()` returns a validated remote state scope directly and
+  otherwise delegates to the unchanged local `getProjectStoragePath()`. Route
+  transcript, inbox, goal, SessionLease, durable process-lease, and PersistentStore
+  paths through this one helper. Use `lstat`, owner/mode checks, realpath equality,
+  and a keyed in-process creation mutex for the configured root, fixed namespace,
+  and leaf; do not follow a symlink at any checked level. Route each remote
+  SessionService, PersistentStore, JSONL, inbox, goal, SessionLease, durable
+  process-lease, cleanup, and projection lifecycle operation through
+  `withValidatedAcpRemoteStateScope()` before its first I/O. The callback receives
+  a branded scope so arbitrary paths cannot enter the direct-storage branch.
+  `PersistentStore.createEvent()` must omit
+  `gitBranch` for a remote state scope. Do not infer remote state from arbitrary
+  paths beneath the storage root.
+
+- [ ] **Step 4: Write SessionService descriptor RED tests**
+
+  Add real JSONL tests proving:
+
+  - a remote `session_created` atomically stores the immutable descriptor while
+    `cwd` and `projectPath` remain `hostStateRoot`;
+  - concurrent remote creators with the same descriptor converge on the same
+    valid first record, while remote-vs-local and collision-equivalent
+    exact-distinct creators fail closed without a mutable descriptor backfill;
+  - metadata parsing reparses the descriptor and rejects a corrupt version/hash
+    or a descriptor transplanted into another collision bucket;
+  - `assertRemoteSessionWritable(sessionId, hostStateRoot, requestedDescriptor)`
+    returns only an exact match and never accepts a collision-only match or a
+    legacy local transcript;
+  - remote fork validates from the same stable source snapshot, copies the
+    descriptor, omits Git/task-worktree fields, and leaves the source untouched;
+  - collision-equivalent exact-distinct Sessions coexist in one scope as separate
+    files; scoped and unscoped remote list pages return only matching descriptor
+    records; ordinary local list pages do not expose them;
+  - SQLite rebuild and JSONL fallback return identical metadata and pagination.
+
+- [ ] **Step 5: Run the SessionService RED tests**
+
+  ```bash
+  cd packages/cli
+  bun x vitest run --config vitest.config.ts --project=unit \
+    tests/unit/services/session-service-catalog.test.ts \
+    tests/unit/services/session-service-fork.test.ts
+  ```
+
+  Expected: no descriptor field or remote list/load/fork API exists, and the
+  remote scope is not scanned.
+
+- [ ] **Step 6: Implement immutable descriptor persistence and recovery**
+
+  Add `remoteWorkspace?: AcpRemoteWorkspaceDescriptorV1` to `SessionInfo` and
+  `SessionMetadata`, but not to mutable `SessionMetadataUpdate`. Add a dedicated
+  `createRemoteSessionMetadata()` exclusive-create API. If it observes `EEXIST`,
+  reread a stable first record and continue only for the same validated
+  descriptor; never call mutable update to add or replace a descriptor. Parse it
+  only from `session_created.data`; if the property exists but is invalid, fail
+  as durable corruption. Validate that its derived root equals the host
+  `projectPath`. Legacy records without it stay local.
+
+  Add `assertRemoteSessionWritable()` and a remote page API whose cursor scope
+  includes the requested exact identity. Extend Session storage enumeration and
+  projection sync to include protected remote scopes, but keep generic local list
+  APIs filtered to descriptor-free records. In `forkSession`, accept an expected
+  remote descriptor, validate it inside the stable source snapshot, copy it into
+  the child's first event, suppress `detectGitBranch()`, and omit local task
+  isolation/source/worktree fields. Never use `wirePath` as a host path.
+
+- [ ] **Step 7: Verify, review twice, and commit the storage layer**
+
+  ```bash
+  cd packages/cli
+  bun x vitest run --config vitest.config.ts --project=unit \
+    tests/unit/agent-runtime/acp/remote-workspace.test.ts \
+    tests/unit/agent-runtime/context/storage-path-utils.test.ts \
+    tests/unit/services/session-service-catalog.test.ts \
+    tests/unit/services/session-service-fork.test.ts \
+    tests/unit/agent-runtime/agent/session-lease.test.ts \
+    tests/unit/context/sqlite/projection.test.ts
+  bun run type-check
+  bun x biome check src/acp/AcpRemoteWorkspace.ts src/context/types.ts \
+    src/context/storage/pathUtils.ts src/context/storage/PersistentStore.ts \
+    src/context/storage/sqlite/projection.ts src/services/sessionCatalog.ts \
+    src/services/SessionService.ts tests/unit/agent-runtime/acp/remote-workspace.test.ts \
+    tests/unit/agent-runtime/context/storage-path-utils.test.ts \
+    tests/unit/services/session-service-catalog.test.ts \
+    tests/unit/services/session-service-fork.test.ts
+  git diff --check
+  ```
+
+  Obtain independent specification and storage/concurrency reviews, resolve all
+  Critical/Important findings, rerun the commands, and commit as
+  `feat(acp): isolate remote session state`.
+
+---
+
+### Task 3: Route ACP lifecycle through explicit Session roots
 
 **Files:**
 - Modify: `packages/cli/src/acp/AcpFileSystemService.ts`
 - Modify: `packages/cli/src/acp/AcpServiceContext.ts`
 - Modify: `packages/cli/src/acp/Session.ts`
 - Modify: `packages/cli/src/acp/BladeAgent.ts`
+- Modify: `packages/cli/src/acp/index.ts`
 - Modify: `packages/cli/tests/support/acp/remotePatchTestHarness.ts`
 - Modify: `packages/cli/tests/integration/apply-patch-transaction.test.ts`
+- Modify: `packages/cli/tests/integration/acp-session-fork.test.ts`
 - Modify: `packages/cli/tests/unit/agent-runtime/acp/file-system-service.test.ts`
 - Modify: `packages/cli/tests/unit/tooling/tools/execution/file-lock-manager.test.ts`
 - Modify: `packages/cli/tests/unit/agent-runtime/acp/service-context.test.ts`
 - Modify: `packages/cli/tests/unit/agent-runtime/acp/session.test.ts`
 - Modify: `packages/cli/tests/unit/agent-runtime/acp/bladeAgent.test.ts`
 
-- [ ] **Step 1: Write lifecycle and constructor RED tests**
+- [ ] **Step 1: Write lifecycle and root-routing RED tests**
 
-  Negotiate real remote fs capabilities in BladeAgent tests and assert:
+  Introduce the discriminated constructor contract and test it directly:
 
-- normal new rejects invalid cwd before runtime reservation, Session
-  construction, or `setSessionPermissionMode`;
-- remote `taskIsolation: 'local'` and `'worktree'` both reject before runtime
-  reservation, `SessionTaskService`, host Git/worktree calls, or Session
-  construction; ACP-local worktree behavior remains unchanged;
-- fork rejects an invalid request before durable fork, then constructs a valid
-  child from `fork.projectPath` and preserves the existing durable-transcript
-  behavior on later initialization failure;
-- load obtains writable metadata, rejects an exact workspace mismatch before
-  destroying the resident owner, and uses the persisted wire path on success;
-- duplicate `initializeSession()` ignores a conflicting or invalid new cwd and
-  preserves the first profile, connection, owner, and ledger.
-  - destroy plus rebuild installs the new profile with an empty ledger.
-  - a successful load replacement does not inherit the old owner's Read ledger,
-    and a fork child does not inherit the parent's Read ledger.
+  ```ts
+  export type AcpSessionRoots =
+    | {
+        readonly kind: 'local';
+        readonly hostStateRoot: string;
+        readonly executionRoot: string;
+        readonly hostResourceRoot: string;
+      }
+    | {
+        readonly kind: 'acp-remote';
+        readonly hostStateRoot: string;
+        readonly executionRoot: string;
+        readonly hostResourceRoot: string;
+        readonly profile: AcpRemotePathProfile;
+        readonly descriptor: AcpRemoteWorkspaceDescriptorV1;
+      };
+  ```
 
-- [ ] **Step 2: Run RED**
+  Assert remote new parses/rejects task isolation before reservation, creates its
+  private scope only after reservation, and gives SessionService only the state
+  root plus descriptor. Assert load derives the state root, validates the durable
+  exact descriptor before closing the resident owner, and then loads from the
+  state root. Assert fork passes only the state root and expected descriptor to
+  `SessionService.forkSession()`, consumes the validated child descriptor, and
+  retains the durable child if later Runtime initialization fails. Assert list
+  maps descriptor `wirePath` to ACP `cwd` and never returns a state root.
+
+  Add paired integration coverage that creates a Windows remote Session on a
+  POSIX host, destroys the first Agent, then lists, loads, and forks it from a
+  fresh connection. Assert all files remain below the opaque scope and a
+  collision-equivalent exact-distinct request cannot replace the live owner.
+
+- [ ] **Step 2: Run lifecycle RED**
 
   ```bash
   cd packages/cli
@@ -189,31 +394,39 @@
     tests/unit/agent-runtime/acp/bladeAgent.test.ts \
     tests/unit/agent-runtime/acp/session.test.ts \
     tests/unit/agent-runtime/acp/service-context.test.ts
+  bun x vitest run --config vitest.config.ts --project=integration \
+    tests/integration/acp-session-fork.test.ts
   ```
 
-  Expected: the current code reserves/creates/closes too early, permits remote
-  task isolation to enter host-native services, and has no frozen profile.
+  Expected: current code passes one `cwd`, sends `wireRoot` into SessionService,
+  and has neither descriptor recovery nor a protected state scope.
 
-- [ ] **Step 3: Migrate profile construction atomically**
+- [ ] **Step 3: Implement three-root ACP lifecycle**
 
-  Make the `AcpFileSystemService` constructor require
-  `AcpRemotePathProfile`, store it, and expose `getPathProfile()` plus
-  `parsePath(filePath)`. Keep request/ledger identity behavior unchanged until
-  Task 3. Update the sole production constructor in `AcpServiceContext` and all
-  direct test constructors, including `remotePatchTestHarness.ts`, the three
-  `apply-patch-transaction.test.ts` sites, and the file-lock helper.
+  Capture `hostResourceRoot = path.resolve(getCwd())` in the process-side
+  `BladeAgent` constructor for remote ownership and never accept it from a
+  request. Local and ACP-local Sessions keep all three roots equal to their
+  validated request cwd, even if it differs from the process cwd. Build
+  `AcpSessionRoots` before constructing a Session. Replace every `this.cwd` use:
+  SessionService, interactions, Bus ownership, and metadata use `hostStateRoot`;
+  ACP filesystem and terminal use `executionRoot`; only Runtime resource options
+  receive `hostResourceRoot`. Remove raw-root debug logging.
 
-  Add `remotePathProfile?: AcpRemotePathProfile` to `AcpSessionOptions` and pass
-  it into `AcpServiceContext.initializeSession`. Keep the existing-session early
-  return before any fallback profile construction. In `BladeAgent`, use a small
-  remote-capability predicate and implement the exact new/fork/load ordering
-  above. Map only `AcpRemotePathError` and remote task-isolation rejection to
-  `RequestError.invalidParams({ code, reason })`; preserve all other error
-  classes.
+  Make `AcpFileSystemService` require and freeze the parsed profile, expose
+  `getPathProfile()` and `parsePath()`, and update every constructor fixture. Keep
+  the ledger/key algorithm unchanged until Task 6. Preserve duplicate
+  `initializeSession()` as an early no-op before parsing any replacement profile.
 
-- [ ] **Step 4: Verify GREEN, review twice, and commit**
+  Implement exact `new/load/fork/list` ordering with the Task 2 SessionService
+  APIs. Map request syntax errors to redacted `invalidParams`; map exact mismatch
+  to `RequestError.invalidParams` with exactly
+  `{ code: 'acp_remote_workspace_mismatch', reason: 'exact-identity-mismatch' }`
+  and no raw roots; propagate corrupt durable descriptors as internal failures.
+  Local and ACP-local lifecycle stays byte-for-byte equivalent.
 
-  Run the Task 2 RED command plus:
+- [ ] **Step 4: Verify, review twice, and commit the lifecycle**
+
+  Run Step 2 plus:
 
   ```bash
   cd packages/cli
@@ -221,10 +434,15 @@
     tests/integration/acp-remote-file-tools.test.ts \
     tests/integration/apply-patch-transaction.test.ts \
     tests/integration/apply-patch-recovery.test.ts
+  bun x vitest run --config vitest.config.ts --project=unit \
+    tests/unit/agent-runtime/acp/file-system-service.test.ts \
+    tests/unit/tooling/tools/execution/file-lock-manager.test.ts
   bun run type-check
   bun x biome check src/acp/AcpFileSystemService.ts src/acp/AcpServiceContext.ts \
-    src/acp/Session.ts src/acp/BladeAgent.ts tests/support/acp/remotePatchTestHarness.ts \
+    src/acp/Session.ts src/acp/BladeAgent.ts src/acp/index.ts \
+    tests/support/acp/remotePatchTestHarness.ts \
     tests/integration/apply-patch-transaction.test.ts \
+    tests/integration/acp-session-fork.test.ts \
     tests/unit/agent-runtime/acp/file-system-service.test.ts \
     tests/unit/tooling/tools/execution/file-lock-manager.test.ts \
     tests/unit/agent-runtime/acp/service-context.test.ts \
@@ -233,14 +451,213 @@
   git diff --check
   ```
 
-  Ask a fresh specification reviewer to verify lifecycle ordering and a fresh
-  quality/security reviewer to inspect host-path isolation and cleanup. Resolve
-  every Critical/Important finding and rerun the commands. Commit as
-  `fix(acp): freeze remote workspace path semantics`.
+  Obtain independent lifecycle-order and host-path-isolation reviews, fix every
+  Critical/Important finding, rerun the commands, and commit as
+  `fix(acp): separate remote session roots`.
 
 ---
 
-### Task 3: Separate exact ledger authority from collision fencing
+### Task 4: Separate Runtime state from remote execution
+
+**Files:**
+- Create: `packages/cli/src/agent/runtime/SessionWorkspace.ts`
+- Modify: `packages/cli/src/agent/runtime/SessionRuntime.ts`
+- Modify: `packages/cli/src/agent/resources/WorkspaceAgentResources.ts`
+- Modify: `packages/cli/src/agent/resources/WorkspaceModelResources.ts`
+- Modify: `packages/cli/src/agent/types.ts`
+- Modify: `packages/cli/src/agent/Agent.ts`
+- Modify: `packages/cli/src/agent/loop/executeLoopGenerator.ts`
+- Modify: `packages/cli/src/tools/types/ExecutionTypes.ts`
+- Modify: `packages/cli/src/context/CompactionService.ts`
+- Modify: `packages/cli/src/prompts/builder.ts`
+- Modify: `packages/cli/src/tools/builtin/file/applyPatch.ts`
+- Modify: `packages/cli/tests/unit/agent-runtime/agent/session-runtime.test.ts`
+- Modify: `packages/cli/tests/unit/agent-runtime/acp/session.test.ts`
+- Modify: `packages/cli/tests/unit/agent-runtime/prompts/system-prompt.test.ts`
+- Modify: `packages/cli/tests/integration/apply-patch-tool.test.ts`
+
+- [ ] **Step 1: Write Runtime root and host-I/O RED tests**
+
+  Define a discriminated execution profile:
+
+  ```ts
+  export type SessionWorkspace =
+    | { readonly kind: 'local'; readonly executionRoot: string; readonly resourceRoot: string }
+    | {
+        readonly kind: 'acp-remote';
+        readonly executionRoot: string;
+        readonly resourceRoot: string;
+        readonly readTextFile: boolean;
+        readonly writeTextFile: boolean;
+        readonly terminal: boolean;
+      };
+  ```
+
+  Build a remote Runtime with a Windows execution root on a POSIX test host.
+  Assert `workspaceRoot` and all Session/ContextManager/lease/goal/inbox/Bus keys
+  remain the host state root, while `executionRoot` reaches tool contexts. Spy on
+  workspace model/config, permission, hook, plugin, skill, command, instruction,
+  LSP, AutoVerify, attachment, worktree, Git, local patch recovery, and local
+  background-process recovery seams and require zero calls. Assert browser and
+  prompt artifacts are rooted under the private state root.
+
+  Add prompt tests proving remote mode displays `executionRoot` as the working
+  directory but passes no project path to instruction, Auto Memory, skill, or
+  attachment loaders. Add compaction tests proving remote mode skips compaction
+  hooks and referenced-file restoration while retaining normal summarization.
+  Add a remote ApplyPatch regression proving the tool selects `executionRoot`,
+  never `workspaceRoot`, before any path planning or lock derivation.
+
+- [ ] **Step 2: Run Runtime RED**
+
+  ```bash
+  cd packages/cli
+  bun x vitest run --config vitest.config.ts --project=unit \
+    tests/unit/agent-runtime/agent/session-runtime.test.ts \
+    tests/unit/agent-runtime/acp/session.test.ts \
+    tests/unit/agent-runtime/prompts/system-prompt.test.ts \
+    tests/unit/context/compaction-service.test.ts
+  bun x vitest run --config vitest.config.ts --project=integration \
+    tests/integration/apply-patch-tool.test.ts
+  ```
+
+  Expected: the Runtime has no execution profile and reads the remote root as a
+  host project.
+
+- [ ] **Step 3: Implement the Runtime execution profile**
+
+  Add `workspace?: SessionWorkspace` to `SessionRuntimeOptions`; local callers
+  default to local roots. Keep `workspaceRoot` as host state, expose
+  `executionRoot`, `resourceRoot`, and `isRemoteWorkspace()`. In remote mode:
+
+  - snapshot the already-loaded Store model/provider catalog without workspace
+    discovery, keep only the process-level configured environment, create empty project rules,
+    hooks, commands, skills, subagents, and LSP resources, and do not resolve
+    workspace MCP/plugin configuration; explicit Session MCP servers remain;
+  - skip stale worktree, local patch, local shell, subagent/team, hook, LSP, and
+    AutoVerify initialization/recovery;
+  - do not construct an AttachmentCollector; make its accessor optional and let
+    Agent's existing no-collector branch preserve literal `@` text;
+  - create browser and prompt artifact stores with `hostStateRoot` as their
+    private storage root;
+  - set `ChatContext.workspaceRoot=hostStateRoot` and
+    `ChatContext.executionRoot=wireRoot`. `ExecutionContext.workspaceRoot` also
+    remains `hostStateRoot`; add required `executionRoot` and
+    `workspaceKind: 'acp-remote'`. Only the remote Read/Write/Edit/ApplyPatch and
+    ACP-terminal implementations consume `executionRoot`. Goal, MCP, task-list,
+    prompt-artifact, confirmation, and every other host-private consumer keep
+    using `workspaceRoot`;
+  - build prompts with no project path/resource loading and with
+    `environmentOptions.workingDirectory=executionRoot`; `resourceRoot` is not a
+    workspace configuration source and is used only as the host cwd of explicit
+    Client-supplied stdio MCP servers. Pass
+    `workspaceAccess: 'none'` to compaction so hooks and referenced-file I/O are
+    skipped while durable compaction still uses the state root.
+
+- [ ] **Step 4: Verify, review twice, and commit Runtime isolation**
+
+  Rerun Step 2, then:
+
+  ```bash
+  cd packages/cli
+  bun run type-check
+  bun x biome check src/agent/runtime/SessionWorkspace.ts \
+    src/agent/runtime/SessionRuntime.ts src/agent/resources/WorkspaceAgentResources.ts \
+    src/agent/resources/WorkspaceModelResources.ts src/agent/types.ts \
+    src/agent/Agent.ts src/agent/loop/executeLoopGenerator.ts \
+    src/tools/types/ExecutionTypes.ts src/context/CompactionService.ts \
+    src/prompts/builder.ts src/tools/builtin/file/applyPatch.ts \
+    tests/unit/agent-runtime/agent/session-runtime.test.ts \
+    tests/unit/agent-runtime/acp/session.test.ts \
+    tests/unit/agent-runtime/prompts/system-prompt.test.ts \
+    tests/unit/context/compaction-service.test.ts \
+    tests/integration/apply-patch-tool.test.ts
+  git diff --check
+  ```
+
+  Obtain independent Runtime-boundary and host-I/O security reviews, resolve all
+  Critical/Important findings, rerun the commands, and commit as
+  `fix(runtime): isolate ACP remote execution`.
+
+---
+
+### Task 5: Enforce the remote capability matrix and terminal boundary
+
+**Files:**
+- Modify: `packages/cli/src/agent/runtime/SessionRuntime.ts`
+- Modify: `packages/cli/src/tools/execution/ToolExecutor.ts`
+- Modify: `packages/cli/src/acp/AcpServiceContext.ts`
+- Modify: `packages/cli/src/acp/Session.ts`
+- Modify: `packages/cli/src/tools/builtin/shell/bash.ts`
+- Modify: `packages/cli/src/services/UserShellCommandService.ts`
+- Modify: `packages/cli/src/slash-commands/index.ts`
+- Modify: `packages/cli/src/slash-commands/types.ts`
+- Modify: `packages/cli/tests/unit/agent-runtime/acp/service-context.test.ts`
+- Modify: `packages/cli/tests/unit/agent-runtime/acp/session.test.ts`
+- Modify: `packages/cli/tests/unit/agent-runtime/agent/session-runtime.test.ts`
+- Modify: `packages/cli/tests/unit/agent-runtime/tools/tool-executor-filelock.test.ts`
+- Modify: `packages/cli/tests/unit/tooling/tools/builtin/bash.test.ts`
+
+- [ ] **Step 1: Write capability-matrix RED tests**
+
+  Cover `fs={none,read,write,read+write} × terminal={false,true}`. For remote
+  ownership assert both advertised declarations and crafted direct calls obey:
+
+  - Read requires read; Write/Edit/ApplyPatch require read+write; Bash requires
+    terminal;
+  - Glob, Grep, NotebookEdit, Task, TaskOutput, team/worktree tools, LSP,
+    MemoryRead/Write, ConfigTool, Skill, SlashCommand, WriteStdin, and KillShell
+    are absent and execution-stage rejected;
+  - no-terminal Bash and user shell call neither `createTerminal` nor host spawn;
+  - terminal-capable foreground Bash sends exact `wireRoot`, creates no host
+    durable ownership, and cannot auto-background; explicit background Bash is
+    rejected before `BackgroundShellManager`;
+  - an explicit unknown Session terminal lookup fails closed. ACP-local behavior
+    remains unchanged.
+
+  Send ordinary text and `resource.text` containing a host canary `@path`, then
+  invoke `/git`, `/review`, `/init`, `/memory`, a custom command, a plugin command,
+  and a user-invocable Skill. Assert zero host read/process/discovery calls and
+  that inline ACP content itself still reaches model context.
+
+- [ ] **Step 2: Run capability RED**
+
+  ```bash
+  cd packages/cli
+  bun x vitest run --config vitest.config.ts --project=unit \
+    tests/unit/agent-runtime/acp/service-context.test.ts \
+    tests/unit/agent-runtime/acp/session.test.ts \
+    tests/unit/agent-runtime/agent/session-runtime.test.ts \
+    tests/unit/agent-runtime/tools/tool-executor-filelock.test.ts \
+    tests/unit/tooling/tools/builtin/bash.test.ts
+  ```
+
+- [ ] **Step 3: Implement one fail-closed capability policy**
+
+  Filter the Session-owned base registry before it is visible to any main or side
+  conversation, and add the same `workspaceKind/capability` guard at the beginning
+  of ToolExecutor execution. Do not rely on a per-Agent blacklist. Add an
+  `UnavailableTerminalService` for remote fs without terminal capability; remote
+  sessions never instantiate or fall back to `LocalTerminalService`. In Bash,
+  reject remote background mode before manager admission, set handoff to zero,
+  and omit host durable ownership for ACP terminal calls.
+
+  Add a single remote-safe slash allowlist shared by command advertisement and
+  execution. It may include bounded Session/model controls that operate through
+  supplied callbacks, but excludes filesystem/Git/review/init/memory/hooks/plugins/
+  skills/agents/tasks/team/schedule/trust/custom/plugin commands. Never call
+  `resolveWorkspaceAgentResources()` from a remote slash request.
+
+- [ ] **Step 4: Verify, review twice, and commit capability isolation**
+
+  Rerun Step 2 plus the ACP remote integration suite, type-check, targeted Biome,
+  and `git diff --check`. Obtain independent capability-matrix and terminal/host
+  escape reviews, resolve every Critical/Important finding, and commit as
+  `fix(acp): fail closed on host-only capabilities`.
+
+---
+
+### Task 6: Separate exact ledger authority from collision fencing
 
 **Files:**
 - Modify: `packages/cli/src/acp/AcpFileSystemService.ts`
@@ -339,10 +756,10 @@
   identity, require exact+Session matches for write lease use and reconciliation,
   and keep collision-equivalent normal Reads as busy admission rather than
   promise/result coalescing. Change `RemoteTextMutation` to parse once and pass
-  the same `AcpRemotePath` to all lease operations. Until Task 5 supplies parsed
+  the same `AcpRemotePath` to all lease operations. Until Task 8 supplies parsed
   preflight entries, `applyPatchTransaction.ts` parses each change path once into
   its attempted-change state and uses that object for `beginRecovery()` and
-  `markUncertain()`; Task 5 replaces this transitional parse with
+  `markUncertain()`; Task 8 replaces this transitional parse with
   `AcpRemotePatchEntry.source`. Preserve deadlines, late settlement, ABA guards,
   reverse recovery, and 31+1 capacity semantics.
 
@@ -376,7 +793,7 @@
 
 ---
 
-### Task 4: Reject invalid remote single-file tools before side effects
+### Task 7: Reject invalid remote single-file tools before side effects
 
 **Files:**
 - Modify: `packages/cli/src/tools/execution/ToolExecutor.ts`
@@ -432,7 +849,7 @@
 
 - [ ] **Step 4: Verify GREEN, review twice, and commit**
 
-  Rerun the Task 4 RED commands, then run:
+  Rerun the Task 7 RED commands, then run:
 
   ```bash
   cd packages/cli
@@ -452,7 +869,7 @@
 
 ---
 
-### Task 5: Add one pure pre-lock remote ApplyPatch preflight
+### Task 8: Add one pure pre-lock remote ApplyPatch preflight
 
 **Files:**
 - Modify: `packages/cli/src/tools/builtin/file/applyPatch.ts`
@@ -536,7 +953,7 @@
 
 - [ ] **Step 4: Verify GREEN, review twice, and commit**
 
-  Rerun the Task 5 RED command plus:
+  Rerun the Task 8 RED command plus:
 
   ```bash
   cd packages/cli
@@ -560,7 +977,7 @@
   resolve every Critical/Important finding, rerun the commands, then commit as
   `fix(acp): preflight remote patch paths`.
 
-### Task 6: Prepare the final `0.10.128` candidate, qualify, and publish
+### Task 9: Prepare the final `0.10.128` candidate, qualify, and publish
 
 **Files:**
 - Modify: `docs/reference/acp-filesystem-request-lifecycle.md`
