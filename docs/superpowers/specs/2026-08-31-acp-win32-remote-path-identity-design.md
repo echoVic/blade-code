@@ -204,7 +204,11 @@ responsibilities. They must never collapse back into one untyped `cwd`:
   direct-child chain below the normalized storage root. Every Session storage
   operation enters through `withValidatedAcpRemoteStateScope(root, operation)`,
   which revalidates the scope before its first I/O and keeps all derived paths
-  inside the branded scope. In-process creation and lifecycle entry are
+  inside the branded scope. Existing string-based project/session path helpers
+  remain local-only and always escape into `projects/`; they never infer remote
+  authority from a path's shape. Only dedicated helpers that require the branded
+  `AcpRemoteStateScope` may derive direct transcript, inbox, goal, or lease
+  paths. In-process creation and lifecycle entry are
   serialized by digest so a replacement observed between checks fails closed.
   The configured storage root and the same OS account remain the local trust
   boundary; defending against a trusted same-account process replacing a path
@@ -266,6 +270,10 @@ only descriptor-bearing Sessions; an ACP-local list returns only local Sessions.
 Protocol responses map `cwd` back to `descriptor.wirePath`, never to
 `hostStateRoot`. Collision-equivalent but exact-distinct workspaces may share a
 bucket and must remain separate Session entries.
+An absent remote namespace is an empty catalog. Once the namespace exists, any
+owner, mode, symlink, realpath, or enumeration failure propagates as durable
+state corruption; catalog and projection code must not convert it to an empty
+remote result.
 
 On load, Blade derives the opaque `hostStateRoot` from the requested profile,
 reads the durable metadata there, validates the stored descriptor, and requires

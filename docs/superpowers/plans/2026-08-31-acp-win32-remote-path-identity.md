@@ -207,9 +207,11 @@
   kinds, styles, hashes, and a descriptor whose identities do not equal a fresh
   parse of `wirePath` must fail with one redacted durable-state error.
 
-  Add storage helper tests proving `getProjectStoragePath(hostStateRoot)` returns
-  that direct protected scope while ordinary local workspaces keep the existing
-  escaped `projects/` layout. Enumerating Session storage scopes must include
+  Add storage helper tests proving ordinary string-based project/session helpers
+  remain local-only and escape even a remote-looking string into `projects/`.
+  Dedicated helpers requiring the branded `AcpRemoteStateScope` return the
+  direct protected scope only inside the async validation callback. Enumerating
+  Session storage scopes must include
   valid remote digest directories, ignore malformed names and symlinks, and not
   expose the remote namespace from `listProjectDirectories()`.
 
@@ -233,16 +235,22 @@
 
   ```ts
   export function isAcpRemoteHostStateRoot(value: string): boolean;
-  export function getSessionStoragePath(projectPath: string): string;
+  export function getAcpRemoteSessionStoragePath(
+    scope: AcpRemoteStateScope
+  ): string;
+  export function getAcpRemoteSessionFilePath(
+    scope: AcpRemoteStateScope,
+    sessionId: string
+  ): string;
   export async function listSessionStorageScopes(): Promise<
     Array<{ storagePath: string; projectPath: string; kind: 'local' | 'acp-remote' }>
   >;
   ```
 
-  `getSessionStoragePath()` returns a validated remote state scope directly and
-  otherwise delegates to the unchanged local `getProjectStoragePath()`. Route
-  transcript, inbox, goal, SessionLease, durable process-lease, and PersistentStore
-  paths through this one helper. Use `lstat`, owner/mode checks, realpath equality,
+  Existing string-based helpers retain local semantics. Route remote transcript,
+  inbox, goal, SessionLease, durable process-lease, and PersistentStore paths
+  through the branded helpers inside the async scope gate. Use `lstat`,
+  owner/mode checks, realpath equality,
   and a keyed in-process creation mutex for the configured root, fixed namespace,
   and leaf; do not follow a symlink at any checked level. Route each remote
   SessionService, PersistentStore, JSONL, inbox, goal, SessionLease, durable
@@ -252,6 +260,9 @@
   `PersistentStore.createEvent()` must omit
   `gitBranch` for a remote state scope. Do not infer remote state from arbitrary
   paths beneath the storage root.
+  A missing remote namespace enumerates as empty. Any other remote namespace or
+  leaf validation/enumeration error must propagate; do not catch it as an empty
+  list.
 
 - [ ] **Step 4: Write SessionService descriptor RED tests**
 
