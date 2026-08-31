@@ -24,6 +24,8 @@
 * Reference
   * [CLI Commands](/en/reference/cli-commands.md)
   * [Tool List](/en/reference/tool-list.md)
+  * [ACP Filesystem Request Lifecycle](/en/reference/acp-filesystem-request-lifecycle.md)
+  * [ACP Filesystem Request Lifecycle Qualification Evidence](/en/testing/acp-filesystem-request-lifecycle-evidence.md)
   * [Tool Concurrency Model](/en/reference/tool-concurrency.md)
   * [Atomic ApplyPatch](/en/reference/atomic-apply-patch.md)
   * [Native Read-Only Code Review](/en/reference/native-code-review.md)

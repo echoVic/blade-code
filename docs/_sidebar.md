@@ -24,6 +24,8 @@
 * 参考
   * [CLI 命令](reference/cli-commands.md)
   * [工具列表](reference/tool-list.md)
+  * [ACP Filesystem Request Lifecycle](reference/acp-filesystem-request-lifecycle.md)
+  * [ACP Filesystem Request Lifecycle 资格验证证据](testing/acp-filesystem-request-lifecycle-evidence.md)
   * [工具并发模型](reference/tool-concurrency.md)
   * [Atomic ApplyPatch](reference/atomic-apply-patch.md)
   * [Native Read-Only Code Review](reference/native-code-review.md)

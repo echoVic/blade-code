@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.127] - 2026-08-31
+
+### Added
+- Added bilingual reference and evidence pages for ACP filesystem request lifecycle, documenting the public typed ACP request API, lifecycle bounds, request-slot accounting, generation-safe quarantine, and the explicit non-goal of ACP receipt UI projection.
+
+### Fixed
+- Bounded ACP remote text requests to public `AgentSideConnection.request(...)` calls with cooperative cancellation, a 30-second default request budget, a reserved recovery lane, and generation-safe `pending-write` / `needs-read` fencing on same-connection normalized paths.
+- Required remote Write/Edit to acquire mutation leases before preflight and kept remote ApplyPatch ordered as precheck before host-private state, then workspace lock, sorted opaque locks, atomic leases, bounded forward execution, and reverse verified compensation.
+- Preserved local and ACP-local filesystem semantics, kept remote ApplyPatch update-only with the existing 100-operation cap, and continued to emit stable sanitized uncertainty metadata instead of ACP-specific receipt UI.
+
+### Tests
+- Recorded Tasks 1-5 causal REDs, focused unit/integration/Web fresh evidence, and independent specification plus quality review verdicts for the complete request lifecycle patch.
+- Recorded zero-retry real ACP qualification for `deepseek-v4-flash` and `deepseek-v4-pro` using canonical field-only SHA-256 evidence.
+
 ## [0.10.126] - 2026-08-30
 
 ### Added

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.127] - 2026-08-31
+
+### 新增
+- 新增 ACP filesystem request lifecycle 的双语 reference 与 evidence 页面，记录公开 typed ACP request API、生命周期预算、request slot 计数、generation-safe quarantine，以及 ACP receipt UI projection 的明确 non-goal。
+
+### 修复
+- 将 ACP remote 文本请求统一收紧到公开 `AgentSideConnection.request(...)` 调用、cooperative cancellation、默认 30 秒 request budget、保留 recovery lane，以及同 connection normalized path 上 generation-safe 的 `pending-write` / `needs-read` fence。
+- 让 remote Write / Edit 在 preflight 前先获取 mutation lease，并保持 remote ApplyPatch 的顺序为先 precheck、后 host-private state，再进入 workspace lock、sorted opaque locks、atomic leases、有界 forward 执行与逆序 verified compensation。
+- 保持 local 与 ACP-local 文件语义不变，继续将 remote ApplyPatch 限定为 update-only 和既有 100 operation cap，并维持稳定、脱敏的 uncertainty metadata，而不是引入 ACP 专属 receipt UI。
+
+### 测试
+- 记录 Tasks 1-5 的 causal RED、focused unit/integration/Web fresh evidence，以及完整 request lifecycle patch 的独立规格审查和质量审查结论。
+- 记录 `deepseek-v4-flash` 与 `deepseek-v4-pro` 的零重试真实 ACP qualification，并只保留 canonical field-only SHA-256 evidence。
+
 ## [0.10.126] - 2026-08-30
 
 ### 新增
