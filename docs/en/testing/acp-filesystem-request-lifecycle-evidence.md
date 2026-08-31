@@ -7,6 +7,9 @@
 - Implementation plan:
   `docs/superpowers/plans/2026-08-31-acp-filesystem-request-lifecycle.md`
 - Implementation commit range: `d94afa48` through `5cc23972`
+- Release-candidate closure commit: `1f13637a`, a Biome format-only fix across
+  13 PTY helper/test files to close the first tag CI format gate. It does not
+  change ACP runtime behavior.
 - Scope: record the release-metadata evidence for ACP filesystem request
   lifecycle, covering the causal REDs for Tasks 1-5, implementation
   responsibilities, focused fresh results, real qualification, independent
@@ -141,6 +144,7 @@ test was not used merely to manufacture RED.
 | `686578f9` | Tighten the exact recovery-lease fence and complete pending rollback settlement |
 | `17c28954` | Fix the reject-first cancel-listener and unhandled regression |
 | `5cc23972` | Close the patch with a lint-compatible no-op helper |
+| `1f13637a` | Apply a Biome format-only fix across 13 PTY helper/test files to close the first tag CI format gate without changing ACP behavior |
 
 ## What This Implementation Proves
 
@@ -247,6 +251,7 @@ Result: `1 file`, `21 tests passed`, exit code `0`, duration `3.58s`.
 
 ### Repo-root type-check / lint / build / test:all
 
+- `bun run format:check`: exit code `0`. It checked `1509` files.
 - `bun run type-check`: exit code `0`. CLI, VSCode, and Web all exited `0`.
 - `bun run lint`: exit code `0`. CLI checked `1314` files with no fixes;
   VSCode exited `0`; Web checked `193` files with no fixes.
@@ -256,9 +261,9 @@ Result: `1 file`, `21 tests passed`, exit code `0`, duration `3.58s`.
   for assets larger than `500 kB` after minification.
 - `bun run test:all`: exit code `0`.
   non-performance: `Test Files 456 passed | 92 skipped (548)`,
-  `Tests 4990 passed | 84 skipped (5074)`, duration `408.69s`.
+  `Tests 4990 passed | 84 skipped (5074)`, duration `403.94s`.
   performance: `Test Files 4 passed | 1 skipped (5)`,
-  `Tests 9 passed | 1 skipped (10)`, duration `7.22s`.
+  `Tests 9 passed | 1 skipped (10)`, duration `6.02s`.
 
 ### Task4 reviewer fresh rerun
 
@@ -322,6 +327,10 @@ serialization. They are fresh outputs of this qualification round, but they are
 not values printed directly by real-API stdout. The evidence retains no raw
 path, raw content, or other client-private material.
 
+This real `2/2` qualification still corresponds to the ACP runtime's final
+behavioral change set. After it, only the format-only `1f13637a` closure and
+the current bilingual documentation/release-metadata updates were added.
+
 ### Final real rerun after release metadata
 
 Command:
@@ -369,6 +378,7 @@ Together these reviews confirm:
 Release-metadata verification completed with no failed commands in the recorded
 runs:
 
+- `bun run format:check`: exit `0`; checked `1509` files.
 - `bun run type-check`: exit `0` for CLI, VSCode, and Web.
 - `bun run lint`: exit `0`; CLI checked `1314` files with no fixes, VSCode
   exit `0`, Web checked `193` files with no fixes.
@@ -377,9 +387,9 @@ runs:
   chunk-size warning remained.
 - `bun run test:all`: exit `0`.
   non-performance: `Test Files 456 passed | 92 skipped (548)`,
-  `Tests 4990 passed | 84 skipped (5074)`, duration `408.69s`.
+  `Tests 4990 passed | 84 skipped (5074)`, duration `403.94s`.
   performance: `Test Files 4 passed | 1 skipped (5)`,
-  `Tests 9 passed | 1 skipped (10)`, duration `7.22s`.
+  `Tests 9 passed | 1 skipped (10)`, duration `6.02s`.
 - Final real qualification rerun: exit `0`, `1 file`, `2 tests passed`,
   Flash `6.015s`, Pro `4.380s`, overall `13.35s`, framework retry `0`,
   model override retry `0`.

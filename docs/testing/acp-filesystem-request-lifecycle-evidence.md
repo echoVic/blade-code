@@ -5,6 +5,8 @@
 - 设计规格：`docs/superpowers/specs/2026-08-31-acp-filesystem-request-lifecycle-design.md`
 - 实施计划：`docs/superpowers/plans/2026-08-31-acp-filesystem-request-lifecycle.md`
 - 实现提交范围：`d94afa48` 到 `5cc23972`
+- release-candidate closure commit：`1f13637a`，对 13 个 PTY helper / test 文件做
+  Biome 纯格式修复，用于关闭首次 tag CI 的 format gate；不改变 ACP runtime 行为。
 - 范围：记录 ACP filesystem request lifecycle 的 release-metadata 证据，
   覆盖 Tasks 1-5 的因果 RED、实现职责、focused fresh 结果、真实 qualification、
   独立审查结论，以及最终仓库级验证结果。
@@ -130,6 +132,7 @@ characterization 不是这一阶段的因果 RED，真实 real-api 也不用于�
 | `686578f9` | 收紧 exact recovery lease fence，并补齐 pending rollback settlement |
 | `17c28954` | 修复 reject-first cancel listener 与 unhandled regression |
 | `5cc23972` | 以 lint-compatible no-op helper 收口实现细节 |
+| `1f13637a` | 对 13 个 PTY helper / test 文件做 Biome format-only 修复，关闭首次 tag CI format gate，不改变 ACP 行为 |
 
 ## 这轮实现证明了什么
 
@@ -226,6 +229,7 @@ bun x vitest run --config vitest.config.ts \
 
 ### Repo-root type-check / lint / build / test:all
 
+- `bun run format:check`：退出码 `0`。共检查 `1509` 个文件。
 - `bun run type-check`：退出码 `0`。CLI、VSCode 与 Web 均退出 `0`。
 - `bun run lint`：退出码 `0`。CLI 检查 `1314` 个文件、无自动修复；VSCode 退出 `0`；
   Web 检查 `193` 个文件、无自动修复。
@@ -234,9 +238,9 @@ bun x vitest run --config vitest.config.ts \
   chunk 大于 `500 kB`。
 - `bun run test:all`：退出码 `0`。
   non-performance：`Test Files 456 passed | 92 skipped (548)`，
-  `Tests 4990 passed | 84 skipped (5074)`，时长 `408.69s`。
+  `Tests 4990 passed | 84 skipped (5074)`，时长 `403.94s`。
   performance：`Test Files 4 passed | 1 skipped (5)`，
-  `Tests 9 passed | 1 skipped (10)`，时长 `7.22s`。
+  `Tests 9 passed | 1 skipped (10)`，时长 `6.02s`。
 
 ### Task4 reviewer fresh rerun
 
@@ -297,6 +301,9 @@ canonical evidence fields：
 它们是本轮 fresh qualification 产物，但不是 real stdout 直接打印值；证据页不保留
 raw path、raw content 或其他 client-private material。
 
+这组 real `2/2` qualification 仍然对应 ACP runtime 最终行为变更后的资格验证；
+其后新增的仅有 `1f13637a` 的 format-only 修复和当前双语文档 / release metadata 更新。
+
 ### Final real rerun after release metadata
 
 命令：
@@ -340,6 +347,7 @@ REAL_API_TEST=1 REAL_API_RELEASE_MATRIX=1 bun x vitest run \
 <!-- FINAL_REPOSITORY_VERIFICATION_BEGIN -->
 Release-metadata verification completed with no failed commands in the recorded runs:
 
+- `bun run format:check`: exit `0`; checked `1509` files.
 - `bun run type-check`: exit `0` for CLI, VSCode, and Web.
 - `bun run lint`: exit `0`; CLI checked `1314` files with no fixes, VSCode exit `0`,
   Web checked `193` files with no fixes.
@@ -348,9 +356,9 @@ Release-metadata verification completed with no failed commands in the recorded 
   warning remained.
 - `bun run test:all`: exit `0`.
   non-performance: `Test Files 456 passed | 92 skipped (548)`,
-  `Tests 4990 passed | 84 skipped (5074)`, duration `408.69s`.
+  `Tests 4990 passed | 84 skipped (5074)`, duration `403.94s`.
   performance: `Test Files 4 passed | 1 skipped (5)`,
-  `Tests 9 passed | 1 skipped (10)`, duration `7.22s`.
+  `Tests 9 passed | 1 skipped (10)`, duration `6.02s`.
 - Final real qualification rerun: exit `0`, `1 file`, `2 tests passed`,
   Flash `6.015s`, Pro `4.380s`, overall `13.35s`, framework retry `0`,
   model override retry `0`.
