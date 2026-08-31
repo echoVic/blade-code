@@ -1198,4 +1198,125 @@ describe('FilePreview', () => {
     expect(container.textContent).not.toContain('write acknowledged');
     expect(container.textContent).not.toContain('write verified');
   });
+
+  test('keeps generic remote uncertainty metadata from changing FilePreview diff rendering', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    const { useAppStore } = await import('../../../src/store/AppStore');
+    const diffSnippet = JSON.stringify({
+      patch:
+        '--- remote-output.txt\n' +
+        '+++ remote-output.txt\n' +
+        '@@\n' +
+        '-old remote line\n' +
+        '+new remote line',
+    });
+    useSessionStore.setState({
+      messages: [
+        {
+          id: 'remote-write-uncertain-result',
+          role: 'assistant',
+          content: '',
+          timestamp: 1,
+          metadata: {
+            kind: 'tool_result',
+            toolName: 'Write',
+            summary: '写入 remote-output.txt，但远端状态仍需确认',
+            output: 'remote write returned generic uncertainty metadata',
+            metadata: {
+              kind: 'edit',
+              file_path: '/remote/workspace/remote-output.txt',
+              oldContent: 'old remote line\n',
+              newContent: 'new remote line\n',
+              diff_snippet: `<<<DIFF>>>${diffSnippet}<<</DIFF>>>`,
+              write_acknowledged: false,
+              write_verified: false,
+              sideEffectsUncertain: true,
+              requiresRead: true,
+            },
+          },
+        },
+      ],
+    });
+    fetchMock.mockResolvedValue(createJsonResponse([]));
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('remote-output.txt');
+    });
+
+    await act(async () => {
+      useAppStore.getState().openFilePreview({
+        tab: 'diff',
+        targetPath: '/remote/workspace/remote-output.txt',
+      });
+    });
+
+    const diffItem = await vi.waitFor(() => {
+      const item = container.querySelector<HTMLElement>(
+        '[data-preview-diff-path="/remote/workspace/remote-output.txt"]'
+      );
+      expect(item).toBeTruthy();
+      return item!;
+    });
+    const diffToggle = diffItem.querySelector<HTMLButtonElement>('button');
+    expect(diffToggle).toBeTruthy();
+    await vi.waitFor(() => {
+      expect(diffToggle).toBe(document.activeElement);
+    });
+
+    expect(
+      container.querySelectorAll(
+        '[data-preview-diff-path="/remote/workspace/remote-output.txt"]'
+      )
+    ).toHaveLength(1);
+    expect(
+      container.textContent?.match(/\+\+\+ remote-output\.txt/g) ?? []
+    ).toHaveLength(1);
+    expect(container.textContent).toContain(
+      '写入 remote-output.txt，但远端状态仍需确认'
+    );
+    expect(useAppStore.getState().previewTargetPath).toBe(
+      '/remote/workspace/remote-output.txt'
+    );
+
+    await act(async () => {
+      diffToggle?.click();
+    });
+    await vi.waitFor(() => {
+      expect(
+        container.querySelector<HTMLElement>(
+          '[data-preview-diff-path="/remote/workspace/remote-output.txt"]'
+        )
+      ).toBeTruthy();
+    });
+    await act(async () => {
+      diffToggle?.click();
+    });
+    await vi.waitFor(() => {
+      expect(diffToggle).toBe(document.activeElement);
+    });
+
+    expect(
+      container.querySelectorAll(
+        '[data-preview-diff-path="/remote/workspace/remote-output.txt"]'
+      )
+    ).toHaveLength(1);
+    expect(
+      container.textContent?.match(/\+\+\+ remote-output\.txt/g) ?? []
+    ).toHaveLength(1);
+    expect(useAppStore.getState().previewTargetPath).toBe(
+      '/remote/workspace/remote-output.txt'
+    );
+    expect(container.textContent).not.toContain('ACP');
+    expect(container.textContent).not.toContain('Retry');
+    expect(container.textContent).not.toContain('retry');
+    expect(container.textContent).not.toContain('reconcile');
+    expect(container.textContent).not.toContain('write acknowledged');
+    expect(container.textContent).not.toContain('write verified');
+    expect(container.textContent).not.toContain('Side effects: uncertain');
+    expect(container.textContent).not.toContain('inspect before retrying');
+  });
 });
