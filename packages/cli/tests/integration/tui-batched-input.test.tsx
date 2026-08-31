@@ -241,6 +241,7 @@ describe('TUI batched input integration', () => {
         stderr: stderr as unknown as NodeJS.WriteStream,
         exitOnCtrlC: false,
         patchConsole: false,
+        debug: true,
       }
     );
     activeRenders.push(instance);
