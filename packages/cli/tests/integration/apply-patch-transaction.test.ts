@@ -28,6 +28,7 @@ import {
   commitPreparedRemotePatchTransactionForTest,
   flushAsyncSteps,
   prepareRemotePatchTransactionForTest,
+  waitForMicrotaskCondition,
 } from '../support/acp/remotePatchTestHarness.js';
 
 const roots: string[] = [];
@@ -1487,6 +1488,113 @@ describe('ApplyPatch ACP remote transaction', () => {
       await vi.runAllTimersAsync();
     } finally {
       releaseBlockedCurrentWrite?.();
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops before dispatching the next forward change once the absolute forward deadline has expired', async () => {
+    vi.useFakeTimers({ now: 40_000 });
+    try {
+      const { service } = createAcpRemoteFileSystem(
+        new Map([
+          ['/remote/first.ts', 'const first = false;\n'],
+          ['/remote/second.ts', 'const second = false;\n'],
+          ['/remote/third.ts', 'const third = false;\n'],
+          ['/remote/fourth.ts', 'const fourth = false;\n'],
+        ]),
+        'forward-deadline-stops-next-change'
+      );
+      const writeCalls: Array<{ path: string; purpose: string }> = [];
+      const originalWriteTextFile = service.writeTextFile.bind(service);
+      vi.spyOn(service, 'writeTextFile').mockImplementation(
+        async (filePath, content, options) => {
+          void content;
+          writeCalls.push({
+            path: filePath,
+            purpose: options?.purpose ?? 'mutation',
+          });
+          return originalWriteTextFile(filePath, content, options);
+        }
+      );
+      const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** Update File: third.ts
+@@
+-const third = false;
++const third = true;
+*** Update File: fourth.ts
+@@
+-const fourth = false;
++const fourth = true;
+*** End Patch`);
+      const readbackCalls: Array<{ path: string; purpose: string }> = [];
+      const originalReadTextFileIfExists = service.readTextFileIfExists.bind(service);
+      const prepared = await prepareRemotePatchTransactionForTest(
+        operations,
+        '/remote',
+        service
+      );
+      vi.spyOn(service, 'readTextFileIfExists').mockImplementation(
+        async (filePath, options) => {
+          readbackCalls.push({
+            path: filePath,
+            purpose: options?.purpose ?? 'preflight',
+          });
+          const result = await originalReadTextFileIfExists(filePath, options);
+          if (filePath === '/remote/third.ts' && options?.purpose === 'readback') {
+            vi.setSystemTime(prepared.forwardDeadlineAt + 1);
+          }
+          return result;
+        }
+      );
+      const commitPromise = commitPreparedRemotePatchTransactionForTest(
+        prepared,
+        service
+      );
+
+      let thrown: unknown;
+      try {
+        await commitPromise;
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AcpRemotePatchTransactionError);
+      if (!(thrown instanceof AcpRemotePatchTransactionError)) {
+        throw new Error('expected AcpRemotePatchTransactionError');
+      }
+      expect(thrown.sideEffectsUncertain).toBe(false);
+      expect(thrown.errors[0]).toMatchObject({
+        message: 'ACP remote patch forward request budget expired',
+      });
+      expect(readbackCalls).toContainEqual({
+        path: '/remote/third.ts',
+        purpose: 'readback',
+      });
+      expect(
+        writeCalls
+          .filter((entry) => entry.purpose === 'mutation')
+          .map((entry) => entry.path)
+      ).toEqual(['/remote/first.ts', '/remote/second.ts', '/remote/third.ts']);
+      const rollbackPaths = writeCalls
+        .filter((entry) => entry.purpose === 'rollback')
+        .map((entry) => entry.path);
+      expect(rollbackPaths.length).toBeGreaterThanOrEqual(1);
+      expect(rollbackPaths).toContain('/remote/second.ts');
+      expect(
+        writeCalls.some(
+          (entry) => entry.path === '/remote/fourth.ts' && entry.purpose === 'mutation'
+        )
+      ).toBe(false);
+    } finally {
+      await vi.runAllTimersAsync();
       vi.useRealTimers();
     }
   });
