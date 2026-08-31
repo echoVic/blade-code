@@ -6,7 +6,6 @@
  */
 
 import { createHash } from 'node:crypto';
-import path from 'node:path';
 import type {
   AgentSideConnection,
   FileSystemCapabilities,
@@ -28,6 +27,9 @@ import {
   createAcpRemoteConnectionPathIdentity,
   getAcpFileRequestCoordinator,
 } from './AcpFileRequestCoordinator.js';
+import { normalizeAcpRemotePath } from './AcpRemotePath.js';
+
+export { normalizeAcpRemotePath } from './AcpRemotePath.js';
 
 const logger = createLogger(LogCategory.AGENT);
 const MAX_REMOTE_ACCESS_RECORDS = 1024;
@@ -44,25 +46,6 @@ export interface RemoteFileAccessRecord {
 }
 
 export type RemoteAccessStatus = 'missing' | 'current' | 'modified';
-
-export function normalizeAcpRemotePath(filePath: string): string {
-  if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
-    throw new Error(
-      'ACP remote file path must be absolute; UNC paths are not supported'
-    );
-  }
-
-  if (/^[A-Za-z]:[\\/]/.test(filePath)) {
-    const normalized = path.win32.normalize(filePath);
-    return `${normalized[0].toUpperCase()}${normalized.slice(1)}`;
-  }
-
-  if (filePath.startsWith('/')) {
-    return path.posix.normalize(filePath);
-  }
-
-  throw new Error('ACP remote file path must be absolute');
-}
 
 export class AcpFileSystemCapabilityError extends Error {
   readonly name = 'AcpFileSystemCapabilityError';
