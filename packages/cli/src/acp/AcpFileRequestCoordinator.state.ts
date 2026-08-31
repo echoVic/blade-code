@@ -504,13 +504,21 @@ export function createMutationLease(
         generation: nextGeneration,
         pathIdentity,
         finish(outcome: 'restored' | 'uncertain'): void {
-          recoveryMetadata.finished = true;
+          if (recoveryMetadata.finished) {
+            return;
+          }
           const current = state.mutationStates.get(pathIdentity);
           if (
             !current ||
             current.sessionId !== sessionId ||
-            current.generation !== nextGeneration
+            current.generation !== nextGeneration ||
+            current.leaseKind !== 'recovery' ||
+            current.leaseId !== recoveryLeaseId
           ) {
+            return;
+          }
+          recoveryMetadata.finished = true;
+          if (current.kind === 'pending-write') {
             return;
           }
           if (outcome === 'restored') {

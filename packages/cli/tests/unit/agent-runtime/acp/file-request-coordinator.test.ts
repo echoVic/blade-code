@@ -921,6 +921,100 @@ describe('AcpFileRequestCoordinator', () => {
     currentAfterRecovery.release();
   });
 
+  it('ignores stale recovery finish calls after state deletion and generation reuse on the same session/path', async () => {
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp.client({ name: 'coordinator-stale-recovery-finish-client' })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const path = '/repo/stale-recovery-finish.txt';
+
+    const firstLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    firstLease.markUncertain(path);
+    const firstRecovery = firstLease.beginRecovery(path);
+    firstRecovery.finish('restored');
+    firstRecovery.finish('restored');
+    firstLease.release();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 0,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    const secondLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    secondLease.markUncertain(path);
+    const secondRecovery = secondLease.beginRecovery(path);
+    expect(secondLease.isCurrent(path)).toBe(false);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+    await expect(
+      Promise.resolve().then(() => coordinator.beginUserRead(path, 'session-a'))
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+    await expect(
+      Promise.resolve().then(() =>
+        coordinator.tryAcquireMutationLease([path], 'session-b')
+      )
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+
+    firstRecovery.finish('restored');
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    firstRecovery.finish('uncertain');
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    await expect(
+      Promise.resolve().then(() => coordinator.beginUserRead(path, 'session-a'))
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+
+    secondRecovery.finish('uncertain');
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 1,
+    });
+    secondRecovery.finish('restored');
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 1,
+    });
+
+    const permit = coordinator.beginUserRead(path, 'session-a');
+    expect(permit.lane).toBe('recovery');
+    permit.fail();
+    secondLease.release();
+  });
+
   it('does not let a stale active lease release delete a new lease after markDefinite removed the old state', async () => {
     const harness = trackHarness(
       createPairedAcpAppHarness(

@@ -432,6 +432,133 @@ describe('ApplyPatch crash recovery and cross-process lock', () => {
     }
   });
 
+  it('keeps a pending rollback write fenced until its late settlement instead of downgrading it to needs-read early', async () => {
+    vi.useFakeTimers({ now: 2_000 });
+    try {
+      const files = new Map<string, string>([
+        ['/remote/first.ts', 'const first = false;\n'],
+        ['/remote/second.ts', 'const second = false;\n'],
+      ]);
+      const { client, service, harness } = createAcpRemoteFileSystemForPatchTest(
+        files,
+        'pending-rollback-stays-pending-write'
+      );
+      remoteHarnesses.push(harness);
+      const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+      const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+      const prepared = await prepareRemotePatchTransactionForTest(
+        operations,
+        '/remote',
+        service
+      );
+
+      client.enqueueWriteBehavior({ kind: 'apply-and-ack' });
+      client.enqueueWriteBehavior({
+        kind: 'leave-old-and-throw',
+        error: new Error('forward second write failed'),
+      });
+      const blockedRollbackWrite = client.enqueueObservedBlockedWrite({
+        mode: 'ignore-cancel-until-release',
+      });
+      let commitSettled = false;
+      const commitPromise = commitPreparedRemotePatchTransactionForTest(
+        prepared,
+        service
+      );
+      void commitPromise.finally(() => {
+        commitSettled = true;
+      });
+
+      const rollbackWriteObservation = await blockedRollbackWrite.started;
+      expect(rollbackWriteObservation.kind).toBe('write');
+      const rollbackWriteRequest = client.requests.at(-1);
+      expect(rollbackWriteRequest).toEqual({
+        kind: 'write',
+        request: {
+          path: '/remote/first.ts',
+          content: 'const first = false;\n',
+          sessionId: 'pending-rollback-stays-pending-write',
+        },
+      });
+      expect(rollbackWriteObservation.settled).toBe('pending');
+
+      await vi.advanceTimersByTimeAsync(ACP_REMOTE_PATCH_COMPENSATION_TIMEOUT_MS + 1);
+      expect(commitSettled).toBe(true);
+      await expect(commitPromise).rejects.toMatchObject({
+        name: 'AcpRemotePatchTransactionError',
+        sideEffectsUncertain: true,
+      });
+
+      expect(coordinator.getStatsForTests()).toMatchObject({
+        pendingWrites: 1,
+        needsRead: 0,
+      });
+      await expect(
+        service.readTextFileForUser('/remote/first.ts', {
+          deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        })
+      ).rejects.toMatchObject({
+        reason: 'busy',
+        dispatched: false,
+        requestPending: false,
+        requiresRead: true,
+      });
+      await expect(
+        Promise.resolve().then(() =>
+          service.tryAcquireMutationLease(['/remote/first.ts'])
+        )
+      ).rejects.toMatchObject({
+        reason: 'busy',
+        dispatched: false,
+        requestPending: false,
+        requiresRead: true,
+      });
+      expect(
+        client.requests
+          .filter(
+            (request) =>
+              request.kind === 'write' && request.request.path === '/remote/first.ts'
+          )
+          .map((request) => request.request)
+      ).toEqual([
+        {
+          path: '/remote/first.ts',
+          content: 'const first = true;\n',
+          sessionId: 'pending-rollback-stays-pending-write',
+        },
+        {
+          path: '/remote/first.ts',
+          content: 'const first = false;\n',
+          sessionId: 'pending-rollback-stays-pending-write',
+        },
+      ]);
+
+      blockedRollbackWrite.release();
+      await vi.runAllTimersAsync();
+      await waitForMicrotaskCondition(
+        () =>
+          coordinator.getStatsForTests().pendingWrites === 0 &&
+          coordinator.getStatsForTests().needsRead === 1
+      );
+
+      const freshRead = service.readTextFileForUser('/remote/first.ts', {
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+      });
+      await expect(freshRead).resolves.toBe('const first = false;\n');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rejects a late recovery read as stale and preserves the newer needs-read fence', async () => {
     vi.useFakeTimers({ now: 5_000 });
     try {

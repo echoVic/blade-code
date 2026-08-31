@@ -334,6 +334,88 @@ describe('ACP filesystem request lifecycle', () => {
     expect(unhandled).toEqual([]);
   });
 
+  it('cleans up cooperate-with-cancel abort listeners after outcome resolves first', async () => {
+    const client = new ControlledFileClient();
+    client.files.set('/repo/cooperate.txt', 'cooperate content');
+    const blocked = client.enqueueObservedBlockedRead({
+      mode: 'cooperate-with-cancel',
+    });
+    const harness = trackHarness(createPairedAcpAppHarness(client.createApp()));
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const controller = new AbortController();
+
+    const pending = coordinator.runRequest({
+      operation: 'read',
+      purpose: 'user-read',
+      sessionId: 'session-a',
+      pathIdentity: client.pathIdentityFor('/repo/cooperate.txt'),
+      deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+      signal: controller.signal,
+      dispatch: (cancellationSignal) =>
+        harness.agentConnection.request(
+          acp.CLIENT_METHODS.fs_read_text_file,
+          { path: '/repo/cooperate.txt', sessionId: 'session-a' },
+          { cancellationSignal }
+        ),
+    });
+
+    const originalAddEventListener = AbortSignal.prototype.addEventListener;
+    const originalRemoveEventListener = AbortSignal.prototype.removeEventListener;
+    const addCalls: AbortSignal[] = [];
+    const removeCalls: AbortSignal[] = [];
+    const addSpy = vi
+      .spyOn(AbortSignal.prototype, 'addEventListener')
+      .mockImplementation(function (
+        this: AbortSignal,
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | AddEventListenerOptions
+      ): void {
+        if (type === 'abort') {
+          addCalls.push(this);
+        }
+        return originalAddEventListener.call(this, type, listener, options);
+      });
+    const removeSpy = vi
+      .spyOn(AbortSignal.prototype, 'removeEventListener')
+      .mockImplementation(function (
+        this: AbortSignal,
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | EventListenerOptions
+      ): void {
+        if (type === 'abort') {
+          removeCalls.push(this);
+        }
+        return originalRemoveEventListener.call(this, type, listener, options);
+      });
+    try {
+      const observation = await blocked.started;
+      blocked.release();
+      await expect(pending).resolves.toEqual({ content: 'cooperate content' });
+      expect(observation.settled).toBe('fulfilled');
+      expect(observation.settledAfterCancel).toBe(false);
+      const signalAdds = addCalls.filter(
+        (signal) => signal === observation.signal
+      ).length;
+      const signalRemoves = removeCalls.filter(
+        (signal) => signal === observation.signal
+      ).length;
+      expect(signalAdds).toBe(2);
+      expect(signalRemoves).toBe(1);
+
+      controller.abort(new Error('late abort after settle'));
+      await flushAsyncSteps();
+      expect(observation.cancelled).toBe(false);
+      expect(observation.settled).toBe('fulfilled');
+      expect(observation.settledAfterCancel).toBe(false);
+      expect(unhandled).toEqual([]);
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
+  });
+
   it('releases ToolExecutor lock at the local boundary while coordinator write fence remains', async () => {
     const root = await createWorkspace('blade-acp-request-lifecycle-locks-');
     roots.push(root);
