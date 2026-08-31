@@ -840,6 +840,132 @@ describe('ApplyPatch builtin tool', () => {
     );
   });
 
+  it('remote ApplyPatch 在 pending write uncertainty 下返回 exact uncertain metadata', async () => {
+    const sessionId = 'remote-patch-pending-current-metadata';
+    const remoteFiles = new Map([
+      ['C:\\workspace\\first.ts', 'const first = false;\n'],
+      ['C:\\workspace\\second.ts', 'const second = false;\n'],
+      ['C:\\workspace\\third.ts', 'const third = false;\n'],
+    ]);
+    createRemotePatchSession({
+      sessionId,
+      workspaceRoot: 'C:\\workspace',
+      files: remoteFiles,
+    });
+    vi.spyOn(applyPatchTransaction, 'commitRemotePatchTransaction').mockRejectedValue(
+      new applyPatchTransaction.AcpRemotePatchTransactionError(
+        [
+          Object.assign(new Error('pending write requires read'), {
+            name: 'AcpRemoteMutationError',
+            requestPending: true,
+            requiresRead: true,
+            sideEffectsUncertain: true,
+          }),
+        ],
+        true
+      )
+    );
+
+    const result = await applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** Update File: third.ts
+@@
+-const third = false;
++const third = true;
+*** End Patch`,
+      },
+      undefined,
+      {
+        sessionId,
+        messageId: 'remote-pending-current-metadata',
+        workspaceRoot: 'C:\\workspace',
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('execution_error');
+    expect(result.metadata).toEqual({
+      sideEffectsUncertain: true,
+      write_acknowledged: false,
+      write_verified: false,
+      requiresRead: true,
+      summary:
+        'ApplyPatch failed; final remote state is uncertain, re-read affected files before retrying',
+    });
+    expect(result.llmContent).toContain(
+      'Use Read on the same file to refresh remote state before retrying ApplyPatch'
+    );
+  });
+
+  it('redacts raw remote absolute paths and private rollback sentinel text from user-facing remote ApplyPatch failures', async () => {
+    const sessionId = 'remote-patch-redacted-user-failure';
+    const sentinel = 'PRIVATE_ROLLBACK_SENTINEL';
+    const remoteFiles = new Map([
+      ['C:\\workspace\\first.ts', 'const first = false;\n'],
+      ['C:\\workspace\\second.ts', 'const second = false;\n'],
+    ]);
+    createRemotePatchSession({
+      sessionId,
+      workspaceRoot: 'C:\\workspace',
+      files: remoteFiles,
+      writeBehaviors: [
+        { kind: 'apply-and-ack' },
+        {
+          kind: 'leave-old-and-throw',
+          error: new Error(`${sentinel}: forward failed at C:\\workspace\\second.ts`),
+        },
+        {
+          kind: 'replace-and-throw',
+          content: 'const first = rollback mismatch;\n',
+          error: new Error(`${sentinel}: rollback mismatch at C:\\workspace\\first.ts`),
+        },
+      ],
+    });
+
+    const result = await applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`,
+      },
+      undefined,
+      {
+        sessionId,
+        messageId: 'remote-redacted-user-failure',
+        workspaceRoot: 'C:\\workspace',
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('execution_error');
+    expect(result.metadata).toMatchObject({
+      sideEffectsUncertain: true,
+      write_verified: false,
+    });
+    expect(String(result.llmContent)).not.toContain(sentinel);
+    expect(String(result.llmContent)).not.toContain('C:\\workspace\\first.ts');
+    expect(String(result.llmContent)).not.toContain('C:\\workspace\\second.ts');
+    expect(result.error?.message).not.toContain(sentinel);
+    expect(result.error?.message).not.toContain('C:\\workspace\\first.ts');
+    expect(result.error?.message).not.toContain('C:\\workspace\\second.ts');
+  });
+
   it('rejects a quarantined target before creating the host-private workspace lock or sending ACP I/O', async () => {
     const sessionId = 'remote-patch-precheck-before-workspace-lock';
     const remoteFiles = new Map([

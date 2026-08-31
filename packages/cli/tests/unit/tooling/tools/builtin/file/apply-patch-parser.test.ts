@@ -102,4 +102,21 @@ describe('ApplyPatch parser', () => {
       content: 'one\ntwo\n',
     });
   });
+
+  it('accepts exactly 100 file operations and rejects 101 with the authoritative limit error', () => {
+    const buildPatch = (count: number) =>
+      [
+        '*** Begin Patch',
+        ...Array.from({ length: count }, (_, index) => [
+          `*** Add File: src/file-${String(index).padStart(3, '0')}.ts`,
+          `+export const value${index} = ${index};`,
+        ]).flat(),
+        '*** End Patch',
+      ].join('\n');
+
+    expect(parseApplyPatch(buildPatch(100))).toHaveLength(100);
+    expect(() => parseApplyPatch(buildPatch(101))).toThrow(
+      'patch exceeds the 100 file operation limit'
+    );
+  });
 });

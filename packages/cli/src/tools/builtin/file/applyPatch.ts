@@ -295,10 +295,17 @@ export const applyPatchTool = createTool({
       });
     } catch (error) {
       if (error instanceof AcpRemotePatchTransactionError) {
+        const requiresRead = error.errors.some(
+          (entry) =>
+            entry instanceof Error &&
+            'requiresRead' in entry &&
+            (entry as Error & { requiresRead?: boolean }).requiresRead === true
+        );
         return failure(error.message, ToolErrorType.EXECUTION_ERROR, {
           sideEffectsUncertain: error.sideEffectsUncertain,
           write_acknowledged: false,
           write_verified: false,
+          requiresRead: requiresRead || undefined,
         });
       }
       const boundaryRequiresRead =

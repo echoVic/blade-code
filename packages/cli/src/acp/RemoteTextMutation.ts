@@ -45,6 +45,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
   deadlineAt?: number;
   purpose?: 'mutation' | 'rollback';
   recordAccess?: boolean;
+  preserveWriteFailureOnPreviousReadback?: boolean;
 }): Promise<AcpRemoteMutationReceipt> {
   options.signal?.throwIfAborted?.();
 
@@ -57,6 +58,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
     options.deadlineAt ?? Date.now() + ACP_REMOTE_READBACK_TIMEOUT_MS + 30_000;
   const writePurpose = options.purpose ?? 'mutation';
   let writeAcknowledged = false;
+  let writeFailure: unknown;
   try {
     try {
       const writeDeadlineAt = Math.min(
@@ -97,6 +99,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
         );
       }
       writeAcknowledged = false;
+      writeFailure = error;
     }
 
     const activeLease = getActiveLease(lease);
@@ -104,7 +107,8 @@ export async function commitVerifiedRemoteTextMutation(options: {
       options.service,
       options.filePath,
       Math.min(deadlineAt, Date.now() + ACP_REMOTE_READBACK_TIMEOUT_MS),
-      activeLease
+      activeLease,
+      writePurpose === 'rollback' ? 'rollback' : 'readback'
     );
 
     if (readback.kind === 'content') {
@@ -130,6 +134,18 @@ export async function commitVerifiedRemoteTextMutation(options: {
 
       if (options.previous.exists && readback.content === options.previous.content) {
         markDefinite(activeLease, options.filePath);
+        if (
+          options.preserveWriteFailureOnPreviousReadback &&
+          writeFailure instanceof Error
+        ) {
+          throw writeFailure;
+        }
+        if (
+          options.preserveWriteFailureOnPreviousReadback &&
+          writeFailure !== undefined
+        ) {
+          throw new Error(String(writeFailure));
+        }
         throw new AcpRemoteMutationError(
           `${options.operation} readback still matched the previous remote content`,
           writeAcknowledged,
@@ -185,14 +201,15 @@ async function readBackWithDeadline(
   service: AcpFileSystemService,
   filePath: string,
   deadlineAt: number,
-  lease: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease
+  lease: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease,
+  purpose: 'readback' | 'rollback'
 ): Promise<
   { kind: 'content'; content: string } | { kind: 'missing' } | { kind: 'error' }
 > {
   try {
     const result = await service.readTextFileIfExists(filePath, {
       deadlineAt,
-      purpose: 'readback',
+      purpose,
       lease,
     });
 

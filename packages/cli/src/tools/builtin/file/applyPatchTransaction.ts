@@ -16,7 +16,6 @@ import {
   AcpRemoteMutationError,
   commitVerifiedRemoteTextMutation,
 } from '../../../acp/RemoteTextMutation.js';
-import type { FileSystemService } from '../../../services/FileSystemService.js';
 import { PathSecurity } from '../../../utils/pathSecurity.js';
 import { applyUpdateChunks } from './applyPatchEngine.js';
 import type { ApplyPatchOperation } from './applyPatchParser.js';
@@ -225,12 +224,10 @@ export async function planLocalPatchTransaction(
 export async function planRemotePatchTransaction(
   operations: readonly ApplyPatchOperation[],
   workspaceRoot: string,
-  fileSystem: AcpFileSystemService | FileSystemService,
-  options?: RemotePatchPlanOptions | AbortSignal
+  fileSystem: AcpFileSystemService,
+  options: RemotePatchPlanOptions
 ): Promise<PatchTransactionPlan> {
-  const signal = options instanceof AbortSignal ? options : options?.signal;
-  const deadlineAt = options instanceof AbortSignal ? undefined : options?.deadlineAt;
-  const lease = options instanceof AbortSignal ? undefined : options?.lease;
+  const { signal, deadlineAt, lease } = options;
   if (
     operations.some((operation) => operation.kind !== 'update' || operation.movePath)
   ) {
@@ -250,21 +247,18 @@ export async function planRemotePatchTransaction(
     const operation = operations[index];
     if (operation.kind !== 'update') continue;
     const filePath = paths[index];
-    const readDeadlineAt =
-      deadlineAt === undefined
-        ? undefined
-        : Math.min(deadlineAt, Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS);
+    const readDeadlineAt = Math.min(
+      deadlineAt,
+      Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS
+    );
     let oldContent: string;
     try {
-      oldContent =
-        fileSystem instanceof AcpFileSystemService
-          ? await fileSystem.readTextFile(filePath, {
-              signal,
-              deadlineAt: readDeadlineAt,
-              purpose: 'preflight',
-              lease,
-            })
-          : await fileSystem.readTextFile(filePath);
+      oldContent = await fileSystem.readTextFile(filePath, {
+        signal,
+        deadlineAt: readDeadlineAt,
+        purpose: 'preflight',
+        lease,
+      });
     } catch (error) {
       if (isAcpResourceNotFoundError(error)) {
         throw new Error(`Remote file not found: ${filePath}`);
@@ -395,27 +389,12 @@ export async function commitLocalPatchTransaction(
 
 export async function commitRemotePatchTransaction(
   plan: PatchTransactionPlan,
-  fileSystem: AcpFileSystemService | FileSystemService,
-  options?: RemotePatchCommitOptions | AbortSignal
+  fileSystem: AcpFileSystemService,
+  options: RemotePatchCommitOptions
 ): Promise<void> {
-  const signal = options instanceof AbortSignal ? options : options?.signal;
-  const forwardDeadlineAt =
-    options instanceof AbortSignal ? undefined : options?.forwardDeadlineAt;
-  const lease = options instanceof AbortSignal ? undefined : options?.lease;
-  const remoteService =
-    fileSystem instanceof AcpFileSystemService ? fileSystem : undefined;
-  const ownedLease =
-    remoteService && lease === undefined
-      ? remoteService.tryAcquireMutationLease(
-          plan.changes
-            .map((change) => change.path)
-            .filter((filePath, index, source) => source.indexOf(filePath) === index)
-            .sort((left, right) => left.localeCompare(right))
-        )
-      : undefined;
-  const transactionLease = lease ?? ownedLease;
-  const effectiveForwardDeadlineAt =
-    forwardDeadlineAt ?? Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS * 4;
+  const { signal, forwardDeadlineAt, lease: transactionLease } = options;
+  const remoteService = fileSystem;
+  const effectiveForwardDeadlineAt = forwardDeadlineAt;
   const attempted: Array<
     PatchFileChange & {
       forwardVerified: boolean;
@@ -436,14 +415,12 @@ export async function commitRemotePatchTransaction(
         effectiveForwardDeadlineAt,
         Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS
       );
-      const current = remoteService
-        ? await remoteService.readTextFile(change.path, {
-            signal,
-            deadlineAt: compareDeadlineAt,
-            purpose: 'preflight',
-            lease: transactionLease,
-          })
-        : await fileSystem.readTextFile(change.path);
+      const current = await remoteService.readTextFile(change.path, {
+        signal,
+        deadlineAt: compareDeadlineAt,
+        purpose: 'preflight',
+        lease: transactionLease,
+      });
       if (current !== change.oldContent) {
         throw new Error(`Remote file changed after patch preflight: ${change.path}`);
       }
@@ -454,69 +431,53 @@ export async function commitRemotePatchTransaction(
         rollbackEligible: false,
       };
       attempted.push(attemptedChange);
-      if (remoteService) {
-        try {
-          await commitVerifiedRemoteTextMutation({
-            service: remoteService,
-            lease: transactionLease,
-            filePath: change.path,
-            previous: { exists: true, content: change.oldContent },
-            intendedContent: change.newContent,
-            operation: 'edit',
-            signal,
-            deadlineAt: effectiveForwardDeadlineAt,
-            purpose: 'mutation',
-            recordAccess: false,
-          });
-          attemptedChange.forwardVerified = true;
-        } catch (error) {
-          if (
-            error instanceof AcpRemoteMutationError &&
-            error.sideEffectsUncertain &&
-            error.requestPending
-          ) {
-            attemptedChange.pendingForwardWrite = true;
-          } else if (
-            error instanceof AcpRemoteMutationError &&
-            error.sideEffectsUncertain
-          ) {
-            attemptedChange.rollbackEligible = true;
-          }
-          throw error;
-        }
-      } else {
-        try {
-          await fileSystem.writeTextFile(change.path, change.newContent);
-        } catch (error) {
-          attemptedChange.rollbackEligible = true;
-          throw error;
-        }
-        try {
-          const written = await fileSystem.readTextFile(change.path);
-          if (written !== change.newContent) {
-            attemptedChange.rollbackEligible = true;
-            throw new Error(`Remote write verification failed: ${change.path}`);
-          }
-        } catch (error) {
-          attemptedChange.rollbackEligible = true;
-          throw error;
-        }
+      try {
+        await commitVerifiedRemoteTextMutation({
+          service: remoteService,
+          lease: transactionLease,
+          filePath: change.path,
+          previous: { exists: true, content: change.oldContent },
+          intendedContent: change.newContent,
+          operation: 'edit',
+          signal,
+          deadlineAt: effectiveForwardDeadlineAt,
+          purpose: 'mutation',
+          recordAccess: false,
+          preserveWriteFailureOnPreviousReadback: true,
+        });
         attemptedChange.forwardVerified = true;
+      } catch (error) {
+        if (
+          error instanceof AcpRemoteMutationError &&
+          error.sideEffectsUncertain &&
+          error.requestPending
+        ) {
+          attemptedChange.pendingForwardWrite = true;
+        } else if (
+          error instanceof AcpRemoteMutationError &&
+          error.sideEffectsUncertain
+        ) {
+          attemptedChange.rollbackEligible = true;
+        }
+        throw error;
       }
     }
-    if (remoteService) {
-      for (const change of plan.changes) {
-        if (change.newContent !== null) {
-          remoteService.recordRemoteAccess(change.path, change.newContent, 'edit');
-        }
+    for (const change of plan.changes) {
+      if (change.newContent !== null) {
+        remoteService.recordRemoteAccess(change.path, change.newContent, 'edit');
       }
     }
   } catch (error) {
     const forwardError = normalizeForwardTransactionError(signal, error);
     const rollbackErrors: unknown[] = [];
+    const hasPendingForwardWrite = attempted.some(
+      (change) => change.pendingForwardWrite
+    );
     const compensationDeadlineAt =
       Date.now() + ACP_REMOTE_PATCH_COMPENSATION_TIMEOUT_MS;
-    for (const change of attempted.reverse()) {
+    const rollbackQueue = [...attempted].reverse();
+    for (let index = 0; index < rollbackQueue.length; index += 1) {
+      const change = rollbackQueue[index];
       if (change.pendingForwardWrite) {
         continue;
       }
@@ -529,7 +490,11 @@ export async function commitRemotePatchTransaction(
             `ACP remote patch compensation budget expired before rollback: ${change.path}`
           )
         );
-        continue;
+        markRemainingRollbackPathsUncertain(
+          rollbackQueue.slice(index),
+          transactionLease
+        );
+        break;
       }
       try {
         const rollbackNewContent = change.newContent;
@@ -539,11 +504,8 @@ export async function commitRemotePatchTransaction(
             `ACP remote rollback received an incomplete change: ${change.path}`
           );
         }
-        if (remoteService) {
-          const recoveryLease = transactionLease?.beginRecovery(change.path);
-          if (!recoveryLease) {
-            throw new Error('ACP remote rollback requires a recovery lease');
-          }
+        {
+          const recoveryLease = transactionLease.beginRecovery(change.path);
           try {
             await commitVerifiedRemoteTextMutation({
               service: remoteService,
@@ -555,37 +517,34 @@ export async function commitRemotePatchTransaction(
               deadlineAt: compensationDeadlineAt,
               purpose: 'rollback',
               recordAccess: false,
+              preserveWriteFailureOnPreviousReadback: true,
             });
             recoveryLease.finish('restored');
           } catch (rollbackError) {
             recoveryLease.finish('uncertain');
             throw rollbackError;
           }
-        } else {
-          await fileSystem.writeTextFile(change.path, rollbackOldContent);
-          const restored = await fileSystem.readTextFile(change.path);
-          if (restored !== rollbackOldContent) {
-            throw new Error(`Remote rollback verification failed: ${change.path}`);
-          }
         }
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError);
+        if (Date.now() >= compensationDeadlineAt) {
+          markRemainingRollbackPathsUncertain(
+            rollbackQueue.slice(index + 1),
+            transactionLease
+          );
+          break;
+        }
       }
     }
     if (rollbackErrors.length > 0) {
       throw new AcpRemotePatchTransactionError([forwardError, ...rollbackErrors], true);
     }
+    if (hasPendingForwardWrite) {
+      throw new AcpRemotePatchTransactionError([forwardError], true);
+    }
     throw new AcpRemotePatchTransactionError([forwardError], false);
   } finally {
-    if (ownedLease) {
-      if (
-        attempted.length === plan.changes.length &&
-        attempted.every((change) => change.forwardVerified)
-      ) {
-        ownedLease.commitVerified();
-      }
-      ownedLease.release();
-    }
+    // Caller owns the transaction lease lifecycle.
   }
 }
 
@@ -600,6 +559,27 @@ function normalizeForwardTransactionError(
     return signal.reason;
   }
   return new DOMException('This operation was aborted', 'AbortError');
+}
+
+function markRemainingRollbackPathsUncertain(
+  remaining: ReadonlyArray<
+    PatchFileChange & {
+      forwardVerified: boolean;
+      pendingForwardWrite: boolean;
+      rollbackEligible: boolean;
+    }
+  >,
+  lease: AcpRemoteMutationLease
+): void {
+  for (const change of remaining) {
+    if (change.pendingForwardWrite) {
+      continue;
+    }
+    if (!change.forwardVerified && !change.rollbackEligible) {
+      continue;
+    }
+    lease.markUncertain(change.path);
+  }
 }
 
 async function resolveLocalPatchPath(
