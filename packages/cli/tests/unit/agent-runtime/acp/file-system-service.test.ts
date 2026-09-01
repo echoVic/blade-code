@@ -641,6 +641,14 @@ describe('AcpFileSystemService remote ownership', () => {
     assertIdentityError(() =>
       service.recordRemoteAccessForParsedPath(forged, 'forged', 'read')
     );
+    await expect(
+      service.readTextFileForUserForParsedPath(forged)
+    ).rejects.toMatchObject({
+      name: 'AcpRemotePathIdentityError',
+      code: 'acp_remote_path_identity_invalid',
+      message: 'ACP remote path identity is invalid',
+    });
+    assertIdentityError(() => service.checkRemoteAccessForParsedPath(forged, 'forged'));
     assertIdentityError(() => service.tryAcquireMutationLeaseForParsedPaths([forged]));
     await expect(
       service.writeTextFileForParsedPath(forged, 'forged')

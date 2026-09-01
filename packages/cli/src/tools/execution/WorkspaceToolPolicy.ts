@@ -1,12 +1,21 @@
+import type { AcpRemotePathStyle } from '../../acp/AcpRemotePath.js';
+import { parseAcpRemoteWorkspaceDescriptor } from '../../acp/AcpRemoteWorkspace.js';
 import type { SessionWorkspace } from '../../agent/runtime/SessionWorkspace.js';
-import { ToolErrorType, type ToolResult } from '../types/index.js';
+import {
+  type ExecutionContext,
+  ToolErrorType,
+  type ToolResult,
+} from '../types/index.js';
+
+const executionWorkspacePolicySymbol = Symbol('executionWorkspacePolicy');
+const runtimeWorkspacePolicies = new WeakSet<object>();
 
 export type WorkspaceToolPolicy =
   | { readonly kind: 'local' }
-  | Pick<
+  | (Pick<
       Extract<SessionWorkspace, { kind: 'acp-remote' }>,
       'kind' | 'readTextFile' | 'writeTextFile' | 'terminal'
-    >;
+    > & { readonly pathStyle: AcpRemotePathStyle });
 
 export type WorkspaceToolPolicyReason =
   | 'host-only'
@@ -54,20 +63,56 @@ const REMOTE_ALWAYS_ALLOWED_BUILTINS = new Set([
 export function createWorkspaceToolPolicy(
   workspace: SessionWorkspace
 ): WorkspaceToolPolicy {
-  return workspace.kind === 'acp-remote'
-    ? Object.freeze({
-        kind: 'acp-remote' as const,
-        readTextFile: workspace.readTextFile,
-        writeTextFile: workspace.writeTextFile,
-        terminal: workspace.terminal,
-      })
-    : Object.freeze({ kind: 'local' as const });
+  if (workspace.kind === 'local') {
+    const policy = freezeWorkspaceToolPolicy({ kind: 'local' });
+    runtimeWorkspacePolicies.add(policy);
+    return policy;
+  }
+  const descriptor = parseAcpRemoteWorkspaceDescriptor(workspace.descriptor);
+  const policy = freezeWorkspaceToolPolicy({
+    kind: 'acp-remote' as const,
+    readTextFile: workspace.readTextFile,
+    writeTextFile: workspace.writeTextFile,
+    terminal: workspace.terminal,
+    pathStyle: descriptor.style,
+  });
+  runtimeWorkspacePolicies.add(policy);
+  return policy;
 }
 
 export function freezeWorkspaceToolPolicy(
   policy: WorkspaceToolPolicy
 ): WorkspaceToolPolicy {
-  return Object.freeze({ ...policy });
+  const frozen = Object.freeze({ ...policy });
+  if (runtimeWorkspacePolicies.has(policy)) {
+    runtimeWorkspacePolicies.add(frozen);
+  }
+  return frozen;
+}
+
+export function bindExecutionWorkspaceToolPolicy(
+  context: ExecutionContext,
+  policy: WorkspaceToolPolicy | undefined
+): ExecutionContext {
+  if (!policy || !runtimeWorkspacePolicies.has(policy)) return context;
+  return Object.assign(context, { [executionWorkspacePolicySymbol]: policy });
+}
+
+export function getExecutionWorkspaceToolPolicy(
+  context: ExecutionContext
+): WorkspaceToolPolicy | undefined {
+  const candidate = (
+    context as ExecutionContext & {
+      [executionWorkspacePolicySymbol]?: WorkspaceToolPolicy;
+    }
+  )[executionWorkspacePolicySymbol];
+  return candidate && runtimeWorkspacePolicies.has(candidate) ? candidate : undefined;
+}
+
+export function isRuntimeWorkspaceToolPolicy(
+  policy: WorkspaceToolPolicy | undefined
+): boolean {
+  return policy !== undefined && runtimeWorkspacePolicies.has(policy);
 }
 
 export function evaluateBuiltinToolAccess(

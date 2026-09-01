@@ -1,19 +1,29 @@
-import { describe, expect, it, vi } from 'vitest';
-import { Type } from '../../src/schema/index.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AcpServiceContext } from '../../src/acp/AcpServiceContext.js';
+import { createLocalSessionWorkspace } from '../../src/agent/runtime/SessionWorkspace.js';
 import { PermissionMode } from '../../src/config/types.js';
 import { HookManager } from '../../src/hooks/HookManager.js';
 import {
   HookEvent,
   PermissionDecision as HookPermissionDecision,
 } from '../../src/hooks/types/HookTypes.js';
+import { Type } from '../../src/schema/index.js';
 import { createTool } from '../../src/tools/core/createTool.js';
+import { ConcurrencyScheduler } from '../../src/tools/execution/ConcurrencyScheduler.js';
+import { FileLockManager } from '../../src/tools/execution/FileLockManager.js';
 import { ToolExecutor } from '../../src/tools/execution/ToolExecutor.js';
+import { createWorkspaceToolPolicy } from '../../src/tools/execution/WorkspaceToolPolicy.js';
 import { ToolRegistry } from '../../src/tools/registry/ToolRegistry.js';
 import type {
   ConfirmationDetails,
   ExecutionContext,
 } from '../../src/tools/types/ExecutionTypes.js';
-import { type Tool, ToolKind } from '../../src/tools/types/ToolTypes.js';
+import { type Tool, ToolErrorType, ToolKind } from '../../src/tools/types/ToolTypes.js';
+import { ControlledFileClient } from '../support/acp/ControlledFileClient.js';
+import {
+  createPairedAcpHarness,
+  type PairedAcpHarness,
+} from '../support/acp/createPairedAcpHarness.js';
 
 function createTestTool(name = 'TestTool') {
   return createTool({
@@ -60,6 +70,20 @@ function createTestBashTool() {
 }
 
 describe('ToolExecutor 权限集成', () => {
+  const task7Harnesses: PairedAcpHarness[] = [];
+  const task7SessionIds = new Set<string>();
+
+  afterEach(async () => {
+    for (const sessionId of task7SessionIds) {
+      AcpServiceContext.destroySession(sessionId);
+    }
+    task7SessionIds.clear();
+    await Promise.all(task7Harnesses.splice(0).map((harness) => harness.close()));
+    FileLockManager.resetInstance();
+    HookManager.resetInstance();
+    vi.restoreAllMocks();
+  });
+
   it('ALLOW 规则应直接执行并跳过确认', async () => {
     const registry = new ToolRegistry();
     registry.register(createTestTool() as any);
@@ -440,6 +464,175 @@ describe('ToolExecutor 权限集成', () => {
       unregister();
       hookManager.loadConfig({ enabled: false });
     }
+  });
+
+  it('可信 local executor 不允许 caller 伪造 remote kind 跳过 deny hook', async () => {
+    const projectDir = '/private/trusted-local-project';
+    const hookManager = HookManager.getInstance();
+    hookManager.loadConfig({ enabled: true }, projectDir);
+    const hookSpy = vi.fn(async () => ({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse' as const,
+        permissionDecision: HookPermissionDecision.Deny,
+        permissionDecisionReason: 'blocked by trusted local hook',
+      },
+    }));
+    const unregister = hookManager.registerFunction(
+      HookEvent.PreToolUse,
+      { tools: 'TestTool' },
+      hookSpy,
+      { projectDir }
+    );
+    const invocationSpy = vi.fn();
+    const tool = createTool({
+      name: 'TestTool',
+      displayName: 'TestTool',
+      kind: ToolKind.Execute,
+      description: { short: 'trusted local authority probe' },
+      schema: Type.Object({ value: Type.String() }),
+      async execute() {
+        invocationSpy();
+        return { success: true, llmContent: 'local invocation ran' };
+      },
+    });
+    const registry = new ToolRegistry();
+    registry.register(tool as unknown as Tool);
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      workspaceToolPolicy: createWorkspaceToolPolicy(
+        createLocalSessionWorkspace(projectDir)
+      ),
+      contextDefaults: {
+        sessionId: 'trusted-local-session',
+        workspaceKind: 'local',
+        workspaceRoot: projectDir,
+        executionRoot: projectDir,
+      },
+    });
+
+    try {
+      const result = await executor.execute(
+        'TestTool',
+        { value: 'blocked' },
+        {
+          workspaceKind: 'acp-remote',
+          workspaceRoot: projectDir,
+          executionRoot: 'C:\\forged-remote',
+        }
+      );
+
+      expect(hookSpy).toHaveBeenCalledTimes(1);
+      expect(invocationSpy).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          type: ToolErrorType.PERMISSION_DENIED,
+          message: 'blocked by trusted local hook',
+        },
+      });
+    } finally {
+      unregister();
+      hookManager.loadConfig({ enabled: false }, projectDir);
+    }
+  });
+
+  it('远端执行应忽略真实 PreToolUse hook 并保持 runtime-owned 路由', async () => {
+    const sessionId = 'remote-post-hook-path-validation';
+    const root = 'C:\\workspace';
+    const rejectedPath = 'C:\\workspace\\secret.txt:$DATA';
+    const projectDir = '/private/remote-state';
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    task7Harnesses.push(harness);
+    task7SessionIds.add(sessionId);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      sessionId,
+      { fs: { readTextFile: true, writeTextFile: true } },
+      root
+    );
+
+    const invocationSpy = vi.fn();
+    const tool = createTool({
+      name: 'Write',
+      displayName: 'Write',
+      kind: ToolKind.Write,
+      isConcurrencySafe: false,
+      parallelism: 'shared',
+      schema: Type.Object({
+        file_path: Type.String(),
+        content: Type.String(),
+      }),
+      description: { short: 'typed remote hook validation probe' },
+      affectedPaths: (params) => [params.file_path],
+      async execute() {
+        invocationSpy();
+        return { success: true, llmContent: 'remote invocation ran' };
+      },
+    });
+    const registry = new ToolRegistry();
+    registry.register(tool as Tool);
+
+    const hookManager = HookManager.getInstance();
+    hookManager.loadConfig({ enabled: true }, projectDir);
+    const hookSpy = vi.fn(async () => ({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse' as const,
+        permissionDecision: HookPermissionDecision.Allow,
+        updatedInput: { file_path: rejectedPath },
+      },
+    }));
+    hookManager.registerFunction(HookEvent.PreToolUse, { tools: 'Write' }, hookSpy, {
+      projectDir,
+    });
+
+    const scheduler = new ConcurrencyScheduler();
+    const scheduleSpy = vi.spyOn(scheduler, 'schedule');
+    const hostLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireLock');
+    const opaqueLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+      workspaceToolPolicy: {
+        kind: 'acp-remote',
+        readTextFile: true,
+        writeTextFile: true,
+        terminal: false,
+        pathStyle: 'win32',
+      },
+      contextDefaults: {
+        sessionId,
+        workspaceKind: 'acp-remote',
+        workspaceRoot: projectDir,
+        executionRoot: root,
+      },
+    });
+
+    const result = await executor.execute(
+      'Write',
+      { file_path: 'C:\\workspace\\safe.txt', content: 'safe' },
+      {
+        sessionId,
+        workspaceKind: 'local',
+        workspaceRoot: '/tmp/caller-workspace',
+        worktreeActive: true,
+      }
+    );
+
+    expect(hookSpy).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: true,
+      llmContent: 'remote invocation ran',
+    });
+    expect(String(result.llmContent)).not.toContain(rejectedPath);
+    expect(scheduleSpy).toHaveBeenCalledTimes(1);
+    expect(hostLockSpy).not.toHaveBeenCalled();
+    expect(opaqueLockSpy).toHaveBeenCalledTimes(1);
+    expect(invocationSpy).toHaveBeenCalledTimes(1);
+    expect(client.requests).toEqual([]);
+
+    hostLockSpy.mockRestore();
+    opaqueLockSpy.mockRestore();
   });
 
   it('排队期间取消时不应启动工具', async () => {

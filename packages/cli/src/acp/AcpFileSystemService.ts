@@ -160,6 +160,17 @@ export class AcpFileSystemService implements FileSystemService {
     }
   ): Promise<string> {
     const remotePath = this.parsePath(filePath);
+    return this.readTextFileForUserForParsedPath(remotePath, options);
+  }
+
+  async readTextFileForUserForParsedPath(
+    remotePath: AcpRemotePath,
+    options?: {
+      signal?: AbortSignal;
+      deadlineAt?: number;
+    }
+  ): Promise<string> {
+    this.assertParsedPathStyle(remotePath);
     const coordinator = getAcpFileRequestCoordinator(this.connection);
     const permit = coordinator.beginUserRead(remotePath, this.sessionId);
 
@@ -482,6 +493,14 @@ export class AcpFileSystemService implements FileSystemService {
 
   checkRemoteAccess(filePath: string, content: string): RemoteAccessStatus {
     const remotePath = this.parsePath(filePath);
+    return this.checkRemoteAccessForParsedPath(remotePath, content);
+  }
+
+  checkRemoteAccessForParsedPath(
+    remotePath: AcpRemotePath,
+    content: string
+  ): RemoteAccessStatus {
+    this.assertParsedPathStyle(remotePath);
     const existing = this.remoteAccessLedger.get(remotePath.exactIdentity);
     if (!existing) {
       return 'missing';

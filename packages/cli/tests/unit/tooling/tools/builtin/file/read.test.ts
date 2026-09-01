@@ -14,6 +14,7 @@ import { createMockFileSystem } from '../../../../../support/mocks/mockFileSyste
 vi.mock('../../../../../../src/acp/AcpServiceContext.js', () => ({
   isAcpMode: vi.fn(() => false),
   isAcpRemoteFileSystem: vi.fn(() => false),
+  isExplicitUnknownAcpSession: vi.fn(() => false),
   AcpServiceContext: {
     initializeSession: vi.fn(),
     destroySession: vi.fn(),

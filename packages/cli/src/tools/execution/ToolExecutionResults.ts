@@ -35,3 +35,51 @@ export function createCancellationResult(abortedBeforeLaunch: boolean): ToolResu
     abortedBeforeLaunch,
   });
 }
+
+export function createInvalidAcpRemotePathResult(options?: {
+  filePath?: string;
+  mutation?: boolean;
+}): ToolResult {
+  const message = 'ACP remote file path is invalid';
+  return {
+    success: false,
+    llmContent: message,
+    error: {
+      type: ToolErrorType.VALIDATION_ERROR,
+      code: 'acp_remote_path_invalid',
+      message,
+    },
+    ...(options?.mutation
+      ? {
+          metadata: {
+            ...(options.filePath === undefined ? {} : { file_path: options.filePath }),
+            ...(options.mutation ? { sideEffectsUncertain: false } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+export function createUnavailableAcpSessionFileSystemResult(options?: {
+  filePath?: string;
+  mutation?: boolean;
+}): ToolResult {
+  const message = 'ACP session filesystem is unavailable';
+  return {
+    success: false,
+    llmContent: message,
+    error: {
+      type: ToolErrorType.EXECUTION_ERROR,
+      code: 'acp_session_unavailable',
+      message,
+    },
+    ...(options?.mutation
+      ? {
+          metadata: {
+            ...(options.filePath === undefined ? {} : { file_path: options.filePath }),
+            sideEffectsUncertain: false,
+          },
+        }
+      : {}),
+  };
+}

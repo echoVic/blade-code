@@ -5,15 +5,25 @@ import path from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AcpRemoteFileBoundaryError } from '../../src/acp/AcpFileRequestCoordinator.js';
+import {
+  AcpRemoteFileBoundaryError,
+  getAcpFileRequestCoordinator,
+} from '../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
+import {
+  type AcpRemotePath,
+  type AcpRemotePathProfile,
+  createAcpRemotePathProfile,
+} from '../../src/acp/AcpRemotePath.js';
 import {
   AcpServiceContext,
   getAcpFileSystemService,
   isAcpMode,
   isAcpRemoteFileSystem,
 } from '../../src/acp/AcpServiceContext.js';
+import { createLocalSessionWorkspace } from '../../src/agent/runtime/SessionWorkspace.js';
 import { PermissionMode } from '../../src/config/types.js';
+import { Logger } from '../../src/logging/Logger.js';
 import { applyPatchTool } from '../../src/tools/builtin/file/applyPatch.js';
 import { editTool } from '../../src/tools/builtin/file/edit.js';
 import { FileAccessTracker } from '../../src/tools/builtin/file/FileAccessTracker.js';
@@ -21,6 +31,7 @@ import { readTool } from '../../src/tools/builtin/file/read.js';
 import { writeTool } from '../../src/tools/builtin/file/write.js';
 import { FileLockManager } from '../../src/tools/execution/FileLockManager.js';
 import { ToolExecutor } from '../../src/tools/execution/ToolExecutor.js';
+import { createWorkspaceToolPolicy } from '../../src/tools/execution/WorkspaceToolPolicy.js';
 import { ToolRegistry } from '../../src/tools/registry/ToolRegistry.js';
 import type { Tool } from '../../src/tools/types/ToolTypes.js';
 import { ControlledFileClient } from '../support/acp/ControlledFileClient.js';
@@ -30,6 +41,77 @@ import {
   type PairedAcpAppHarness,
   type PairedAcpHarness,
 } from '../support/acp/createPairedAcpHarness.js';
+
+const INVALID_REMOTE_PATH_MESSAGE = 'ACP remote file path is invalid';
+
+function expectNoRemoteFileCoordinationState(
+  coordinator: ReturnType<typeof getAcpFileRequestCoordinator>
+): void {
+  expect(coordinator.getStatsForTests()).toEqual({
+    pendingNormal: 0,
+    pendingRecovery: 0,
+    activeNormalReads: 0,
+    mutationPaths: 0,
+    activeMutations: 0,
+    pendingWrites: 0,
+    needsRead: 0,
+    reconciling: 0,
+    closed: false,
+  });
+}
+
+function captureToolLogs(): {
+  text: () => string;
+  restore: () => void;
+} {
+  const calls: unknown[][] = [];
+  const capture = (...args: unknown[]): void => {
+    calls.push(args);
+  };
+  const spies = [
+    vi.spyOn(Logger.prototype, 'debug').mockImplementation(capture),
+    vi.spyOn(Logger.prototype, 'info').mockImplementation(capture),
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(capture),
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(capture),
+    vi.spyOn(console, 'debug').mockImplementation(capture),
+    vi.spyOn(console, 'log').mockImplementation(capture),
+    vi.spyOn(console, 'warn').mockImplementation(capture),
+    vi.spyOn(console, 'error').mockImplementation(capture),
+  ];
+
+  const serializeValue = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    try {
+      return JSON.stringify(value) ?? String(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  return {
+    text: () =>
+      calls
+        .flatMap((args) => args)
+        .map(serializeValue)
+        .join('\n'),
+    restore: () => {
+      for (const spy of spies) spy.mockRestore();
+    },
+  };
+}
+
+async function captureToolLogsDuring<T>(operation: () => Promise<T>): Promise<{
+  result: T;
+  logs: string;
+}> {
+  const capture = captureToolLogs();
+  try {
+    const result = await operation();
+    return { result, logs: capture.text() };
+  } finally {
+    capture.restore();
+  }
+}
 
 describe('ACP remote Read builtin tool', () => {
   const harnesses: Array<PairedAcpHarness | PairedAcpAppHarness> = [];
@@ -63,8 +145,9 @@ describe('ACP remote Read builtin tool', () => {
   function initializeRemoteSession(
     client: ControlledFileClient,
     sessionId: string,
-    cwd: string
-  ): void {
+    cwd: string,
+    remotePathProfile?: AcpRemotePathProfile
+  ): PairedAcpHarness {
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
     sessionIds.add(sessionId);
@@ -72,8 +155,11 @@ describe('ACP remote Read builtin tool', () => {
       harness.agentConnection,
       sessionId,
       { fs: { readTextFile: true } },
-      cwd
+      cwd,
+      undefined,
+      remotePathProfile
     );
+    return harness;
   }
 
   function initializeRemoteAppSession(
@@ -137,6 +223,257 @@ describe('ACP remote Read builtin tool', () => {
       }
     );
   }
+
+  it('direct remote Read projects a Windows ADS path rejection without side effects or path leakage', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const filePath = String.raw`C:\Repo\secret.ts:payload`;
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-read-direct-invalid-ads';
+    const harness = initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      profile
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+
+    const { result, logs } = await captureToolLogsDuring(() =>
+      executeRead(filePath, sessionId)
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      llmContent: INVALID_REMOTE_PATH_MESSAGE,
+      error: {
+        type: 'validation_error',
+        code: 'acp_remote_path_invalid',
+        message: INVALID_REMOTE_PATH_MESSAGE,
+      },
+    });
+    expect(String(result.llmContent)).not.toContain(filePath);
+    expect(JSON.stringify(result.error ?? {})).not.toContain(filePath);
+    expect(logs).not.toContain(filePath);
+    expect(client.requests).toEqual([]);
+    expectNoRemoteFileCoordinationState(coordinator);
+  });
+
+  it('direct remote Read uses the current Windows session when context omits sessionId', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const filePath = String.raw`C:\Repo\secret.ts:payload`;
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-read-direct-current-session-invalid-ads';
+    const harness = initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      profile
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const progress: string[] = [];
+
+    const { result, logs } = await captureToolLogsDuring(() =>
+      readTool.execute(
+        {
+          file_path: filePath,
+          encoding: 'utf8',
+        },
+        undefined,
+        {
+          updateOutput: (output) => progress.push(output),
+        }
+      )
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      llmContent: INVALID_REMOTE_PATH_MESSAGE,
+      error: {
+        type: 'validation_error',
+        code: 'acp_remote_path_invalid',
+        message: INVALID_REMOTE_PATH_MESSAGE,
+      },
+    });
+    expect(String(result.llmContent)).not.toContain(filePath);
+    expect(JSON.stringify(result.error ?? {})).not.toContain(filePath);
+    expect(logs).not.toContain(filePath);
+    expect(progress).toEqual([]);
+    expect(client.requests).toEqual([]);
+    expectNoRemoteFileCoordinationState(coordinator);
+  });
+
+  it('direct Read with an explicit unknown session cannot fall back to the host filesystem', async () => {
+    const hostRoot = await createTempRoot('blade-acp-unknown-read-');
+    const hostFile = path.join(hostRoot, 'host-secret.txt');
+    await fs.writeFile(hostFile, 'host secret must stay unread');
+    const client = new ControlledFileClient();
+    initializeRemoteSession(client, 'remote-read-known-session', String.raw`C:\Repo`);
+
+    const { result, logs } = await captureToolLogsDuring(() =>
+      readTool.execute({ file_path: hostFile, encoding: 'utf8' }, undefined, {
+        sessionId: 'explicit-unknown-session',
+        workspaceKind: 'local',
+      })
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      llmContent: 'ACP session filesystem is unavailable',
+      error: {
+        type: 'execution_error',
+        code: 'acp_session_unavailable',
+        message: 'ACP session filesystem is unavailable',
+      },
+    });
+    expect(String(result.llmContent)).not.toContain(hostFile);
+    expect(JSON.stringify(result.error ?? {})).not.toContain(hostFile);
+    expect(logs).not.toContain(hostFile);
+    expect(client.requests).toEqual([]);
+  });
+
+  it('direct remote-kind Read without a current session cannot read the host filesystem', async () => {
+    const hostRoot = await createTempRoot('blade-acp-missing-current-read-');
+    const hostFile = path.join(hostRoot, 'host-secret.txt');
+    await fs.writeFile(hostFile, 'host secret must stay unread');
+    expect(AcpServiceContext.getCurrentSessionId()).toBeNull();
+
+    const result = await readTool.execute(
+      { file_path: hostFile, encoding: 'utf8' },
+      undefined,
+      { workspaceKind: 'acp-remote' }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      llmContent: 'ACP session filesystem is unavailable',
+      error: { code: 'acp_session_unavailable' },
+    });
+    expect(String(result.llmContent)).not.toContain('host secret must stay unread');
+  });
+
+  it('a trusted local executor remains local while another ACP session is active', async () => {
+    const hostRoot = await createTempRoot('blade-acp-trusted-local-read-');
+    const hostFile = path.join(hostRoot, 'local.txt');
+    await fs.writeFile(hostFile, 'trusted local content');
+    const client = new ControlledFileClient();
+    initializeRemoteSession(client, 'remote-read-other-session', String.raw`C:\Repo`);
+    const registry = new ToolRegistry();
+    registry.register(readTool as Tool);
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      workspaceToolPolicy: createWorkspaceToolPolicy(
+        createLocalSessionWorkspace(hostRoot)
+      ),
+      contextDefaults: {
+        sessionId: 'legitimate-local-session',
+        workspaceKind: 'local',
+        workspaceRoot: hostRoot,
+        executionRoot: hostRoot,
+      },
+    });
+
+    const result = await executor.execute(
+      'Read',
+      { file_path: hostFile, encoding: 'utf8' },
+      {}
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      llmContent: 'trusted local content',
+    });
+    expect(client.requests).toEqual([]);
+  });
+
+  it('an ACP-local executor remains local while a remote filesystem session is active', async () => {
+    const hostRoot = await createTempRoot('blade-acp-local-session-read-');
+    const hostFile = path.join(hostRoot, 'local.txt');
+    await fs.writeFile(hostFile, 'ACP-local content');
+    const remoteClient = new ControlledFileClient();
+    initializeRemoteSession(
+      remoteClient,
+      'remote-read-other-session',
+      String.raw`C:\Repo`
+    );
+    const localClient = new ControlledFileClient();
+    const localHarness = createPairedAcpHarness(localClient);
+    harnesses.push(localHarness);
+    sessionIds.add('legitimate-local-session');
+    AcpServiceContext.initializeSession(
+      localHarness.agentConnection,
+      'legitimate-local-session',
+      {},
+      hostRoot
+    );
+
+    const result = await readTool.execute(
+      { file_path: hostFile, encoding: 'utf8' },
+      undefined,
+      { sessionId: 'legitimate-local-session' }
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      llmContent: 'ACP-local content',
+    });
+    expect(remoteClient.requests).toEqual([]);
+    expect(localClient.requests).toEqual([]);
+  });
+
+  it('remote Read rejects a stale explicit session even after it becomes the current id', async () => {
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-read-destroyed-session';
+    const harness = initializeRemoteSession(client, sessionId, String.raw`C:\Repo`);
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    AcpServiceContext.destroySession(sessionId);
+    sessionIds.delete(sessionId);
+
+    const result = await readTool.execute(
+      { file_path: '/tmp/host-file', encoding: 'utf8' },
+      undefined,
+      { sessionId, workspaceKind: 'acp-remote' }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: { code: 'acp_session_unavailable' },
+    });
+    expect(client.requests).toEqual([]);
+    expectNoRemoteFileCoordinationState(coordinator);
+  });
+
+  it('direct remote Read rejects a POSIX absolute path under the frozen Windows profile without side effects or path leakage', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const filePath = '/remote/secret.ts';
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-read-direct-style-mismatch';
+    const harness = initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      profile
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+
+    expect(Object.isFrozen(profile)).toBe(true);
+    const { result, logs } = await captureToolLogsDuring(() =>
+      executeRead(filePath, sessionId)
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      llmContent: INVALID_REMOTE_PATH_MESSAGE,
+      error: {
+        type: 'validation_error',
+        code: 'acp_remote_path_invalid',
+        message: INVALID_REMOTE_PATH_MESSAGE,
+      },
+    });
+    expect(String(result.llmContent)).not.toContain(filePath);
+    expect(JSON.stringify(result.error ?? {})).not.toContain(filePath);
+    expect(logs).not.toContain(filePath);
+    expect(client.requests).toEqual([]);
+    expectNoRemoteFileCoordinationState(coordinator);
+  });
 
   it('remote Read returns remote UTF-8 text through one ACP read and no host metadata', async () => {
     const root = await createTempRoot('blade-acp-remote-read-');
@@ -298,9 +635,10 @@ describe('ACP remote Read builtin tool', () => {
     }
     const lockManager = FileLockManager.getInstance();
     const opaqueKey = service.createOpaqueLockKey(filePath);
-    const originalReadTextFileForUser = service.readTextFileForUser.bind(service);
+    const originalReadTextFileForUser =
+      service.readTextFileForUserForParsedPath.bind(service);
     const readForUserSpy = vi
-      .spyOn(service, 'readTextFileForUser')
+      .spyOn(service, 'readTextFileForUserForParsedPath')
       .mockImplementation((targetPath, options) =>
         originalReadTextFileForUser(targetPath, {
           ...options,
@@ -500,7 +838,7 @@ describe('ACP remote Read builtin tool', () => {
     }
 
     Object.assign(service, {
-      async readTextFileForUser(_path: string): Promise<string> {
+      async readTextFileForUserForParsedPath(_path: AcpRemotePath): Promise<string> {
         throw new AcpRemoteFileBoundaryError('timeout', 'read', true, true);
       },
     });
@@ -622,6 +960,40 @@ describe('ACP remote Read builtin tool', () => {
     expect(client.requests).toEqual([]);
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'ACP-local Read keeps a POSIX filename that Windows remote validation would reject',
+    async () => {
+      const root = await createTempRoot('blade-acp-local-win32-invalid-');
+      const filePath = path.join(root, 'local:colon.txt');
+      const content = 'local POSIX filename remains readable\n';
+      await fs.writeFile(filePath, content, 'utf8');
+
+      const client = new ControlledFileClient();
+      const harness = createPairedAcpHarness(client);
+      harnesses.push(harness);
+      const sessionId = 'local-acp-win32-invalid-filename';
+      sessionIds.add(sessionId);
+      AcpServiceContext.initializeSession(harness.agentConnection, sessionId, {}, root);
+
+      expect(isAcpMode(sessionId)).toBe(true);
+      expect(isAcpRemoteFileSystem(sessionId)).toBe(false);
+
+      const result = await executeRead(filePath, sessionId);
+
+      expect(result).toMatchObject({
+        success: true,
+        llmContent: content,
+        metadata: {
+          file_path: filePath,
+          encoding: 'utf8',
+          acp_mode: true,
+          file_type: '.txt',
+        },
+      });
+      expect(client.requests).toEqual([]);
+    }
+  );
+
   it('ACP-local Read calls do not use opaque remote serialization and can run concurrently', async () => {
     const root = await createTempRoot('blade-acp-local-read-concurrency-');
     const filePath = path.join(root, 'local.txt');
@@ -700,8 +1072,9 @@ describe('ACP remote Write/Edit builtin tools', () => {
     client: ControlledFileClient,
     sessionId: string,
     cwd: string,
-    capabilities: { readTextFile?: boolean; writeTextFile?: boolean }
-  ): void {
+    capabilities: { readTextFile?: boolean; writeTextFile?: boolean },
+    remotePathProfile?: AcpRemotePathProfile
+  ): PairedAcpHarness {
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
     sessionIds.add(sessionId);
@@ -709,8 +1082,11 @@ describe('ACP remote Write/Edit builtin tools', () => {
       harness.agentConnection,
       sessionId,
       { fs: capabilities },
-      cwd
+      cwd,
+      undefined,
+      remotePathProfile
     );
+    return harness;
   }
 
   function initializeRemoteSessionsOnSameConnection(
@@ -810,6 +1186,182 @@ describe('ACP remote Write/Edit builtin tools', () => {
     const result = await executeRead(filePath, sessionId);
     expect(result.success).toBe(true);
   }
+
+  it('direct remote Write projects a Windows ADS path rejection without side effects or path leakage', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const filePath = String.raw`C:\Repo\secret.ts:payload`;
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-direct-invalid-ads';
+    const harness = initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      { readTextFile: true, writeTextFile: true },
+      profile
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+
+    const { result, logs } = await captureToolLogsDuring(() =>
+      executeWrite(filePath, 'remote content\n', sessionId)
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      llmContent: INVALID_REMOTE_PATH_MESSAGE,
+      error: {
+        type: 'validation_error',
+        code: 'acp_remote_path_invalid',
+        message: INVALID_REMOTE_PATH_MESSAGE,
+      },
+      metadata: {
+        file_path: filePath,
+        sideEffectsUncertain: false,
+      },
+    });
+    expect(String(result.llmContent)).not.toContain(filePath);
+    expect(JSON.stringify(result.error ?? {})).not.toContain(filePath);
+    expect(logs).not.toContain(filePath);
+    expect(client.requests).toEqual([]);
+    expectNoRemoteFileCoordinationState(coordinator);
+  });
+
+  it('direct remote Edit projects a Windows ADS path rejection without side effects or path leakage', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const filePath = String.raw`C:\Repo\secret.ts:payload`;
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-edit-direct-invalid-ads';
+    const harness = initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      { readTextFile: true, writeTextFile: true },
+      profile
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+
+    const { result, logs } = await captureToolLogsDuring(() =>
+      executeEdit(filePath, 'alpha', 'beta', sessionId)
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      llmContent: INVALID_REMOTE_PATH_MESSAGE,
+      error: {
+        type: 'validation_error',
+        code: 'acp_remote_path_invalid',
+        message: INVALID_REMOTE_PATH_MESSAGE,
+      },
+      metadata: {
+        file_path: filePath,
+        sideEffectsUncertain: false,
+      },
+    });
+    expect(String(result.llmContent)).not.toContain(filePath);
+    expect(JSON.stringify(result.error ?? {})).not.toContain(filePath);
+    expect(logs).not.toContain(filePath);
+    expect(client.requests).toEqual([]);
+    expectNoRemoteFileCoordinationState(coordinator);
+  });
+
+  it('direct Write and Edit with an explicit unknown session cannot mutate host files', async () => {
+    const hostRoot = await createTempRoot('blade-acp-unknown-mutation-');
+    const existingFile = path.join(hostRoot, 'existing.txt');
+    const newFile = path.join(hostRoot, 'new.txt');
+    await fs.writeFile(existingFile, 'original host content');
+    const client = new ControlledFileClient();
+    initializeRemoteSession(
+      client,
+      'remote-mutation-known-session',
+      String.raw`C:\Repo`,
+      { readTextFile: true, writeTextFile: true }
+    );
+
+    const writeResult = await writeTool.execute(
+      {
+        file_path: newFile,
+        content: 'must not reach host',
+        encoding: 'utf8',
+        create_directories: true,
+      },
+      undefined,
+      { sessionId: 'explicit-unknown-session', workspaceKind: 'local' }
+    );
+    const editResult = await editTool.execute(
+      {
+        file_path: existingFile,
+        old_string: 'original',
+        new_string: 'mutated',
+        replace_all: false,
+      },
+      undefined,
+      { sessionId: 'explicit-unknown-session', workspaceKind: 'local' }
+    );
+
+    for (const result of [writeResult, editResult]) {
+      expect(result).toMatchObject({
+        success: false,
+        llmContent: 'ACP session filesystem is unavailable',
+        error: {
+          type: 'execution_error',
+          code: 'acp_session_unavailable',
+          message: 'ACP session filesystem is unavailable',
+        },
+        metadata: {
+          file_path: result === writeResult ? newFile : existingFile,
+          sideEffectsUncertain: false,
+        },
+      });
+    }
+    await expect(fs.readFile(existingFile, 'utf8')).resolves.toBe(
+      'original host content'
+    );
+    await expect(fs.access(newFile)).rejects.toThrow();
+    expect(client.requests).toEqual([]);
+  });
+
+  it('direct remote-kind Write and Edit without a current session cannot mutate host files', async () => {
+    const hostRoot = await createTempRoot('blade-acp-missing-current-mutation-');
+    const existingFile = path.join(hostRoot, 'existing.txt');
+    const newFile = path.join(hostRoot, 'new.txt');
+    await fs.writeFile(existingFile, 'original host content');
+    expect(AcpServiceContext.getCurrentSessionId()).toBeNull();
+
+    const writeResult = await writeTool.execute(
+      {
+        file_path: newFile,
+        content: 'must not reach host',
+        encoding: 'utf8',
+        create_directories: true,
+      },
+      undefined,
+      { workspaceKind: 'acp-remote' }
+    );
+    const editResult = await editTool.execute(
+      {
+        file_path: existingFile,
+        old_string: 'original',
+        new_string: 'mutated',
+        replace_all: false,
+      },
+      undefined,
+      { workspaceKind: 'acp-remote' }
+    );
+
+    for (const result of [writeResult, editResult]) {
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: 'acp_session_unavailable' },
+        metadata: {
+          file_path: result === writeResult ? newFile : existingFile,
+          sideEffectsUncertain: false,
+        },
+      });
+    }
+    await expect(fs.readFile(existingFile, 'utf8')).resolves.toBe(
+      'original host content'
+    );
+    await expect(fs.access(newFile)).rejects.toThrow();
+  });
 
   it('remote Write fails validation before any I/O when ACP client is read-only', async () => {
     const root = await createTempRoot('blade-acp-remote-write-capability-');

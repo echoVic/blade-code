@@ -11,18 +11,30 @@
 
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AcpFileSystemService } from '../../../../src/acp/AcpFileSystemService.js';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import { createAcpRemoteWorkspaceDescriptor } from '../../../../src/acp/AcpRemoteWorkspace.js';
 import { AcpServiceContext } from '../../../../src/acp/AcpServiceContext.js';
 import { PermissionMode } from '../../../../src/config/types.js';
+import { HookManager } from '../../../../src/hooks/HookManager.js';
+import {
+  HookEvent,
+  PermissionDecision as HookPermissionDecision,
+} from '../../../../src/hooks/types/HookTypes.js';
 import { Type } from '../../../../src/schema/index.js';
 import { createTool } from '../../../../src/tools/core/createTool.js';
+import { ConcurrencyScheduler } from '../../../../src/tools/execution/ConcurrencyScheduler.js';
 import { FileLockManager } from '../../../../src/tools/execution/FileLockManager.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
+import { createWorkspaceToolPolicy } from '../../../../src/tools/execution/WorkspaceToolPolicy.js';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
+import type { ExecutionContext } from '../../../../src/tools/types/ExecutionTypes.js';
 import {
   type Tool,
   ToolErrorType,
   ToolKind,
 } from '../../../../src/tools/types/ToolTypes.js';
+import { PathSecurity } from '../../../../src/utils/pathSecurity.js';
 import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
 import {
   createPairedAcpHarness,
@@ -88,6 +100,7 @@ describe('ToolExecutor — file lock logic', () => {
 
   beforeEach(() => {
     FileLockManager.resetInstance();
+    HookManager.resetInstance();
   });
 
   afterEach(async () => {
@@ -95,6 +108,8 @@ describe('ToolExecutor — file lock logic', () => {
     AcpServiceContext.destroySession('remote-lock-session-b');
     await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
     FileLockManager.resetInstance();
+    HookManager.resetInstance();
+    vi.restoreAllMocks();
   });
 
   function initializeRemoteSession(sessionId: string, root: string): void {
@@ -672,6 +687,616 @@ describe('ToolExecutor — file lock logic', () => {
   });
 
   describe('remote capability fail-closed execution stage', () => {
+    it('rejects an invalid remote Write path before worktree permission hook scheduler lock invocation or ACP I/O', async () => {
+      const sessionId = 'remote-lock-session-a';
+      const root = 'C:\\workspace';
+      const rejectedPath = 'C:\\workspace\\secret.txt:$DATA';
+      const client = new ControlledFileClient();
+      const harness = createPairedAcpHarness(client);
+      harnesses.push(harness);
+      AcpServiceContext.initializeSession(
+        harness.agentConnection,
+        sessionId,
+        { fs: { readTextFile: true, writeTextFile: true } },
+        root
+      );
+
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'Write',
+        displayName: 'Write',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({
+          file_path: Type.String(),
+          content: Type.String(),
+        }),
+        description: { short: 'typed remote Write probe' },
+        affectedPaths: (params) => [params.file_path],
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.register(tool as Tool);
+
+      const projectDir = '/private/remote-state';
+      const hookManager = HookManager.getInstance();
+      hookManager.loadConfig({ enabled: true }, projectDir);
+      const hookSpy = vi.fn(async () => ({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse' as const,
+          permissionDecision: HookPermissionDecision.Allow,
+        },
+      }));
+      const unregister = hookManager.registerFunction(
+        HookEvent.PreToolUse,
+        { tools: 'Write' },
+        hookSpy,
+        { projectDir }
+      );
+      const scheduler = new ConcurrencyScheduler();
+      const scheduleSpy = vi.spyOn(scheduler, 'schedule');
+      const worktreeSpy = vi
+        .spyOn(PathSecurity, 'isWithinWorkspaceResolved')
+        .mockResolvedValue(true);
+      const hostLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireLock');
+      const opaqueLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const confirmationSpy = vi.fn(async () => ({
+        approved: true,
+        scope: 'once' as const,
+      }));
+      const executor = new ToolExecutor(registry, {
+        permissionConfig: { allow: [], ask: ['Write'], deny: [] },
+        scheduler,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId,
+          workspaceKind: 'acp-remote',
+          workspaceRoot: projectDir,
+          executionRoot: root,
+        },
+      });
+
+      try {
+        const result = await executor.execute(
+          'Write',
+          { file_path: rejectedPath, content: 'unsafe' },
+          {
+            sessionId,
+            workspaceKind: 'local',
+            workspaceRoot: projectDir,
+            worktreeActive: true,
+            confirmationHandler: { requestConfirmation: confirmationSpy },
+          }
+        );
+
+        expect(result).toMatchObject({
+          success: false,
+          llmContent: 'ACP remote file path is invalid',
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            code: 'acp_remote_path_invalid',
+            message: 'ACP remote file path is invalid',
+          },
+          metadata: {
+            file_path: rejectedPath,
+            sideEffectsUncertain: false,
+          },
+        });
+        expect(result.error?.details).toBeUndefined();
+        expect(String(result.llmContent)).not.toContain(rejectedPath);
+        expect(JSON.stringify(result.error)).not.toContain(rejectedPath);
+        expect(worktreeSpy).not.toHaveBeenCalled();
+        expect(hookSpy).not.toHaveBeenCalled();
+        expect(confirmationSpy).not.toHaveBeenCalled();
+        expect(scheduleSpy).not.toHaveBeenCalled();
+        expect(hostLockSpy).not.toHaveBeenCalled();
+        expect(opaqueLockSpy).not.toHaveBeenCalled();
+        expect(invocationSpy).not.toHaveBeenCalled();
+        expect(client.requests).toEqual([]);
+      } finally {
+        unregister();
+        worktreeSpy.mockRestore();
+        hostLockSpy.mockRestore();
+        opaqueLockSpy.mockRestore();
+      }
+    });
+
+    it('rejects an invalid remote notebook_path before generic MCP lock admission', async () => {
+      const sessionId = 'remote-lock-session-a';
+      const root = 'C:\\workspace';
+      const rejectedPath = 'C:\\workspace\\notes.ipynb:$DATA';
+      const client = new ControlledFileClient();
+      const harness = createPairedAcpHarness(client);
+      harnesses.push(harness);
+      AcpServiceContext.initializeSession(
+        harness.agentConnection,
+        sessionId,
+        { fs: { readTextFile: true, writeTextFile: true } },
+        root
+      );
+
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'mcp__safe__notebook_write',
+        displayName: 'Notebook Write',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({ notebook_path: Type.String() }),
+        description: { short: 'typed remote notebook probe' },
+        affectedPaths: (params) => [params.notebook_path],
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.registerMcpTool(tool as Tool);
+      const scheduler = new ConcurrencyScheduler();
+      const scheduleSpy = vi.spyOn(scheduler, 'schedule');
+      const opaqueLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        scheduler,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId,
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: root,
+        },
+      });
+      const result = await executor.execute(
+        tool.name,
+        { notebook_path: rejectedPath },
+        { sessionId, workspaceKind: 'local' }
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        llmContent: 'ACP remote file path is invalid',
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          code: 'acp_remote_path_invalid',
+          message: 'ACP remote file path is invalid',
+        },
+      });
+      expect(result.error?.details).toBeUndefined();
+      expect(result.metadata?.file_path).toBeUndefined();
+      expect(result.metadata?.sideEffectsUncertain).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(rejectedPath);
+      expect(scheduleSpy).not.toHaveBeenCalled();
+      expect(opaqueLockSpy).not.toHaveBeenCalled();
+      expect(invocationSpy).not.toHaveBeenCalled();
+      expect(client.requests).toEqual([]);
+      opaqueLockSpy.mockRestore();
+    });
+
+    it('rejects a hook-rewritten invalid remote path before scheduling or locking', async () => {
+      const sessionId = 'remote-lock-session-a';
+      const root = 'C:\\workspace';
+      const rejectedPath = 'C:\\workspace\\secret.txt:$DATA';
+      initializeRemoteSession(sessionId, root);
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'Write',
+        displayName: 'Write',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({
+          file_path: Type.String(),
+          content: Type.String(),
+        }),
+        description: { short: 'typed post-hook validation probe' },
+        affectedPaths: (params) => [params.file_path],
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.register(tool as Tool);
+      const scheduler = new ConcurrencyScheduler();
+      const scheduleSpy = vi.spyOn(scheduler, 'schedule');
+      const hostLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireLock');
+      const opaqueLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        scheduler,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId,
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: root,
+        },
+      });
+      Reflect.set(
+        executor,
+        'preToolUseHookRunner',
+        async (hookTool: Tool, params: Record<string, unknown>) => {
+          const modifiedParams = { ...params, file_path: rejectedPath };
+          return {
+            params: modifiedParams,
+            invocation: hookTool.build(modifiedParams),
+            inputModified: true,
+          };
+        }
+      );
+
+      const result = await executor.execute(
+        'Write',
+        { file_path: 'C:\\workspace\\safe.txt', content: 'safe' },
+        {}
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: 'acp_remote_path_invalid' },
+        metadata: {
+          file_path: rejectedPath,
+          sideEffectsUncertain: false,
+        },
+      });
+      expect(scheduleSpy).not.toHaveBeenCalled();
+      expect(hostLockSpy).not.toHaveBeenCalled();
+      expect(opaqueLockSpy).not.toHaveBeenCalled();
+      expect(invocationSpy).not.toHaveBeenCalled();
+    });
+
+    it('uses the frozen remote path style instead of a caller-selected session service', async () => {
+      initializeRemoteSession('remote-lock-session-a', 'C:\\workspace');
+      initializeRemoteSession('remote-lock-session-b', '/workspace');
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'Write',
+        displayName: 'Write',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({
+          file_path: Type.String(),
+          content: Type.String(),
+        }),
+        description: { short: 'typed remote style authority probe' },
+        affectedPaths: (params) => [params.file_path],
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.register(tool as Tool);
+      const remotePolicy = {
+        kind: 'acp-remote' as const,
+        readTextFile: true,
+        writeTextFile: true,
+        terminal: false,
+        pathStyle: 'win32' as const,
+      };
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: remotePolicy,
+        contextDefaults: {
+          sessionId: 'remote-lock-session-a',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        },
+      });
+
+      const result = await executor.execute(
+        'Write',
+        { file_path: '/workspace/file:stream', content: 'unsafe' },
+        { sessionId: 'remote-lock-session-b', workspaceKind: 'local' }
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: 'acp_remote_path_invalid' },
+      });
+      expect(invocationSpy).not.toHaveBeenCalled();
+      AcpServiceContext.destroySession('remote-lock-session-b');
+    });
+
+    it('keeps remote lock routing and invocation on the runtime-owned context', async () => {
+      const sessionId = 'remote-lock-session-a';
+      const root = 'C:\\workspace';
+      const filePath = 'C:\\workspace\\file.ts';
+      initializeRemoteSession(sessionId, root);
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'Write',
+        displayName: 'Write',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({
+          file_path: Type.String(),
+          content: Type.String(),
+        }),
+        description: { short: 'typed remote context authority probe' },
+        affectedPaths: (params) => [params.file_path],
+        async execute(_params, context) {
+          invocationSpy(context);
+          return { success: true, llmContent: 'remote context preserved' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.register(tool as Tool);
+      const hostLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireLock');
+      const opaqueLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const worktreeSpy = vi
+        .spyOn(PathSecurity, 'isWithinWorkspaceResolved')
+        .mockResolvedValue(true);
+      const sourceEnvironment: Record<string, string> = { TRUSTED_VALUE: 'original' };
+      const contextDefaults: ExecutionContext = {
+        sessionId,
+        workspaceKind: 'acp-remote',
+        workspaceRoot: '/private/remote-state',
+        executionRoot: root,
+        environment: sourceEnvironment,
+      };
+      const runtimePolicy = createWorkspaceToolPolicy({
+        kind: 'acp-remote',
+        executionRoot: root,
+        resourceRoot: '/trusted/resource-root',
+        readTextFile: true,
+        writeTextFile: true,
+        terminal: false,
+        descriptor: createAcpRemoteWorkspaceDescriptor(
+          createAcpRemotePathProfile(root)
+        ),
+      });
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: runtimePolicy,
+        contextDefaults,
+      });
+      contextDefaults.sessionId = 'mutated-session';
+      contextDefaults.workspaceKind = 'local';
+      contextDefaults.workspaceRoot = '/tmp/mutated-workspace';
+      contextDefaults.executionRoot = '/tmp/mutated-execution';
+      sourceEnvironment.TRUSTED_VALUE = 'mutated';
+
+      const result = await executor.execute(
+        'Write',
+        { file_path: filePath, content: 'safe' },
+        {
+          sessionId: 'caller-selected-session',
+          workspaceKind: 'local',
+          workspaceRoot: '/tmp/caller-workspace',
+          executionRoot: '/tmp/caller-execution',
+          environment: { TRUSTED_VALUE: 'caller' },
+          worktreeActive: true,
+          worktreeIsolationRequired: true,
+        }
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        llmContent: 'remote context preserved',
+      });
+      expect(worktreeSpy).not.toHaveBeenCalled();
+      expect(hostLockSpy).not.toHaveBeenCalled();
+      expect(opaqueLockSpy).toHaveBeenCalledTimes(1);
+      expect(invocationSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId,
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: root,
+          environment: { TRUSTED_VALUE: 'original' },
+        })
+      );
+    });
+
+    it('uses one schema-cloned parameter snapshot for permission lock and invocation', async () => {
+      const sessionId = 'remote-lock-session-a';
+      const root = '/workspace';
+      initializeRemoteSession(sessionId, root);
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'Write',
+        displayName: 'Write',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({
+          file_path: Type.String(),
+          content: Type.String(),
+        }),
+        description: { short: 'typed parameter snapshot probe' },
+        affectedPaths: (params) => [params.file_path],
+        extractSignatureContent: (params) => params.file_path,
+        async execute(params) {
+          invocationSpy(params.file_path);
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.register(tool as Tool);
+      const opaqueLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const executor = new ToolExecutor(registry, {
+        permissionConfig: {
+          allow: ['Write(/workspace/safe.ts)'],
+          ask: [],
+          deny: ['Write(/workspace/secret.ts)'],
+        },
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'posix',
+        },
+        contextDefaults: {
+          sessionId,
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: root,
+        },
+      });
+      const params = { file_path: '/workspace/secret.ts', content: 'PWN' };
+
+      const resultPromise = executor.execute('Write', params, {});
+      params.file_path = '/workspace/safe.ts';
+      const result = await resultPromise;
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: ToolErrorType.PERMISSION_DENIED },
+      });
+      expect(opaqueLockSpy).not.toHaveBeenCalled();
+      expect(invocationSpy).not.toHaveBeenCalled();
+    });
+
+    it('uses the schema snapshot for both the remote lock key and invocation', async () => {
+      const sessionId = 'remote-lock-session-a';
+      const root = '/workspace';
+      initializeRemoteSession(sessionId, root);
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'Write',
+        displayName: 'Write',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({ file_path: Type.String() }),
+        description: { short: 'typed lock snapshot probe' },
+        affectedPaths: (params) => [params.file_path],
+        async execute(params) {
+          invocationSpy(params.file_path);
+          return { success: true, llmContent: 'snapshot executed' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.register(tool as Tool);
+      const opaqueLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'posix',
+        },
+        contextDefaults: {
+          sessionId,
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: root,
+        },
+      });
+      const params = { file_path: '/workspace/a.ts' };
+
+      const resultPromise = executor.execute('Write', params, {});
+      params.file_path = '/workspace/b.ts';
+      const result = await resultPromise;
+      const service =
+        AcpServiceContext.getSessionServices(sessionId)?.fileSystemService;
+      if (!(service instanceof AcpFileSystemService)) {
+        throw new Error('expected ACP remote filesystem service');
+      }
+
+      expect(result).toMatchObject({ success: true, llmContent: 'snapshot executed' });
+      expect(invocationSpy).toHaveBeenCalledWith('/workspace/a.ts');
+      expect(opaqueLockSpy).toHaveBeenCalledWith(
+        service.createOpaqueLockKey('/workspace/a.ts'),
+        expect.any(Function)
+      );
+      expect(opaqueLockSpy).not.toHaveBeenCalledWith(
+        service.createOpaqueLockKey('/workspace/b.ts'),
+        expect.any(Function)
+      );
+    });
+
+    it('rejects a remote executor without complete runtime-owned context defaults', () => {
+      const registry = new ToolRegistry();
+
+      expect(
+        () =>
+          new ToolExecutor(registry, {
+            workspaceToolPolicy: {
+              kind: 'acp-remote',
+              readTextFile: true,
+              writeTextFile: true,
+              terminal: false,
+              pathStyle: 'win32',
+            },
+          })
+      ).toThrow('ACP remote ToolExecutor requires runtime-owned context defaults');
+    });
+
+    it('does not validate an unlocked concurrency-safe MCP file_path as a remote file', async () => {
+      initializeRemoteSession('remote-lock-session-a', 'C:\\workspace');
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'mcp__safe__metadata',
+        displayName: 'Metadata',
+        kind: ToolKind.ReadOnly,
+        isConcurrencySafe: true,
+        parallelism: 'shared',
+        schema: Type.Object({ file_path: Type.String() }),
+        description: { short: 'typed metadata probe' },
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'metadata ok' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.registerMcpTool(tool as Tool);
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId: 'remote-lock-session-a',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        },
+      });
+
+      await expect(
+        executor.execute(
+          tool.name,
+          { file_path: 'opaque://metadata:not-a-filesystem-path' },
+          { workspaceKind: 'local' }
+        )
+      ).resolves.toMatchObject({ success: true, llmContent: 'metadata ok' });
+      expect(invocationSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('rejects crafted host-only calls before schema validation despite a forged local context', async () => {
       const executeSpy = vi.fn(async () => ({
         success: true as const,
@@ -688,6 +1313,13 @@ describe('ToolExecutor — file lock logic', () => {
           readTextFile: true,
           writeTextFile: true,
           terminal: true,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId: 'remote-lock-session-a',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
         },
       });
 
@@ -719,10 +1351,17 @@ describe('ToolExecutor — file lock logic', () => {
         readTextFile: true,
         writeTextFile: true,
         terminal: false,
+        pathStyle: 'win32' as const,
       };
       const executor = new ToolExecutor(registry, {
         permissionMode: PermissionMode.YOLO,
         workspaceToolPolicy: sourcePolicy,
+        contextDefaults: {
+          sessionId: 'remote-lock-session-a',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        },
       });
       sourcePolicy.terminal = true;
 
@@ -755,6 +1394,13 @@ describe('ToolExecutor — file lock logic', () => {
           readTextFile: true,
           writeTextFile: true,
           terminal: true,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId: 'remote-lock-session-a',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
         },
       });
 
@@ -843,6 +1489,13 @@ describe('ToolExecutor — file lock logic', () => {
           readTextFile: capabilities.fs?.readTextFile === true,
           writeTextFile: capabilities.fs?.writeTextFile === true,
           terminal: capabilities.terminal === true,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId,
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
         },
       });
 

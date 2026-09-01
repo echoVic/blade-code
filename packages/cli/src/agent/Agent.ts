@@ -52,6 +52,7 @@ import {
 import { getBuiltinTools } from '../tools/builtin/index.js';
 import { createMcpContentTools } from '../tools/builtin/mcp/index.js';
 import { ToolExecutor } from '../tools/execution/ToolExecutor.js';
+import { createWorkspaceToolPolicy } from '../tools/execution/WorkspaceToolPolicy.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import { type Tool, ToolErrorType, type ToolResult } from '../tools/types/index.js';
 import { getCwd } from '../utils/cwd.js';
@@ -175,6 +176,11 @@ export class Agent {
       maxHistorySize: 1000,
       toolWhitelist: this.runtimeOptions.toolWhitelist,
       toolBlacklist: this.runtimeOptions.toolBlacklist,
+      workspaceToolPolicy: createWorkspaceToolPolicy({
+        kind: 'local',
+        executionRoot: getCwd(),
+        resourceRoot: getCwd(),
+      }),
       contextDefaults: {
         foregroundCommandHandoffMs: this.config.bashForegroundHandoffMs,
       },

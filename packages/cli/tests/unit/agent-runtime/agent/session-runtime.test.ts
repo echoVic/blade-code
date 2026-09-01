@@ -1254,6 +1254,14 @@ describe('SessionRuntime', () => {
       executionRoot,
       workspaceKind: 'acp-remote',
     });
+    const workspaceToolPolicy = Reflect.get(executor, 'workspaceToolPolicy') as Record<
+      string,
+      unknown
+    >;
+    expect(workspaceToolPolicy).toMatchObject({
+      kind: 'acp-remote',
+      pathStyle: 'win32',
+    });
     await expect(runtime.setTaskStatus('running')).resolves.toMatchObject({
       projectPath: hostStateRoot,
       remoteWorkspace: descriptor,

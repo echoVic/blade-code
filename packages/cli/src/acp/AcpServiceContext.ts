@@ -19,6 +19,7 @@ import {
 } from '../context/storage/DurableForegroundProcess.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import {
+  type FileStat,
   type FileSystemService,
   LocalFileSystemService,
 } from '../services/FileSystemService.js';
@@ -283,6 +284,41 @@ class UnavailableTerminalService implements TerminalService {
 
   isAvailable(): boolean {
     return false;
+  }
+}
+
+export class AcpFileSystemUnavailableError extends Error {
+  readonly code = 'acp_session_unavailable';
+
+  constructor() {
+    super('ACP session filesystem is unavailable');
+    this.name = 'AcpFileSystemUnavailableError';
+  }
+}
+
+class UnavailableFileSystemService implements FileSystemService {
+  async readTextFile(): Promise<string> {
+    throw new AcpFileSystemUnavailableError();
+  }
+
+  async writeTextFile(): Promise<void> {
+    throw new AcpFileSystemUnavailableError();
+  }
+
+  async exists(): Promise<boolean> {
+    throw new AcpFileSystemUnavailableError();
+  }
+
+  async readBinaryFile(): Promise<Buffer> {
+    throw new AcpFileSystemUnavailableError();
+  }
+
+  async stat(): Promise<FileStat | null> {
+    throw new AcpFileSystemUnavailableError();
+  }
+
+  async mkdir(): Promise<void> {
+    throw new AcpFileSystemUnavailableError();
   }
 }
 
@@ -755,7 +791,6 @@ export class AcpServiceContext {
       services.fileSystemService.dispose();
     }
     AcpServiceContext.sessions.delete(sessionId);
-
     // 如果是当前会话，清除当前会话 ID
     if (AcpServiceContext.currentSessionId === sessionId) {
       // 切换到另一个活跃会话，或者清空
@@ -835,6 +870,12 @@ export class AcpServiceContext {
    * 获取文件系统服务（当前会话）
    */
   getFileSystemService(sessionId?: string): FileSystemService {
+    if (sessionId !== undefined) {
+      return (
+        AcpServiceContext.sessions.get(sessionId)?.fileSystemService ??
+        new UnavailableFileSystemService()
+      );
+    }
     const targetSessionId = sessionId ?? AcpServiceContext.currentSessionId;
     if (targetSessionId) {
       const services = AcpServiceContext.sessions.get(targetSessionId);
@@ -942,8 +983,25 @@ export function isAcpMode(sessionId?: string): boolean {
 }
 
 export function isAcpRemoteFileSystem(sessionId?: string): boolean {
-  if (!sessionId) {
-    return false;
+  const targetSessionId = sessionId ?? AcpServiceContext.getCurrentSessionId();
+  return targetSessionId
+    ? AcpServiceContext.isRemoteFileSystem(targetSessionId)
+    : false;
+}
+
+export function isExplicitUnknownAcpSession(
+  sessionId?: string,
+  workspaceKind?: 'local' | 'acp-remote',
+  trustedWorkspaceKind?: 'local' | 'acp-remote'
+): boolean {
+  if (trustedWorkspaceKind === 'local') return false;
+  if (trustedWorkspaceKind === 'acp-remote' || workspaceKind === 'acp-remote') {
+    const targetSessionId = sessionId ?? AcpServiceContext.getCurrentSessionId();
+    return (
+      targetSessionId === null || !AcpServiceContext.isRemoteFileSystem(targetSessionId)
+    );
   }
-  return AcpServiceContext.isRemoteFileSystem(sessionId);
+  return (
+    sessionId !== undefined && AcpServiceContext.getSessionServices(sessionId) === null
+  );
 }

@@ -29,9 +29,18 @@ export function validateToolCall(
   }
 
   try {
+    const invocation = tool.build(params);
+    const validatedParams = invocation.params;
+    if (
+      typeof validatedParams !== 'object' ||
+      validatedParams === null ||
+      Array.isArray(validatedParams)
+    ) {
+      throw new Error('Tool parameters must be an object');
+    }
     return {
-      invocation: tool.build(params),
-      params,
+      invocation,
+      params: validatedParams as Record<string, unknown>,
     };
   } catch (error) {
     return createRejectedResult(

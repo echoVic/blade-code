@@ -8,10 +8,12 @@ import {
   AcpFileSystemCapabilityError,
   AcpFileSystemService,
 } from '../../../acp/AcpFileSystemService.js';
+import { type AcpRemotePath, AcpRemotePathError } from '../../../acp/AcpRemotePath.js';
 import {
   getAcpFileSystemService,
   isAcpMode,
   isAcpRemoteFileSystem,
+  isExplicitUnknownAcpSession,
 } from '../../../acp/AcpServiceContext.js';
 import {
   AcpRemoteMutationError,
@@ -20,6 +22,11 @@ import {
 import { Default, Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
+import {
+  createInvalidAcpRemotePathResult,
+  createUnavailableAcpSessionFileSystemResult,
+} from '../../execution/ToolExecutionResults.js';
+import { getExecutionWorkspaceToolPolicy } from '../../execution/WorkspaceToolPolicy.js';
 import type {
   ExecutionContext,
   NodeError,
@@ -77,13 +84,28 @@ export const writeTool = createTool({
     const { file_path, content, encoding, create_directories } = params;
     const { updateOutput, sessionId, messageId } = context;
     const signal = context.signal ?? new AbortController().signal;
+    const trustedWorkspaceKind = getExecutionWorkspaceToolPolicy(context)?.kind;
+    if (
+      isExplicitUnknownAcpSession(
+        sessionId,
+        context.workspaceKind,
+        trustedWorkspaceKind
+      )
+    ) {
+      return createUnavailableAcpSessionFileSystemResult({
+        filePath: file_path,
+        mutation: true,
+      });
+    }
 
     try {
-      updateOutput?.('开始写入文件...');
-
       // 获取文件系统服务（ACP 或本地）
-      const useAcp = isAcpMode(sessionId);
-      const remoteFileSystem = isAcpRemoteFileSystem(sessionId);
+      const useAcp =
+        trustedWorkspaceKind === 'acp-remote' ||
+        (trustedWorkspaceKind !== 'local' && isAcpMode(sessionId));
+      const remoteFileSystem =
+        trustedWorkspaceKind === 'acp-remote' ||
+        (trustedWorkspaceKind !== 'local' && isAcpRemoteFileSystem(sessionId));
       const fsService = useAcp
         ? getAcpFileSystemService(sessionId)
         : getFileSystemService();
@@ -114,6 +136,8 @@ export const writeTool = createTool({
           updateOutput
         );
       }
+
+      updateOutput?.('开始写入文件...');
 
       // 检查并创建目录（统一使用 FileSystemService）
       if (create_directories) {
@@ -401,6 +425,20 @@ async function executeRemoteWrite(
     file_path,
     sideEffectsUncertain: false,
   } satisfies Pick<WriteMetadata, 'file_path' | 'sideEffectsUncertain'>;
+  let remotePath: AcpRemotePath;
+  try {
+    remotePath = fsService.parsePath(file_path);
+  } catch (error) {
+    if (error instanceof AcpRemotePathError) {
+      return createInvalidAcpRemotePathResult({
+        filePath: file_path,
+        mutation: true,
+      });
+    }
+    throw error;
+  }
+
+  updateOutput?.('开始写入文件...');
 
   if (encoding !== 'utf8') {
     return {
@@ -441,12 +479,12 @@ async function executeRemoteWrite(
   const getOldContent = (
     prior: Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>> | undefined
   ): string => (prior?.exists ? prior.content : '');
-  let lease: ReturnType<AcpFileSystemService['tryAcquireMutationLease']>;
+  let lease: ReturnType<AcpFileSystemService['tryAcquireMutationLeaseForParsedPaths']>;
   let previous:
-    | Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>>
+    | Awaited<ReturnType<AcpFileSystemService['readTextFileIfExistsForParsedPath']>>
     | undefined;
   try {
-    lease = fsService.tryAcquireMutationLease([file_path]);
+    lease = fsService.tryAcquireMutationLeaseForParsedPaths([remotePath]);
   } catch (error) {
     if (requiresReadBoundary(error)) {
       return {
@@ -481,14 +519,17 @@ async function executeRemoteWrite(
     throw error;
   }
   try {
-    previous = await fsService.readTextFileIfExists(file_path, {
+    previous = await fsService.readTextFileIfExistsForParsedPath(remotePath, {
       signal,
       deadlineAt,
       purpose: 'preflight',
       lease,
     });
     if (previous.exists) {
-      const accessStatus = fsService.checkRemoteAccess(file_path, previous.content);
+      const accessStatus = fsService.checkRemoteAccessForParsedPath(
+        remotePath,
+        previous.content
+      );
       if (accessStatus === 'missing') {
         return {
           success: false,
@@ -527,7 +568,7 @@ async function executeRemoteWrite(
     const receipt = await commitVerifiedRemoteTextMutation({
       service: fsService,
       lease,
-      filePath: file_path,
+      filePath: remotePath,
       previous,
       intendedContent: content,
       operation: 'write',

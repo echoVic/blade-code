@@ -4,14 +4,21 @@ import {
   AcpFileSystemService,
   isAcpResourceNotFoundError,
 } from '../../../acp/AcpFileSystemService.js';
+import { type AcpRemotePath, AcpRemotePathError } from '../../../acp/AcpRemotePath.js';
 import {
   getAcpFileSystemService,
   isAcpMode,
   isAcpRemoteFileSystem,
+  isExplicitUnknownAcpSession,
 } from '../../../acp/AcpServiceContext.js';
 import { Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
+import {
+  createInvalidAcpRemotePathResult,
+  createUnavailableAcpSessionFileSystemResult,
+} from '../../execution/ToolExecutionResults.js';
+import { getExecutionWorkspaceToolPolicy } from '../../execution/WorkspaceToolPolicy.js';
 import type {
   ExecutionContext,
   NodeError,
@@ -98,13 +105,25 @@ export const readTool = createTool({
     const ext = extname(file_path).toLowerCase();
     const isTextFile = checkIsTextFile(ext);
     const isBinaryFile = checkIsBinaryFile(ext);
+    const trustedWorkspaceKind = getExecutionWorkspaceToolPolicy(context)?.kind;
+    if (
+      isExplicitUnknownAcpSession(
+        sessionId,
+        context.workspaceKind,
+        trustedWorkspaceKind
+      )
+    ) {
+      return createUnavailableAcpSessionFileSystemResult();
+    }
 
     try {
-      updateOutput?.('Starting file read...');
-
       // 获取文件系统服务（ACP 或本地）
-      const acpMode = isAcpMode(sessionId);
-      const remoteFileSystem = isAcpRemoteFileSystem(sessionId);
+      const acpMode =
+        trustedWorkspaceKind === 'acp-remote' ||
+        (trustedWorkspaceKind !== 'local' && isAcpMode(sessionId));
+      const remoteFileSystem =
+        trustedWorkspaceKind === 'acp-remote' ||
+        (trustedWorkspaceKind !== 'local' && isAcpRemoteFileSystem(sessionId));
       const fsService = acpMode
         ? getAcpFileSystemService(sessionId)
         : getFileSystemService();
@@ -120,6 +139,18 @@ export const readTool = createTool({
             },
           };
         }
+
+        let remotePath: AcpRemotePath;
+        try {
+          remotePath = fsService.parsePath(file_path);
+        } catch (error) {
+          if (error instanceof AcpRemotePathError) {
+            return createInvalidAcpRemotePathResult();
+          }
+          throw error;
+        }
+
+        updateOutput?.('Starting file read...');
 
         if (!fsService.canReadTextFile()) {
           return {
@@ -152,7 +183,9 @@ export const readTool = createTool({
         let fullContent: string;
         try {
           updateOutput?.('通过 IDE 读取文件...');
-          fullContent = await fsService.readTextFileForUser(file_path, { signal });
+          fullContent = await fsService.readTextFileForUserForParsedPath(remotePath, {
+            signal,
+          });
         } catch (error) {
           if (isAcpResourceNotFoundError(error)) {
             const message = `File not found: ${file_path}`;
@@ -213,6 +246,8 @@ export const readTool = createTool({
           metadata,
         };
       }
+
+      updateOutput?.('Starting file read...');
 
       // 检查文件是否存在（统一使用 FileSystemService）
       try {

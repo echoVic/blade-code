@@ -18,6 +18,7 @@ import {
   getTerminalService,
   isAcpMode,
   isAcpRemoteFileSystem,
+  isExplicitUnknownAcpSession,
 } from '../../../../src/acp/AcpServiceContext.js';
 import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
 import { ControlledTerminalClient } from '../../../support/acp/ControlledTerminalClient.js';
@@ -37,6 +38,7 @@ describe('AcpServiceContext session isolation', () => {
   afterEach(async () => {
     AcpServiceContext.destroySession('session-a');
     AcpServiceContext.destroySession('session-b');
+    AcpServiceContext.destroySession('unknown-session');
     await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
   });
 
@@ -280,8 +282,19 @@ describe('AcpServiceContext session isolation', () => {
     expect(firstServices.fileSystemService.getPathProfile()).toEqual(initialProfile);
   });
 
-  it('reports false for unknown or undefined remote filesystem queries', () => {
+  it('uses the current Session only when remote filesystem queries omit a session ID', () => {
     expect(isAcpRemoteFileSystem()).toBe(false);
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true } },
+      '/workspace'
+    );
+
+    expect(isAcpRemoteFileSystem()).toBe(true);
     expect(isAcpRemoteFileSystem('unknown-session')).toBe(false);
     expect(isAcpMode('unknown-session')).toBe(false);
   });
@@ -305,6 +318,32 @@ describe('AcpServiceContext session isolation', () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it('fails closed for an explicit unknown session filesystem lookup', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true } },
+      '/workspace'
+    );
+    const fileSystem = getAcpFileSystemService('unknown-session');
+
+    await expect(fileSystem.exists('/tmp/host-file')).rejects.toMatchObject({
+      name: 'AcpFileSystemUnavailableError',
+      code: 'acp_session_unavailable',
+      message: 'ACP session filesystem is unavailable',
+    });
+    expect(client.requests).toEqual([]);
+  });
+
+  it('keeps no-session filesystem lookup local when ACP has no active session', async () => {
+    await expect(
+      getAcpFileSystemService().exists('/definitely/missing-without-acp')
+    ).resolves.toBe(false);
   });
 
   it('disposes session-scoped remote ledger state when the session is destroyed', () => {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { AcpFileSystemService } from '../../acp/AcpFileSystemService.js';
+import { AcpRemotePathError, parseAcpRemotePath } from '../../acp/AcpRemotePath.js';
 import {
   getAcpFileSystemService,
   isAcpRemoteFileSystem,
@@ -14,6 +15,9 @@ import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type {
   ExecutionContext,
   ExecutionHistoryEntry,
+  PermissionDecision,
+  Tool,
+  ToolInvocation,
   ToolResult,
 } from '../types/index.js';
 import { ToolErrorType, ToolKind } from '../types/index.js';
@@ -36,16 +40,23 @@ import {
   ToolConcurrencyGateOverflowError,
 } from './ToolConcurrencyGate.js';
 import { enforceWorktreeIsolation, validateToolCall } from './ToolExecutionGuards.js';
-import { runPostToolUseHooks, runPreToolUseHooks } from './ToolExecutionHooks.js';
+import {
+  type PreToolUseResult,
+  runPostToolUseHooks,
+  runPreToolUseHooks,
+} from './ToolExecutionHooks.js';
 import {
   createCancellationResult,
+  createInvalidAcpRemotePathResult,
   createRejectedResult,
 } from './ToolExecutionResults.js';
 import { executeToolInvocation, formatToolResult } from './ToolInvocationRunner.js';
 import {
+  bindExecutionWorkspaceToolPolicy,
   createRemoteToolUnavailableResult,
   evaluateBuiltinToolAccess,
   freezeWorkspaceToolPolicy,
+  isRuntimeWorkspaceToolPolicy,
   type WorkspaceToolPolicy,
 } from './WorkspaceToolPolicy.js';
 
@@ -80,6 +91,23 @@ interface ToolExecutorEventMap {
   historyClear: [event: { timestamp: number }];
 }
 
+type PreToolUseHookRunner = (
+  tool: Tool,
+  params: Record<string, unknown>,
+  invocation: ToolInvocation<unknown>,
+  context: ExecutionContext,
+  ruleDecision: PermissionDecision
+) => Promise<PreToolUseResult>;
+
+type RemoteExecutionContextDefaults = Readonly<
+  ExecutionContext & {
+    sessionId: string;
+    workspaceRoot: string;
+    executionRoot: string;
+    workspaceKind: 'acp-remote';
+  }
+>;
+
 export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
   private readonly executionHistory: ExecutionHistoryEntry[] = [];
   private readonly maxHistorySize: number;
@@ -90,6 +118,9 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
   private readonly approvalController: ToolApprovalController;
   private readonly concurrencyGate = new ToolConcurrencyGate();
   private readonly contextDefaults: ExecutionContext;
+  private readonly remoteContextDefaults?: RemoteExecutionContextDefaults;
+  private readonly preToolUseHookRunner: PreToolUseHookRunner;
+  private readonly trustedRuntimePolicy: boolean;
   private readonly autoVerifyRuntime?: Pick<AutoVerifyRuntime, 'verify'>;
   private readonly lspManager?: Pick<LspSessionManager, 'afterToolUse'>;
   private readonly onDispose?: () => void;
@@ -104,13 +135,21 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     super();
 
     this.maxHistorySize = config.maxHistorySize ?? 1000;
-    this.contextDefaults = config.contextDefaults ?? {};
     this.autoVerifyRuntime = config.autoVerifyRuntime;
     this.lspManager = config.lspManager;
     this.onDispose = config.onDispose;
     this.workspaceToolPolicy = config.workspaceToolPolicy
       ? freezeWorkspaceToolPolicy(config.workspaceToolPolicy)
       : undefined;
+    this.contextDefaults = freezeExecutionContextDefaults(config.contextDefaults);
+    this.trustedRuntimePolicy = isRuntimeWorkspaceToolPolicy(
+      config.workspaceToolPolicy
+    );
+    this.remoteContextDefaults =
+      this.workspaceToolPolicy?.kind === 'acp-remote'
+        ? requireRemoteExecutionContextDefaults(this.contextDefaults)
+        : undefined;
+    this.preToolUseHookRunner = runPreToolUseHooks;
     this.toolWhitelist = config.toolWhitelist?.length
       ? new Set(config.toolWhitelist)
       : null;
@@ -143,16 +182,44 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     if (this.disposed) return this.createDisposedResult();
     const startTime = Date.now();
     const executionId = `exec_${randomUUID()}`;
-    const executionContext: ExecutionContext = {
-      ...this.contextDefaults,
-      ...context,
-      sessionId: context.sessionId ?? this.contextDefaults.sessionId ?? this.ownerId,
-      environment: {
-        ...this.contextDefaults.environment,
-        ...context.environment,
+    const remoteContext = this.remoteContextDefaults;
+    const remoteWorkspace = remoteContext !== undefined;
+    const trustedLocalWorkspace =
+      this.trustedRuntimePolicy && this.workspaceToolPolicy?.kind === 'local';
+    const executionContext = bindExecutionWorkspaceToolPolicy(
+      {
+        ...this.contextDefaults,
+        ...context,
+        sessionId: remoteWorkspace
+          ? remoteContext.sessionId
+          : (context.sessionId ?? this.contextDefaults.sessionId ?? this.ownerId),
+        workspaceRoot: remoteWorkspace
+          ? remoteContext.workspaceRoot
+          : (context.workspaceRoot ?? this.contextDefaults.workspaceRoot),
+        executionRoot: remoteWorkspace
+          ? remoteContext.executionRoot
+          : (context.executionRoot ?? this.contextDefaults.executionRoot),
+        workspaceKind: remoteWorkspace
+          ? 'acp-remote'
+          : trustedLocalWorkspace
+            ? 'local'
+            : (context.workspaceKind ?? this.contextDefaults.workspaceKind),
+        worktreeIsolationRequired: remoteWorkspace
+          ? false
+          : (context.worktreeIsolationRequired ??
+            this.contextDefaults.worktreeIsolationRequired),
+        worktreeActive: remoteWorkspace
+          ? false
+          : (context.worktreeActive ?? this.contextDefaults.worktreeActive),
+        environment: remoteWorkspace
+          ? remoteContext.environment
+          : {
+              ...this.contextDefaults.environment,
+              ...context.environment,
+            },
       },
-    };
-
+      this.trustedRuntimePolicy ? this.workspaceToolPolicy : undefined
+    );
     this.emit('executionStarted', {
       executionId,
       toolName,
@@ -252,6 +319,15 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     if ('success' in validation) {
       return validation;
     }
+    onParamsResolved(validation.params);
+    const initialPathRejection = this.validateRemoteFilePath(
+      toolName,
+      tool,
+      validation.invocation.params
+    );
+    if (initialPathRejection) {
+      return initialPathRejection;
+    }
 
     return this.concurrencyGate.run(
       tool.parallelism === 'shared' ||
@@ -278,7 +354,7 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
           params,
           context
         );
-        const hookResult = await runPreToolUseHooks(
+        const hookResult = await this.preToolUseHookRunner(
           tool,
           params,
           invocation,
@@ -289,10 +365,28 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
           return hookResult.rejection;
         }
 
-        params = hookResult.params;
         invocation = hookResult.invocation;
+        const invocationParams = invocation.params;
+        if (
+          typeof invocationParams !== 'object' ||
+          invocationParams === null ||
+          Array.isArray(invocationParams)
+        ) {
+          return createRejectedResult('Hook modified parameters must be an object', {
+            errorType: ToolErrorType.VALIDATION_ERROR,
+          });
+        }
+        params = invocationParams as Record<string, unknown>;
         onParamsResolved(params);
         if (hookResult.inputModified) {
+          const modifiedPathRejection = this.validateRemoteFilePath(
+            toolName,
+            tool,
+            invocation.params
+          );
+          if (modifiedPathRejection) {
+            return modifiedPathRejection;
+          }
           const modifiedInputIsolationRejection = await enforceWorktreeIsolation(
             tool,
             params,
@@ -348,7 +442,9 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
           return executeToolInvocation(invocation, context);
         };
         const lockPath = params.file_path ?? params.notebook_path;
-        const remoteFileSystem = isAcpRemoteFileSystem(context.sessionId);
+        const remoteFileSystem =
+          this.workspaceToolPolicy?.kind === 'acp-remote' ||
+          isAcpRemoteFileSystem(context.sessionId);
         const needsOpaqueReadLock =
           tool.kind === ToolKind.ReadOnly && tool.name === 'Read' && remoteFileSystem;
         const needsAnyFileLock =
@@ -714,6 +810,44 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
       );
     }
   }
+
+  private validateRemoteFilePath(
+    toolName: string,
+    tool: { readonly kind: ToolKind; readonly isConcurrencySafe: boolean },
+    value: unknown
+  ): ToolResult | undefined {
+    if (this.workspaceToolPolicy?.kind !== 'acp-remote') {
+      return undefined;
+    }
+
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return undefined;
+    }
+    const params = value as Record<string, unknown>;
+    const pathValue = params.file_path ?? params.notebook_path;
+    const isRemoteSingleFileTool =
+      toolName === 'Read' || toolName === 'Write' || toolName === 'Edit';
+    const hasActualLockInput = !tool.isConcurrencySafe && typeof pathValue === 'string';
+    if (!isRemoteSingleFileTool && !hasActualLockInput) {
+      return undefined;
+    }
+    if (typeof pathValue !== 'string') {
+      return undefined;
+    }
+
+    try {
+      parseAcpRemotePath(pathValue, this.workspaceToolPolicy.pathStyle);
+      return undefined;
+    } catch (error) {
+      if (!(error instanceof AcpRemotePathError)) {
+        throw error;
+      }
+      return createInvalidAcpRemotePathResult({
+        filePath: isRemoteSingleFileTool ? pathValue : undefined,
+        mutation: toolName === 'Write' || toolName === 'Edit',
+      });
+    }
+  }
 }
 
 export interface ToolExecutorConfig {
@@ -730,6 +864,32 @@ export interface ToolExecutorConfig {
   autoVerifyRuntime?: Pick<AutoVerifyRuntime, 'verify'>;
   lspManager?: Pick<LspSessionManager, 'afterToolUse'>;
   onDispose?: () => void;
+}
+
+function freezeExecutionContextDefaults(
+  context: ExecutionContext | undefined
+): ExecutionContext {
+  const environment = context?.environment
+    ? Object.freeze({ ...context.environment })
+    : undefined;
+  return Object.freeze({
+    ...context,
+    ...(environment ? { environment } : {}),
+  });
+}
+
+function requireRemoteExecutionContextDefaults(
+  context: ExecutionContext
+): RemoteExecutionContextDefaults {
+  if (
+    !context.sessionId ||
+    !context.workspaceRoot ||
+    !context.executionRoot ||
+    context.workspaceKind !== 'acp-remote'
+  ) {
+    throw new Error('ACP remote ToolExecutor requires runtime-owned context defaults');
+  }
+  return context as RemoteExecutionContextDefaults;
 }
 
 function hasClassifiedSideEffectOutcome(result: ToolResult): boolean {
