@@ -10,6 +10,7 @@
  */
 
 import { ContextManager } from '../context/ContextManager.js';
+import type { SessionStateStorage } from '../context/storage/SessionStateStorage.js';
 import type { IChatService, Message } from '../services/ChatServiceInterface.js';
 import { getCwd } from '../utils/cwd.js';
 import type { AgentResponse, AgentTask } from './types.js';
@@ -34,11 +35,16 @@ export class ExecutionEngine {
   constructor(
     chatService: IChatService,
     contextManager?: ContextManager,
-    projectPath?: string
+    projectPath?: string,
+    stateStorage?: SessionStateStorage
   ) {
     this.chatService = chatService;
     this.contextManager =
-      contextManager || new ContextManager({ projectPath: projectPath || getCwd() });
+      contextManager ||
+      new ContextManager({
+        projectPath: projectPath || getCwd(),
+        ...(stateStorage ? { stateStorage } : {}),
+      });
     this.memoryAdapter = this.createMemoryAdapter();
   }
 

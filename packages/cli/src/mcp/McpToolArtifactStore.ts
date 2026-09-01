@@ -1,3 +1,4 @@
+import type { SessionStateStorage } from '../context/storage/SessionStateStorage.js';
 import { SessionArtifactStore } from '../tools/artifacts/SessionArtifactStore.js';
 import type {
   McpToolArtifact,
@@ -11,6 +12,7 @@ export const MAX_MCP_ARTIFACT_SESSION_BYTES = 64 * 1024 * 1024;
 
 interface McpToolArtifactStoreOptions {
   storageRoot?: string;
+  stateStorage?: SessionStateStorage;
   exposePaths?: boolean;
 }
 
@@ -46,6 +48,7 @@ export class McpToolArtifactStore implements McpToolArtifactWriter {
       maxSessionBytes: MAX_MCP_ARTIFACT_SESSION_BYTES,
       extensionForMimeType,
       storageRoot: options.storageRoot,
+      stateStorage: options.stateStorage,
       exposePaths: options.exposePaths,
     });
   }

@@ -109,7 +109,10 @@ export const applyPatchTool = createTool({
     params: { patch: string },
     context: ExecutionContext
   ): Promise<ToolResult> {
-    const workspaceRoot = context.workspaceRoot;
+    const workspaceRoot =
+      context.workspaceKind === 'acp-remote'
+        ? context.executionRoot
+        : context.workspaceRoot;
     let remoteOwnership = false;
     if (!workspaceRoot) {
       return failure('ApplyPatch requires a Session workspace root');

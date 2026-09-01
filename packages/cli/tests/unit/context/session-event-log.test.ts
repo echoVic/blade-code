@@ -1,7 +1,14 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+  withValidatedAcpRemoteStateScope,
+} from '../../../src/acp/AcpRemoteWorkspace.js';
 import type { EphemeralDelta } from '../../../src/context/events/EphemeralDelta.js';
 import {
   MAX_CACHED_SESSION_EVENT_LOGS,
@@ -9,6 +16,7 @@ import {
 } from '../../../src/context/events/SessionEventLog.js';
 import { JSONLStore } from '../../../src/context/storage/JSONLStore.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
+import { createRemoteSessionStateStorage } from '../../../src/context/storage/SessionStateStorage.js';
 import type { TokenBudgetHandoffRecordedV1 } from '../../../src/context/TokenBudgetHandoff.js';
 import type {
   SessionEvent,
@@ -60,6 +68,30 @@ function tokenBudgetHandoffRecorded(
   };
 }
 
+function remoteSessionCreated(
+  sessionId: string,
+  hostStateRoot: string,
+  descriptor: ReturnType<typeof createAcpRemoteWorkspaceDescriptor>
+): Extract<SessionEvent, { type: 'session_created' }> {
+  return {
+    id: `${sessionId}-created`,
+    sessionId,
+    projectPath: hostStateRoot,
+    timestamp: '2024-01-01T00:00:00.000Z',
+    type: 'session_created',
+    cwd: hostStateRoot,
+    version: 'test',
+    data: {
+      sessionId,
+      rootId: sessionId,
+      taskStatus: 'queued',
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+      remoteWorkspace: descriptor,
+    },
+  };
+}
+
 describe('SessionEventLog', () => {
   let projectPath: string;
   const sessionId = 'log-session';
@@ -70,6 +102,7 @@ describe('SessionEventLog', () => {
 
   afterEach(async () => {
     SessionEventLog.release(sessionId, projectPath);
+    vi.unstubAllEnvs();
     await rm(projectPath, { recursive: true, force: true });
   });
 
@@ -239,6 +272,42 @@ describe('SessionEventLog', () => {
     const a = SessionEventLog.for(sessionId, projectPath);
     const b = SessionEventLog.for(sessionId, projectPath);
     expect(a).toBe(b);
+  });
+
+  it('rejects a collision-equivalent remote transcript from another exact workspace', async () => {
+    vi.stubEnv('BLADE_STORAGE_ROOT', projectPath);
+    const requestedDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const persistedDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('c:\\repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(
+      requestedDescriptor.collisionIdentity
+    );
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      const filePath = path.join(String(scope), `${sessionId}.jsonl`);
+      await new JSONLStore(filePath).createExclusive([
+        remoteSessionCreated(sessionId, hostStateRoot, persistedDescriptor),
+      ]);
+      await chmod(filePath, 0o600);
+    });
+    const storage = createRemoteSessionStateStorage(hostStateRoot, requestedDescriptor);
+    const persistedStorage = createRemoteSessionStateStorage(
+      hostStateRoot,
+      persistedDescriptor
+    );
+    await expect(
+      SessionEventLog.for(sessionId, hostStateRoot, persistedStorage).readAll()
+    ).resolves.toHaveLength(1);
+
+    await expect(
+      SessionEventLog.for(sessionId, hostStateRoot, storage).readAll()
+    ).rejects.toMatchObject({ code: 'acp_remote_workspace_state_invalid' });
+
+    SessionEventLog.release(sessionId, hostStateRoot, storage);
+    SessionEventLog.release(sessionId, hostStateRoot, persistedStorage);
   });
 
   it('evicts the least recently used idle log when the cache reaches capacity', () => {

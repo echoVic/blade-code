@@ -3,6 +3,12 @@ import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import writeFileAtomic from 'write-file-atomic';
 import { getSessionGoalFilePath } from '../context/storage/pathUtils.js';
+import {
+  createSessionStateStorage,
+  type SessionStateStorage,
+  sessionStateStorageKey,
+  withSessionStatePaths,
+} from '../context/storage/SessionStateStorage.js';
 import type { SessionGoalFinalizationInfo } from '../context/types.js';
 import { parseSchema, StringEnum, safeParseSchema, Type } from '../schema/index.js';
 import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
@@ -139,13 +145,19 @@ export class GoalStore {
   private static readonly locks = new KeyedMutexRegistry<string>();
   private static readonly listeners = new Set<(event: GoalChangeEvent) => void>();
 
-  private readonly filePath: string;
+  private readonly coordinationKey: string;
 
   constructor(
     readonly workspaceRoot: string,
-    readonly sessionId: string
+    readonly sessionId: string,
+    private readonly stateStorage: SessionStateStorage = createSessionStateStorage(
+      workspaceRoot
+    )
   ) {
-    this.filePath = getSessionGoalFilePath(workspaceRoot, sessionId);
+    this.coordinationKey =
+      stateStorage.kind === 'local'
+        ? getSessionGoalFilePath(stateStorage.root, sessionId)
+        : `${sessionStateStorageKey(stateStorage, sessionId)}\0goal`;
   }
 
   static coordinationStatsForTests() {
@@ -159,18 +171,22 @@ export class GoalStore {
 
   static async hasActiveGoal(
     workspaceRoot: string,
-    sessionId: string
+    sessionId: string,
+    stateStorage: SessionStateStorage = createSessionStateStorage(workspaceRoot)
   ): Promise<boolean> {
-    const status = (await new GoalStore(workspaceRoot, sessionId).get())?.status;
+    const status = (await new GoalStore(workspaceRoot, sessionId, stateStorage).get())
+      ?.status;
     return status === 'active' || status === 'verifying';
   }
 
   async get(): Promise<GoalSnapshot | null> {
-    return GoalStore.locks.runExclusive(this.filePath, () => this.readUnlocked());
+    return GoalStore.locks.runExclusive(this.coordinationKey, () =>
+      this.readUnlocked()
+    );
   }
 
   async create(input: GoalCreateInput): Promise<GoalSnapshot> {
-    return GoalStore.locks.runExclusive(this.filePath, async () => {
+    return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
       const existing = await this.readUnlocked();
       if (existing && existing.status !== 'complete') {
         throw new Error(
@@ -246,7 +262,7 @@ export class GoalStore {
   }
 
   async clearFrontierStall(): Promise<GoalSnapshot | null> {
-    return GoalStore.locks.runExclusive(this.filePath, async () => {
+    return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
       const goal = await this.readUnlocked();
       if (!goal) return null;
       const { frontierStall: _frontierStall, ...withoutStall } = goal;
@@ -280,7 +296,7 @@ export class GoalStore {
   }
 
   async pauseIfActive(reason: string): Promise<GoalSnapshot | null> {
-    return GoalStore.locks.runExclusive(this.filePath, async () => {
+    return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
       const goal = await this.readUnlocked();
       if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
         return goal;
@@ -462,7 +478,7 @@ export class GoalStore {
   async reconcileFinalizationReceipt(
     receipt: SessionGoalFinalizationInfo
   ): Promise<GoalFinalizationReconciliation | null> {
-    return GoalStore.locks.runExclusive(this.filePath, async () => {
+    return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
       const goal = await this.readUnlocked();
       if (!goal || goal.goalId !== receipt.goalId) return null;
 
@@ -515,7 +531,7 @@ export class GoalStore {
   }
 
   async recordProgress(progress: GoalProgress): Promise<GoalSnapshot | null> {
-    return GoalStore.locks.runExclusive(this.filePath, async () => {
+    return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
       const goal = await this.readUnlocked();
       if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
         return goal;
@@ -581,7 +597,7 @@ export class GoalStore {
   }
 
   async tryBeginContinuation(): Promise<GoalSnapshot | null> {
-    return GoalStore.locks.runExclusive(this.filePath, async () => {
+    return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
       const goal = await this.readUnlocked();
       if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
         return null;
@@ -599,22 +615,24 @@ export class GoalStore {
   }
 
   async clear(): Promise<boolean> {
-    return GoalStore.locks.runExclusive(this.filePath, async () => {
-      try {
-        await fs.unlink(this.filePath);
-      } catch (error) {
-        if (isNodeError(error, 'ENOENT')) return false;
-        throw error;
-      }
-      this.emit(null);
-      return true;
-    });
+    return GoalStore.locks.runExclusive(this.coordinationKey, () =>
+      withSessionStatePaths(this.stateStorage, this.sessionId, async (paths) => {
+        try {
+          await fs.unlink(paths.goalPath);
+        } catch (error) {
+          if (isNodeError(error, 'ENOENT')) return false;
+          throw error;
+        }
+        this.emit(null);
+        return true;
+      })
+    );
   }
 
   private async updateExisting(
     update: (goal: GoalSnapshot) => GoalSnapshot
   ): Promise<GoalSnapshot> {
-    return GoalStore.locks.runExclusive(this.filePath, async () => {
+    return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
       const existing = await this.readUnlocked();
       if (!existing) throw new Error('Session has no goal');
       const next = parseSchema(GoalSnapshotSchema, {
@@ -628,40 +646,44 @@ export class GoalStore {
   }
 
   private async readUnlocked(): Promise<GoalSnapshot | null> {
-    try {
-      const stats = await fs.stat(this.filePath);
-      if (stats.size > MAX_GOAL_FILE_BYTES) {
-        throw new Error(`Goal state exceeds ${MAX_GOAL_FILE_BYTES} bytes`);
+    return withSessionStatePaths(this.stateStorage, this.sessionId, async (paths) => {
+      try {
+        const stats = await fs.stat(paths.goalPath);
+        if (stats.size > MAX_GOAL_FILE_BYTES) {
+          throw new Error(`Goal state exceeds ${MAX_GOAL_FILE_BYTES} bytes`);
+        }
+        await fs.chmod(paths.goalPath, 0o600);
+        const parsed = safeParseSchema(
+          GoalSnapshotSchema,
+          JSON.parse(await fs.readFile(paths.goalPath, 'utf8')) as unknown
+        );
+        if (!parsed.success || parsed.data.sessionId !== this.sessionId) {
+          throw new Error(`Invalid goal state: ${paths.goalPath}`);
+        }
+        return parsed.data;
+      } catch (error) {
+        if (isNodeError(error, 'ENOENT')) return null;
+        if (error instanceof SyntaxError) {
+          throw new Error(`Invalid goal state JSON: ${paths.goalPath}`, {
+            cause: error,
+          });
+        }
+        throw error;
       }
-      await fs.chmod(this.filePath, 0o600);
-      const parsed = safeParseSchema(
-        GoalSnapshotSchema,
-        JSON.parse(await fs.readFile(this.filePath, 'utf8')) as unknown
-      );
-      if (!parsed.success || parsed.data.sessionId !== this.sessionId) {
-        throw new Error(`Invalid goal state: ${this.filePath}`);
-      }
-      return parsed.data;
-    } catch (error) {
-      if (isNodeError(error, 'ENOENT')) return null;
-      if (error instanceof SyntaxError) {
-        throw new Error(`Invalid goal state JSON: ${this.filePath}`, {
-          cause: error,
-        });
-      }
-      throw error;
-    }
+    });
   }
 
   private async persistUnlocked(goal: GoalSnapshot): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), {
-      recursive: true,
-      mode: 0o700,
-    });
-    await writeFileAtomic(this.filePath, `${JSON.stringify(goal)}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-      fsync: true,
+    await withSessionStatePaths(this.stateStorage, this.sessionId, async (paths) => {
+      await fs.mkdir(path.dirname(paths.goalPath), {
+        recursive: true,
+        mode: 0o700,
+      });
+      await writeFileAtomic(paths.goalPath, `${JSON.stringify(goal)}\n`, {
+        encoding: 'utf8',
+        mode: 0o600,
+        fsync: true,
+      });
     });
   }
 

@@ -1,10 +1,18 @@
+import { existsSync } from 'node:fs';
 import * as fs from 'fs/promises';
 import { tmpdir } from 'os';
 import * as path from 'path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+} from '../../../../../src/acp/AcpRemoteWorkspace.js';
+import { createRemoteSessionStateStorage } from '../../../../../src/context/storage/SessionStateStorage.js';
 import { getBuiltinTools } from '../../../../../src/tools/builtin/index';
-import { TaskListManager } from '../../../../../src/tools/builtin/task/TaskListManager';
 import { createTaskListTools } from '../../../../../src/tools/builtin/task/index';
+import { TaskListManager } from '../../../../../src/tools/builtin/task/TaskListManager';
 
 async function createTempConfigDir() {
   return fs.mkdtemp(path.join(tmpdir(), 'blade-task-list-test-'));
@@ -444,6 +452,73 @@ describe('builtin task list tool registration', () => {
         process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
       }
       await fs.rm(storageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('routes builtin task persistence through the remote host state root', async () => {
+    const configDir = await createTempConfigDir();
+    vi.stubEnv('BLADE_STORAGE_ROOT', configDir);
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/blade-task-tools')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    const sessionId = 'remote-task-session';
+
+    try {
+      await ensureAcpRemoteHostStateRoot(hostStateRoot);
+      const tools = await getBuiltinTools({
+        sessionId,
+        configDir,
+        workspaceRoot: hostStateRoot,
+        stateStorage: remoteStorage,
+      });
+      const taskCreate = tools.find((tool) => tool.name === 'TaskCreate');
+      const taskList = tools.find((tool) => tool.name === 'TaskList');
+      if (!taskCreate || !taskList) {
+        throw new Error('Task builtin tools were not registered');
+      }
+
+      await expect(
+        taskCreate
+          .build({
+            subject: 'Remote task',
+            description: 'Persist under the host state root',
+          })
+          .execute(createAbortSignal(), undefined, {
+            sessionId,
+            workspaceRoot: hostStateRoot,
+          })
+      ).resolves.toMatchObject({ success: true });
+
+      const encoded = encodeURIComponent(sessionId);
+      expect(
+        existsSync(
+          path.join(hostStateRoot, 'tasks', `${encoded}-agent-${encoded}.json`)
+        )
+      ).toBe(true);
+      expect(existsSync(path.join(configDir, 'tasks'))).toBe(false);
+
+      if (process.platform !== 'win32') {
+        await fs.chmod(hostStateRoot, 0o755);
+        await expect(
+          taskList.build({}).execute(createAbortSignal(), undefined, {
+            sessionId,
+            workspaceRoot: hostStateRoot,
+          })
+        ).resolves.toMatchObject({
+          success: false,
+          error: {
+            message: expect.stringContaining(
+              'ACP remote workspace durable state is invalid'
+            ),
+          },
+        });
+        await fs.chmod(hostStateRoot, 0o700);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(configDir, { recursive: true, force: true });
     }
   });
 

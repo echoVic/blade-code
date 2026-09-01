@@ -36,6 +36,7 @@ export class ContextManager {
   constructor(options: Partial<ContextManagerOptions> = {}) {
     this.options = {
       projectPath: options.projectPath || getCwd(),
+      ...(options.stateStorage ? { stateStorage: options.stateStorage } : {}),
       storage: {
         maxMemorySize: 1000,
         persistentPath: '',
@@ -53,7 +54,12 @@ export class ContextManager {
       enableVectorSearch: options.enableVectorSearch || false,
     };
 
-    this.persistent = new PersistentStore(this.options.projectPath, 100);
+    this.persistent = new PersistentStore(
+      this.options.projectPath,
+      100,
+      undefined,
+      this.options.stateStorage
+    );
   }
 
   /**

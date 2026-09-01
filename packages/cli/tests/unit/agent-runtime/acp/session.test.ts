@@ -412,7 +412,18 @@ describe('AcpSession', () => {
           '../../../../src/agent/runtime/SessionRuntime.js'
         );
         expect(SessionRuntime.create).toHaveBeenCalledWith(
-          expect.objectContaining({ workspaceRoot: hostStateRoot })
+          expect.objectContaining({
+            workspaceRoot: hostStateRoot,
+            workspace: {
+              kind: 'acp-remote',
+              executionRoot: remotePathProfile.workspace.wirePath,
+              resourceRoot: '/trusted/host/resource',
+              readTextFile: true,
+              writeTextFile: true,
+              terminal: false,
+              descriptor,
+            },
+          })
         );
       } finally {
         await remoteSession.destroy();

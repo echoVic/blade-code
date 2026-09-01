@@ -802,6 +802,7 @@ export async function* checkAndCompactInLoop(
       signal,
       activeTask,
       workspaceRoot: context.workspaceRoot || getCwd(),
+      workspaceAccess: context.workspaceKind === 'acp-remote' ? 'none' : 'full',
       sessionId: context.sessionId,
     });
     if (result.usage) {
@@ -2210,6 +2211,9 @@ validates the object and may return a bounded corrective error.`;
                 modelId: deps.config.currentModelId,
                 providerAdmissionOwnerId,
                 workspaceRoot: context.workspaceRoot || getCwd(),
+                executionRoot:
+                  context.executionRoot ?? context.workspaceRoot ?? getCwd(),
+                workspaceKind: context.workspaceKind ?? 'local',
                 environment: deps.config.env,
                 worktreeIsolationRequired,
                 worktreeActive:
@@ -2293,6 +2297,8 @@ validates the object and may return a bounded corrective error.`;
                   signal: options?.signal,
                   activeTask: activeUserRequest,
                   workspaceRoot: context.workspaceRoot || getCwd(),
+                  workspaceAccess:
+                    context.workspaceKind === 'acp-remote' ? 'none' : 'full',
                   sessionId: context.sessionId,
                 }
               );
@@ -2998,15 +3004,16 @@ validates the object and may return a bounded corrective error.`;
           verificationRetryCount = 0;
 
           // Stop Hook (via completionPolicy, with timeout)
-          const stopAction = readOnlyAudit
-            ? ({ action: 'stop' } as const)
-            : await checkStopHook({
-                sessionId: context.sessionId,
-                workspaceRoot: context.workspaceRoot,
-                permissionMode: context.permissionMode as PermissionMode,
-                reason: turnResult.content,
-                abortSignal: options?.signal,
-              });
+          const stopAction =
+            readOnlyAudit || context.workspaceKind === 'acp-remote'
+              ? ({ action: 'stop' } as const)
+              : await checkStopHook({
+                  sessionId: context.sessionId,
+                  workspaceRoot: context.workspaceRoot,
+                  permissionMode: context.permissionMode as PermissionMode,
+                  reason: turnResult.content,
+                  abortSignal: options?.signal,
+                });
 
           if (stopAction.action === 'continue') {
             await invalidateGoalVerification(
@@ -3459,6 +3466,9 @@ validates the object and may return a bounded corrective error.`;
                 modelId: deps.config.currentModelId,
                 providerAdmissionOwnerId,
                 workspaceRoot: context.workspaceRoot || getCwd(),
+                executionRoot:
+                  context.executionRoot ?? context.workspaceRoot ?? getCwd(),
+                workspaceKind: context.workspaceKind ?? 'local',
                 environment: deps.config.env,
                 worktreeIsolationRequired,
                 worktreeActive:
@@ -3466,17 +3476,18 @@ validates the object and may return a bounded corrective error.`;
                   !successfulTools.has('ExitWorktree'),
                 subagentType: context.subagentInfo?.subagentType,
                 signal: options?.signal,
-                confirmationHandler: context.sessionId
-                  ? SessionInteractionService.createConfirmationHandler(
-                      context.confirmationHandler,
-                      {
-                        sessionId: context.sessionId,
-                        projectPath: context.workspaceRoot || getCwd(),
-                        toolCallId: toolUseUuid ?? toolCall.id,
-                        toolName: toolCall.function.name,
-                      }
-                    )
-                  : context.confirmationHandler,
+                confirmationHandler:
+                  context.sessionId && context.workspaceKind !== 'acp-remote'
+                    ? SessionInteractionService.createConfirmationHandler(
+                        context.confirmationHandler,
+                        {
+                          sessionId: context.sessionId,
+                          projectPath: context.workspaceRoot || getCwd(),
+                          toolCallId: toolUseUuid ?? toolCall.id,
+                          toolName: toolCall.function.name,
+                        }
+                      )
+                    : context.confirmationHandler,
                 permissionMode: context.permissionMode,
                 toolRegistry: registry,
                 deferredToolManager: registry.deferredToolManager,
@@ -4299,6 +4310,8 @@ validates the object and may return a bounded corrective error.`;
                     signal: options?.signal,
                     activeTask: activeUserRequest,
                     workspaceRoot: context.workspaceRoot || getCwd(),
+                    workspaceAccess:
+                      context.workspaceKind === 'acp-remote' ? 'none' : 'full',
                     sessionId: context.sessionId,
                   }
                 );

@@ -1211,17 +1211,24 @@ export class Agent {
 
     // Plan 模式差异 1: 使用统一入口构建 Plan 模式系统提示词
     const { prompt: systemPrompt } = await buildSystemPrompt({
-      projectPath: context.workspaceRoot || getCwd(),
+      ...(context.workspaceKind === 'acp-remote'
+        ? { workspaceAccess: 'none' as const }
+        : { projectPath: context.workspaceRoot || getCwd() }),
       mode: PermissionMode.PLAN,
       includeEnvironment: true,
-      environmentOptions: CACHE_STABLE_ENVIRONMENT_OPTIONS,
+      environmentOptions: {
+        ...CACHE_STABLE_ENVIRONMENT_OPTIONS,
+        workingDirectory: context.executionRoot ?? context.workspaceRoot ?? getCwd(),
+      },
       language: this.config.language,
       availableSkills: this.agentResources?.skills.generateAvailableSkillsList(),
       communicationStyle:
         this.sessionRuntime?.getCommunicationStyleConfiguration().selection,
       communicationStyleCatalog: this.sessionRuntime?.getCommunicationStyleCatalog(),
       projectRuleCatalog: this.sessionRuntime?.getProjectRuleCatalog(),
-      projectInstructionSourcePath: this.sessionRuntime?.projectRoot,
+      ...(context.workspaceKind === 'acp-remote'
+        ? {}
+        : { projectInstructionSourcePath: this.sessionRuntime?.projectRoot }),
     });
 
     // Plan 模式差异 2: 在用户消息中注入 system-reminder
@@ -1268,8 +1275,7 @@ export class Agent {
 
     // 无状态设计：优先使用 context.systemPrompt，否则按需构建
     const systemPrompt =
-      context.systemPrompt ??
-      (await this.buildSystemPromptOnDemand(context.workspaceRoot || getCwd()));
+      context.systemPrompt ?? (await this.buildSystemPromptOnDemand(context));
 
     return yield* this.executeLoop(message, context, options, systemPrompt);
   }
@@ -1277,23 +1283,30 @@ export class Agent {
   /**
    * 按需构建系统提示词（用于未传入 context.systemPrompt 的场景）
    */
-  private async buildSystemPromptOnDemand(projectPath: string): Promise<string> {
+  private async buildSystemPromptOnDemand(context: ChatContext): Promise<string> {
     const replacePrompt = this.runtimeOptions.systemPrompt;
     const appendPrompt = this.runtimeOptions.appendSystemPrompt;
 
     const result = await buildSystemPrompt({
-      projectPath,
+      ...(context.workspaceKind === 'acp-remote'
+        ? { workspaceAccess: 'none' as const }
+        : { projectPath: context.workspaceRoot || getCwd() }),
       replaceDefault: replacePrompt,
       append: appendPrompt,
       includeEnvironment: true,
-      environmentOptions: CACHE_STABLE_ENVIRONMENT_OPTIONS,
+      environmentOptions: {
+        ...CACHE_STABLE_ENVIRONMENT_OPTIONS,
+        workingDirectory: context.executionRoot ?? context.workspaceRoot ?? getCwd(),
+      },
       language: this.config.language,
       availableSkills: this.agentResources?.skills.generateAvailableSkillsList(),
       communicationStyle:
         this.sessionRuntime?.getCommunicationStyleConfiguration().selection,
       communicationStyleCatalog: this.sessionRuntime?.getCommunicationStyleCatalog(),
       projectRuleCatalog: this.sessionRuntime?.getProjectRuleCatalog(),
-      projectInstructionSourcePath: this.sessionRuntime?.projectRoot,
+      ...(context.workspaceKind === 'acp-remote'
+        ? {}
+        : { projectInstructionSourcePath: this.sessionRuntime?.projectRoot }),
     });
 
     return result.prompt;
@@ -1606,7 +1619,9 @@ export class Agent {
       const appendPrompt = this.runtimeOptions.appendSystemPrompt;
 
       const result = await buildSystemPrompt({
-        projectPath: this.sessionRuntime?.workspaceRoot ?? getCwd(),
+        ...(this.sessionRuntime?.isRemoteWorkspace()
+          ? { workspaceAccess: 'none' as const }
+          : { projectPath: this.sessionRuntime?.workspaceRoot ?? getCwd() }),
         replaceDefault: replacePrompt,
         append: appendPrompt,
         includeEnvironment: false,
@@ -1616,7 +1631,17 @@ export class Agent {
           this.sessionRuntime?.getCommunicationStyleConfiguration().selection,
         communicationStyleCatalog: this.sessionRuntime?.getCommunicationStyleCatalog(),
         projectRuleCatalog: this.sessionRuntime?.getProjectRuleCatalog(),
-        projectInstructionSourcePath: this.sessionRuntime?.projectRoot,
+        ...(this.sessionRuntime?.isRemoteWorkspace()
+          ? {}
+          : { projectInstructionSourcePath: this.sessionRuntime?.projectRoot }),
+        ...(this.sessionRuntime
+          ? {
+              environmentOptions: {
+                ...CACHE_STABLE_ENVIRONMENT_OPTIONS,
+                workingDirectory: this.sessionRuntime.executionRoot,
+              },
+            }
+          : {}),
       });
 
       if (result.prompt) {

@@ -3,7 +3,16 @@ import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+  withValidatedAcpRemoteStateScope,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
+import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { getSessionGoalFilePath } from '../../../../src/context/storage/pathUtils.js';
+import { createRemoteSessionStateStorage } from '../../../../src/context/storage/SessionStateStorage.js';
 import type { SessionGoalFinalizationInfo } from '../../../../src/context/types.js';
 import { GoalStore } from '../../../../src/goals/GoalStore.js';
 import type {
@@ -70,6 +79,63 @@ describe('GoalStore', () => {
     const mode = (await stat(filePath)).mode & 0o777;
     expect(mode).toBe(0o600);
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual(created);
+  });
+
+  it('stores remote goals directly under an explicitly authorized state root', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Remote\\Blade')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+
+    const store = new GoalStore(hostStateRoot, sessionId, remoteStorage);
+    const created = await store.create({ objective: 'keep state on the host' });
+
+    const goalPath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => path.join(String(scope), `${sessionId}.goal.json`)
+    );
+    expect(JSON.parse(await readFile(goalPath, 'utf8'))).toEqual(created);
+    await expect(
+      GoalStore.hasActiveGoal(hostStateRoot, sessionId, remoteStorage)
+    ).resolves.toBe(true);
+    await expect(
+      SessionRuntime.hasActiveGoal(hostStateRoot, sessionId, remoteStorage)
+    ).resolves.toBe(true);
+    await expect(
+      new GoalStore(hostStateRoot, sessionId, remoteStorage).get()
+    ).resolves.toEqual(created);
+    await expect(store.clear()).resolves.toBe(true);
+    await expect(stat(goalPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      stat(getSessionGoalFilePath(hostStateRoot, sessionId))
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('revalidates the remote state scope before every goal I/O', async () => {
+    if (process.platform === 'win32') return;
+
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/blade')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const store = new GoalStore(hostStateRoot, sessionId, remoteStorage);
+    await store.create({ objective: 'guard every access' });
+
+    await chmod(hostStateRoot, 0o755);
+    await expect(store.get()).rejects.toMatchObject({
+      code: 'acp_remote_workspace_state_invalid',
+    });
+    await expect(store.edit('blocked write')).rejects.toMatchObject({
+      code: 'acp_remote_workspace_state_invalid',
+    });
+    await expect(store.clear()).rejects.toMatchObject({
+      code: 'acp_remote_workspace_state_invalid',
+    });
+    await chmod(hostStateRoot, 0o700);
   });
 
   it('creates version 2 goals and persists the execution frontier atomically', async () => {

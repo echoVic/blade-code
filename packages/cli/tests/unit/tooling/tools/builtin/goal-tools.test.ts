@@ -1,26 +1,41 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { GoalStore } from '../../../../../src/goals/GoalStore.js';
+import { createAcpRemotePathProfile } from '../../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+} from '../../../../../src/acp/AcpRemoteWorkspace.js';
+import { getProjectStoragePath } from '../../../../../src/context/storage/pathUtils.js';
+import { createRemoteSessionStateStorage } from '../../../../../src/context/storage/SessionStateStorage.js';
 import { getGoalTaskListId } from '../../../../../src/goals/executionFrontier.js';
+import { GoalStore } from '../../../../../src/goals/GoalStore.js';
 import { createGoalTools } from '../../../../../src/tools/builtin/goal/index.js';
+import { getBuiltinTools } from '../../../../../src/tools/builtin/index.js';
 import { TaskListManager } from '../../../../../src/tools/builtin/task/TaskListManager.js';
 import { executeToolInvocation } from '../../../../../src/tools/execution/ToolInvocationRunner.js';
 
 describe('goal tools', () => {
   let storageRoot: string;
+  let previousBladeStorageRoot: string | undefined;
   const sessionId = 'goal-tool-session';
   const workspaceRoot = '/tmp/goal-tool-workspace';
 
   beforeEach(() => {
     storageRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-goal-tools-'));
-    vi.stubEnv('BLADE_STORAGE_ROOT', storageRoot);
+    previousBladeStorageRoot = process.env.BLADE_STORAGE_ROOT;
+    process.env.BLADE_STORAGE_ROOT = storageRoot;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.unstubAllEnvs();
+    if (previousBladeStorageRoot === undefined) {
+      delete process.env.BLADE_STORAGE_ROOT;
+    } else {
+      process.env.BLADE_STORAGE_ROOT = previousBladeStorageRoot;
+    }
     rmSync(storageRoot, { recursive: true, force: true });
   });
 
@@ -153,5 +168,52 @@ describe('goal tools', () => {
       metadata: { retriedAttempts: 1 },
     });
     expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('routes builtin goal tool persistence through the remote host state root', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/blade-goal-tools')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+
+    const builtinOptions = {
+      sessionId,
+      configDir: storageRoot,
+      workspaceRoot: hostStateRoot,
+      stateStorage: remoteStorage,
+    };
+    const tools = await getBuiltinTools(builtinOptions);
+    const createGoalTool = tools.find((tool) => tool.name === 'CreateGoal');
+    const getGoalTool = tools.find((tool) => tool.name === 'GetGoal');
+    if (!createGoalTool || !getGoalTool) {
+      throw new Error('Goal builtin tools were not registered');
+    }
+
+    await expect(
+      createGoalTool
+        .build({ objective: 'persist remotely' })
+        .execute(new AbortController().signal, undefined, {
+          sessionId,
+          workspaceRoot: hostStateRoot,
+        })
+    ).resolves.toMatchObject({
+      success: true,
+      llmContent: { goal: { objective: 'persist remotely' } },
+    });
+
+    await expect(
+      getGoalTool.build({}).execute(new AbortController().signal, undefined, {
+        sessionId,
+        workspaceRoot: hostStateRoot,
+      })
+    ).resolves.toMatchObject({
+      success: true,
+      llmContent: { goal: { objective: 'persist remotely' } },
+    });
+
+    expect(existsSync(path.join(hostStateRoot, `${sessionId}.goal.json`))).toBe(true);
+    expect(existsSync(getProjectStoragePath(hostStateRoot))).toBe(false);
   });
 });

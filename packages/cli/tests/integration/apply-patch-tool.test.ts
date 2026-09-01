@@ -421,7 +421,9 @@ describe('ApplyPatch builtin tool', () => {
       {
         sessionId,
         messageId: 'remote-message',
-        workspaceRoot: 'C:\\workspace',
+        workspaceRoot: workspace,
+        executionRoot: 'C:\\workspace',
+        workspaceKind: 'acp-remote',
       }
     );
 

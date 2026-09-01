@@ -117,7 +117,7 @@ export class ToolApprovalController {
           });
         }
         if (!response.approved) {
-          if (response.scope === 'project') {
+          if (response.scope === 'project' && context.workspaceKind !== 'acp-remote') {
             await this.persistProjectPermission(
               tool,
               invocation,
@@ -134,7 +134,10 @@ export class ToolApprovalController {
           });
         }
 
-        if (response.scope === 'session') {
+        if (
+          response.scope === 'session' ||
+          (response.scope === 'project' && context.workspaceKind === 'acp-remote')
+        ) {
           this.sessionApprovals.add(permissionSignature);
         } else if (response.scope === 'project') {
           await this.persistProjectPermission(
@@ -162,6 +165,9 @@ export class ToolApprovalController {
     params: Record<string, unknown>,
     context: ExecutionContext
   ): Promise<'approved' | ToolResult | undefined> {
+    if (context.workspaceKind === 'acp-remote') {
+      return undefined;
+    }
     const hookManager = HookManager.getInstance();
     const projectDir = context.workspaceRoot || getCwd();
     const sessionId = context.sessionId || 'unknown';

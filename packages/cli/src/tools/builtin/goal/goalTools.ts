@@ -1,11 +1,12 @@
-import { GoalStore } from '../../../goals/GoalStore.js';
+import { getBladeStorageRoot } from '../../../context/storage/pathUtils.js';
+import type { SessionStateStorage } from '../../../context/storage/SessionStateStorage.js';
 import {
   getGoalTaskListId,
   readGoalExecutionFrontier,
 } from '../../../goals/executionFrontier.js';
+import { GoalStore } from '../../../goals/GoalStore.js';
 import { formatGoalSummary } from '../../../goals/prompts.js';
 import { StringEnum, Type } from '../../../schema/index.js';
-import { getBladeStorageRoot } from '../../../context/storage/pathUtils.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -14,12 +15,14 @@ interface GoalToolOptions {
   sessionId: string;
   workspaceRoot: string;
   configDir?: string;
+  stateStorage?: SessionStateStorage;
 }
 
 function getStore(context: ExecutionContext, options: GoalToolOptions): GoalStore {
   return new GoalStore(
     context.workspaceRoot ?? options.workspaceRoot,
-    context.sessionId ?? options.sessionId
+    context.sessionId ?? options.sessionId,
+    options.stateStorage
   );
 }
 
@@ -146,7 +149,10 @@ export function createGoalTools(options: GoalToolOptions) {
         if (params.status === 'complete') {
           const current = await store.get();
           if (!current) throw new Error('Session has no goal');
-          const { frontier } = await readGoalExecutionFrontier(current, { configDir });
+          const { frontier } = await readGoalExecutionFrontier(current, {
+            configDir,
+            stateStorage: options.stateStorage,
+          });
           if (frontier.pending > 0 || frontier.inProgress > 0 || frontier.blocked > 0) {
             throw new Error(
               `Goal has unfinished tasks (${frontier.completed}/${frontier.total} completed); update the goal-scoped task list before requesting completion`

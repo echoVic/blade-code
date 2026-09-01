@@ -17,6 +17,7 @@ import type {
   ServiceTierSelection,
 } from '../../config/types.js';
 import { getBladeStorageRoot } from '../../context/storage/pathUtils.js';
+import type { SessionStateStorage } from '../../context/storage/SessionStateStorage.js';
 import type { LspSessionManager } from '../../lsp/LspSessionManager.js';
 import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
 import { getSkillRegistry, type SkillRegistry } from '../../skills/index.js';
@@ -65,6 +66,7 @@ export async function getBuiltinTools(opts?: {
   configDir?: string;
   workspaceRoot?: string;
   resourceRoot?: string;
+  stateStorage?: SessionStateStorage;
   subagentRegistry?: SubagentRegistry;
   skillRegistry?: SkillRegistry;
   commandRegistry?: CustomCommandRegistry;
@@ -133,10 +135,19 @@ export async function getBuiltinTools(opts?: {
     taskOutputTool,
 
     // 会话任务列表: TaskCreate, TaskGet, TaskUpdate, TaskList
-    ...createTaskListTools({ sessionId, configDir }),
+    ...createTaskListTools({
+      sessionId,
+      configDir,
+      stateStorage: opts?.stateStorage,
+    }),
 
     // Goal mode: GetGoal, CreateGoal, UpdateGoal
-    ...createGoalTools({ sessionId, workspaceRoot, configDir }),
+    ...createGoalTools({
+      sessionId,
+      workspaceRoot,
+      configDir,
+      stateStorage: opts?.stateStorage,
+    }),
 
     // Agent Teams are a formal capability gated by explicit configuration.
     ...(opts?.agentTeamsEnabled

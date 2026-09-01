@@ -108,6 +108,25 @@ describe('buildSystemPrompt', () => {
       });
     });
 
+    it('remote 模式只显示执行根且不加载 host workspace 资源', async () => {
+      const result = await buildSystemPrompt({
+        projectPath: '/private/host-state',
+        workspaceAccess: 'none',
+        includeEnvironment: true,
+        environmentOptions: { workingDirectory: 'C:\\Remote\\Project' },
+      });
+
+      expect(environmentContextMock).toHaveBeenCalledWith({
+        workingDirectory: 'C:\\Remote\\Project',
+      });
+      expect(loadIndexMock).not.toHaveBeenCalled();
+      expect(accessMock).not.toHaveBeenCalled();
+      expect(readFileMock).not.toHaveBeenCalled();
+      expect(result.sources).not.toContainEqual(
+        expect.objectContaining({ name: 'project_instructions' })
+      );
+    });
+
     it('应该使用分隔符连接各部分', async () => {
       const result = await buildSystemPrompt();
 

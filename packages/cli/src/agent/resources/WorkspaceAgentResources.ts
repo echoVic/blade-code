@@ -357,6 +357,21 @@ export function snapshotWorkspaceAgentResources(
   };
 }
 
+export function createEmptySessionAgentResources(
+  projectRoot: string
+): SessionAgentResources {
+  const root = path.resolve(projectRoot);
+  return {
+    projectRoot: root,
+    subagents: new SubagentRegistry(),
+    skills: new SkillRegistry(),
+    commands: CustomCommandRegistry.empty(root),
+    hooks: { enabled: false },
+    communicationStyles: BUILTIN_COMMUNICATION_STYLE_CATALOG.snapshot(),
+    projectRules: ProjectRuleCatalog.empty(root),
+  };
+}
+
 export function resetWorkspaceAgentResources(): void {
   resourceGeneration++;
   for (const [workspaceRoot, entry] of resourceEntries) {

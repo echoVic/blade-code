@@ -13,6 +13,8 @@ export interface WorkspaceMcpConfigOptions {
   sessionServers?: Readonly<Record<string, McpServerConfig>>;
   cliConfigs?: readonly string[];
   strictCliConfig?: boolean;
+  workspaceAccess?: 'full' | 'none';
+  resourceRoot?: string;
 }
 
 async function resolvePluginMcpServers(
@@ -34,7 +36,9 @@ export async function resolveWorkspaceMcpConfig(
   options: WorkspaceMcpConfigOptions
 ): Promise<Record<string, McpServerConfig>> {
   let servers: Record<string, McpServerConfig> = {};
-  if (!options.strictCliConfig) {
+  if (options.workspaceAccess === 'none') {
+    servers = { ...(options.sessionServers ?? {}) };
+  } else if (!options.strictCliConfig) {
     const workspaceServers = await ConfigManager.getInstance().loadWorkspaceMcpServers(
       options.workspaceRoot,
       options.storeServers
@@ -64,9 +68,12 @@ export async function resolveWorkspaceMcpConfig(
         normalized.type === 'stdio'
           ? {
               ...normalized,
-              cwd: normalized.cwd
-                ? path.resolve(options.workspaceRoot, normalized.cwd)
-                : path.resolve(options.workspaceRoot),
+              cwd:
+                options.workspaceAccess === 'none'
+                  ? path.resolve(options.resourceRoot ?? options.workspaceRoot)
+                  : normalized.cwd
+                    ? path.resolve(options.workspaceRoot, normalized.cwd)
+                    : path.resolve(options.workspaceRoot),
             }
           : normalized,
       ];

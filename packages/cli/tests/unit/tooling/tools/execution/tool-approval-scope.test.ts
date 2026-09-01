@@ -121,4 +121,25 @@ describe('tool approval scopes', () => {
       projectDir: workspaceRoot,
     });
   });
+
+  it('keeps ACP remote project approval scoped to the current Session', async () => {
+    const executor = createExecutor();
+    const confirmation = vi.fn(async () => ({
+      approved: true,
+      scope: 'project' as const,
+    }));
+    const context: ExecutionContext = {
+      workspaceRoot: '/private/remote-state',
+      executionRoot: 'C:\\Remote\\Project',
+      workspaceKind: 'acp-remote',
+      confirmationHandler: { requestConfirmation: confirmation },
+    };
+
+    await executor.execute('ScopedTool', { value: 'remote' }, context);
+    await executor.execute('ScopedTool', { value: 'remote' }, context);
+
+    expect(confirmation).toHaveBeenCalledTimes(1);
+    expect(permissionPersistence.allow).not.toHaveBeenCalled();
+    expect(permissionPersistence.deny).not.toHaveBeenCalled();
+  });
 });

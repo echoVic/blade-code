@@ -284,6 +284,44 @@ describe('Bash Tool', () => {
     expect(updateOutput.mock.calls.flat().join('\n')).not.toContain(sentinel);
   });
 
+  it('uses the remote execution root instead of the host state root', async () => {
+    const sessionId = 'bash-acp-remote-root';
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    client.enqueueOutput({ output: '', truncated: false });
+    client.resolveWait({ exitCode: 0 });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      sessionId,
+      acpCapabilities,
+      'C:\\Remote\\Project'
+    );
+    cleanups.push(
+      () => AcpServiceContext.destroySession(sessionId),
+      () => harness.close()
+    );
+
+    await bashTool.execute(
+      {
+        command: 'git status',
+        timeout: 10_000,
+        env: {},
+        run_in_background: false,
+      },
+      undefined,
+      {
+        sessionId,
+        workspaceRoot: '/private/remote-state',
+        executionRoot: 'C:\\Remote\\Project',
+        workspaceKind: 'acp-remote',
+      }
+    );
+
+    expect(client.createRequests).toEqual([
+      expect.objectContaining({ cwd: 'C:\\Remote\\Project' }),
+    ]);
+  });
+
   it('fails closed when the real ACP terminal cannot be created', async () => {
     const sessionId = 'bash-acp-fail-closed';
     const directory = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-bash-'));

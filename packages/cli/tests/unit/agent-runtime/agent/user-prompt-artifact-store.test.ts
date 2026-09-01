@@ -1,7 +1,21 @@
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
 import {
   collectUserPromptArtifactIds,
   getUserPromptArtifactReference,
@@ -14,6 +28,7 @@ import {
   MAX_USER_MESSAGE_TEXT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../../../src/api/attachmentLimits.js';
+import { createRemoteSessionStateStorage } from '../../../../src/context/storage/SessionStateStorage.js';
 
 describe('UserPromptArtifactStore', () => {
   let storageRoot: string;
@@ -23,12 +38,14 @@ describe('UserPromptArtifactStore', () => {
   beforeEach(() => {
     storageRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-prompt-artifact-'));
     workspaceRoot = path.join(storageRoot, 'workspace');
+    vi.stubEnv('BLADE_STORAGE_ROOT', storageRoot);
     store = new UserPromptArtifactStore(workspaceRoot, 'session-1', {
       storageRoot,
     });
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     rmSync(storageRoot, { recursive: true, force: true });
   });
 
@@ -99,6 +116,66 @@ describe('UserPromptArtifactStore', () => {
       expect(statSync(artifactPath).mode & 0o777).toBe(0o600);
       expect(statSync(path.dirname(artifactPath)).mode & 0o777).toBe(0o700);
     }
+  });
+
+  it('stores remote prompt artifacts below the authorized host state root', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Remote\\Blade')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const remoteStore = new UserPromptArtifactStore(
+      hostStateRoot,
+      'remote-prompt-session',
+      { storageRoot: hostStateRoot, stateStorage: remoteStorage }
+    );
+    const full = `${'remote'.repeat(8_000)}_TAIL`;
+
+    const materialized = await remoteStore.materialize(full);
+    const reference = getUserPromptArtifactReference(materialized.metadata)!;
+    await expect(
+      remoteStore.read(reference.id, 0, MAX_USER_PROMPT_ARTIFACT_READ_BYTES)
+    ).resolves.toMatchObject({
+      content: full,
+    });
+
+    const artifactFiles = readdirSync(hostStateRoot, {
+      recursive: true,
+      withFileTypes: true,
+    }).filter((entry) => entry.isFile() && entry.name.endsWith('.txt'));
+    expect(artifactFiles).toHaveLength(1);
+    expect(artifactFiles[0]!.parentPath).toContain(
+      path.join(hostStateRoot, 'prompt-artifacts')
+    );
+    expect(existsSync(path.join(storageRoot, 'projects'))).toBe(false);
+  });
+
+  it('revalidates the remote state scope before prompt artifact I/O', async () => {
+    if (process.platform === 'win32') return;
+
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/blade')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const remoteStore = new UserPromptArtifactStore(
+      hostStateRoot,
+      'remote-prompt-gate',
+      { storageRoot: hostStateRoot, stateStorage: remoteStorage }
+    );
+    const materialized = await remoteStore.materialize(`${'guard'.repeat(8_000)}_TAIL`);
+    const reference = getUserPromptArtifactReference(materialized.metadata)!;
+
+    chmodSync(hostStateRoot, 0o755);
+    await expect(remoteStore.read(reference.id)).rejects.toThrow(
+      'Prompt artifact is unavailable or invalid'
+    );
+    await expect(remoteStore.removeAll()).rejects.toThrow(
+      'Prompt artifact cleanup failed'
+    );
+    chmodSync(hostStateRoot, 0o700);
   });
 
   it('preserves inline images while offloading the complete text sequence', async () => {

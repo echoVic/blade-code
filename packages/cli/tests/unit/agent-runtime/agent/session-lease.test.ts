@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -25,6 +26,7 @@ import {
   getAcpRemoteSessionLeaseFilePath,
   getProjectStoragePath,
 } from '../../../../src/context/storage/pathUtils.js';
+import { createRemoteSessionStateStorage } from '../../../../src/context/storage/SessionStateStorage.js';
 
 describe('SessionLease', () => {
   let storageRoot: string;
@@ -124,6 +126,35 @@ describe('SessionLease', () => {
     });
 
     expect(existsSync(getProjectStoragePath(hostStateRoot))).toBe(false);
+  });
+
+  it('revalidates the remote state scope before releasing a lease', async () => {
+    if (process.platform === 'win32') return;
+
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Remote\\Lease')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-lease-release-gate';
+    const stateStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const lease = await SessionLease.acquireForStorage(sessionId, stateStorage);
+    chmodSync(hostStateRoot, 0o755);
+
+    await expect(lease.release()).rejects.toMatchObject({
+      code: 'acp_remote_workspace_state_invalid',
+    });
+    chmodSync(hostStateRoot, 0o700);
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      expect(existsSync(getAcpRemoteSessionLeaseFilePath(scope, sessionId))).toBe(true);
+    });
+    await expect(lease.release()).resolves.toBeUndefined();
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      expect(existsSync(getAcpRemoteSessionLeaseFilePath(scope, sessionId))).toBe(
+        false
+      );
+    });
   });
 
   it('rejects a symlinked remote session lease without following or deleting it', async () => {

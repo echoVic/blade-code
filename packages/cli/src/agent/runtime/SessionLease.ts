@@ -9,6 +9,10 @@ import {
   getAcpRemoteSessionLeaseFilePath,
   getProjectStoragePath,
 } from '../../context/storage/pathUtils.js';
+import {
+  type SessionStateStorage,
+  withSessionStateRoot,
+} from '../../context/storage/SessionStateStorage.js';
 import { getCwd } from '../../utils/cwd.js';
 import {
   captureProcessIdentity,
@@ -120,8 +124,24 @@ export class SessionLease {
 
   private constructor(
     private readonly filePath: string,
-    private readonly record: SessionLeaseRecord
+    private readonly record: SessionLeaseRecord,
+    private readonly stateStorage?: SessionStateStorage
   ) {}
+
+  static async acquireForStorage(
+    sessionId: string,
+    storage: SessionStateStorage
+  ): Promise<SessionLease> {
+    if (storage.kind === 'local') {
+      return SessionLease.acquire(sessionId, storage.root);
+    }
+    return withSessionStateRoot(storage, (root, scope) => {
+      if (!scope || root !== storage.root) {
+        throw new Error('ACP remote session lease scope is invalid');
+      }
+      return SessionLease.acquireRemote(sessionId, scope, storage);
+    });
+  }
 
   static async acquire(
     sessionId: string,
@@ -132,7 +152,8 @@ export class SessionLease {
 
   static async acquireRemote(
     sessionId: string,
-    scope: AcpRemoteStateScope
+    scope: AcpRemoteStateScope,
+    stateStorage?: SessionStateStorage
   ): Promise<SessionLease> {
     const filePath = getAcpRemoteSessionLeaseFilePath(scope, sessionId);
     try {
@@ -143,7 +164,7 @@ export class SessionLease {
     const lease = await SessionLease.acquireAtPath(sessionId, filePath);
     try {
       await assertAcpRemoteStateFile(scope, filePath);
-      return lease;
+      return new SessionLease(filePath, lease.record, stateStorage);
     } catch (error) {
       await lease.release();
       throw error;
@@ -190,12 +211,18 @@ export class SessionLease {
 
   async release(): Promise<void> {
     if (this.released) return;
+    const release = async () => {
+      const current = await readLease(this.filePath);
+      if (current?.ownerId !== this.record.ownerId) return;
+      await fs.unlink(this.filePath).catch((error) => {
+        if (!isNodeError(error, 'ENOENT')) throw error;
+      });
+    };
+    if (this.stateStorage?.kind === 'acp-remote') {
+      await withSessionStateRoot(this.stateStorage, release);
+    } else {
+      await release();
+    }
     this.released = true;
-
-    const current = await readLease(this.filePath);
-    if (current?.ownerId !== this.record.ownerId) return;
-    await fs.unlink(this.filePath).catch((error) => {
-      if (!isNodeError(error, 'ENOENT')) throw error;
-    });
   }
 }

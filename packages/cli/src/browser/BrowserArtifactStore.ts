@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { SessionStateStorage } from '../context/storage/SessionStateStorage.js';
 import { SessionArtifactStore } from '../tools/artifacts/SessionArtifactStore.js';
 import {
   MAX_BROWSER_SCREENSHOT_BYTES,
@@ -11,6 +12,7 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 
 export interface BrowserArtifactStoreOptions {
   storageRoot?: string;
+  stateStorage?: SessionStateStorage;
   exposePaths?: boolean;
   maxArtifacts?: number;
   maxSessionBytes?: number;
@@ -27,10 +29,12 @@ export function createBrowserSessionIdentity(
 export async function removeBrowserSessionArtifacts(
   projectPath: string,
   sessionId: string,
-  storageRoot?: string
+  storageRoot?: string,
+  stateStorage?: SessionStateStorage
 ): Promise<void> {
   await new BrowserArtifactStore(createBrowserSessionIdentity(projectPath, sessionId), {
     storageRoot,
+    stateStorage,
   }).removeAll();
 }
 
@@ -55,6 +59,7 @@ export class BrowserArtifactStore {
         }
       },
       storageRoot: options.storageRoot,
+      stateStorage: options.stateStorage,
       exposePaths: options.exposePaths,
     });
   }

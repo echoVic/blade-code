@@ -1187,6 +1187,45 @@ describe('CompactionService - 输出协议', () => {
     }
   });
 
+  test('remote compaction 不执行 host hook 或 referenced-file analysis', async () => {
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>Remote summary only.</summary>',
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+    });
+    const hookSpy = vi.spyOn(HookManager.getInstance(), 'executeCompactionHooks');
+    const analyzeSpy = vi.spyOn(
+      (await import('../../../../src/context/FileAnalyzer.js')).FileAnalyzer,
+      'analyzeFiles'
+    );
+
+    try {
+      await CompactionService.compact(
+        [
+          {
+            role: 'user',
+            content: 'Read C:\\Remote\\secret.txt and preserve the result.',
+          },
+        ],
+        {
+          trigger: 'auto',
+          modelName: 'test-model',
+          maxContextTokens: 6_000,
+          apiKey: 'test-key',
+          baseURL: 'https://example.invalid',
+          sessionId: 'remote-compaction-session',
+          workspaceRoot: '/private/remote-state',
+          workspaceAccess: 'none',
+        }
+      );
+
+      expect(hookSpy).not.toHaveBeenCalled();
+      expect(analyzeSpy).not.toHaveBeenCalled();
+    } finally {
+      hookSpy.mockRestore();
+      analyzeSpy.mockRestore();
+    }
+  });
+
   test('circuit breaker 应按 workspace 和 session 复合身份隔离', async () => {
     resetCompactionCircuitBreaker();
     compactChat

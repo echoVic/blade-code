@@ -411,7 +411,9 @@ export class StreamingToolExecutor {
         messageId: toolUseUuid ?? toolCall.id,
         signal: combinedSignal,
         confirmationHandler:
-          this.execContext.sessionId && this.execContext.workspaceRoot
+          this.execContext.sessionId &&
+          this.execContext.workspaceRoot &&
+          this.execContext.workspaceKind !== 'acp-remote'
             ? SessionInteractionService.createConfirmationHandler(
                 this.execContext.confirmationHandler,
                 {

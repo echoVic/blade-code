@@ -55,6 +55,13 @@ import {
   getSessionInboxFilePath,
   listProjectDirectories,
 } from './pathUtils.js';
+import {
+  createSessionStateStorage,
+  type SessionStateStorage,
+  sessionStateStorageKey,
+  withSessionStatePaths,
+  withSessionStateRoot,
+} from './SessionStateStorage.js';
 
 class TurnLifecycleNoop extends Error {}
 
@@ -651,17 +658,20 @@ export class PersistentStore {
   private readonly projectPath: string;
   private readonly maxSessions: number;
   private readonly version: string;
+  private readonly stateStorage: SessionStateStorage;
   /** Positive per-facade cache; Runtime ownership prevents active-file deletion. */
   private readonly initializedSessions = new Set<string>();
 
   constructor(
     projectPath: string = getCwd(),
     maxSessions: number = 100,
-    version: string = getVersion()
+    version: string = getVersion(),
+    stateStorage: SessionStateStorage = createSessionStateStorage(projectPath)
   ) {
     this.projectPath = projectPath;
     this.maxSessions = maxSessions;
     this.version = version;
+    this.stateStorage = stateStorage;
   }
 
   private createEvent<T extends SessionEvent['type']>(
@@ -676,7 +686,9 @@ export class PersistentStore {
       timestamp: new Date().toISOString(),
       type,
       cwd: this.projectPath,
-      gitBranch: detectGitBranch(this.projectPath),
+      ...(this.stateStorage.kind === 'local'
+        ? { gitBranch: detectGitBranch(this.projectPath) }
+        : {}),
       version: this.version,
       data,
     } as SessionEvent;
@@ -684,14 +696,14 @@ export class PersistentStore {
 
   /** The single writer for a session's stream: persists + fans out atomically. */
   private log(sessionId: string): SessionEventLog {
-    return SessionEventLog.for(sessionId, this.projectPath);
+    return SessionEventLog.for(sessionId, this.projectPath, this.stateStorage);
   }
 
   private async ensureSessionCreated(
     sessionId: string,
     subagentInfo?: SubagentInfoForContext
   ): Promise<void> {
-    const filePath = getSessionFilePath(this.projectPath, sessionId);
+    const filePath = sessionStateStorageKey(this.stateStorage, sessionId);
     if (this.initializedSessions.delete(sessionId)) {
       this.initializedSessions.add(sessionId);
       return;
@@ -728,9 +740,11 @@ export class PersistentStore {
     filePath: string,
     subagentInfo?: SubagentInfoForContext
   ): Promise<void> {
-    const store = new JSONLStore(filePath);
-    const entries = await store.readAll();
+    const entries = await this.log(sessionId).readAll();
     if (entries.length > 0) return;
+    if (this.stateStorage.kind === 'acp-remote') {
+      throw new Error('ACP remote session has no durable creation record');
+    }
     const now = new Date().toISOString();
     const sessionInfo: SessionInfo = {
       sessionId,
@@ -805,9 +819,11 @@ export class PersistentStore {
    */
   async initialize(): Promise<void> {
     try {
-      const storagePath = getProjectStoragePath(this.projectPath);
-      await fs.mkdir(storagePath, { recursive: true, mode: 0o755 });
-      console.log(`[PersistentStore] 初始化存储目录: ${storagePath}`);
+      await withSessionStateRoot(this.stateStorage, async (storagePath) => {
+        if (this.stateStorage.kind === 'local') {
+          await fs.mkdir(storagePath, { recursive: true, mode: 0o755 });
+        }
+      });
     } catch (error) {
       console.warn('[PersistentStore] 无法创建持久化存储目录:', error);
     }
@@ -2112,9 +2128,7 @@ export class PersistentStore {
    */
   async loadEvents(sessionId: string): Promise<SessionEvent[] | null> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
-      const store = new JSONLStore(filePath);
-      const entries = await store.readAll();
+      const entries = await this.log(sessionId).readAll();
       return entries.length > 0 ? materializeSessionEvents(entries) : null;
     } catch {
       return null;
@@ -2126,10 +2140,7 @@ export class PersistentStore {
    */
   async loadSession(sessionId: string): Promise<SessionContext | null> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
-      const store = new JSONLStore(filePath);
-
-      const entries = materializeSessionEvents(await store.readAll());
+      const entries = materializeSessionEvents(await this.log(sessionId).readAll());
       if (entries.length === 0) return null;
       const firstEntry = entries.find((entry) => entry.type === 'session_created');
 
@@ -2150,10 +2161,7 @@ export class PersistentStore {
    */
   async loadConversation(sessionId: string): Promise<ConversationContext | null> {
     try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
-      const store = new JSONLStore(filePath);
-
-      const entries = materializeSessionEvents(await store.readAll());
+      const entries = materializeSessionEvents(await this.log(sessionId).readAll());
       if (entries.length === 0) return null;
       const messageMap = new Map<
         string,
@@ -2202,6 +2210,9 @@ export class PersistentStore {
    * 获取所有会话列表
    */
   async listSessions(): Promise<string[]> {
+    if (this.stateStorage.kind === 'acp-remote') {
+      throw new Error('Remote session enumeration requires SessionService');
+    }
     try {
       const storagePath = getProjectStoragePath(this.projectPath);
       const files = await fs.readdir(storagePath);
@@ -2223,6 +2234,9 @@ export class PersistentStore {
     messageCount: number;
     topics: string[];
   } | null> {
+    if (this.stateStorage.kind === 'acp-remote') {
+      throw new Error('Remote session summaries require SessionService');
+    }
     try {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
       const store = new JSONLStore(filePath);
@@ -2256,6 +2270,9 @@ export class PersistentStore {
    * 删除会话数据
    */
   async deleteSession(sessionId: string): Promise<void> {
+    if (this.stateStorage.kind === 'acp-remote') {
+      throw new Error('Remote session deletion requires SessionService');
+    }
     this.initializedSessions.delete(sessionId);
     try {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
@@ -2292,6 +2309,9 @@ export class PersistentStore {
    * 清理旧会话（保持最近的N个会话）
    */
   async cleanupOldSessions(): Promise<void> {
+    if (this.stateStorage.kind === 'acp-remote') {
+      throw new Error('Remote session cleanup requires SessionService');
+    }
     try {
       const sessions = await this.listSessions();
       if (sessions.length <= this.maxSessions) {
@@ -2330,6 +2350,9 @@ export class PersistentStore {
     totalSize: number;
     projectPath: string;
   }> {
+    if (this.stateStorage.kind === 'acp-remote') {
+      throw new Error('Remote storage statistics require SessionService');
+    }
     try {
       const sessions = await this.listSessions();
       let totalSize = 0;
@@ -2363,6 +2386,9 @@ export class PersistentStore {
     canWrite: boolean;
     error?: string;
   }> {
+    if (this.stateStorage.kind === 'acp-remote') {
+      throw new Error('Remote storage health checks require SessionService');
+    }
     try {
       const storagePath = getProjectStoragePath(this.projectPath);
 

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { GoalExecutionFrontier, GoalSnapshot } from './types.js';
+import type { SessionStateStorage } from '../context/storage/SessionStateStorage.js';
 import { TaskListManager } from '../tools/builtin/task/TaskListManager.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
+import type { GoalExecutionFrontier, GoalSnapshot } from './types.js';
 
 export const MAX_GOAL_FRONTIER_SUBJECT_CHARS = 512;
 export const MAX_GOAL_FRONTIER_TASK_LIST_ID_CHARS = 256;
@@ -27,10 +28,14 @@ export function getGoalTaskListId(goal: GoalIdentity): string {
 
 export async function readGoalExecutionFrontier(
   goal: GoalIdentity,
-  options: { configDir: string; owner?: string }
+  options: { configDir: string; owner?: string; stateStorage?: SessionStateStorage }
 ): Promise<GoalExecutionFrontierReadResult> {
   const taskListId = getGoalTaskListId(goal);
-  const manager = TaskListManager.getInstance(taskListId, options.configDir);
+  const manager = TaskListManager.getInstance(
+    taskListId,
+    options.configDir,
+    options.stateStorage
+  );
   const tasks = await manager.listTasks();
   const completedIds = new Set(
     tasks.filter((task) => task.status === 'completed').map((task) => task.id)

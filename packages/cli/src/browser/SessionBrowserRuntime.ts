@@ -10,6 +10,7 @@ import type {
   Response,
   Route,
 } from 'playwright';
+import type { SessionStateStorage } from '../context/storage/SessionStateStorage.js';
 import {
   BrowserArtifactStore,
   createBrowserSessionIdentity,
@@ -98,6 +99,7 @@ interface BlockedPopup {
 export interface SessionBrowserRuntimeOptions {
   pool?: BrowserProcessPool;
   storageRoot?: string;
+  stateStorage?: SessionStateStorage;
   exposeArtifactPaths?: boolean;
 }
 
@@ -275,6 +277,7 @@ export class SessionBrowserRuntime {
       createBrowserSessionIdentity(projectPath, sessionId),
       {
         storageRoot: options.storageRoot,
+        stateStorage: options.stateStorage,
         exposePaths: options.exposeArtifactPaths,
       }
     );

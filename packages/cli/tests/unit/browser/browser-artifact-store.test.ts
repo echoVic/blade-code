@@ -1,12 +1,19 @@
 import { chmod, lstat, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+} from '../../../src/acp/AcpRemoteWorkspace.js';
 import {
   BrowserArtifactStore,
   createBrowserSessionIdentity,
   removeBrowserSessionArtifacts,
 } from '../../../src/browser/BrowserArtifactStore.js';
+import { createRemoteSessionStateStorage } from '../../../src/context/storage/SessionStateStorage.js';
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -19,9 +26,11 @@ describe('BrowserArtifactStore', () => {
 
   beforeEach(async () => {
     root = await mkdtemp(path.join(os.tmpdir(), 'blade-browser-artifacts-'));
+    vi.stubEnv('BLADE_STORAGE_ROOT', root);
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await rm(root, { recursive: true, force: true });
   });
 
@@ -56,6 +65,53 @@ describe('BrowserArtifactStore', () => {
     const artifact = await store.writeScreenshot(png('acp'));
     expect(artifact.persisted).toBe(true);
     expect(artifact.path).toBeUndefined();
+  });
+
+  it('stores remote screenshots below the authorized host state root', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Remote\\Blade')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const store = new BrowserArtifactStore('remote-browser-session', {
+      storageRoot: hostStateRoot,
+      stateStorage: remoteStorage,
+      exposePaths: true,
+    });
+
+    const artifact = await store.writeScreenshot(png('remote'));
+    expect(artifact.path).toMatch(
+      new RegExp(
+        `^${hostStateRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/browser-artifacts/`
+      )
+    );
+    expect(await readFile(artifact.path!)).toEqual(png('remote'));
+  });
+
+  it('revalidates the remote state scope before screenshot writes and removal', async () => {
+    if (process.platform === 'win32') return;
+
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/blade')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const store = new BrowserArtifactStore('remote-browser-gate', {
+      storageRoot: hostStateRoot,
+      stateStorage: remoteStorage,
+    });
+    await store.writeScreenshot(png('first'));
+
+    await chmod(hostStateRoot, 0o755);
+    await expect(store.writeScreenshot(png('second'))).rejects.toMatchObject({
+      code: 'acp_remote_workspace_state_invalid',
+    });
+    await expect(store.removeAll()).rejects.toMatchObject({
+      code: 'acp_remote_workspace_state_invalid',
+    });
+    await chmod(hostStateRoot, 0o700);
   });
 
   it('rejects invalid or oversized PNG data before persistence', async () => {

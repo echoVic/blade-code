@@ -1,7 +1,15 @@
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
+import { createRemoteSessionStateStorage } from '../../../../src/context/storage/SessionStateStorage.js';
 import {
   formatGoalExecutionFrontier,
   getGoalTaskListId,
@@ -15,9 +23,11 @@ describe('goal execution frontier', () => {
 
   beforeEach(async () => {
     configDir = await mkdtemp(path.join(os.tmpdir(), 'blade-goal-frontier-'));
+    vi.stubEnv('BLADE_STORAGE_ROOT', configDir);
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await rm(configDir, { recursive: true, force: true });
   });
 
@@ -100,6 +110,46 @@ describe('goal execution frontier', () => {
     const changed = await readGoalExecutionFrontier(goal, { configDir });
     expect(changed.frontier.digestSha256).not.toBe(first.frontier.digestSha256);
     expect(changed.frontier.inProgress).toBe(1);
+  });
+
+  it('reads goal frontier tasks from the remote host state root without projects escaping', async () => {
+    const goal = { sessionId: 'session-remote', goalId: 'goal-1' };
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/frontier')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+
+    const manager = TaskListManager.getInstance(
+      getGoalTaskListId(goal),
+      configDir,
+      remoteStorage
+    );
+    await manager.createTask({
+      subject: 'Remote frontier task',
+      description: 'Persisted below hostStateRoot',
+      priority: 'high',
+    });
+
+    const result = await readGoalExecutionFrontier(goal, {
+      configDir,
+      stateStorage: remoteStorage,
+    });
+
+    expect(result.frontier.nextTask).toMatchObject({
+      subject: 'Remote frontier task',
+      priority: 'high',
+    });
+    expect(
+      existsSync(
+        path.join(
+          hostStateRoot,
+          'tasks',
+          `${encodeURIComponent(getGoalTaskListId(goal))}-agent-${encodeURIComponent(getGoalTaskListId(goal))}.json`
+        )
+      )
+    ).toBe(true);
   });
 
   it('escapes and bounds the model-visible frontier block', () => {

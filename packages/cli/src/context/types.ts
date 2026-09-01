@@ -10,6 +10,7 @@ import type {
   ServiceTierSelection,
 } from '../config/types.js';
 import type { JsonObject, JsonValue, MessageRole } from '../store/types.js';
+import type { SessionStateStorage } from './storage/SessionStateStorage.js';
 
 export const MAX_TURN_INPUT_MESSAGE_IDS = 120;
 export const MAX_TURN_INPUT_MESSAGE_ID_CHARS = 128;
@@ -175,6 +176,7 @@ export interface ContextStorageOptions {
 
 export interface ContextManagerOptions {
   projectPath: string;
+  stateStorage?: SessionStateStorage;
   storage: ContextStorageOptions;
   defaultFilter: ContextFilter;
   compressionThreshold: number;

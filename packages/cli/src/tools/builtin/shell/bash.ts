@@ -1,4 +1,8 @@
 import { isAbsolute, resolve } from 'node:path';
+import {
+  parseAcpRemotePath,
+  resolveAcpRemotePathDescendant,
+} from '../../../acp/AcpRemotePath.js';
 import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { normalizeForegroundCommandHandoffMs } from '../../../config/foregroundCommandHandoff.js';
 import {
@@ -213,11 +217,22 @@ Before executing commands:
     const signal = context.signal ?? new AbortController().signal;
     const workspaceRoot = context.workspaceRoot ?? getCwd();
     const effectiveCwd =
-      cwd === undefined
-        ? workspaceRoot
-        : isAbsolute(cwd)
-          ? cwd
-          : resolve(workspaceRoot, cwd);
+      context.workspaceKind === 'acp-remote'
+        ? cwd === undefined
+          ? (context.executionRoot ?? workspaceRoot)
+          : (() => {
+              const executionRoot = context.executionRoot ?? workspaceRoot;
+              try {
+                return parseAcpRemotePath(cwd).wirePath;
+              } catch {
+                return resolveAcpRemotePathDescendant(executionRoot, cwd).wirePath;
+              }
+            })()
+        : cwd === undefined
+          ? workspaceRoot
+          : isAbsolute(cwd)
+            ? cwd
+            : resolve(workspaceRoot, cwd);
     const foregroundOwnership = context.sessionId
       ? {
           sessionId: context.sessionId,

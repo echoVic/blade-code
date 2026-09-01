@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
@@ -11,7 +12,11 @@ import {
 } from '../../src/acp/AcpRemoteWorkspace.js';
 import { BladeAgent } from '../../src/acp/BladeAgent.js';
 import { JSONLStore } from '../../src/context/storage/JSONLStore.js';
-import { getAcpRemoteSessionFilePath } from '../../src/context/storage/pathUtils.js';
+import {
+  getAcpRemoteSessionFilePath,
+  getProjectStoragePath,
+  getSessionFilePath,
+} from '../../src/context/storage/pathUtils.js';
 import { SessionService } from '../../src/services/SessionService.js';
 import { getState, vanillaStore } from '../../src/store/vanilla.js';
 import { worktreeManager } from '../../src/worktree/WorktreeManager.js';
@@ -240,6 +245,7 @@ describe('ACP session list and durable fork NDJSON integration', () => {
       cwd: requestedCwd,
       mcpServers: [],
     });
+    expect(existsSync(getProjectStoragePath(hostStateRoot))).toBe(false);
     expect(parent._meta).toBeUndefined();
     expect(JSON.stringify(parent)).not.toContain(hostStateRoot);
 
@@ -278,6 +284,7 @@ describe('ACP session list and durable fork NDJSON integration', () => {
       cwd: wirePath,
       mcpServers: [],
     });
+    expect(existsSync(getProjectStoragePath(hostStateRoot))).toBe(false);
 
     const collisionAlias = wirePath.toLowerCase();
     const aliasDescriptor = createAcpRemoteWorkspaceDescriptor(
@@ -313,6 +320,7 @@ describe('ACP session list and durable fork NDJSON integration', () => {
       cwd: wirePath,
       mcpServers: [],
     });
+    expect(existsSync(getProjectStoragePath(hostStateRoot))).toBe(false);
     expect(child._meta).toBeUndefined();
     expect(JSON.stringify(child)).not.toContain(hostStateRoot);
 
@@ -338,5 +346,12 @@ describe('ACP session list and durable fork NDJSON integration', () => {
     );
     expect(firstClient.requests).toEqual([]);
     expect(secondClient.requests).toEqual([]);
+
+    expect(existsSync(getSessionFilePath(hostStateRoot, parent.sessionId))).toBe(false);
+    expect(existsSync(getSessionFilePath(hostStateRoot, child.sessionId))).toBe(false);
+    const projectEntries = await readdir(path.join(storageRoot, 'projects'));
+    expect(projectEntries).not.toContain(
+      path.basename(getProjectStoragePath(hostStateRoot))
+    );
   });
 });

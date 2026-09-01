@@ -390,23 +390,33 @@ export class JSONLStore {
   }
 
   async appendValidated(
-    buildEntry: (entries: readonly SessionEvent[]) => SessionEvent
+    buildEntry: (entries: readonly SessionEvent[]) => SessionEvent,
+    options: JSONLValidatedAppendOptions = {}
   ): Promise<SessionEvent> {
-    return this.appendValidatedAsync(async (entries) => buildEntry(entries));
+    return this.appendValidatedAsync(async (entries) => buildEntry(entries), options);
   }
 
   async appendValidatedBatch(
-    buildEntries: (entries: readonly SessionEvent[]) => SessionEvent[]
+    buildEntries: (entries: readonly SessionEvent[]) => SessionEvent[],
+    options: JSONLValidatedAppendOptions = {}
   ): Promise<SessionEvent[]> {
-    return this.appendValidatedBatchAsync(async (entries) => buildEntries(entries));
+    return this.appendValidatedBatchAsync(
+      async (entries) => buildEntries(entries),
+      options
+    );
   }
 
   async appendValidatedBatchAsync(
-    buildEntries: (entries: readonly SessionEvent[]) => Promise<SessionEvent[]>
+    buildEntries: (entries: readonly SessionEvent[]) => Promise<SessionEvent[]>,
+    options: JSONLValidatedAppendOptions = {}
   ): Promise<SessionEvent[]> {
     return this.enqueue(async () => {
-      const handle = await fs.open(this.filePath, 'r+');
+      const flags = options.noFollow
+        ? fsSync.constants.O_RDWR | (fsSync.constants.O_NOFOLLOW ?? 0)
+        : 'r+';
+      const handle = await fs.open(this.filePath, flags);
       try {
+        await options.validateHandle?.(handle);
         const { entries, separator, size } = await this.readCommittedState(
           handle,
           'session transcript'
@@ -417,6 +427,7 @@ export class JSONLStore {
         const content = `${stamped.map(serializeSessionEvent).join('\n')}\n`;
         await handle.write(separator + content, size, 'utf8');
         await handle.sync();
+        await options.validateHandle?.(handle);
         return stamped;
       } finally {
         await handle.close();
@@ -450,6 +461,32 @@ export class JSONLStore {
         await handle.close();
       }
     });
+  }
+
+  async readAllValidated(
+    options: JSONLValidatedAppendOptions = {}
+  ): Promise<SessionEvent[]> {
+    const flags = options.noFollow
+      ? fsSync.constants.O_RDONLY | (fsSync.constants.O_NOFOLLOW ?? 0)
+      : 'r';
+    let handle: fs.FileHandle;
+    try {
+      handle = await fs.open(this.filePath, flags);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+    try {
+      await options.validateHandle?.(handle);
+      const entries = parseSessionJSONL(
+        await handle.readFile('utf8'),
+        'session transcript'
+      );
+      await options.validateHandle?.(handle);
+      return entries;
+    } finally {
+      await handle.close();
+    }
   }
 
   /**

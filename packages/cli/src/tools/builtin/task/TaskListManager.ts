@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import writeFileAtomic from 'write-file-atomic';
+import type { SessionStateStorage } from '../../../context/storage/SessionStateStorage.js';
+import { withSessionStateRoot } from '../../../context/storage/SessionStateStorage.js';
 import { safeParseSchema } from '../../../schema/index.js';
 import { KeyedMutexRegistry } from '../../../utils/KeyedMutexRegistry.js';
 import type { NodeError } from '../../types/index.js';
@@ -24,8 +26,14 @@ export class TaskListManager {
   private static readonly operations = new KeyedMutexRegistry<string>();
   private tasks: TaskListItem[] = [];
   private readonly filePath: string;
+  private readonly stateStorage?: SessionStateStorage;
 
-  private constructor(taskListId: string, configDir: string) {
+  private constructor(
+    private readonly taskListId: string,
+    private readonly configDir: string,
+    stateStorage?: SessionStateStorage
+  ) {
+    this.stateStorage = stateStorage;
     this.filePath = path.join(
       path.resolve(configDir),
       'tasks',
@@ -33,8 +41,12 @@ export class TaskListManager {
     );
   }
 
-  static getInstance(taskListId: string, configDir: string): TaskListManager {
-    return new TaskListManager(taskListId, configDir);
+  static getInstance(
+    taskListId: string,
+    configDir: string,
+    stateStorage?: SessionStateStorage
+  ): TaskListManager {
+    return new TaskListManager(taskListId, configDir, stateStorage);
   }
 
   static coordinationStatsForTests() {
@@ -252,9 +264,18 @@ export class TaskListManager {
     return [...this.tasks].sort(compareTasks);
   }
 
+  private withTaskListPath<T>(operation: (filePath: string) => Promise<T>): Promise<T> {
+    if (this.stateStorage?.kind !== 'acp-remote') {
+      return operation(this.filePath);
+    }
+    return withSessionStateRoot(this.stateStorage, (storageRoot) =>
+      operation(path.join(storageRoot, 'tasks', taskListFileName(this.taskListId)))
+    );
+  }
+
   private async readLatest(): Promise<TaskListFile> {
     return TaskListManager.operations.runExclusive(this.filePath, async () => {
-      const state = await this.readTasks();
+      const state = await this.withTaskListPath((filePath) => this.readTasks(filePath));
       this.tasks = state.tasks;
       return state;
     });
@@ -268,21 +289,23 @@ export class TaskListManager {
     }
   ): Promise<T> {
     return TaskListManager.operations.runExclusive(this.filePath, () =>
-      withTaskListFileLock(this.filePath, async () => {
-        const current = await this.readTasks();
-        const mutation = operation(current);
-        if (mutation.persist) {
-          await this.saveTasks(mutation.state);
-        }
-        this.tasks = mutation.state.tasks;
-        return mutation.result;
-      })
+      this.withTaskListPath((filePath) =>
+        withTaskListFileLock(filePath, async () => {
+          const current = await this.readTasks(filePath);
+          const mutation = operation(current);
+          if (mutation.persist) {
+            await this.saveTasks(filePath, mutation.state);
+          }
+          this.tasks = mutation.state.tasks;
+          return mutation.result;
+        })
+      )
     );
   }
 
-  private async readTasks(): Promise<TaskListFile> {
+  private async readTasks(filePath: string): Promise<TaskListFile> {
     try {
-      const data = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as unknown;
+      const data = JSON.parse(await fs.readFile(filePath, 'utf-8')) as unknown;
       return normalizeTaskFile(data);
     } catch (error) {
       if ((error as NodeError).code === 'ENOENT') {
@@ -294,9 +317,9 @@ export class TaskListManager {
     }
   }
 
-  private async saveTasks(state: TaskListFile): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
-    await writeFileAtomic(this.filePath, `${JSON.stringify(state, null, 2)}\n`, {
+  private async saveTasks(filePath: string, state: TaskListFile): Promise<void> {
+    await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+    await writeFileAtomic(filePath, `${JSON.stringify(state, null, 2)}\n`, {
       mode: 0o600,
     });
   }

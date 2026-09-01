@@ -41,6 +41,13 @@ export class CustomCommandRegistry {
     return instance;
   }
 
+  static empty(workspaceRoot: string): CustomCommandRegistry {
+    const registry = new CustomCommandRegistry();
+    registry.workspaceRoot = path.resolve(workspaceRoot);
+    registry.initialized = true;
+    return registry;
+  }
+
   /**
    * 重置实例（用于测试）
    */

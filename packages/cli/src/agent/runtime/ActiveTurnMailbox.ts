@@ -4,6 +4,7 @@ import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../api/attachmentLimits.js';
+import type { SessionStateStorage } from '../../context/storage/SessionStateStorage.js';
 import type { MessagePersistenceMetadata } from '../../context/types.js';
 import type { JsonObject } from '../../store/types.js';
 import type { BackgroundSubagentCompletion } from '../subagents/BackgroundSubagentCompletion.js';
@@ -82,10 +83,11 @@ export class ActiveTurnMailbox {
 
   static async create(
     workspaceRoot: string,
-    sessionId: string
+    sessionId: string,
+    stateStorage?: SessionStateStorage
   ): Promise<ActiveTurnMailbox> {
     return new ActiveTurnMailbox(
-      await DurableSteeringInbox.open(workspaceRoot, sessionId)
+      await DurableSteeringInbox.open(workspaceRoot, sessionId, stateStorage)
     );
   }
 

@@ -25,6 +25,7 @@ export interface ReactiveCompactOptions {
   signal?: AbortSignal;
   activeTask?: string;
   workspaceRoot?: string;
+  workspaceAccess?: 'full' | 'none';
   sessionId?: string;
 }
 
@@ -92,6 +93,7 @@ export class ReactiveCompaction {
         signal: options.signal,
         activeTask: options.activeTask,
         workspaceRoot: options.workspaceRoot,
+        workspaceAccess: options.workspaceAccess,
         sessionId: options.sessionId,
       });
 

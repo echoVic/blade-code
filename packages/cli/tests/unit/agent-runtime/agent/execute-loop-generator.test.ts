@@ -7000,6 +7000,40 @@ describe('executeLoopGenerator', () => {
       expect(nextMsg.role).toBe('user');
     });
 
+    it('does not execute stop hooks for ACP remote workspaces', async () => {
+      const { HookManager } = await import('../../../../src/hooks/HookManager.js');
+      const mockHookMgr = HookManager.getInstance();
+      const executeStopHooks = vi.mocked(mockHookMgr.executeStopHooks);
+      const deps = createMockDeps();
+      const chatMock = vi.mocked(deps.chatService.chat);
+      chatMock.mockResolvedValueOnce({
+        content: 'Remote work complete.',
+        toolCalls: undefined,
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+        finishReason: 'stop',
+      });
+      const context = {
+        ...createMockContext(),
+        workspaceRoot: '/private/remote-state',
+        executionRoot: 'C:\\Remote\\Project',
+        workspaceKind: 'acp-remote' as const,
+      };
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Finish the remote task',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeStopHooks).not.toHaveBeenCalled();
+      expect(chatMock).toHaveBeenCalledTimes(1);
+    });
+
     it('persists retry branch messages with a continuous parent UUID chain', async () => {
       const contextMgr = createMockContextManager();
       const deps = createMockDeps({

@@ -193,7 +193,8 @@ export async function assertAcpRemoteStateFileHandle(
 export function assertAcpRemoteSessionTranscriptIdentity(
   entries: readonly SessionEvent[],
   sessionId: string,
-  hostStateRoot: string
+  hostStateRoot: string,
+  expectedDescriptor?: AcpRemoteWorkspaceDescriptorV1
 ): Extract<SessionEvent, { type: 'session_created' }> {
   const created = entries[0];
   if (
@@ -204,6 +205,21 @@ export function assertAcpRemoteSessionTranscriptIdentity(
     created.projectPath !== hostStateRoot
   ) {
     throw new AcpRemoteWorkspaceStateError('remote-session-identity');
+  }
+  if (expectedDescriptor) {
+    const persistedDescriptor = parseAcpRemoteWorkspaceDescriptor(
+      created.data.remoteWorkspace
+    );
+    if (
+      persistedDescriptor.version !== expectedDescriptor.version ||
+      persistedDescriptor.kind !== expectedDescriptor.kind ||
+      persistedDescriptor.style !== expectedDescriptor.style ||
+      persistedDescriptor.wirePath !== expectedDescriptor.wirePath ||
+      persistedDescriptor.exactIdentity !== expectedDescriptor.exactIdentity ||
+      persistedDescriptor.collisionIdentity !== expectedDescriptor.collisionIdentity
+    ) {
+      throw new AcpRemoteWorkspaceStateError('remote-session-workspace');
+    }
   }
 
   for (const entry of entries) {

@@ -29,13 +29,16 @@ export async function runPreToolUseHooks<TParams>(
   ruleDecision: PermissionDecision,
   hookManager: HookManager = HookManager.getInstance()
 ): Promise<PreToolUseResult> {
-  const projectDir = context.workspaceRoot || getCwd();
-  const sessionId = context.sessionId || 'unknown';
   const unchanged: PreToolUseResult = {
     params,
     invocation,
     inputModified: false,
   };
+  if (context.workspaceKind === 'acp-remote') {
+    return unchanged;
+  }
+  const projectDir = context.workspaceRoot || getCwd();
+  const sessionId = context.sessionId || 'unknown';
   if (
     !hookManager.isEnabled(projectDir, sessionId) ||
     ruleDecision.behavior === 'deny'
@@ -109,6 +112,9 @@ export async function runPostToolUseHooks<TParams>(
   toolUseId?: string,
   hookManager: HookManager = HookManager.getInstance()
 ): Promise<void> {
+  if (context.workspaceKind === 'acp-remote') {
+    return;
+  }
   const projectDir = context.workspaceRoot || getCwd();
   const sessionId = context.sessionId || 'unknown';
   if (!hookManager.isEnabled(projectDir, sessionId)) {

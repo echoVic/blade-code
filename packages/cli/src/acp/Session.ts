@@ -33,6 +33,7 @@ import {
   type PendingResumeFailureEvidence,
 } from '../agent/runtime/PendingResumeRecoveryPolicy.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
+import type { SessionWorkspace } from '../agent/runtime/SessionWorkspace.js';
 import { isTeamMessageMetadata, TeamMailbox } from '../agent/teams/TeamMailbox.js';
 import type { ChatContext, UserMessageContent } from '../agent/types.js';
 import {
@@ -491,13 +492,15 @@ export class AcpSession {
     );
     logger.debug(`[AcpSession ${this.id}] ACP service context initialized`);
     const recoveredInteraction =
-      await SessionInteractionService.resolvePendingWithHandler(
-        this.roots.hostStateRoot,
-        this.id,
-        {
-          requestConfirmation: (details) => this.requestPermission(details),
-        }
-      );
+      this.roots.kind === 'local'
+        ? await SessionInteractionService.resolvePendingWithHandler(
+            this.roots.hostStateRoot,
+            this.id,
+            {
+              requestConfirmation: (details) => this.requestPermission(details),
+            }
+          )
+        : false;
     if (recoveredInteraction) {
       await this.refreshPersistedMessages();
     } else if ((this.options.initialMessages?.length ?? 0) > 0) {
@@ -510,9 +513,22 @@ export class AcpSession {
       ? toMcpServers(this.options.mcpServers)
       : undefined;
     const terminalService = AcpServiceContext.getInstance().getTerminalService(this.id);
+    const workspace: SessionWorkspace | undefined =
+      this.roots.kind === 'acp-remote'
+        ? {
+            kind: 'acp-remote',
+            executionRoot: this.roots.executionRoot,
+            resourceRoot: this.roots.hostResourceRoot,
+            readTextFile: this.clientCapabilities?.fs?.readTextFile === true,
+            writeTextFile: this.clientCapabilities?.fs?.writeTextFile === true,
+            terminal: this.clientCapabilities?.terminal === true,
+            descriptor: this.roots.descriptor,
+          }
+        : undefined;
     this.runtime = await SessionRuntime.create({
       sessionId: this.id,
       workspaceRoot: this.roots.hostStateRoot,
+      ...(workspace ? { workspace } : {}),
       permissionMode: this.mapModeToPermissionMode(),
       ...(mcpServers ? { mcpServers } : {}),
       ...(this.options.taskWorktree ? { taskWorktree: this.options.taskWorktree } : {}),
@@ -548,16 +564,21 @@ export class AcpSession {
           }
         : {}),
     });
-    const recoveredReview = await CodeReviewService.recoverInterrupted(
-      this.roots.hostStateRoot,
-      this.id,
-      this.runtime
-    );
+    const recoveredReview =
+      this.roots.kind === 'local'
+        ? await CodeReviewService.recoverInterrupted(
+            this.roots.hostStateRoot,
+            this.id,
+            this.runtime
+          )
+        : false;
     if (recoveredReview) {
       await this.refreshPersistedMessages();
     }
     this.agent = await this.createAgent();
-    await initializeCustomCommands(this.roots.hostStateRoot);
+    if (this.roots.kind === 'local') {
+      await initializeCustomCommands(this.roots.hostStateRoot);
+    }
 
     logger.debug(`[AcpSession ${this.id}] Agent created successfully`);
     this.taskStatusUnsubscribe?.();
@@ -1340,6 +1361,8 @@ export class AcpSession {
         sessionId: this.id,
         userId: 'acp-user',
         workspaceRoot: this.roots.hostStateRoot,
+        executionRoot: this.roots.executionRoot,
+        workspaceKind: this.roots.kind,
         messages: [...this.contextMessages],
         signal: abortController.signal,
         // 根据 ACP 模式映射到 Blade 权限模式

@@ -101,6 +101,8 @@ export interface ExecutionContext {
   modelId?: string; // 当前父 Agent 模型，供子代理 identity 冻结
   providerAdmissionOwnerId?: string; // 根 Session Provider capacity owner
   workspaceRoot?: string;
+  executionRoot?: string;
+  workspaceKind?: 'local' | 'acp-remote';
   environment?: Readonly<Record<string, string>>;
   worktreeIsolationRequired?: boolean;
   worktreeActive?: boolean;

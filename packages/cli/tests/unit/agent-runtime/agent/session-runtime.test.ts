@@ -9,6 +9,12 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
 import { ProjectRuleCatalog } from '../../../../src/agent/resources/WorkspaceProjectRules.js';
 import { DurableSteeringInbox } from '../../../../src/agent/runtime/DurableSteeringInbox.js';
 import { SessionLease } from '../../../../src/agent/runtime/SessionLease.js';
@@ -28,6 +34,7 @@ import {
   PROCESS_RESTART_TOOL_RESULT,
 } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
+import { createRemoteSessionStateStorage } from '../../../../src/context/storage/SessionStateStorage.js';
 import { getGoalTaskListId } from '../../../../src/goals/executionFrontier.js';
 import { GoalStore } from '../../../../src/goals/GoalStore.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
@@ -112,6 +119,12 @@ const resourceMocks = vi.hoisted(() => {
         commands: {},
       })
     ),
+    createEmpty: vi.fn((workspaceRoot: string) => ({
+      workspaceRoot,
+      subagents: {
+        snapshot: () => snapshot,
+      },
+    })),
   };
 });
 
@@ -165,6 +178,10 @@ const modelResourceMocks = vi.hoisted(() => {
       (resources: { projectRoot: string; config: Record<string, unknown> }) =>
         create(resources.projectRoot, resources.config)
     ),
+    createProcess: vi.fn(
+      (projectRoot: string, startupConfig: Record<string, unknown>) =>
+        create(projectRoot, startupConfig)
+    ),
   };
 });
 
@@ -203,12 +220,14 @@ vi.mock('../../../../src/mcp/resolveWorkspaceMcpConfig.js', () => ({
 }));
 
 vi.mock('../../../../src/agent/resources/WorkspaceAgentResources.js', () => ({
+  createEmptySessionAgentResources: resourceMocks.createEmpty,
   resolveWorkspaceAgentResources: resourceMocks.resolve,
   snapshotWorkspaceAgentResources: resourceMocks.createSnapshot,
 }));
 
 vi.mock('../../../../src/agent/resources/WorkspaceModelResources.js', () => ({
   cloneWorkspaceModelConfig: (config: unknown) => config,
+  createProcessModelResources: modelResourceMocks.createProcess,
   resolveWorkspaceModelResources: modelResourceMocks.resolve,
   snapshotWorkspaceModelResources: modelResourceMocks.snapshot,
 }));
@@ -969,6 +988,137 @@ describe('SessionRuntime', () => {
       existsSync(getSessionFilePath(workspaceRoot, 'workspace-owned-session'))
     ).toBe(true);
 
+    await runtime.dispose();
+  });
+
+  it('separates remote state execution and resource roots without workspace discovery', async () => {
+    const executionRoot = 'C:\\Remote\\Project';
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile(executionRoot)
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const resourceRoot = path.join(storageRoot, 'trusted-host-resource');
+    const userShellExecutor: UserShellExecutor = {
+      execute: vi.fn(async (_command, options) => {
+        expect(options.cwd).toBe(executionRoot);
+        return { exitCode: 0, stdout: 'remote shell', stderr: '' };
+      }),
+    };
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await SessionService.createRemoteSessionMetadata(
+      'remote-runtime-session',
+      hostStateRoot,
+      descriptor
+    );
+    const runtime = await SessionRuntime.create({
+      sessionId: 'remote-runtime-session',
+      workspaceRoot: hostStateRoot,
+      userShellExecutor,
+      workspace: {
+        kind: 'acp-remote',
+        executionRoot,
+        resourceRoot,
+        readTextFile: true,
+        writeTextFile: true,
+        terminal: false,
+        descriptor,
+      },
+    });
+
+    expect(runtime.workspaceRoot).toBe(hostStateRoot);
+    expect(runtime.executionRoot).toBe(executionRoot);
+    expect(runtime.resourceRoot).toBe(resourceRoot);
+    expect(runtime.isRemoteWorkspace()).toBe(true);
+    expect(runtime.getAttachmentCollector()).toBeUndefined();
+    expect(
+      runtime.resolveContextualProjectRules(
+        'Read',
+        { file_path: executionRoot },
+        undefined,
+        new Set()
+      )
+    ).toMatchObject({ files: [], references: [], triggerPaths: [] });
+    expect(modelResourceMocks.resolve).not.toHaveBeenCalled();
+    expect(lspResourceMocks.resolve).not.toHaveBeenCalled();
+    expect(resourceMocks.resolve).not.toHaveBeenCalled();
+    expect(worktreeMocks.restoreSession).not.toHaveBeenCalled();
+    expect(worktreeMocks.cleanupStaleAgentWorktrees).not.toHaveBeenCalled();
+    expect(patchRecoveryMocks.recover).not.toHaveBeenCalled();
+    expect(mcpResolverMocks.resolve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceAccess: 'none',
+        resourceRoot,
+      })
+    );
+    expect(vi.mocked(buildSystemPrompt)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceAccess: 'none',
+        environmentOptions: expect.objectContaining({
+          workingDirectory: executionRoot,
+        }),
+      })
+    );
+    vi.mocked(buildSystemPrompt).mockClear();
+    vi.mocked(buildSystemPrompt).mockResolvedValueOnce({
+      prompt: 'remote side conversation prompt',
+      sources: [],
+    });
+    vi.mocked(runtime.getChatService().chat).mockResolvedValueOnce({
+      content: 'remote side conversation answer',
+    });
+    await runtime.askSideQuestion('Inspect the remote session state');
+    expect(vi.mocked(buildSystemPrompt)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceAccess: 'none',
+        environmentOptions: expect.objectContaining({
+          workingDirectory: executionRoot,
+        }),
+      })
+    );
+    expect(vi.mocked(buildSystemPrompt).mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      'projectPath'
+    );
+    expect(vi.mocked(buildSystemPrompt).mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      'projectInstructionSourcePath'
+    );
+    await runtime.executeUserShellCommand('pwd');
+    expect(userShellExecutor.execute).toHaveBeenCalledTimes(1);
+
+    const executor = runtime.createToolExecutor();
+    const contextDefaults = Reflect.get(executor, 'contextDefaults') as Record<
+      string,
+      unknown
+    >;
+    expect(contextDefaults).toMatchObject({
+      workspaceRoot: hostStateRoot,
+      executionRoot,
+      workspaceKind: 'acp-remote',
+    });
+    await expect(runtime.setTaskStatus('running')).resolves.toMatchObject({
+      projectPath: hostStateRoot,
+      remoteWorkspace: descriptor,
+      taskStatus: 'running',
+    });
+    await expect(runtime.listRewindCheckpoints()).rejects.toThrow(
+      'Rewind is unavailable for ACP remote workspaces'
+    );
+    const turn = await runtime.beginTurn();
+    await runtime.finishTurn(turn, {
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1,
+      },
+    });
+    await expect(
+      SessionRuntime.hasRecoverableTurn(
+        hostStateRoot,
+        'remote-runtime-session',
+        createRemoteSessionStateStorage(hostStateRoot, descriptor)
+      )
+    ).resolves.toBe(false);
+    executor.dispose();
     await runtime.dispose();
   });
 

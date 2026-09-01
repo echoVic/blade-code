@@ -1,3 +1,4 @@
+import type { SessionStateStorage } from '../../../context/storage/SessionStateStorage.js';
 import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
@@ -54,7 +55,13 @@ Status progresses: pending -> in_progress -> completed
 
 Use deleted to permanently remove a task. Read the latest state with TaskGet before making risky updates.`;
 
-export function createTaskListTools(opts: { sessionId: string; configDir: string }) {
+interface TaskListToolOptions {
+  sessionId: string;
+  configDir: string;
+  stateStorage?: SessionStateStorage;
+}
+
+export function createTaskListTools(opts: TaskListToolOptions) {
   return [
     createTaskCreateTool(opts),
     createTaskGetTool(opts),
@@ -63,7 +70,7 @@ export function createTaskListTools(opts: { sessionId: string; configDir: string
   ];
 }
 
-function createTaskCreateTool(opts: { sessionId: string; configDir: string }) {
+function createTaskCreateTool(opts: TaskListToolOptions) {
   const { sessionId, configDir } = opts;
 
   return createTool({
@@ -95,7 +102,7 @@ function createTaskCreateTool(opts: { sessionId: string; configDir: string }) {
     },
     async execute(params, context: ExecutionContext): Promise<ToolResult> {
       try {
-        const manager = getManager(context, sessionId, configDir);
+        const manager = getManager(context, sessionId, configDir, opts.stateStorage);
         const task = await manager.createTask(params);
         const tasks = await manager.listTasks();
         const stats = manager.getStats();
@@ -122,7 +129,7 @@ function createTaskCreateTool(opts: { sessionId: string; configDir: string }) {
   });
 }
 
-function createTaskGetTool(opts: { sessionId: string; configDir: string }) {
+function createTaskGetTool(opts: TaskListToolOptions) {
   const { sessionId, configDir } = opts;
 
   return createTool({
@@ -143,7 +150,7 @@ function createTaskGetTool(opts: { sessionId: string; configDir: string }) {
     },
     async execute(params, context: ExecutionContext): Promise<ToolResult> {
       try {
-        const manager = getManager(context, sessionId, configDir);
+        const manager = getManager(context, sessionId, configDir, opts.stateStorage);
         const task = await manager.getTask(params.taskId);
 
         return {
@@ -167,7 +174,7 @@ function createTaskGetTool(opts: { sessionId: string; configDir: string }) {
   });
 }
 
-function createTaskUpdateTool(opts: { sessionId: string; configDir: string }) {
+function createTaskUpdateTool(opts: TaskListToolOptions) {
   const { sessionId, configDir } = opts;
 
   return createTool({
@@ -199,7 +206,7 @@ function createTaskUpdateTool(opts: { sessionId: string; configDir: string }) {
     },
     async execute(params, context: ExecutionContext): Promise<ToolResult> {
       try {
-        const manager = getManager(context, sessionId, configDir);
+        const manager = getManager(context, sessionId, configDir, opts.stateStorage);
         const status = params.status as TaskUpdateStatus | undefined;
 
         if (status === 'deleted') {
@@ -269,7 +276,7 @@ function createTaskUpdateTool(opts: { sessionId: string; configDir: string }) {
   });
 }
 
-function createTaskListTool(opts: { sessionId: string; configDir: string }) {
+function createTaskListTool(opts: TaskListToolOptions) {
   const { sessionId, configDir } = opts;
 
   return createTool({
@@ -285,7 +292,7 @@ function createTaskListTool(opts: { sessionId: string; configDir: string }) {
     },
     async execute(_params, context: ExecutionContext): Promise<ToolResult> {
       try {
-        const manager = getManager(context, sessionId, configDir);
+        const manager = getManager(context, sessionId, configDir, opts.stateStorage);
         const tasks = await manager.listTasks();
         const stats = manager.getStats();
 
@@ -316,14 +323,16 @@ function createTaskListTool(opts: { sessionId: string; configDir: string }) {
 function getManager(
   context: ExecutionContext,
   fallbackSessionId: string,
-  configDir: string
+  configDir: string,
+  stateStorage?: SessionStateStorage
 ): TaskListManager {
   return TaskListManager.getInstance(
     context.taskListId ||
       context.goalTaskListId ||
       context.sessionId ||
       fallbackSessionId,
-    configDir
+    configDir,
+    stateStorage
   );
 }
 

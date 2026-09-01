@@ -65,6 +65,8 @@ export interface CompactionOptions {
   activeTask?: string;
   /** 当前 active workspace；相对文件引用必须按它解析 */
   workspaceRoot?: string;
+  /** Whether compaction may inspect or execute hooks for a host workspace. */
+  workspaceAccess?: 'full' | 'none';
 }
 
 /**
@@ -503,30 +505,32 @@ export class CompactionService {
     let blockReason: string | undefined;
     let completedSampleAttempts = 0;
     let imagesOmitted = 0;
-    try {
-      const hookManager = HookManager.getInstance();
-      const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
-        projectDir: options.workspaceRoot ?? getCwd(),
-        sessionId: options.sessionId || 'unknown',
-        permissionMode: options.permissionMode || PermissionMode.DEFAULT,
-        messagesBefore: sourceMessages.length,
-        tokensBefore: preTokens,
-      });
+    if (options.workspaceAccess !== 'none') {
+      try {
+        const hookManager = HookManager.getInstance();
+        const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
+          projectDir: options.workspaceRoot ?? getCwd(),
+          sessionId: options.sessionId || 'unknown',
+          permissionMode: options.permissionMode || PermissionMode.DEFAULT,
+          messagesBefore: sourceMessages.length,
+          tokensBefore: preTokens,
+        });
 
-      // 如果 hook 返回 blockCompaction: true，阻止压缩
-      if (hookResult.blockCompaction) {
-        blockReason = hookResult.blockReason || 'Compaction blocked by hook';
-      }
+        // 如果 hook 返回 blockCompaction: true，阻止压缩
+        if (hookResult.blockCompaction) {
+          blockReason = hookResult.blockReason || 'Compaction blocked by hook';
+        }
 
-      // 如果有警告，记录日志
-      if (hookResult.warning) {
-        logger.warn(
-          `[CompactionService] Compaction hook warning: ${hookResult.warning}`
-        );
+        // 如果有警告，记录日志
+        if (hookResult.warning) {
+          logger.warn(
+            `[CompactionService] Compaction hook warning: ${hookResult.warning}`
+          );
+        }
+      } catch (hookError) {
+        // Hook 执行失败不应阻止压缩
+        logger.warn('[CompactionService] Compaction hook execution failed:', hookError);
       }
-    } catch (hookError) {
-      // Hook 执行失败不应阻止压缩
-      logger.warn('[CompactionService] Compaction hook execution failed:', hookError);
     }
     if (blockReason) {
       logger.debug(`[CompactionService] Compaction hook 阻止压缩: ${blockReason}`);
@@ -558,7 +562,10 @@ export class CompactionService {
       logger.debug('[CompactionService] 压缩前 tokens:', preTokens);
 
       // 1. 分析并读取重点文件
-      const fileRefs = FileAnalyzer.analyzeFiles(sourceMessages);
+      const fileRefs =
+        options.workspaceAccess === 'none'
+          ? []
+          : FileAnalyzer.analyzeFiles(sourceMessages);
       const filePaths = fileRefs.map((f) => f.path);
       logger.debug('[CompactionService] 提取重点文件:', filePaths);
 
@@ -622,10 +629,13 @@ export class CompactionService {
       const compactedMessages = [summaryMessage, ...retainedMessages];
 
       // === Post-Compact 上下文恢复 ===
-      const restorationMessage = await this.buildFileRestorationMessage(
-        options.workspaceRoot,
-        options.sessionId
-      );
+      const restorationMessage =
+        options.workspaceAccess === 'none'
+          ? null
+          : await this.buildFileRestorationMessage(
+              options.workspaceRoot,
+              options.sessionId
+            );
       if (restorationMessage) {
         compactedMessages.push(restorationMessage);
       }

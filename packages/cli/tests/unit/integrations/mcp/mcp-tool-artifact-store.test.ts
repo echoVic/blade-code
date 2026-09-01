@@ -1,7 +1,14 @@
-import { mkdtemp, rm, stat, writeFile, chmod } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
+import { createRemoteSessionStateStorage } from '../../../../src/context/storage/SessionStateStorage.js';
 import { McpToolArtifactStore } from '../../../../src/mcp/McpToolArtifactStore.js';
 
 describe('MCP tool artifact store', () => {
@@ -9,9 +16,11 @@ describe('MCP tool artifact store', () => {
 
   beforeEach(async () => {
     root = await mkdtemp(path.join(os.tmpdir(), 'blade-mcp-artifacts-'));
+    vi.stubEnv('BLADE_STORAGE_ROOT', root);
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await rm(root, { recursive: true, force: true });
   });
 
@@ -71,6 +80,45 @@ describe('MCP tool artifact store', () => {
     expect(path.dirname(localArtifact.path!)).not.toBe(
       path.dirname(otherLocalArtifact.path!)
     );
+  });
+
+  it('revalidates the remote state scope before each artifact write', async () => {
+    if (process.platform === 'win32') return;
+
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/mcp-artifacts')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const store = new McpToolArtifactStore('session-remote', {
+      storageRoot: hostStateRoot,
+      stateStorage: remoteStorage,
+      exposePaths: true,
+    });
+
+    const first = await store.write({
+      kind: 'text',
+      bytes: Buffer.from('first'),
+      mimeType: 'text/plain',
+    });
+    expect(first.path).toMatch(
+      new RegExp(
+        `^${hostStateRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/mcp-artifacts/`
+      )
+    );
+
+    await chmod(hostStateRoot, 0o755);
+    await expect(
+      store.write({
+        kind: 'text',
+        bytes: Buffer.from('second'),
+        mimeType: 'text/plain',
+      })
+    ).rejects.toMatchObject({
+      code: 'acp_remote_workspace_state_invalid',
+    });
+    await chmod(hostStateRoot, 0o700);
   });
 
   it('fails closed when an existing artifact loses private permissions', async () => {

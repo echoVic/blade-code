@@ -4,9 +4,11 @@ import { Mutex } from 'async-mutex';
 import writeFileAtomic from 'write-file-atomic';
 import { parseSessionJSONL } from '../../context/storage/JSONLStore.js';
 import {
-  getSessionFilePath,
-  getSessionInboxFilePath,
-} from '../../context/storage/pathUtils.js';
+  createSessionStateStorage,
+  type SessionStatePaths,
+  type SessionStateStorage,
+  withSessionStatePaths,
+} from '../../context/storage/SessionStateStorage.js';
 import {
   type MessagePersistenceMetadata,
   type SessionEvent,
@@ -174,20 +176,16 @@ export class DurableSteeringInbox {
   private messages: DurableSteeringMessage[] = [];
 
   private constructor(
-    private readonly workspaceRoot: string,
     private readonly sessionId: string,
-    private readonly filePath: string
+    private readonly stateStorage: SessionStateStorage
   ) {}
 
   static async open(
     workspaceRoot: string,
-    sessionId: string
+    sessionId: string,
+    stateStorage: SessionStateStorage = createSessionStateStorage(workspaceRoot)
   ): Promise<DurableSteeringInbox> {
-    const inbox = new DurableSteeringInbox(
-      workspaceRoot,
-      sessionId,
-      getSessionInboxFilePath(workspaceRoot, sessionId)
-    );
+    const inbox = new DurableSteeringInbox(sessionId, stateStorage);
     await inbox.loadAndReconcile();
     return inbox;
   }
@@ -259,45 +257,49 @@ export class DurableSteeringInbox {
 
   private async loadAndReconcile(): Promise<void> {
     await this.mutex.runExclusive(async () => {
-      let record: InboxRecord = {
-        version: INBOX_VERSION,
-        sessionId: this.sessionId,
-        messages: [],
-      };
-      try {
-        const stats = await fs.stat(this.filePath);
-        if (stats.size > MAX_INBOX_FILE_BYTES) {
-          throw new Error(
-            `Steering inbox exceeds ${MAX_INBOX_FILE_BYTES} bytes: ${this.filePath}`
+      await withSessionStatePaths(this.stateStorage, this.sessionId, async (paths) => {
+        let record: InboxRecord = {
+          version: INBOX_VERSION,
+          sessionId: this.sessionId,
+          messages: [],
+        };
+        try {
+          const stats = await fs.stat(paths.inboxPath);
+          if (stats.size > MAX_INBOX_FILE_BYTES) {
+            throw new Error(
+              `Steering inbox exceeds ${MAX_INBOX_FILE_BYTES} bytes: ${paths.inboxPath}`
+            );
+          }
+          await fs.chmod(paths.inboxPath, 0o600);
+          record = parseInboxRecord(
+            await fs.readFile(paths.inboxPath, 'utf8'),
+            paths.inboxPath,
+            this.sessionId
           );
+        } catch (error) {
+          if (!isNodeError(error, 'ENOENT')) throw error;
         }
-        await fs.chmod(this.filePath, 0o600);
-        record = parseInboxRecord(
-          await fs.readFile(this.filePath, 'utf8'),
-          this.filePath,
-          this.sessionId
-        );
-      } catch (error) {
-        if (!isNodeError(error, 'ENOENT')) throw error;
-      }
 
-      const transcriptPath = getSessionFilePath(this.workspaceRoot, this.sessionId);
-      let acknowledged = new Set<string>();
-      try {
-        acknowledged = acknowledgedInboxIds(
-          parseSessionJSONL(await fs.readFile(transcriptPath, 'utf8'), transcriptPath)
-        );
-      } catch (error) {
-        if (!isNodeError(error, 'ENOENT')) throw error;
-      }
+        let acknowledged = new Set<string>();
+        try {
+          acknowledged = acknowledgedInboxIds(
+            parseSessionJSONL(
+              await fs.readFile(paths.transcriptPath, 'utf8'),
+              paths.transcriptPath
+            )
+          );
+        } catch (error) {
+          if (!isNodeError(error, 'ENOENT')) throw error;
+        }
 
-      const next = record.messages
-        .filter((message) => !acknowledged.has(message.id))
-        .map((message) => ({ ...message, recovered: true }));
-      this.messages = next;
-      if (next.length !== record.messages.length) {
-        await this.persist(next);
-      }
+        const next = record.messages
+          .filter((message) => !acknowledged.has(message.id))
+          .map((message) => ({ ...message, recovered: true }));
+        this.messages = next;
+        if (next.length !== record.messages.length) {
+          await this.persistAtPath(next, paths);
+        }
+      });
     });
   }
 
@@ -305,13 +307,23 @@ export class DurableSteeringInbox {
     messages: DurableSteeringMessage[],
     serializedRecord?: string
   ): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), {
+    await withSessionStatePaths(this.stateStorage, this.sessionId, (paths) =>
+      this.persistAtPath(messages, paths, serializedRecord)
+    );
+  }
+
+  private async persistAtPath(
+    messages: DurableSteeringMessage[],
+    paths: SessionStatePaths,
+    serializedRecord?: string
+  ): Promise<void> {
+    await fs.mkdir(path.dirname(paths.inboxPath), {
       recursive: true,
       mode: 0o700,
     });
 
     if (messages.length === 0) {
-      await fs.unlink(this.filePath).catch((error) => {
+      await fs.unlink(paths.inboxPath).catch((error) => {
         if (!isNodeError(error, 'ENOENT')) throw error;
       });
       return;
@@ -321,10 +333,10 @@ export class DurableSteeringInbox {
       serializedRecord ?? serializeInboxRecord(this.sessionId, messages);
     if (Buffer.byteLength(serialized) > MAX_INBOX_FILE_BYTES) {
       throw new Error(
-        `Steering inbox exceeds ${MAX_INBOX_FILE_BYTES} bytes: ${this.filePath}`
+        `Steering inbox exceeds ${MAX_INBOX_FILE_BYTES} bytes: ${paths.inboxPath}`
       );
     }
-    await writeFileAtomic(this.filePath, serialized, {
+    await writeFileAtomic(paths.inboxPath, serialized, {
       encoding: 'utf8',
       mode: 0o600,
       fsync: true,

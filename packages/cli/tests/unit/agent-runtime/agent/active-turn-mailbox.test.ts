@@ -1,8 +1,15 @@
 import { mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+  withValidatedAcpRemoteStateScope,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
 import {
   ActiveTurnMailbox,
   MAX_PENDING_BACKGROUND_COMPLETIONS,
@@ -16,6 +23,7 @@ import {
   getSessionFilePath,
   getSessionInboxFilePath,
 } from '../../../../src/context/storage/pathUtils.js';
+import { createRemoteSessionStateStorage } from '../../../../src/context/storage/SessionStateStorage.js';
 import { MAX_TURN_INPUT_MESSAGE_IDS } from '../../../../src/context/types.js';
 
 describe('ActiveTurnMailbox', () => {
@@ -41,6 +49,69 @@ describe('ActiveTurnMailbox', () => {
     expect(MAX_PENDING_STEERS + MAX_PENDING_BACKGROUND_COMPLETIONS).toBe(
       MAX_TURN_INPUT_MESSAGE_IDS
     );
+  });
+
+  it('stores remote inboxes directly under an explicitly authorized state root', async () => {
+    const sessionId = 'remote-inbox';
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Remote\\Blade')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+
+    const mailbox = await ActiveTurnMailbox.create(
+      hostStateRoot,
+      sessionId,
+      remoteStorage
+    );
+    await mailbox.enqueue('remote guidance', { allowBeforeTurn: true });
+
+    const inboxPath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => path.join(String(scope), `${sessionId}.inbox.json`)
+    );
+    expect(JSON.parse(await readFile(inboxPath, 'utf8'))).toMatchObject({
+      sessionId,
+      messages: [expect.objectContaining({ content: 'remote guidance' })],
+    });
+    await expect(
+      ActiveTurnMailbox.create(hostStateRoot, sessionId, remoteStorage)
+    ).resolves.toMatchObject({});
+    await expect(
+      stat(getSessionInboxFilePath(hostStateRoot, sessionId))
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('revalidates the remote state scope before inbox reads and writes', async () => {
+    if (process.platform === 'win32') return;
+
+    const sessionId = 'remote-inbox-gate';
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/blade')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const remoteStorage = createRemoteSessionStateStorage(hostStateRoot, descriptor);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const inbox = await DurableSteeringInbox.open(
+      hostStateRoot,
+      sessionId,
+      remoteStorage
+    );
+    await inbox.enqueue({
+      id: 'remote-message',
+      content: 'guard this write',
+      queuedAt: Date.now(),
+    });
+
+    await chmod(hostStateRoot, 0o755);
+    await expect(inbox.acknowledge(['remote-message'])).rejects.toMatchObject({
+      code: 'acp_remote_workspace_state_invalid',
+    });
+    await expect(
+      DurableSteeringInbox.open(hostStateRoot, sessionId, remoteStorage)
+    ).rejects.toMatchObject({ code: 'acp_remote_workspace_state_invalid' });
+    await chmod(hostStateRoot, 0o700);
   });
 
   it('accepts steering only for an active turn and drains it in order', async () => {

@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Type } from '../../../../../src/schema/index.js';
 import type { HookManager } from '../../../../../src/hooks/HookManager.js';
+import { Type } from '../../../../../src/schema/index.js';
 import { createTool } from '../../../../../src/tools/core/createTool.js';
-import { runPreToolUseHooks } from '../../../../../src/tools/execution/ToolExecutionHooks.js';
+import {
+  runPostToolUseHooks,
+  runPreToolUseHooks,
+} from '../../../../../src/tools/execution/ToolExecutionHooks.js';
 import { ToolKind } from '../../../../../src/tools/types/index.js';
 
 function createValueTool() {
@@ -31,7 +34,42 @@ function createHookManager(modifiedInput: Record<string, unknown>): HookManager 
   } as unknown as HookManager;
 }
 
+function createCountingHookManager() {
+  return {
+    isEnabled: vi.fn(() => true),
+    executePreToolHooks: vi.fn().mockResolvedValue({ decision: 'allow' }),
+    executePostToolHooks: vi.fn().mockResolvedValue({}),
+  } as unknown as HookManager;
+}
+
 describe('runPreToolUseHooks', () => {
+  it('skips all hooks for ACP remote execution contexts', async () => {
+    const tool = createValueTool();
+    const params = { value: 'remote' };
+    const hookManager = createCountingHookManager();
+    const context = {
+      workspaceRoot: '/private/state',
+      executionRoot: 'C:\\Remote\\Project',
+      workspaceKind: 'acp-remote' as const,
+    };
+
+    const pre = await runPreToolUseHooks(
+      tool,
+      params,
+      tool.build(params),
+      context,
+      { behavior: 'allow', source: 'rule' },
+      hookManager
+    );
+    const result = { success: true, llmContent: 'ok' };
+    await runPostToolUseHooks(tool, params, result, context, undefined, hookManager);
+
+    expect(pre).toMatchObject({ params, inputModified: false });
+    expect(hookManager.isEnabled).not.toHaveBeenCalled();
+    expect(hookManager.executePreToolHooks).not.toHaveBeenCalled();
+    expect(hookManager.executePostToolHooks).not.toHaveBeenCalled();
+  });
+
   it('使用 Hook 修改后的参数重建 invocation', async () => {
     const tool = createValueTool();
     const initialParams = { value: 'before' };

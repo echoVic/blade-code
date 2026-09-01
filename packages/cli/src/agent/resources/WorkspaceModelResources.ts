@@ -67,3 +67,15 @@ export function snapshotWorkspaceModelResources(
     catalog: createCatalog(config, resources.catalog),
   };
 }
+
+export function createProcessModelResources(
+  projectRoot: string,
+  config: BladeConfig
+): SessionModelResources {
+  const snapshot = cloneWorkspaceModelConfig(config);
+  return {
+    projectRoot: path.resolve(projectRoot),
+    config: snapshot,
+    catalog: createCatalog(snapshot),
+  };
+}

@@ -42,6 +42,8 @@ const AVAILABLE_SKILLS_REGEX = /<available_skills>\s*<\/available_skills>/;
  * 提示词构建选项
  */
 export interface BuildSystemPromptOptions {
+  /** Host workspace resources available to this prompt build. */
+  workspaceAccess?: 'full' | 'none';
   /**
    * 项目路径，用于查找分层项目指令
    */
@@ -165,7 +167,9 @@ export async function buildSystemPrompt(
     availableSkills,
     communicationStyle = 'auto',
     communicationStyleCatalog,
+    workspaceAccess = 'full',
   } = options;
+  const workspaceProjectPath = workspaceAccess === 'full' ? projectPath : undefined;
 
   const parts: string[] = [];
   const sources: BuildSystemPromptResult['sources'] = [];
@@ -209,16 +213,18 @@ export async function buildSystemPrompt(
   }
 
   const allowProjectInstructions =
-    projectPath !== undefined &&
+    workspaceProjectPath !== undefined &&
     (projectTrusted ??
-      (await WorkspaceTrustService.getInstance().getStatus(projectPath)).state ===
-        'trusted');
+      (await WorkspaceTrustService.getInstance().getStatus(workspaceProjectPath))
+        .state === 'trusted');
 
   // 3. 分层项目指令 - 仅在 Folder Trust 通过后加载
-  if (projectPath && allowProjectInstructions) {
+  if (workspaceProjectPath && allowProjectInstructions) {
     const projectInstructions = projectRuleCatalog
-      ? projectRuleCatalog.staticRules(projectInstructionSourcePath ?? projectPath)
-      : await loadProjectInstructions(projectPath);
+      ? projectRuleCatalog.staticRules(
+          projectInstructionSourcePath ?? workspaceProjectPath
+        )
+      : await loadProjectInstructions(workspaceProjectPath);
     if (projectInstructions && projectInstructions.files.length > 0) {
       parts.push(projectInstructions.content);
       sources.push({
@@ -229,14 +235,14 @@ export async function buildSystemPrompt(
     } else {
       sources.push({ name: 'project_instructions', loaded: false });
     }
-  } else if (projectPath) {
+  } else if (workspaceProjectPath) {
     sources.push({ name: 'project_instructions', loaded: false });
   }
 
   // 4. Auto Memory（MEMORY.md 前 N 行）- 跨会话持久记忆
-  if (projectPath && process.env.BLADE_AUTO_MEMORY !== '0') {
+  if (workspaceProjectPath && process.env.BLADE_AUTO_MEMORY !== '0') {
     try {
-      const memoryManager = new AutoMemoryManager(projectPath);
+      const memoryManager = new AutoMemoryManager(workspaceProjectPath);
       const memoryContent = await memoryManager.loadIndex();
       if (memoryContent) {
         parts.push(`<auto-memory>\n${memoryContent}\n</auto-memory>`);
@@ -256,8 +262,8 @@ export async function buildSystemPrompt(
   // 5. 环境上下文
   if (includeEnvironment) {
     const envContext = getEnvironmentContext(
-      projectPath
-        ? { ...environmentOptions, workingDirectory: projectPath }
+      workspaceProjectPath && !environmentOptions?.workingDirectory
+        ? { ...environmentOptions, workingDirectory: workspaceProjectPath }
         : environmentOptions
     );
     if (envContext) {
@@ -276,7 +282,11 @@ export async function buildSystemPrompt(
   let prompt = parts.join('\n\n---\n\n');
 
   // 注入 Skills 元数据到 <available_skills> 占位符
-  prompt = injectSkillsToPrompt(prompt, projectPath, availableSkills);
+  prompt = injectSkillsToPrompt(
+    prompt,
+    workspaceProjectPath,
+    workspaceAccess === 'none' ? (availableSkills ?? '') : availableSkills
+  );
 
   // 注入语言指令
   prompt = injectLanguageInstruction(prompt, language);

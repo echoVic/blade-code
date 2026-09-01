@@ -60,6 +60,8 @@ export interface ChatContext {
   /** Task-list scope derived from the active persisted Goal. */
   goalTaskListId?: string;
   workspaceRoot: string;
+  executionRoot?: string;
+  workspaceKind?: 'local' | 'acp-remote';
   signal?: AbortSignal;
   confirmationHandler?: ConfirmationHandler; // 会话级别的确认处理器
   permissionMode?: PermissionMode; // 当前权限模式（用于 Plan 模式判断）

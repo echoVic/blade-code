@@ -446,6 +446,19 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
       },
     };
 
+    if (context.workspaceKind === 'acp-remote') {
+      this.addToHistory({
+        executionId,
+        toolName,
+        params,
+        result,
+        startTime,
+        endTime,
+        context,
+      });
+      return formatToolResult(result, executionId, toolName);
+    }
+
     try {
       const hookResult = await HookManager.getInstance().executePostToolUseFailureHooks(
         toolName,

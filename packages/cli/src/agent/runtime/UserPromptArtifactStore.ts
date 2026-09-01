@@ -7,6 +7,10 @@ import {
   MAX_USER_MESSAGE_TEXT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../api/attachmentLimits.js';
+import {
+  type SessionStateStorage,
+  withSessionStateRoot,
+} from '../../context/storage/SessionStateStorage.js';
 import type { MessagePersistenceMetadata } from '../../context/types.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import type { JsonObject } from '../../store/types.js';
@@ -62,6 +66,7 @@ export interface UserPromptArtifactChunk {
 
 interface UserPromptArtifactStoreOptions {
   storageRoot: string;
+  stateStorage?: SessionStateStorage;
 }
 
 function isNodeError(error: unknown, code: string): boolean {
@@ -390,6 +395,7 @@ export function collectUserPromptArtifactIds(
 
 export class UserPromptArtifactStore {
   private readonly root: string;
+  private readonly stateStorage?: SessionStateStorage;
   private readonly writeMutex = new Mutex();
   private initializePromise?: Promise<void>;
   private artifactCount = 0;
@@ -406,16 +412,27 @@ export class UserPromptArtifactStore {
     if (!sessionId || Buffer.byteLength(sessionId) > 256) {
       throw new Error('Prompt artifact Session identity is invalid');
     }
+    if (
+      options.stateStorage?.kind === 'acp-remote' &&
+      options.storageRoot !== options.stateStorage.root
+    ) {
+      throw new Error(
+        'Remote prompt artifact storage root does not match its authority'
+      );
+    }
     const projectKey = createHash('sha256')
       .update(path.resolve(projectRoot))
       .digest('hex');
     const sessionKey = createHash('sha256').update(sessionId).digest('hex');
     this.root = path.join(
-      options.storageRoot,
+      options.stateStorage?.kind === 'acp-remote'
+        ? options.stateStorage.root
+        : options.storageRoot,
       'prompt-artifacts',
       projectKey,
       sessionKey
     );
+    this.stateStorage = options.stateStorage;
   }
 
   async materialize(
@@ -606,13 +623,19 @@ export class UserPromptArtifactStore {
 
   async removeAll(): Promise<void> {
     try {
-      await fs.rm(this.root, { recursive: true, force: true });
+      await this.withStorageScope(() =>
+        fs.rm(this.root, { recursive: true, force: true })
+      );
     } catch {
       throw new Error('Prompt artifact cleanup failed');
     }
   }
 
   private async initialize(): Promise<void> {
+    return this.withStorageScope(() => this.initializeInScope());
+  }
+
+  private async initializeInScope(): Promise<void> {
     this.initializePromise ??= this.scan().catch((error) => {
       this.initializePromise = undefined;
       throw error;
@@ -660,7 +683,7 @@ export class UserPromptArtifactStore {
     contentLayout?: UserPromptArtifactContentLayoutEntry[]
   ): Promise<UserPromptArtifactReference> {
     return this.writeMutex.runExclusive(() =>
-      this.writeExclusive(bytes, textChars, contentLayout)
+      this.withStorageScope(() => this.writeExclusive(bytes, textChars, contentLayout))
     );
   }
 
@@ -669,11 +692,11 @@ export class UserPromptArtifactStore {
     textChars: number,
     contentLayout?: UserPromptArtifactContentLayoutEntry[]
   ): Promise<UserPromptArtifactReference> {
-    await this.initialize();
+    await this.initializeInScope();
     const sha256 = createHash('sha256').update(bytes).digest('hex');
     const filePath = path.join(this.root, artifactFileName(sha256));
     try {
-      await this.verify(sha256, bytes.length);
+      await this.readVerifiedInScope(sha256, bytes.length);
     } catch (error) {
       if (!isNodeError(error, 'ENOENT')) throw error;
       if (
@@ -708,7 +731,7 @@ export class UserPromptArtifactStore {
           await fs.rm(filePath, { force: true }).catch(() => undefined);
           throw writeError;
         }
-        await this.verify(sha256, bytes.length);
+        await this.readVerifiedInScope(sha256, bytes.length);
       }
     }
 
@@ -739,7 +762,14 @@ export class UserPromptArtifactStore {
   }
 
   private async readVerified(id: string, expectedSize?: number): Promise<Buffer> {
-    await this.initialize();
+    return this.withStorageScope(() => this.readVerifiedInScope(id, expectedSize));
+  }
+
+  private async readVerifiedInScope(
+    id: string,
+    expectedSize?: number
+  ): Promise<Buffer> {
+    await this.initializeInScope();
     const filePath = path.join(this.root, artifactFileName(id));
     const handle = await fs.open(
       filePath,
@@ -764,5 +794,10 @@ export class UserPromptArtifactStore {
     } finally {
       await handle.close();
     }
+  }
+
+  private withStorageScope<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.stateStorage?.kind !== 'acp-remote') return operation();
+    return withSessionStateRoot(this.stateStorage, () => operation());
   }
 }

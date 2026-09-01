@@ -3,6 +3,10 @@ import { constants, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import { getBladeStorageRoot } from '../../context/storage/pathUtils.js';
+import {
+  type SessionStateStorage,
+  withSessionStateRoot,
+} from '../../context/storage/SessionStateStorage.js';
 
 export interface SessionArtifactWriteRequest<TKind extends string> {
   kind: TKind;
@@ -29,6 +33,7 @@ export interface SessionArtifactStoreOptions<TKind extends string> {
   maxSessionBytes: number;
   maxArtifactBytes?: number;
   storageRoot?: string;
+  stateStorage?: SessionStateStorage;
   exposePaths?: boolean;
   extensionForMimeType: (mimeType: string | undefined) => string;
   validateRequest?: (request: SessionArtifactWriteRequest<TKind>) => void;
@@ -84,6 +89,7 @@ async function verifyPrivateArtifact(
 
 export class SessionArtifactStore<TKind extends string> {
   private readonly root: string;
+  private readonly stateStorage?: SessionStateStorage;
   private readonly exposePaths: boolean;
   private readonly mutex = new Mutex();
   private initializePromise?: Promise<void>;
@@ -103,14 +109,22 @@ export class SessionArtifactStore<TKind extends string> {
     if (options.maxArtifactBytes !== undefined) {
       validatePositiveInteger(options.maxArtifactBytes, 'Artifact byte limit');
     }
+    if (
+      options.stateStorage?.kind === 'acp-remote' &&
+      options.storageRoot !== undefined &&
+      options.storageRoot !== options.stateStorage.root
+    ) {
+      throw new Error('Remote artifact storage root does not match its authority');
+    }
+    const storageRoot =
+      options.stateStorage?.kind === 'acp-remote'
+        ? options.stateStorage.root
+        : (options.storageRoot ?? getBladeStorageRoot());
     const sessionKey = createHash('sha256')
       .update(options.sessionIdentity)
       .digest('hex');
-    this.root = path.join(
-      options.storageRoot ?? getBladeStorageRoot(),
-      options.namespace,
-      sessionKey
-    );
+    this.root = path.join(storageRoot, options.namespace, sessionKey);
+    this.stateStorage = options.stateStorage;
     this.exposePaths = options.exposePaths ?? true;
   }
 
@@ -125,66 +139,75 @@ export class SessionArtifactStore<TKind extends string> {
       throw new Error('Artifact exceeds the per-file byte limit');
     }
 
-    return this.mutex.runExclusive(async () => {
-      await this.initialize();
-      const sha256 = createHash('sha256').update(request.bytes).digest('hex');
-      const extension = this.options.extensionForMimeType(request.mimeType);
-      if (!/^\.[a-z0-9]{1,12}$/.test(extension)) {
-        throw new Error('Artifact extension is invalid');
-      }
-      const filePath = path.join(this.root, `${sha256}${extension}`);
-
-      try {
-        await verifyPrivateArtifact(filePath, sha256, request.bytes.length);
-        return this.descriptor(request, sha256, filePath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      }
-
-      if (
-        this.artifactCount >= this.options.maxArtifacts ||
-        this.storedBytes + request.bytes.length > this.options.maxSessionBytes
-      ) {
-        throw new Error('Artifact Session quota exceeded');
-      }
-
-      let handle;
-      try {
-        handle = await fs.open(
-          filePath,
-          constants.O_CREAT |
-            constants.O_EXCL |
-            constants.O_WRONLY |
-            (constants.O_NOFOLLOW ?? 0),
-          0o600
-        );
-        await handle.writeFile(request.bytes);
-        await handle.sync();
-        await handle.close();
-        handle = undefined;
-        await fs.chmod(filePath, 0o600);
-        this.artifactCount++;
-        this.storedBytes += request.bytes.length;
-      } catch (error) {
-        await handle?.close().catch(() => undefined);
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-          await fs.rm(filePath, { force: true }).catch(() => undefined);
-          throw error;
+    return this.mutex.runExclusive(() =>
+      this.withStorageScope(async () => {
+        await this.initialize();
+        const sha256 = createHash('sha256').update(request.bytes).digest('hex');
+        const extension = this.options.extensionForMimeType(request.mimeType);
+        if (!/^\.[a-z0-9]{1,12}$/.test(extension)) {
+          throw new Error('Artifact extension is invalid');
         }
-        await verifyPrivateArtifact(filePath, sha256, request.bytes.length);
-      }
+        const filePath = path.join(this.root, `${sha256}${extension}`);
 
-      return this.descriptor(request, sha256, filePath);
-    });
+        try {
+          await verifyPrivateArtifact(filePath, sha256, request.bytes.length);
+          return this.descriptor(request, sha256, filePath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+
+        if (
+          this.artifactCount >= this.options.maxArtifacts ||
+          this.storedBytes + request.bytes.length > this.options.maxSessionBytes
+        ) {
+          throw new Error('Artifact Session quota exceeded');
+        }
+
+        let handle;
+        try {
+          handle = await fs.open(
+            filePath,
+            constants.O_CREAT |
+              constants.O_EXCL |
+              constants.O_WRONLY |
+              (constants.O_NOFOLLOW ?? 0),
+            0o600
+          );
+          await handle.writeFile(request.bytes);
+          await handle.sync();
+          await handle.close();
+          handle = undefined;
+          await fs.chmod(filePath, 0o600);
+          this.artifactCount++;
+          this.storedBytes += request.bytes.length;
+        } catch (error) {
+          await handle?.close().catch(() => undefined);
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+            await fs.rm(filePath, { force: true }).catch(() => undefined);
+            throw error;
+          }
+          await verifyPrivateArtifact(filePath, sha256, request.bytes.length);
+        }
+
+        return this.descriptor(request, sha256, filePath);
+      })
+    );
   }
 
   async removeAll(): Promise<void> {
-    await this.mutex.runExclusive(async () => {
-      await fs.rm(this.root, { recursive: true, force: true });
-      this.artifactCount = 0;
-      this.storedBytes = 0;
-      this.initializePromise = undefined;
-    });
+    await this.mutex.runExclusive(() =>
+      this.withStorageScope(async () => {
+        await fs.rm(this.root, { recursive: true, force: true });
+        this.artifactCount = 0;
+        this.storedBytes = 0;
+        this.initializePromise = undefined;
+      })
+    );
+  }
+
+  private withStorageScope<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.stateStorage?.kind !== 'acp-remote') return operation();
+    return withSessionStateRoot(this.stateStorage, () => operation());
   }
 
   private async initialize(): Promise<void> {

@@ -30,16 +30,20 @@ import {
   type SessionInterruptedToolCall,
   type SessionTurnRecovery,
 } from '../../context/storage/PersistentStore.js';
+import { getBladeStorageRoot } from '../../context/storage/pathUtils.js';
 import {
-  getBladeStorageRoot,
-  getSessionInboxFilePath,
-} from '../../context/storage/pathUtils.js';
+  createRemoteSessionStateStorage,
+  createSessionStateStorage,
+  type SessionStateStorage,
+  withSessionStatePaths,
+} from '../../context/storage/SessionStateStorage.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import {
   assessSessionTurnRecovery,
   type SessionTurnRecoveryAssessment,
 } from '../../context/turnRecoveryAssessment.js';
 import type {
+  AcpRemoteWorkspaceDescriptorV1,
   MessagePersistenceMetadata,
   SessionTaskDiffStat,
   SessionTaskFailure,
@@ -163,12 +167,14 @@ import {
 } from '../loop/providerSystemPrompt.js';
 import type { LoopEvent } from '../loop/types.js';
 import {
+  createEmptySessionAgentResources,
   resolveWorkspaceAgentResources,
   type SessionAgentResources,
   snapshotWorkspaceAgentResources,
 } from '../resources/WorkspaceAgentResources.js';
 import {
   cloneWorkspaceModelConfig,
+  createProcessModelResources,
   resolveWorkspaceModelResources,
   type SessionModelResources,
   snapshotWorkspaceModelResources,
@@ -215,6 +221,11 @@ import {
   backgroundSubagentCompletionDispatcher,
 } from './BackgroundSubagentCompletionDispatcher.js';
 import { SessionInUseError, SessionLease } from './SessionLease.js';
+import {
+  createLocalSessionWorkspace,
+  freezeSessionWorkspace,
+  type SessionWorkspace,
+} from './SessionWorkspace.js';
 import { type TaskAdmissionSnapshot, taskRunScheduler } from './TaskRunScheduler.js';
 import {
   type MaterializedUserPrompt,
@@ -258,6 +269,7 @@ async function cleanupStaleWorktreesOnce(workspaceRoot: string): Promise<void> {
 export interface SessionRuntimeOptions {
   sessionId: string;
   workspaceRoot?: string;
+  workspace?: SessionWorkspace;
   modelId?: string;
   permissionMode?: PermissionMode;
   reasoningEffort?: ReasoningEffortSelection;
@@ -366,7 +378,7 @@ function messageTurnFinalization(
 export class SessionRuntime {
   private readonly approvalStore = new InMemorySessionApprovalStore();
   private baseRegistry = new ToolRegistry();
-  private readonly attachmentCollector: AttachmentCollector;
+  private readonly attachmentCollector?: AttachmentCollector;
   private readonly goalStore: GoalStore;
   private readonly userPromptArtifactStore: UserPromptArtifactStore;
   private browserRuntime?: SessionBrowserRuntime;
@@ -427,12 +439,25 @@ export class SessionRuntime {
     workspaceRoot: string;
     projectPath: string;
   }>;
+  private readonly workspace: SessionWorkspace;
+  private readonly stateStorage: SessionStateStorage;
   private backgroundSubagentCompletionRegistration?: BackgroundSubagentCompletionRegistration;
 
   constructor(
     private readonly config: BladeConfig,
     private readonly options: SessionRuntimeOptions
   ) {
+    this.workspace = freezeSessionWorkspace(
+      options.workspace ??
+        createLocalSessionWorkspace(options.workspaceRoot ?? getCwd())
+    );
+    this.stateStorage =
+      this.workspace.kind === 'acp-remote'
+        ? createRemoteSessionStateStorage(
+            options.workspaceRoot ?? getCwd(),
+            this.workspace.descriptor
+          )
+        : createSessionStateStorage(options.workspaceRoot ?? getCwd());
     this.selectedModelId =
       options.modelId && options.modelId !== 'inherit' ? options.modelId : undefined;
     this.selectedReasoningEffort = options.reasoningEffort ?? 'off';
@@ -459,18 +484,30 @@ export class SessionRuntime {
       }
     );
     this.sessionEnvironment = Object.freeze({ ...config.env });
-    this.goalStore = new GoalStore(this.workspaceRoot, this.sessionId);
-    this.userPromptArtifactStore = new UserPromptArtifactStore(
-      this.projectRoot,
+    this.goalStore = new GoalStore(
+      this.workspaceRoot,
       this.sessionId,
-      { storageRoot: getBladeStorageRoot() }
+      this.stateStorage
     );
-    this.attachmentCollector = new AttachmentCollector({
-      cwd: this.workspaceRoot,
-      maxFileSize: 1024 * 1024,
-      maxLines: 2000,
-      maxTokens: 32000,
-    });
+    this.userPromptArtifactStore = new UserPromptArtifactStore(
+      this.stateStorage.kind === 'acp-remote' ? this.workspaceRoot : this.projectRoot,
+      this.sessionId,
+      {
+        storageRoot:
+          this.stateStorage.kind === 'acp-remote'
+            ? this.stateStorage.root
+            : getBladeStorageRoot(),
+        stateStorage: this.stateStorage,
+      }
+    );
+    if (this.workspace.kind === 'local') {
+      this.attachmentCollector = new AttachmentCollector({
+        cwd: this.workspaceRoot,
+        maxFileSize: 1024 * 1024,
+        maxLines: 2000,
+        maxTokens: 32000,
+      });
+    }
     this.backgroundSubagentCompletionOwner = Object.freeze({
       sessionId: options.sessionId,
       workspaceRoot: path.resolve(options.workspaceRoot ?? getCwd()),
@@ -494,10 +531,10 @@ export class SessionRuntime {
     const hasExplicitCommunicationStyle = selectedCommunicationStyle !== undefined;
     try {
       await ensureStoreInitialized();
-      const storedMetadata = await SessionService.findSessionMetadata(
-        options.sessionId,
-        workspaceRoot
-      );
+      const remoteWorkspace = options.workspace?.kind === 'acp-remote';
+      const storedMetadata = remoteWorkspace
+        ? undefined
+        : await SessionService.findSessionMetadata(options.sessionId, workspaceRoot);
       if (storedMetadata?.archivedAt) {
         throw new SessionArchivedError(
           options.sessionId,
@@ -519,6 +556,7 @@ export class SessionRuntime {
       }
       selectedProjectInstructionsDigest ??= storedMetadata?.projectInstructionsDigest;
       if (
+        !remoteWorkspace &&
         !options.subagentInfo &&
         (!taskWorktree || !taskIsolation || !selectedModelId)
       ) {
@@ -530,7 +568,7 @@ export class SessionRuntime {
         selectedModelId ??=
           storedMetadata?.selectedModelId ?? storedMetadata?.taskModelId;
       }
-      if (taskWorktree) {
+      if (!remoteWorkspace && taskWorktree) {
         if (path.resolve(taskWorktree.workspaceRoot) !== path.resolve(workspaceRoot)) {
           throw new Error('Task worktree workspace does not match runtime workspace');
         }
@@ -556,14 +594,21 @@ export class SessionRuntime {
         workspaceRoot;
       const modelResources = options.modelResources
         ? snapshotWorkspaceModelResources(options.modelResources)
-        : await resolveWorkspaceModelResources(hookConfigRoot, config);
+        : remoteWorkspace
+          ? createProcessModelResources(options.workspace!.resourceRoot, config)
+          : await resolveWorkspaceModelResources(hookConfigRoot, config);
       const models = modelResources.config.models;
       const lspResources = options.lspResources
         ? snapshotWorkspaceLspResources(options.lspResources)
-        : await resolveWorkspaceLspResources(
-            hookConfigRoot,
-            modelResources.config.lspServers
-          );
+        : remoteWorkspace
+          ? snapshotWorkspaceLspResources({
+              projectRoot: options.workspace!.resourceRoot,
+              servers: {},
+            })
+          : await resolveWorkspaceLspResources(
+              hookConfigRoot,
+              modelResources.config.lspServers
+            );
       if (models.length === 0) {
         throw new Error(
           '没有可用的模型配置\n\n' +
@@ -583,6 +628,12 @@ export class SessionRuntime {
       }
       const mcpServers = await resolveWorkspaceMcpConfig({
         workspaceRoot: hookConfigRoot,
+        ...(remoteWorkspace
+          ? {
+              workspaceAccess: 'none' as const,
+              resourceRoot: options.workspace!.resourceRoot,
+            }
+          : {}),
         storeServers: config.mcpServers ?? {},
         sessionServers: options.mcpServers,
         cliConfigs: options.mcpConfig,
@@ -595,14 +646,18 @@ export class SessionRuntime {
           modelResources.config.permissionMode ??
           PermissionMode.DEFAULT,
         lspServers: structuredClone(lspResources.servers),
-        permissions: await configManager.loadWorkspacePermissions(
-          hookConfigRoot,
-          modelResources.config.permissions
-        ),
-        hooks: await configManager.loadWorkspaceHooks(
-          hookConfigRoot,
-          modelResources.config.hooks ?? {}
-        ),
+        permissions: remoteWorkspace
+          ? structuredClone(modelResources.config.permissions)
+          : await configManager.loadWorkspacePermissions(
+              hookConfigRoot,
+              modelResources.config.permissions
+            ),
+        hooks: remoteWorkspace
+          ? { enabled: false }
+          : await configManager.loadWorkspaceHooks(
+              hookConfigRoot,
+              modelResources.config.hooks ?? {}
+            ),
       };
       configManager.validateConfig(runtimeConfig, modelResources.catalog);
 
@@ -640,7 +695,10 @@ export class SessionRuntime {
           workspaceRoot,
           'failed',
           'Session runtime initialization failed',
-          taskDiffStat ?? undefined
+          taskDiffStat ?? undefined,
+          options.workspace?.kind === 'acp-remote'
+            ? options.workspace.descriptor
+            : undefined
         ).catch((statusError) => {
           if ((statusError as NodeJS.ErrnoException).code !== 'ENOENT') {
             logger.warn(
@@ -656,15 +714,23 @@ export class SessionRuntime {
 
   static async hasPendingInbox(
     workspaceRoot: string,
-    sessionId: string
+    sessionId: string,
+    stateStorage: SessionStateStorage = createSessionStateStorage(workspaceRoot)
   ): Promise<boolean> {
-    try {
-      if ((await stat(getSessionInboxFilePath(workspaceRoot, sessionId))).size > 0) {
-        return true;
+    const hasPending = await withSessionStatePaths(
+      stateStorage,
+      sessionId,
+      async ({ inboxPath }) => {
+        try {
+          return (await stat(inboxPath)).size > 0;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          return false;
+        }
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
+    );
+    if (hasPending) return true;
+    if (stateStorage.kind === 'acp-remote') return false;
     if (getConfig()?.agentTeamsEnabled !== true) return false;
     const teams = (
       await TeamStore.getInstance(getBladeStorageRoot()).listTeams()
@@ -690,16 +756,23 @@ export class SessionRuntime {
 
   static async hasActiveGoal(
     workspaceRoot: string,
-    sessionId: string
+    sessionId: string,
+    stateStorage: SessionStateStorage = createSessionStateStorage(workspaceRoot)
   ): Promise<boolean> {
-    return GoalStore.hasActiveGoal(workspaceRoot, sessionId);
+    return GoalStore.hasActiveGoal(workspaceRoot, sessionId, stateStorage);
   }
 
   static async hasRecoverableTurn(
     workspaceRoot: string,
-    sessionId: string
+    sessionId: string,
+    stateStorage: SessionStateStorage = createSessionStateStorage(workspaceRoot)
   ): Promise<boolean> {
-    return new PersistentStore(workspaceRoot).hasRecoverableTurn(sessionId);
+    return new PersistentStore(
+      workspaceRoot,
+      100,
+      undefined,
+      stateStorage
+    ).hasRecoverableTurn(sessionId);
   }
 
   get sessionId(): string {
@@ -708,6 +781,18 @@ export class SessionRuntime {
 
   get workspaceRoot(): string {
     return this.options.workspaceRoot ?? getCwd();
+  }
+
+  get executionRoot(): string {
+    return this.workspace.executionRoot;
+  }
+
+  get resourceRoot(): string {
+    return this.workspace.resourceRoot;
+  }
+
+  isRemoteWorkspace(): boolean {
+    return this.workspace.kind === 'acp-remote';
   }
 
   get projectRoot(): string {
@@ -771,29 +856,38 @@ export class SessionRuntime {
     if (!this.isTaskSession()) return undefined;
     const now = new Date().toISOString();
     const queued = snapshot.state === 'queued';
-    const metadata = await SessionService.updateSessionMetadata(
-      this.sessionId,
-      this.workspaceRoot,
-      {
-        taskStatus: snapshot.state,
-        taskStatusReason: null,
-        taskFailure: null,
-        taskQueuePosition: queued ? (snapshot.queuePosition ?? 1) : null,
-        taskQueueDepth: queued ? snapshot.queueDepth : null,
-        taskConcurrencyLimit: snapshot.maxConcurrent,
-        ...(queued
-          ? {
-              taskStartedAt: null,
-              taskCompletedAt: null,
-              taskOwnerPid: null,
-            }
-          : {
-              taskStartedAt: now,
-              taskCompletedAt: null,
-              taskOwnerPid: process.pid,
-            }),
-      }
-    );
+    const update = {
+      taskStatus: snapshot.state,
+      taskStatusReason: null,
+      taskFailure: null,
+      taskQueuePosition: queued ? (snapshot.queuePosition ?? 1) : null,
+      taskQueueDepth: queued ? snapshot.queueDepth : null,
+      taskConcurrencyLimit: snapshot.maxConcurrent,
+      ...(queued
+        ? {
+            taskStartedAt: null,
+            taskCompletedAt: null,
+            taskOwnerPid: null,
+          }
+        : {
+            taskStartedAt: now,
+            taskCompletedAt: null,
+            taskOwnerPid: process.pid,
+          }),
+    };
+    const metadata =
+      this.workspace.kind === 'acp-remote'
+        ? await SessionService.updateRemoteSessionMetadata(
+            this.sessionId,
+            this.workspaceRoot,
+            this.workspace.descriptor,
+            update
+          )
+        : await SessionService.updateSessionMetadata(
+            this.sessionId,
+            this.workspaceRoot,
+            update
+          );
     Bus.publish(
       { sessionId: this.sessionId, projectPath: this.workspaceRoot },
       'task.status',
@@ -848,7 +942,13 @@ export class SessionRuntime {
     if (!this.initialized) {
       throw new Error('Session runtime is not initialized');
     }
-    return SessionService.loadSessionModelContext(this.sessionId, this.workspaceRoot);
+    return this.workspace.kind === 'acp-remote'
+      ? SessionService.loadRemoteSessionModelContext(
+          this.sessionId,
+          this.workspaceRoot,
+          this.workspace.descriptor
+        )
+      : SessionService.loadSessionModelContext(this.sessionId, this.workspaceRoot);
   }
 
   async askSideQuestion(
@@ -873,21 +973,28 @@ export class SessionRuntime {
       const [messages, builtPrompt] = await Promise.all([
         this.loadModelContext(),
         buildSystemPrompt({
-          projectPath: this.workspaceRoot,
+          ...(this.isRemoteWorkspace()
+            ? { workspaceAccess: 'none' as const }
+            : { projectPath: this.workspaceRoot }),
           replaceDefault: options.systemPrompt,
           append: options.appendSystemPrompt,
           ...(permissionMode === PermissionMode.PLAN
             ? { mode: PermissionMode.PLAN }
             : {}),
           includeEnvironment: true,
-          environmentOptions: CACHE_STABLE_ENVIRONMENT_OPTIONS,
+          environmentOptions: {
+            ...CACHE_STABLE_ENVIRONMENT_OPTIONS,
+            workingDirectory: this.executionRoot,
+          },
           language: this.config.language,
           availableSkills:
             this.agentResources?.skills.generateAvailableSkillsList() ?? '',
           communicationStyle: this.selectedCommunicationStyle,
           communicationStyleCatalog: this.getCommunicationStyleCatalog(),
           projectRuleCatalog: this.getProjectRuleCatalog(),
-          projectInstructionSourcePath: this.projectRoot,
+          ...(this.isRemoteWorkspace()
+            ? {}
+            : { projectInstructionSourcePath: this.projectRoot }),
         }),
       ]);
       const systemPrompt = composeProviderSystemPrompt(builtPrompt.prompt, registry);
@@ -984,7 +1091,7 @@ export class SessionRuntime {
     return structuredClone(results);
   }
 
-  getAttachmentCollector(): AttachmentCollector {
+  getAttachmentCollector(): AttachmentCollector | undefined {
     return this.attachmentCollector;
   }
 
@@ -1112,6 +1219,13 @@ export class SessionRuntime {
     result: ToolResult | undefined,
     loadedIds: ReadonlySet<string>
   ): ProjectRuleResolution {
+    if (this.isRemoteWorkspace()) {
+      return this.getProjectRuleCatalog().contextualRules(
+        this.projectRoot,
+        [],
+        loadedIds
+      );
+    }
     const paths = new Set<string>();
     try {
       const invocation = this.baseRegistry.get(toolName)?.build(params);
@@ -1192,6 +1306,7 @@ export class SessionRuntime {
     try {
       const result = await readGoalExecutionFrontier(goal, {
         configDir: getBladeStorageRoot(),
+        stateStorage: this.stateStorage,
       });
       const preserveStall =
         options.observeStall === false &&
@@ -1257,7 +1372,8 @@ export class SessionRuntime {
       this.workspaceRoot,
       taskStatus,
       taskStatusReason,
-      taskDiffStat ?? undefined
+      taskDiffStat ?? undefined,
+      this.workspace.kind === 'acp-remote' ? this.workspace.descriptor : undefined
     );
   }
 
@@ -1266,7 +1382,8 @@ export class SessionRuntime {
     workspaceRoot: string,
     taskStatus: SessionTaskStatus,
     taskStatusReason?: unknown,
-    taskDiffStat?: SessionTaskDiffStat
+    taskDiffStat?: SessionTaskDiffStat,
+    remoteDescriptor?: AcpRemoteWorkspaceDescriptorV1
   ): Promise<SessionMetadata> {
     const now = new Date().toISOString();
     const taskFailure: SessionTaskFailure | undefined =
@@ -1278,39 +1395,43 @@ export class SessionRuntime {
       (typeof taskStatusReason === 'string'
         ? taskStatusReason.slice(0, 500)
         : undefined);
-    const metadata = await SessionService.updateSessionMetadata(
-      sessionId,
-      workspaceRoot,
-      {
-        taskStatus,
-        taskStatusReason: safeTaskStatusReason ?? null,
-        taskFailure: taskFailure ?? null,
-        ...(taskDiffStat !== undefined
-          ? { taskDiffStat }
-          : taskStatus === 'running'
-            ? { taskDiffStat: null }
-            : {}),
-        ...(taskStatus !== 'queued'
-          ? {
-              taskQueuePosition: null,
-              taskQueueDepth: null,
-            }
+    const update = {
+      taskStatus,
+      taskStatusReason: safeTaskStatusReason ?? null,
+      taskFailure: taskFailure ?? null,
+      ...(taskDiffStat !== undefined
+        ? { taskDiffStat }
+        : taskStatus === 'running'
+          ? { taskDiffStat: null }
           : {}),
-        ...(taskStatus === 'running'
+      ...(taskStatus !== 'queued'
+        ? {
+            taskQueuePosition: null,
+            taskQueueDepth: null,
+          }
+        : {}),
+      ...(taskStatus === 'running'
+        ? {
+            taskStartedAt: now,
+            taskCompletedAt: null,
+            taskOwnerPid: process.pid,
+          }
+        : taskStatus === 'queued'
           ? {
-              taskStartedAt: now,
+              taskStartedAt: null,
               taskCompletedAt: null,
-              taskOwnerPid: process.pid,
+              taskOwnerPid: null,
             }
-          : taskStatus === 'queued'
-            ? {
-                taskStartedAt: null,
-                taskCompletedAt: null,
-                taskOwnerPid: null,
-              }
-            : { taskCompletedAt: now, taskOwnerPid: null }),
-      }
-    );
+          : { taskCompletedAt: now, taskOwnerPid: null }),
+    };
+    const metadata = remoteDescriptor
+      ? await SessionService.updateRemoteSessionMetadata(
+          sessionId,
+          workspaceRoot,
+          remoteDescriptor,
+          update
+        )
+      : await SessionService.updateSessionMetadata(sessionId, workspaceRoot, update);
     Bus.publish({ sessionId, projectPath: workspaceRoot }, 'task.status', {
       taskStatus: metadata.taskStatus,
       ...(safeTaskStatusReason ? { taskStatusReason: safeTaskStatusReason } : {}),
@@ -1838,6 +1959,7 @@ export class SessionRuntime {
       return false;
     }
     if (
+      !this.isRemoteWorkspace() &&
       BackgroundShellManager.getInstance()
         .listForSession(this.sessionId)
         .some((process) => process.status === 'running')
@@ -1938,6 +2060,7 @@ export class SessionRuntime {
   }
 
   private getBackgroundTaskChildrenState(): 'running' | 'terminal_pending' | 'none' {
+    if (this.isRemoteWorkspace()) return 'none';
     if (this.backgroundTaskChildIds.size === 0) return 'none';
     const owner = {
       sessionId: this.sessionId,
@@ -2074,7 +2197,8 @@ export class SessionRuntime {
     }
     this.activeTurnMailbox = await ActiveTurnMailbox.create(
       this.workspaceRoot,
-      this.sessionId
+      this.sessionId,
+      this.stateStorage
     );
   }
 
@@ -2153,7 +2277,7 @@ export class SessionRuntime {
 
       const record = await executeUserShellCommand(command, {
         executionId,
-        cwd: this.workspaceRoot,
+        cwd: this.executionRoot,
         env: {
           ...process.env,
           ...this.sessionEnvironment,
@@ -2216,99 +2340,107 @@ export class SessionRuntime {
       return;
     }
 
-    this.sessionLease = await SessionLease.acquire(this.sessionId, this.workspaceRoot);
+    this.sessionLease = await SessionLease.acquireForStorage(
+      this.sessionId,
+      this.stateStorage
+    );
     try {
-      await new ForegroundProcessLeaseStore(
-        this.workspaceRoot,
-        this.sessionId
-      ).reapOrphans();
-      await BackgroundShellManager.getInstance().reapOrphanedSession(
-        this.sessionId,
-        this.workspaceRoot
-      );
-      if (!isAcpMode(this.sessionId)) {
+      if (!this.isRemoteWorkspace()) {
+        await new ForegroundProcessLeaseStore(
+          this.workspaceRoot,
+          this.sessionId
+        ).reapOrphans();
+        await BackgroundShellManager.getInstance().reapOrphanedSession(
+          this.sessionId,
+          this.workspaceRoot
+        );
         await recoverWorkspacePatchTransactions(this.workspaceRoot);
+        await BackgroundAgentManager.getInstance().reconcileOrphanedSessions({
+          sessionId: this.sessionId,
+          projectPath: this.workspaceRoot,
+        });
+        await cleanupStaleWorktreesOnce(this.workspaceRoot);
       }
-      await BackgroundAgentManager.getInstance().reconcileOrphanedSessions({
-        sessionId: this.sessionId,
-        projectPath: this.workspaceRoot,
-      });
-      await cleanupStaleWorktreesOnce(this.workspaceRoot);
-      const hookManager = HookManager.getInstance();
-      hookManager.loadConfig(
-        this.config.disableAllHooks
-          ? { ...this.config.hooks, enabled: false }
-          : (this.config.hooks ?? {}),
-        this.projectRoot
-      );
-      hookManager.bindSessionModelResources(
-        this.sessionId,
-        [this.projectRoot, this.workspaceRoot],
-        this.modelResources
-      );
       await this.loadAgentResources();
-      if (this.projectRoot !== this.workspaceRoot) {
-        hookManager.inheritProjectConfig(this.projectRoot, this.workspaceRoot);
-      }
-      hookManager.bindSessionConfig(
-        this.sessionId,
-        [this.projectRoot, this.workspaceRoot],
-        this.config.disableAllHooks
-          ? {
-              ...(this.agentResources?.hooks ??
-                hookManager.getConfig(this.projectRoot)),
-              enabled: false,
-            }
-          : (this.agentResources?.hooks ?? hookManager.getConfig(this.projectRoot))
-      );
-      const sessionStartResult = await hookManager.executeSessionStartHooks({
-        projectDir: this.workspaceRoot,
-        sessionId: this.sessionId,
-        permissionMode: this.config.permissionMode ?? PermissionMode.DEFAULT,
-        isResume: this.options.sessionStart?.isResume ?? false,
-        resumeSessionId: this.options.sessionStart?.resumeSessionId,
-      });
-      if (!sessionStartResult.proceed) {
-        throw new Error(
-          sessionStartResult.warning || 'SessionStart hook blocked initialization'
+      if (!this.isRemoteWorkspace()) {
+        const hookManager = HookManager.getInstance();
+        hookManager.loadConfig(
+          this.config.disableAllHooks
+            ? { ...this.config.hooks, enabled: false }
+            : (this.config.hooks ?? {}),
+          this.projectRoot
         );
-      }
-      if (sessionStartResult.warning) {
-        logger.warn(
-          `[SessionRuntime ${this.sessionId}] SessionStart hook warning: ${sessionStartResult.warning}`
+        hookManager.bindSessionModelResources(
+          this.sessionId,
+          [this.projectRoot, this.workspaceRoot],
+          this.modelResources
         );
-      }
-      const hookEnvironment = normalizeRuntimeEnvironment(sessionStartResult.env ?? {});
-      this.sessionEnvironment = Object.freeze({
-        ...this.sessionEnvironment,
-        ...hookEnvironment,
-      });
-      this.config.env = this.sessionEnvironment as Record<string, string>;
-      hookManager.bindSessionEnvironment(
-        this.sessionId,
-        [this.projectRoot, this.workspaceRoot],
-        this.sessionEnvironment
-      );
-      if (Object.keys(this.lspResources.servers).length > 0) {
-        this.lspManager = new LspSessionManager({
+        if (this.projectRoot !== this.workspaceRoot) {
+          hookManager.inheritProjectConfig(this.projectRoot, this.workspaceRoot);
+        }
+        hookManager.bindSessionConfig(
+          this.sessionId,
+          [this.projectRoot, this.workspaceRoot],
+          this.config.disableAllHooks
+            ? {
+                ...(this.agentResources?.hooks ??
+                  hookManager.getConfig(this.projectRoot)),
+                enabled: false,
+              }
+            : (this.agentResources?.hooks ?? hookManager.getConfig(this.projectRoot))
+        );
+        const sessionStartResult = await hookManager.executeSessionStartHooks({
+          projectDir: this.workspaceRoot,
           sessionId: this.sessionId,
-          workspaceRoot: this.workspaceRoot,
-          environment: this.sessionEnvironment,
-          servers: this.lspResources.servers,
+          permissionMode: this.config.permissionMode ?? PermissionMode.DEFAULT,
+          isResume: this.options.sessionStart?.isResume ?? false,
+          resumeSessionId: this.options.sessionStart?.resumeSessionId,
         });
-      }
-      if (!this.lspManager?.available) {
-        this.autoVerifyRuntime = new AutoVerifyRuntime({
-          sessionId: this.sessionId,
-          workspaceRoot: this.workspaceRoot,
-          projectRoot: this.projectRoot,
-          environment: this.sessionEnvironment,
+        if (!sessionStartResult.proceed) {
+          throw new Error(
+            sessionStartResult.warning || 'SessionStart hook blocked initialization'
+          );
+        }
+        if (sessionStartResult.warning) {
+          logger.warn(
+            `[SessionRuntime ${this.sessionId}] SessionStart hook warning: ${sessionStartResult.warning}`
+          );
+        }
+        const hookEnvironment = normalizeRuntimeEnvironment(
+          sessionStartResult.env ?? {}
+        );
+        this.sessionEnvironment = Object.freeze({
+          ...this.sessionEnvironment,
+          ...hookEnvironment,
         });
+        this.config.env = this.sessionEnvironment as Record<string, string>;
+        hookManager.bindSessionEnvironment(
+          this.sessionId,
+          [this.projectRoot, this.workspaceRoot],
+          this.sessionEnvironment
+        );
+        if (Object.keys(this.lspResources.servers).length > 0) {
+          this.lspManager = new LspSessionManager({
+            sessionId: this.sessionId,
+            workspaceRoot: this.workspaceRoot,
+            environment: this.sessionEnvironment,
+            servers: this.lspResources.servers,
+          });
+        }
+        if (!this.lspManager?.available) {
+          this.autoVerifyRuntime = new AutoVerifyRuntime({
+            sessionId: this.sessionId,
+            workspaceRoot: this.workspaceRoot,
+            projectRoot: this.projectRoot,
+            environment: this.sessionEnvironment,
+          });
+        }
       }
       await this.validateSystemPromptConfig();
       this.activeTurnMailbox = await ActiveTurnMailbox.create(
         this.workspaceRoot,
-        this.sessionId
+        this.sessionId,
+        this.stateStorage
       );
       await this.registerBuiltinTools();
       await this.applyModelConfig(
@@ -2331,26 +2463,28 @@ export class SessionRuntime {
         this.sessionId
       );
       const adoptedToolResults = new Map<string, SessionAdoptedToolResult>();
-      const subagentSessionStore = AgentSessionStore.getInstance();
       const subagentOwner = {
         sessionId: this.sessionId,
         projectPath: this.workspaceRoot,
       };
-      for (const call of interruptedToolCalls) {
-        if (
-          call.toolName !== 'Task' ||
-          !call.input ||
-          typeof call.input !== 'object' ||
-          Array.isArray(call.input)
-        ) {
-          continue;
+      if (!this.isRemoteWorkspace()) {
+        const subagentSessionStore = AgentSessionStore.getInstance();
+        for (const call of interruptedToolCalls) {
+          if (
+            call.toolName !== 'Task' ||
+            !call.input ||
+            typeof call.input !== 'object' ||
+            Array.isArray(call.input)
+          ) {
+            continue;
+          }
+          const childId = call.input.subagent_session_id;
+          if (typeof childId !== 'string') continue;
+          const child = subagentSessionStore.loadSession(childId);
+          if (!child) continue;
+          const adoption = buildSubagentResultAdoption(call, child, subagentOwner);
+          if (adoption) adoptedToolResults.set(call.toolCallId, adoption);
         }
-        const childId = call.input.subagent_session_id;
-        if (typeof childId !== 'string') continue;
-        const child = subagentSessionStore.loadSession(childId);
-        if (!child) continue;
-        const adoption = buildSubagentResultAdoption(call, child, subagentOwner);
-        if (adoption) adoptedToolResults.set(call.toolCallId, adoption);
       }
       const recovery = await persistentStore.recoverInterruptedTurn(this.sessionId, {
         adoptedToolResults,
@@ -2391,8 +2525,10 @@ export class SessionRuntime {
       if (this.startupTurnRecovery?.outcome === 'completed') {
         await this.reloadPendingInbox();
       }
-      await this.recoverTeamLeadMessages();
-      await this.attachBackgroundSubagentCompletionDispatcher();
+      if (!this.isRemoteWorkspace()) {
+        await this.recoverTeamLeadMessages();
+        await this.attachBackgroundSubagentCompletionDispatcher();
+      }
       if (recovery) {
         logger.warn(
           `[SessionRuntime ${this.sessionId}] recovered ${recovery.outcome} turn ${recovery.turnId}`
@@ -2534,6 +2670,8 @@ export class SessionRuntime {
       contextDefaults: {
         sessionId: this.sessionId,
         workspaceRoot: this.workspaceRoot,
+        executionRoot: this.executionRoot,
+        workspaceKind: this.workspace.kind,
         environment: this.sessionEnvironment,
         permissionMode,
         foregroundCommandHandoffMs: this.config.bashForegroundHandoffMs,
@@ -2628,9 +2766,11 @@ export class SessionRuntime {
       this.lspManager = undefined;
       this.browserRuntime = undefined;
 
-      await attempt('kill the session background processes', () =>
-        BackgroundShellManager.getInstance().killSession(this.sessionId)
-      );
+      if (!this.isRemoteWorkspace()) {
+        await attempt('kill the session background processes', () =>
+          BackgroundShellManager.getInstance().killSession(this.sessionId)
+        );
+      }
       await attempt('clear the session approvals', () => this.approvalStore.clear());
       await attempt('clear the session file access records', () =>
         FileAccessTracker.getInstance().clearSession(this.sessionId, this.workspaceRoot)
@@ -2639,15 +2779,17 @@ export class SessionRuntime {
         autoVerifyRuntime?.dispose()
       );
       await attempt('stop the session LSP servers', () => lspManager?.dispose());
-      await attempt('release the session hook model resources', () =>
-        HookManager.getInstance().unbindSessionModelResources(this.sessionId, [
-          this.projectRoot,
-          this.workspaceRoot,
-        ])
-      );
-      await attempt('release the session worktrees', () =>
-        worktreeManager.releaseSession(this.sessionId)
-      );
+      if (!this.isRemoteWorkspace()) {
+        await attempt('release the session hook model resources', () =>
+          HookManager.getInstance().unbindSessionModelResources(this.sessionId, [
+            this.projectRoot,
+            this.workspaceRoot,
+          ])
+        );
+        await attempt('release the session worktrees', () =>
+          worktreeManager.releaseSession(this.sessionId)
+        );
+      }
       await attempt('dispose the session chat service', () =>
         disposableChatService?.dispose?.()
       );
@@ -2737,6 +2879,9 @@ export class SessionRuntime {
   }
 
   private assertRewindIdle(): void {
+    if (this.isRemoteWorkspace()) {
+      throw new Error('Rewind is unavailable for ACP remote workspaces');
+    }
     if (this.hasTurnOwner()) {
       throw new Error('Cannot rewind while the session has an active turn');
     }
@@ -2796,7 +2941,8 @@ export class SessionRuntime {
     this.executionEngine = new ExecutionEngine(
       nextChatService,
       contextManager,
-      this.workspaceRoot
+      this.workspaceRoot,
+      this.stateStorage
     );
     this.currentModelMaxContextTokens = nextModelMaxContextTokens;
     this.currentModelId = modelConfig.id;
@@ -2859,7 +3005,9 @@ export class SessionRuntime {
     }
     try {
       await buildSystemPrompt({
-        projectPath: this.workspaceRoot,
+        ...(this.isRemoteWorkspace()
+          ? { workspaceAccess: 'none' as const }
+          : { projectPath: this.workspaceRoot }),
         includeEnvironment: false,
         language: this.config.language,
         availableSkills:
@@ -2867,7 +3015,13 @@ export class SessionRuntime {
         communicationStyle: this.selectedCommunicationStyle,
         communicationStyleCatalog: this.getCommunicationStyleCatalog(),
         projectRuleCatalog: this.getProjectRuleCatalog(),
-        projectInstructionSourcePath: this.projectRoot,
+        ...(this.isRemoteWorkspace()
+          ? {}
+          : { projectInstructionSourcePath: this.projectRoot }),
+        environmentOptions: {
+          ...CACHE_STABLE_ENVIRONMENT_OPTIONS,
+          workingDirectory: this.executionRoot,
+        },
       });
     } catch (error) {
       logger.warn(
@@ -2881,6 +3035,15 @@ export class SessionRuntime {
     communicationStyleDigest?: string;
     projectInstructionsDigest?: string;
   }): Promise<void> {
+    if (this.workspace.kind === 'acp-remote') {
+      await SessionService.updateRemoteSessionMetadata(
+        this.sessionId,
+        this.workspaceRoot,
+        this.workspace.descriptor,
+        update
+      );
+      return;
+    }
     try {
       await SessionService.updateSessionMetadata(
         this.sessionId,
@@ -2905,7 +3068,11 @@ export class SessionRuntime {
       this.workspaceRoot,
       this.sessionId,
       {
-        storageRoot: getBladeStorageRoot(),
+        storageRoot:
+          this.stateStorage.kind === 'acp-remote'
+            ? this.stateStorage.root
+            : getBladeStorageRoot(),
+        stateStorage: this.stateStorage,
         exposeArtifactPaths: !isAcpMode(this.sessionId),
       }
     );
@@ -2923,6 +3090,7 @@ export class SessionRuntime {
       getResponseVerbosity: () => this.selectedResponseVerbosity,
       getCommunicationStyle: () => this.selectedCommunicationStyle,
       agentTeamsEnabled: this.config.agentTeamsEnabled === true,
+      stateStorage: this.stateStorage,
       userPromptArtifactStore: this.userPromptArtifactStore,
       browserRuntime: this.browserRuntime,
     });
@@ -2946,8 +3114,17 @@ export class SessionRuntime {
         samplingAvailable: true,
         oauthCredentialAccess: !isAcpMode(this.sessionId),
         artifactWriter: new McpToolArtifactStore(
-          `${this.projectRoot}\0${this.sessionId}`,
+          `${
+            this.stateStorage.kind === 'acp-remote'
+              ? this.workspaceRoot
+              : this.projectRoot
+          }\0${this.sessionId}`,
           {
+            storageRoot:
+              this.stateStorage.kind === 'acp-remote'
+                ? this.stateStorage.root
+                : getBladeStorageRoot(),
+            stateStorage: this.stateStorage,
             exposePaths: !isAcpMode(this.sessionId),
           }
         ),
@@ -3167,9 +3344,11 @@ export class SessionRuntime {
   private async loadAgentResources(): Promise<void> {
     const resources = this.options.agentResources
       ? this.options.agentResources
-      : await resolveWorkspaceAgentResources(this.projectRoot, {
-          reconcilePlugins: true,
-        });
+      : this.isRemoteWorkspace()
+        ? createEmptySessionAgentResources(this.resourceRoot)
+        : await resolveWorkspaceAgentResources(this.projectRoot, {
+            reconcilePlugins: true,
+          });
     this.agentResources = snapshotWorkspaceAgentResources(resources);
     this.subagentRegistry = this.agentResources.subagents;
     if (this.options.agents?.length) {
