@@ -2,7 +2,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { AcpSession } from '../../../src/acp/Session.js';
+import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { Agent } from '../../../src/agent/Agent.js';
 import { drainLoop } from '../../../src/agent/loop/index.js';
 import type { LoopEvent } from '../../../src/agent/loop/types.js';
@@ -10,13 +10,13 @@ import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { ChatContext } from '../../../src/agent/types.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
-import { GoalStore } from '../../../src/goals/GoalStore.js';
 import { getGoalTaskListId } from '../../../src/goals/executionFrontier.js';
+import { GoalStore } from '../../../src/goals/GoalStore.js';
 import { Bus } from '../../../src/server/bus.js';
 import { SessionRoutes } from '../../../src/server/routes/session.js';
 import { getState } from '../../../src/store/vanilla.js';
-import { createMockACPClient } from '../../support/mocks/mockACPClient.js';
 import { TaskListManager } from '../../../src/tools/builtin/task/TaskListManager.js';
+import { createMockACPClient } from '../../support/mocks/mockACPClient.js';
 import {
   buildRealApiRuntimeConfig,
   getEnabledModelConfigs,
@@ -665,7 +665,12 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
       const sessionId = `acp-goal-${modelConfig.id}-${Date.now()}`;
       const resultPath = path.join(workspace, 'acp-goal-result.txt');
       const client = createMockACPClient();
-      const session = new AcpSession(sessionId, workspace, client as never, {});
+      const session = new AcpSession(
+        sessionId,
+        createLocalAcpSessionRoots(workspace),
+        client as never,
+        {}
+      );
 
       try {
         await createGoalFixture(workspace, 'acp-goal-result.txt', 'ACP_GOAL_COMPLETE');

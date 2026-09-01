@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AcpSession } from '../../../src/acp/Session.js';
+import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
@@ -176,7 +176,7 @@ describe.skipIf(!claude)('Side conversation ACP trajectory (real API)', () => {
     const client = createMockACPClient();
     const session = new AcpSession(
       fixture.sessionId,
-      fixture.workspace,
+      createLocalAcpSessionRoots(fixture.workspace),
       client as never,
       undefined,
       {

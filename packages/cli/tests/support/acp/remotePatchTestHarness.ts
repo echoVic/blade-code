@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS } from '../../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../../src/acp/AcpFileSystemService.js';
+import { createAcpRemotePathProfile } from '../../../src/acp/AcpRemotePath.js';
 import { parseApplyPatch } from '../../../src/tools/builtin/file/applyPatchParser.js';
 import {
   commitRemotePatchTransaction,
@@ -34,10 +35,15 @@ export function createAcpRemoteFileSystemForPatchTest(
   return {
     client,
     harness,
-    service: new AcpFileSystemService(harness.agentConnection, sessionId, {
-      readTextFile: true,
-      writeTextFile: true,
-    }),
+    service: new AcpFileSystemService(
+      harness.agentConnection,
+      sessionId,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      createAcpRemotePathProfile('/remote')
+    ),
   };
 }
 

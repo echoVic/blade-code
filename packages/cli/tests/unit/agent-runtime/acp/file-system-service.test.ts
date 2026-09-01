@@ -14,6 +14,7 @@ import {
   isAcpResourceNotFoundError,
   normalizeAcpRemotePath,
 } from '../../../../src/acp/AcpFileSystemService.js';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
 import { Logger } from '../../../../src/logging/Logger.js';
 import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
 import {
@@ -31,6 +32,12 @@ const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => unde
 const errorSpy = vi
   .spyOn(Logger.prototype, 'error')
   .mockImplementation(() => undefined);
+const posixProfile = createAcpRemotePathProfile('/workspace');
+const remoteProfile = createAcpRemotePathProfile('/remote');
+
+function profileForTestPath(filePath: string) {
+  return filePath.startsWith('/remote') ? remoteProfile : posixProfile;
+}
 
 describe('AcpFileSystemService remote ownership', () => {
   const harnesses: Array<PairedAcpHarness | PairedAcpAppHarness> = [];
@@ -57,9 +64,14 @@ describe('AcpFileSystemService remote ownership', () => {
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
     const requestSpy = vi.spyOn(harness.agentConnection, 'request');
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        writeTextFile: true,
+      },
+      remoteProfile
+    );
 
     await expect(service.writeTextFile('/remote/file.ts', 'new')).rejects.toMatchObject(
       {
@@ -81,9 +93,14 @@ describe('AcpFileSystemService remote ownership', () => {
     const readSpy = vi
       .spyOn(client, 'readTextFile')
       .mockRejectedValueOnce(remoteReadRejected);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      remoteProfile
+    );
 
     await expect(service.readTextFile('/remote/file.ts')).rejects.toMatchObject({
       name: 'RequestError',
@@ -98,7 +115,12 @@ describe('AcpFileSystemService remote ownership', () => {
     const client = new ControlledFileClient();
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {});
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {},
+      remoteProfile
+    );
 
     await expect(service.readTextFile('/remote/file.ts')).rejects.toMatchObject({
       name: 'AcpFileSystemCapabilityError',
@@ -117,7 +139,12 @@ describe('AcpFileSystemService remote ownership', () => {
     const client = new ControlledFileClient();
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {});
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {},
+      remoteProfile
+    );
 
     await expect(service.writeTextFile('/remote/file.ts', 'new')).rejects.toMatchObject(
       {
@@ -133,10 +160,15 @@ describe('AcpFileSystemService remote ownership', () => {
     const client = new ControlledFileClient();
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      remoteProfile
+    );
 
     await expect(service.readBinaryFile('/remote/file.bin')).rejects.toMatchObject({
       name: 'AcpFileSystemCapabilityError',
@@ -158,9 +190,14 @@ describe('AcpFileSystemService remote ownership', () => {
     client.files.set('/remote/file.ts', 'content');
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      remoteProfile
+    );
 
     await expect(service.exists('/remote/file.ts')).resolves.toBe(true);
     expect(client.requests).toEqual([
@@ -178,9 +215,14 @@ describe('AcpFileSystemService remote ownership', () => {
     const client = new ControlledFileClient();
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      remoteProfile
+    );
 
     await expect(service.exists('/remote/missing.ts')).resolves.toBe(false);
     expect(client.requests).toEqual([
@@ -228,9 +270,14 @@ describe('AcpFileSystemService remote ownership', () => {
       const harness = createPairedAcpHarness(client);
       harnesses.push(harness);
       vi.spyOn(client, 'readTextFile').mockRejectedValueOnce(testCase.thrown);
-      const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-        readTextFile: true,
-      });
+      const service = new AcpFileSystemService(
+        harness.agentConnection,
+        'session-a',
+        {
+          readTextFile: true,
+        },
+        remoteProfile
+      );
 
       await expect(service.exists('/remote/file.ts')).rejects.toMatchObject(
         testCase.expected
@@ -273,9 +320,14 @@ describe('AcpFileSystemService remote ownership', () => {
       path: '/remote/private.txt',
     });
     vi.spyOn(client, 'readTextFile').mockRejectedValueOnce(remoteError);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      remoteProfile
+    );
 
     await expect(service.readTextFile('/remote/private.txt')).rejects.toMatchObject({
       name: 'RequestError',
@@ -308,9 +360,14 @@ describe('AcpFileSystemService remote ownership', () => {
       });
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        writeTextFile: true,
+      },
+      remoteProfile
+    );
 
     await expect(
       service.writeTextFile('/remote/private.txt', 'payload')
@@ -344,7 +401,8 @@ describe('AcpFileSystemService remote ownership', () => {
     const service = new AcpFileSystemService(
       harness.agentConnection,
       'session-a',
-      mutableCapabilities
+      mutableCapabilities,
+      remoteProfile
     );
 
     mutableCapabilities.readTextFile = false;
@@ -369,10 +427,15 @@ describe('AcpFileSystemService remote ownership', () => {
     client.files.set('/remote/file.ts', 'snapshot content');
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-      writeTextFile: false,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+        writeTextFile: false,
+      },
+      remoteProfile
+    );
 
     const exposed = service.getCapabilities();
     exposed.readTextFile = false;
@@ -422,14 +485,55 @@ describe('AcpFileSystemService remote ownership', () => {
     );
   });
 
+  it('rejects paths that do not match the frozen Session path style before an ACP request', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      createAcpRemotePathProfile('C:\\workspace')
+    );
+
+    await expect(service.readTextFile('/workspace/file.ts')).rejects.toMatchObject({
+      name: 'AcpRemotePathError',
+      code: 'acp_remote_path_invalid',
+      reason: 'style-mismatch',
+    });
+    await expect(
+      service.writeTextFile('/workspace/file.ts', 'must not be sent')
+    ).rejects.toMatchObject({
+      name: 'AcpRemotePathError',
+      code: 'acp_remote_path_invalid',
+      reason: 'style-mismatch',
+    });
+    expect(() => service.createOpaqueLockKey('/workspace/file.ts')).toThrowError(
+      expect.objectContaining({
+        name: 'AcpRemotePathError',
+        code: 'acp_remote_path_invalid',
+        reason: 'style-mismatch',
+      })
+    );
+    expect(client.requests).toEqual([]);
+  });
+
   it('tracks a session-scoped remote digest ledger without storing content', () => {
     const client = new ControlledFileClient();
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      posixProfile
+    );
 
     service.recordRemoteAccess('/workspace/a.ts', 'alpha', 'read');
 
@@ -453,9 +557,14 @@ describe('AcpFileSystemService remote ownership', () => {
     const client = new ControlledFileClient();
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      posixProfile
+    );
 
     service.recordRemoteAccess('/workspace/a.ts', 'alpha', 'read');
     const record = service.getRemoteAccessRecord('/workspace/a.ts');
@@ -486,12 +595,22 @@ describe('AcpFileSystemService remote ownership', () => {
     const harnessA = createPairedAcpHarness(clientA);
     const harnessB = createPairedAcpHarness(clientB);
     harnesses.push(harnessA, harnessB);
-    const serviceA = new AcpFileSystemService(harnessA.agentConnection, 'session-a', {
-      readTextFile: true,
-    });
-    const serviceB = new AcpFileSystemService(harnessB.agentConnection, 'session-b', {
-      readTextFile: true,
-    });
+    const serviceA = new AcpFileSystemService(
+      harnessA.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      posixProfile
+    );
+    const serviceB = new AcpFileSystemService(
+      harnessB.agentConnection,
+      'session-b',
+      {
+        readTextFile: true,
+      },
+      posixProfile
+    );
 
     serviceA.recordRemoteAccess('/workspace/shared.ts', 'alpha', 'read');
     serviceB.recordRemoteAccess('/workspace/shared.ts', 'beta', 'read');
@@ -517,10 +636,15 @@ describe('AcpFileSystemService remote ownership', () => {
     client.files.set('/workspace/a.ts', 'alpha');
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      posixProfile
+    );
 
     await expect(service.readTextFile('/workspace/a.ts')).resolves.toBe('alpha');
     await expect(service.exists('/workspace/a.ts')).resolves.toBe(true);
@@ -536,9 +660,14 @@ describe('AcpFileSystemService remote ownership', () => {
     const client = new ControlledFileClient();
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      posixProfile
+    );
 
     for (let index = 0; index < 1024; index += 1) {
       service.recordRemoteAccess(
@@ -573,9 +702,14 @@ describe('AcpFileSystemService remote ownership', () => {
       });
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      posixProfile
+    );
     const requestSpy = vi.spyOn(harness.agentConnection, 'request');
 
     await expect(service.readTextFileForUser('/workspace/user-read.ts')).resolves.toBe(
@@ -605,9 +739,14 @@ describe('AcpFileSystemService remote ownership', () => {
       });
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      posixProfile
+    );
     service.recordRemoteAccess('/workspace/user-read.ts', 'stale content', 'read');
 
     await expect(
@@ -630,9 +769,14 @@ describe('AcpFileSystemService remote ownership', () => {
       });
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      posixProfile
+    );
     vi.useFakeTimers({ now: 10_000 });
     try {
       const requestPromise = service.readTextFileForUser(
@@ -676,9 +820,14 @@ describe('AcpFileSystemService remote ownership', () => {
       });
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        writeTextFile: true,
+      },
+      posixProfile
+    );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const requestSpy = vi.spyOn(harness.agentConnection, 'request');
 
@@ -768,9 +917,14 @@ describe('AcpFileSystemService remote ownership', () => {
       .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        writeTextFile: true,
+      },
+      posixProfile
+    );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const lease = coordinator.tryAcquireMutationLease(
       ['/workspace/caller-owned.ts'],
@@ -806,10 +960,15 @@ describe('AcpFileSystemService remote ownership', () => {
       .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      readTextFile: true,
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      posixProfile
+    );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
 
     expect(() =>
@@ -848,9 +1007,14 @@ describe('AcpFileSystemService remote ownership', () => {
       .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        writeTextFile: true,
+      },
+      posixProfile
+    );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const requestSpy = vi.spyOn(harness.agentConnection, 'request');
     const controller = new AbortController();
@@ -883,9 +1047,14 @@ describe('AcpFileSystemService remote ownership', () => {
       .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        writeTextFile: true,
+      },
+      posixProfile
+    );
     const requestSpy = vi.spyOn(harness.agentConnection, 'request');
     const controller = new AbortController();
     controller.abort(new DOMException('caller already aborted', 'AbortError'));
@@ -925,9 +1094,14 @@ describe('AcpFileSystemService remote ownership', () => {
       .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      writeTextFile: true,
-    });
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        writeTextFile: true,
+      },
+      posixProfile
+    );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const requestSpy = vi.spyOn(harness.agentConnection, 'request');
 
@@ -958,11 +1132,16 @@ describe('AcpFileSystemService remote ownership', () => {
       .onRequest(acp.CLIENT_METHODS.fs_write_text_file, async () => ({}));
     const harness = createPairedAcpAppHarness(clientApp);
     harnesses.push(harness);
-    const service = new AcpFileSystemService(harness.agentConnection, 'session-a', {
-      writeTextFile: true,
-    });
     const sentinelPath = '/remote/private/SENTINEL_WRITE.txt';
     const sentinelContent = 'SENTINEL_REMOTE_PAYLOAD';
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        writeTextFile: true,
+      },
+      profileForTestPath(sentinelPath)
+    );
 
     await expect(
       service.writeTextFile(sentinelPath, sentinelContent)

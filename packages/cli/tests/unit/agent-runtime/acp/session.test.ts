@@ -2,8 +2,14 @@
  * AcpSession 测试
  */
 
+import type { ClientCapabilities } from '@agentclientprotocol/sdk';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
-import { AcpSession } from '../../../../src/acp/Session.js';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
+import { AcpSession, createLocalAcpSessionRoots } from '../../../../src/acp/Session.js';
 import type { LoopEvent } from '../../../../src/agent/loop/types.js';
 import type { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import type { LoopResult } from '../../../../src/agent/types.js';
@@ -19,6 +25,8 @@ import type {
   ConfirmationResponse,
 } from '../../../../src/tools/types/ExecutionTypes.js';
 import { ToolKind } from '../../../../src/tools/types/ToolTypes.js';
+import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
+import { createPairedAcpHarness } from '../../../support/acp/createPairedAcpHarness.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
 import { createMockAgent, type MockAgent } from '../../../support/mocks/mockAgent.js';
 
@@ -186,10 +194,19 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
 const sessionServiceState = vi.hoisted(() => ({
   loadSession: vi.fn().mockResolvedValue([]),
   loadSessionModelContext: vi.fn().mockResolvedValue([]),
+  loadRemoteSession: vi.fn().mockResolvedValue([]),
+  loadRemoteSessionModelContext: vi.fn().mockResolvedValue([]),
   setSessionPermissionMode: vi.fn().mockResolvedValue({
     permissionMode: 'default',
   }),
   updateSessionMetadata: vi.fn().mockResolvedValue({
+    selectedModelId: 'model-1',
+    reasoningEffort: 'off',
+    serviceTier: 'auto',
+    responseVerbosity: 'auto',
+    communicationStyle: 'auto',
+  }),
+  updateRemoteSessionMetadata: vi.fn().mockResolvedValue({
     selectedModelId: 'model-1',
     reasoningEffort: 'off',
     serviceTier: 'auto',
@@ -278,6 +295,11 @@ describe('AcpSession', () => {
       .mockImplementation((...args: unknown[]) =>
         sessionServiceState.loadSession(...args)
       );
+    sessionServiceState.loadRemoteSession.mockReset().mockResolvedValue([]);
+    sessionServiceState.loadRemoteSessionModelContext.mockReset().mockResolvedValue([]);
+    sessionServiceState.updateRemoteSessionMetadata
+      .mockReset()
+      .mockResolvedValue({ permissionMode: 'default' });
     codeReviewState.recoverInterrupted.mockReset().mockResolvedValue(undefined);
     codeReviewState.start.mockReset();
     codeReviewState.list.mockReset();
@@ -297,7 +319,7 @@ describe('AcpSession', () => {
     // 创建会话实例
     session = new AcpSession(
       'test-session-id',
-      '/tmp/test',
+      createLocalAcpSessionRoots('/tmp/test'),
       mockConnection as any,
       {
         promptCapabilities: {
@@ -327,10 +349,75 @@ describe('AcpSession', () => {
       expect(AcpServiceContext.initializeSession).toHaveBeenCalledWith(
         mockConnection,
         'test-session-id',
-        expect.any(Object),
+        {
+          promptCapabilities: {
+            image: true,
+            audio: false,
+            embeddedContext: true,
+          },
+        },
         '/tmp/test',
-        expect.any(Function)
+        expect.any(Function),
+        undefined
       );
+    });
+
+    it('应该按显式 remote roots 路由持久化、ACP 执行根和 Runtime 状态根', async () => {
+      const remotePathProfile = createAcpRemotePathProfile('C:\\workspace');
+      const descriptor = createAcpRemoteWorkspaceDescriptor(remotePathProfile);
+      const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+      const roots = {
+        kind: 'acp-remote' as const,
+        hostStateRoot,
+        executionRoot: remotePathProfile.workspace.wirePath,
+        hostResourceRoot: '/trusted/host/resource',
+        profile: remotePathProfile,
+        descriptor,
+      };
+      const remoteCapabilities: ClientCapabilities = {
+        fs: {
+          readTextFile: true,
+          writeTextFile: true,
+        },
+      };
+      const harness = createPairedAcpHarness(new ControlledFileClient());
+      const remoteSession = new AcpSession(
+        'remote-session-id',
+        roots,
+        harness.agentConnection,
+        remoteCapabilities,
+        {}
+      );
+
+      try {
+        await remoteSession.initialize();
+        const { AcpServiceContext } = await import(
+          '../../../../src/acp/AcpServiceContext.js'
+        );
+        expect(AcpServiceContext.initializeSession).toHaveBeenCalledWith(
+          harness.agentConnection,
+          'remote-session-id',
+          remoteCapabilities,
+          remotePathProfile.workspace.wirePath,
+          expect.any(Function),
+          remotePathProfile
+        );
+        expect(sessionServiceState.updateRemoteSessionMetadata).toHaveBeenCalledWith(
+          'remote-session-id',
+          hostStateRoot,
+          descriptor,
+          { permissionMode: 'default' }
+        );
+        const { SessionRuntime } = await import(
+          '../../../../src/agent/runtime/SessionRuntime.js'
+        );
+        expect(SessionRuntime.create).toHaveBeenCalledWith(
+          expect.objectContaining({ workspaceRoot: hostStateRoot })
+        );
+      } finally {
+        await remoteSession.destroy();
+        await harness.close();
+      }
     });
 
     it('应该创建 SessionRuntime 并注入 Agent 实例', async () => {
@@ -366,7 +453,7 @@ describe('AcpSession', () => {
       };
       const taskSession = new AcpSession(
         'task-session',
-        '/tmp/task-worktree',
+        createLocalAcpSessionRoots('/tmp/task-worktree'),
         mockConnection as any,
         undefined,
         { taskWorktree }
@@ -2678,7 +2765,7 @@ describe('AcpSession', () => {
       ];
       session = new AcpSession(
         'test-session-id',
-        '/tmp/test',
+        createLocalAcpSessionRoots('/tmp/test'),
         mockConnection as any,
         undefined,
         { initialMessages: history }
@@ -2739,7 +2826,7 @@ describe('AcpSession', () => {
       });
       session = new AcpSession(
         'test-session-id',
-        '/tmp/test',
+        createLocalAcpSessionRoots('/tmp/test'),
         mockConnection as any,
         undefined,
         { initialMessages: history }
@@ -2791,7 +2878,7 @@ describe('AcpSession', () => {
       ];
       session = new AcpSession(
         'test-session-id',
-        '/tmp/test',
+        createLocalAcpSessionRoots('/tmp/test'),
         mockConnection as any,
         undefined,
         { initialMessages: history }
@@ -2812,7 +2899,7 @@ describe('AcpSession', () => {
     it('应该把结构化 MCP server 转换为 SessionRuntime 配置', async () => {
       session = new AcpSession(
         'test-session-id',
-        '/tmp/test',
+        createLocalAcpSessionRoots('/tmp/test'),
         mockConnection as any,
         undefined,
         {

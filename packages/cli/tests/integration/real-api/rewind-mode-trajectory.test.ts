@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AcpSession } from '../../../src/acp/Session.js';
+import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { Agent } from '../../../src/agent/Agent.js';
 import { drainLoop } from '../../../src/agent/loop/index.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
@@ -228,7 +228,12 @@ describeTrajectory('Durable rewind trajectories (real API)', () => {
       getState().config.actions.setConfig(buildRealApiRuntimeConfig(modelConfig));
       const sessionId = `acp-rewind-${Date.now()}`;
       const client = createMockACPClient();
-      const session = new AcpSession(sessionId, workspace, client as never, {});
+      const session = new AcpSession(
+        sessionId,
+        createLocalAcpSessionRoots(workspace),
+        client as never,
+        {}
+      );
 
       try {
         await session.initialize();

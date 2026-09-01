@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AcpSession } from '../../../src/acp/Session.js';
+import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import {
   type AgentSession,
@@ -11,9 +11,9 @@ import {
 } from '../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../src/agent/subagents/BackgroundAgentManager.js';
 import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { BusEventSchema } from '../../../src/api/schemas.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { PermissionMode } from '../../../src/config/types.js';
-import { BusEventSchema } from '../../../src/api/schemas.js';
 import { SessionRoutes } from '../../../src/server/routes/session.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
@@ -443,7 +443,7 @@ describeTrajectory('Durable subagent resume trajectories (real API)', () => {
       const client = createMockACPClient();
       const session = new AcpSession(
         owner.sessionId,
-        owner.projectPath,
+        createLocalAcpSessionRoots(owner.projectPath),
         client as never,
         {}
       );

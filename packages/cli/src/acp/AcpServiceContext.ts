@@ -33,6 +33,10 @@ import {
 } from '../tools/builtin/shell/ShellOutputCapture.js';
 import { getCwd } from '../utils/cwd.js';
 import { AcpFileSystemService } from './AcpFileSystemService.js';
+import {
+  type AcpRemotePathProfile,
+  createAcpRemotePathProfile,
+} from './AcpRemotePath.js';
 
 const logger = createLogger(LogCategory.AGENT);
 const ACP_TERMINAL_OUTPUT_READ_TIMEOUT_MS = 5_000;
@@ -261,6 +265,24 @@ class LocalTerminalService implements TerminalService {
 
   isAvailable(): boolean {
     return true;
+  }
+}
+
+class UnavailableTerminalService implements TerminalService {
+  async execute(): Promise<TerminalExecuteResult> {
+    return {
+      success: false,
+      stdout: '',
+      stderr: '',
+      exitCode: null,
+      error: 'ACP terminal capability is unavailable',
+      failureKind: 'unavailable',
+      transport: 'acp',
+    };
+  }
+
+  isAvailable(): boolean {
+    return false;
   }
 }
 
@@ -614,7 +636,7 @@ interface SessionServices {
   connection: AgentSideConnection;
   sendUpdate?: (update: SessionNotification['update']) => Promise<void>;
   clientCapabilities: ClientCapabilities | null;
-  cwd: string;
+  executionRoot: string;
   remoteFileSystem: boolean;
 }
 
@@ -646,14 +668,15 @@ export class AcpServiceContext {
    * @param connection - ACP 连接
    * @param sessionId - 会话 ID
    * @param clientCapabilities - 客户端能力
-   * @param cwd - 工作目录
+   * @param executionRoot - 执行目录
    */
   static initializeSession(
     connection: AgentSideConnection,
     sessionId: string,
     clientCapabilities: ClientCapabilities | undefined,
-    cwd: string,
-    sendUpdate?: (update: SessionNotification['update']) => Promise<void>
+    executionRoot: string,
+    sendUpdate?: (update: SessionNotification['update']) => Promise<void>,
+    remotePathProfile?: AcpRemotePathProfile
   ): void {
     const existingSession = AcpServiceContext.sessions.get(sessionId);
     if (existingSession) {
@@ -667,9 +690,18 @@ export class AcpServiceContext {
     const usesRemoteFileSystem =
       clientCapabilities?.fs?.readTextFile === true ||
       clientCapabilities?.fs?.writeTextFile === true;
-    const fileSystemService: FileSystemService = usesRemoteFileSystem
-      ? new AcpFileSystemService(connection, sessionId, clientCapabilities.fs ?? {})
-      : new LocalFileSystemService();
+    let fileSystemService: FileSystemService;
+    if (usesRemoteFileSystem) {
+      const profile = remotePathProfile ?? createAcpRemotePathProfile(executionRoot);
+      fileSystemService = new AcpFileSystemService(
+        connection,
+        sessionId,
+        clientCapabilities?.fs ?? {},
+        profile
+      );
+    } else {
+      fileSystemService = new LocalFileSystemService();
+    }
 
     if (usesRemoteFileSystem) {
       logger.debug(`[AcpServiceContext:${sessionId}] Using ACP file system service`);
@@ -678,7 +710,9 @@ export class AcpServiceContext {
     // Respect capability negotiation: unsupported ACP methods must not be called.
     const terminalService: TerminalService = clientCapabilities?.terminal
       ? new AcpTerminalService(connection, sessionId)
-      : new LocalTerminalService(cwd);
+      : usesRemoteFileSystem
+        ? new UnavailableTerminalService()
+        : new LocalTerminalService(executionRoot);
     logger.debug(
       `[AcpServiceContext:${sessionId}] Using ${
         clientCapabilities?.terminal ? 'ACP' : 'local'
@@ -692,7 +726,7 @@ export class AcpServiceContext {
       connection,
       sendUpdate,
       clientCapabilities: clientCapabilities || null,
-      cwd,
+      executionRoot,
       remoteFileSystem: usesRemoteFileSystem,
     });
 
@@ -703,7 +737,6 @@ export class AcpServiceContext {
       fs: !!clientCapabilities?.fs,
       readTextFile: clientCapabilities?.fs?.readTextFile,
       writeTextFile: clientCapabilities?.fs?.writeTextFile,
-      cwd,
     });
   }
 

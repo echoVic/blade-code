@@ -46,9 +46,25 @@ import { SessionTaskService } from '../services/SessionTaskService.js';
 import { ensureStoreInitialized, getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import { createSessionId } from '../utils/sessionId.js';
-import { AcpSession } from './Session.js';
+import {
+  AcpRemotePathError,
+  type AcpRemotePathProfile,
+  createAcpRemotePathProfile,
+} from './AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  parseAcpRemoteWorkspaceDescriptor,
+} from './AcpRemoteWorkspace.js';
+import {
+  AcpSession,
+  type AcpSessionRoots,
+  createLocalAcpSessionRoots,
+} from './Session.js';
 
 const logger = createLogger(LogCategory.AGENT);
+const ACP_REMOTE_TASK_ISOLATION_UNSUPPORTED_REASON =
+  'remote task isolation is not supported';
 type AcpModelConfiguration = Pick<
   BladeConfig,
   'currentModelId' | 'models' | 'modelProviders'
@@ -58,6 +74,99 @@ type AcpModelConfiguration = Pick<
   responseVerbosity: ResponseVerbosityConfiguration;
   communicationStyle: CommunicationStyleConfiguration;
 };
+
+function usesRemoteFileSystem(
+  clientCapabilities: acp.ClientCapabilities | undefined
+): boolean {
+  return (
+    clientCapabilities?.fs?.readTextFile === true ||
+    clientCapabilities?.fs?.writeTextFile === true
+  );
+}
+
+function invalidParamsForRemotePath(error: AcpRemotePathError): RequestError {
+  return RequestError.invalidParams({
+    code: error.code,
+    reason: error.reason,
+  });
+}
+
+function invalidRemoteTaskIsolation(): RequestError {
+  return RequestError.invalidParams({
+    code: 'acp_remote_task_isolation_unsupported',
+    reason: ACP_REMOTE_TASK_ISOLATION_UNSUPPORTED_REASON,
+  });
+}
+
+function invalidRemoteWorkspaceMismatch(): RequestError {
+  return RequestError.invalidParams({
+    code: 'acp_remote_workspace_mismatch',
+    reason: 'exact-identity-mismatch',
+  });
+}
+
+function isRemoteWorkspaceMismatch(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    error.code === 'acp_remote_workspace_mismatch' &&
+    'reason' in error &&
+    error.reason === 'exact-identity-mismatch'
+  );
+}
+
+function createRemoteProfileOrThrow(cwd: string): AcpRemotePathProfile {
+  try {
+    return createAcpRemotePathProfile(cwd);
+  } catch (error) {
+    if (error instanceof AcpRemotePathError) {
+      throw invalidParamsForRemotePath(error);
+    }
+    throw error;
+  }
+}
+
+function createRemoteSessionRoots(
+  profile: AcpRemotePathProfile,
+  hostResourceRoot: string
+): Extract<AcpSessionRoots, { kind: 'acp-remote' }> {
+  const descriptor = createAcpRemoteWorkspaceDescriptor(profile);
+  return Object.freeze({
+    kind: 'acp-remote',
+    hostStateRoot: deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity),
+    executionRoot: descriptor.wirePath,
+    hostResourceRoot,
+    profile,
+    descriptor,
+  });
+}
+
+function restoreRemoteSessionRoots(
+  metadata: SessionMetadata,
+  hostResourceRoot: string
+): Extract<AcpSessionRoots, { kind: 'acp-remote' }> {
+  const descriptor = parseAcpRemoteWorkspaceDescriptor(metadata.remoteWorkspace);
+  const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+  if (metadata.projectPath !== hostStateRoot) {
+    throw new Error('ACP remote workspace durable state is invalid');
+  }
+  const profile = createAcpRemotePathProfile(descriptor.wirePath);
+  return Object.freeze({
+    kind: 'acp-remote',
+    hostStateRoot,
+    executionRoot: descriptor.wirePath,
+    hostResourceRoot,
+    profile,
+    descriptor,
+  });
+}
+
+function remoteSessionCwd(metadata: SessionMetadata): string {
+  if (!metadata.remoteWorkspace) {
+    throw new Error('ACP remote workspace durable state is invalid');
+  }
+  return metadata.remoteWorkspace.wirePath;
+}
 
 /**
  * Blade ACP Agent
@@ -71,8 +180,11 @@ export class BladeAgent implements AcpAgentInterface {
   private clientCapabilities: acp.ClientCapabilities | undefined;
   private destroyed = false;
   private destroyPromise?: Promise<void>;
+  private readonly hostResourceRoot: string;
 
-  constructor(private connection: AgentSideConnection) {}
+  constructor(private connection: AgentSideConnection) {
+    this.hostResourceRoot = path.resolve(getCwd());
+  }
 
   private get runtimeResidency(): SessionRuntimeResidency<AcpSession> {
     if (!this.runtimeResidencyValue) {
@@ -162,33 +274,60 @@ export class BladeAgent implements AcpAgentInterface {
   async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
     this.assertNotDestroyed();
     const sessionId = createSessionId('acp');
-    const reservation = await this.reserveSessionRuntime(sessionId);
     const sourceCwd = params.cwd || getCwd();
+    const remoteFileSystem = usesRemoteFileSystem(this.clientCapabilities);
+    const remotePathProfile = remoteFileSystem
+      ? createRemoteProfileOrThrow(sourceCwd)
+      : undefined;
     const requestedIsolation = params._meta?.['blade/taskIsolation'];
     const taskIsolation =
       requestedIsolation === 'local' || requestedIsolation === 'worktree'
         ? requestedIsolation
         : undefined;
+    if (remoteFileSystem && taskIsolation) {
+      throw invalidRemoteTaskIsolation();
+    }
     const requestedPrompt = params._meta?.['blade/taskPrompt'];
+    const reservation = await this.reserveSessionRuntime(sessionId);
     let session: AcpSession | undefined;
     try {
-      const createdTask = taskIsolation
-        ? await SessionTaskService.createSessionTask({
-            sessionId,
-            prompt:
-              typeof requestedPrompt === 'string' && requestedPrompt.trim()
-                ? requestedPrompt
-                : 'ACP task session',
-            sourceProjectPath: sourceCwd,
-            isolation: taskIsolation,
-          })
-        : undefined;
-      const sessionCwd = createdTask?.metadata.projectPath ?? sourceCwd;
+      let remoteMetadata: SessionMetadata | undefined;
+      let sessionRoots: AcpSessionRoots;
+      if (remotePathProfile) {
+        const requestedRoots = createRemoteSessionRoots(
+          remotePathProfile,
+          this.hostResourceRoot
+        );
+        remoteMetadata = await SessionService.createRemoteSessionMetadata(
+          sessionId,
+          requestedRoots.hostStateRoot,
+          requestedRoots.descriptor,
+          {}
+        );
+        sessionRoots = restoreRemoteSessionRoots(remoteMetadata, this.hostResourceRoot);
+      } else {
+        sessionRoots = createLocalAcpSessionRoots(sourceCwd);
+      }
+      const createdTask =
+        !remoteFileSystem && taskIsolation
+          ? await SessionTaskService.createSessionTask({
+              sessionId,
+              prompt:
+                typeof requestedPrompt === 'string' && requestedPrompt.trim()
+                  ? requestedPrompt
+                  : 'ACP task session',
+              sourceProjectPath: sourceCwd,
+              isolation: taskIsolation,
+            })
+          : undefined;
+      if (createdTask) {
+        sessionRoots = createLocalAcpSessionRoots(createdTask.metadata.projectPath);
+      }
       logger.info(`[BladeAgent] Creating new session: ${sessionId}`);
-      logger.debug(`[BladeAgent] Session cwd: ${sessionCwd}`);
+      logger.debug(`[BladeAgent] Session kind: ${sessionRoots.kind}`);
       session = new AcpSession(
         sessionId,
-        sessionCwd,
+        sessionRoots,
         this.connection,
         this.clientCapabilities,
         {
@@ -225,21 +364,35 @@ export class BladeAgent implements AcpAgentInterface {
   async listSessions(
     params: acp.ListSessionsRequest
   ): Promise<acp.ListSessionsResponse> {
-    if (params.cwd != null && !path.isAbsolute(params.cwd)) {
+    const remoteFileSystem = usesRemoteFileSystem(this.clientCapabilities);
+    if (!remoteFileSystem && params.cwd != null && !path.isAbsolute(params.cwd)) {
       throw new Error('ACP session list cwd must be absolute');
     }
 
-    const page = await SessionService.listSessionPage({
-      cwd: params.cwd ?? undefined,
-      cursor: params.cursor ?? undefined,
-      limit: 50,
-      includeSubagents: false,
-    });
+    const page = remoteFileSystem
+      ? await SessionService.listRemoteSessionPage({
+          ...(params.cwd != null
+            ? {
+                descriptor: createAcpRemoteWorkspaceDescriptor(
+                  createRemoteProfileOrThrow(params.cwd)
+                ),
+              }
+            : {}),
+          cursor: params.cursor ?? undefined,
+          limit: 50,
+          includeSubagents: false,
+        })
+      : await SessionService.listSessionPage({
+          cwd: params.cwd ?? undefined,
+          cursor: params.cursor ?? undefined,
+          limit: 50,
+          includeSubagents: false,
+        });
 
     return {
       sessions: page.sessions.map((session) => ({
         sessionId: session.sessionId,
-        cwd: session.projectPath,
+        cwd: remoteFileSystem ? remoteSessionCwd(session) : session.projectPath,
         title: session.title ?? null,
         updatedAt: session.lastMessageTime,
         _meta: {
@@ -298,7 +451,14 @@ export class BladeAgent implements AcpAgentInterface {
     params: acp.ForkSessionRequest
   ): Promise<acp.ForkSessionResponse> {
     this.assertNotDestroyed();
-    if (!path.isAbsolute(params.cwd)) {
+    const remoteFileSystem = usesRemoteFileSystem(this.clientCapabilities);
+    const requestRemoteRoots = remoteFileSystem
+      ? createRemoteSessionRoots(
+          createRemoteProfileOrThrow(params.cwd),
+          this.hostResourceRoot
+        )
+      : undefined;
+    if (!remoteFileSystem && !path.isAbsolute(params.cwd)) {
       throw new Error('ACP session fork cwd must be absolute');
     }
 
@@ -306,15 +466,29 @@ export class BladeAgent implements AcpAgentInterface {
     const reservation = await this.reserveSessionRuntime(forkSessionId);
     let session: AcpSession | undefined;
     try {
-      const fork = await SessionService.forkSession(params.sessionId, {
-        sourceProjectPath: params.cwd,
-        targetProjectPath: params.cwd,
-        newSessionId: forkSessionId,
-      });
+      let fork: Awaited<ReturnType<typeof SessionService.forkSession>>;
+      try {
+        fork = await SessionService.forkSession(params.sessionId, {
+          sourceProjectPath: requestRemoteRoots?.hostStateRoot ?? params.cwd,
+          targetProjectPath: requestRemoteRoots?.hostStateRoot ?? params.cwd,
+          newSessionId: forkSessionId,
+          ...(requestRemoteRoots
+            ? { remote: { expectedDescriptor: requestRemoteRoots.descriptor } }
+            : {}),
+        });
+      } catch (error) {
+        if (isRemoteWorkspaceMismatch(error)) {
+          throw invalidRemoteWorkspaceMismatch();
+        }
+        throw error;
+      }
       this.assertNotDestroyed();
+      const childRoots = remoteFileSystem
+        ? restoreRemoteSessionRoots(fork.metadata, this.hostResourceRoot)
+        : createLocalAcpSessionRoots(fork.projectPath ?? params.cwd);
       session = new AcpSession(
         fork.sessionId,
-        params.cwd,
+        childRoots,
         this.connection,
         this.clientCapabilities,
         {
@@ -329,7 +503,7 @@ export class BladeAgent implements AcpAgentInterface {
       session.sendAvailableCommandsDelayed();
       return this.buildChildSessionResponse(
         fork.sessionId,
-        fork.metadata,
+        remoteFileSystem ? undefined : fork.metadata,
         session.getModelConfiguration()
       );
     } catch (error) {
@@ -368,21 +542,77 @@ export class BladeAgent implements AcpAgentInterface {
     params: acp.LoadSessionRequest
   ): Promise<acp.LoadSessionResponse> {
     this.assertNotDestroyed();
-    await SessionService.assertSessionWritable(params.sessionId, params.cwd);
+    const remoteFileSystem = usesRemoteFileSystem(this.clientCapabilities);
+    if (!remoteFileSystem) {
+      await SessionService.assertSessionWritable(params.sessionId, params.cwd);
+      await this.closeResidentSession(params.sessionId);
+      const reservation = await this.reserveSessionRuntime(params.sessionId);
+      let session: AcpSession | undefined;
+      try {
+        const [messages, metadata] = await Promise.all([
+          SessionService.loadSession(params.sessionId, params.cwd),
+          SessionService.findSessionMetadata(params.sessionId, params.cwd),
+        ]);
+        if (!metadata) {
+          throw new Error(`Session not found: ${params.sessionId}`);
+        }
+        session = new AcpSession(
+          params.sessionId,
+          createLocalAcpSessionRoots(params.cwd),
+          this.connection,
+          this.clientCapabilities,
+          {
+            initialMessages: messages,
+            permissionMode: metadata.permissionMode as PermissionMode | undefined,
+            mcpServers: params.mcpServers,
+          }
+        );
+        await session.initialize();
+        await session.replayHistory();
+        this.assertNotDestroyed();
+        this.commitSession(params.sessionId, session, reservation);
+        session.sendAvailableCommandsDelayed();
+        return this.buildSessionSetup(
+          session.getModelConfiguration(),
+          session.getMode()
+        );
+      } catch (error) {
+        reservation.cancel();
+        await session?.destroy().catch(() => undefined);
+        throw error;
+      }
+    }
+
+    const requestedRoots = createRemoteSessionRoots(
+      createRemoteProfileOrThrow(params.cwd),
+      this.hostResourceRoot
+    );
+    let metadata: SessionMetadata;
+    try {
+      metadata = await SessionService.assertRemoteSessionWritable(
+        params.sessionId,
+        requestedRoots.hostStateRoot,
+        requestedRoots.descriptor
+      );
+    } catch (error) {
+      if (isRemoteWorkspaceMismatch(error)) {
+        throw invalidRemoteWorkspaceMismatch();
+      }
+      throw error;
+    }
+    const persistedRoots = restoreRemoteSessionRoots(metadata, this.hostResourceRoot);
     await this.closeResidentSession(params.sessionId);
     const reservation = await this.reserveSessionRuntime(params.sessionId);
     let session: AcpSession | undefined;
     try {
-      const [messages, metadata] = await Promise.all([
-        SessionService.loadSession(params.sessionId, params.cwd),
-        SessionService.findSessionMetadata(params.sessionId, params.cwd),
-      ]);
-      if (!metadata) {
-        throw new Error(`Session not found: ${params.sessionId}`);
-      }
+      const messages = await SessionService.loadRemoteSession(
+        params.sessionId,
+        persistedRoots.hostStateRoot,
+        persistedRoots.descriptor
+      );
       session = new AcpSession(
         params.sessionId,
-        params.cwd,
+        persistedRoots,
         this.connection,
         this.clientCapabilities,
         {

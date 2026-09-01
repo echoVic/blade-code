@@ -8,6 +8,7 @@ vi.unmock('node:child_process');
 vi.unmock('child_process');
 
 import { AcpFileSystemService } from '../../../../src/acp/AcpFileSystemService.js';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
 import {
   AcpServiceContext,
   getAcpFileSystemService,
@@ -218,7 +219,7 @@ describe('AcpServiceContext session isolation', () => {
     const currentServices = AcpServiceContext.getSessionServices('session-a');
     expect(currentServices).toBe(initialServices);
     expect(currentServices?.connection).toBe(remoteHarness.agentConnection);
-    expect(currentServices?.cwd).toBe('/workspace/a');
+    expect(currentServices?.executionRoot).toBe('/workspace/a');
     expect(currentServices?.clientCapabilities).toEqual(initialCapabilities);
     expect(isAcpRemoteFileSystem('session-a')).toBe(true);
     expect(
@@ -237,6 +238,43 @@ describe('AcpServiceContext session isolation', () => {
       },
     ]);
     expect(replacementClient.requests).toEqual([]);
+  });
+
+  it('keeps the first frozen remote path profile on duplicate initialize before fallback parsing', () => {
+    const remoteClient = new ControlledFileClient();
+    const replacementClient = new ControlledFileClient();
+    const remoteHarness = createPairedAcpHarness(remoteClient);
+    const replacementHarness = createPairedAcpHarness(replacementClient);
+    harnesses.push(remoteHarness, replacementHarness);
+    const initialProfile = createAcpRemotePathProfile('C:\\workspace');
+
+    AcpServiceContext.initializeSession(
+      remoteHarness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true } },
+      'C:\\workspace',
+      undefined,
+      initialProfile
+    );
+
+    const firstServices = AcpServiceContext.getSessionServices('session-a');
+    expect(firstServices?.fileSystemService).toBeInstanceOf(AcpFileSystemService);
+    if (!(firstServices?.fileSystemService instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+
+    AcpServiceContext.initializeSession(
+      replacementHarness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true } },
+      'C:relative\\workspace'
+    );
+
+    const secondServices = AcpServiceContext.getSessionServices('session-a');
+    expect(secondServices).toBe(firstServices);
+    expect(secondServices?.connection).toBe(remoteHarness.agentConnection);
+    expect(secondServices?.executionRoot).toBe('C:\\workspace');
+    expect(firstServices.fileSystemService.getPathProfile()).toEqual(initialProfile);
   });
 
   it('reports false for unknown or undefined remote filesystem queries', () => {
@@ -268,6 +306,52 @@ describe('AcpServiceContext session isolation', () => {
     AcpServiceContext.destroySession('session-a');
 
     expect(fileSystem.getRemoteAccessRecord('/workspace/a.ts')).toBeUndefined();
+  });
+
+  it('creates a fresh remote ledger and profile after destroy plus rebuild', () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const firstProfile = createAcpRemotePathProfile('C:\\workspace');
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true } },
+      'C:\\workspace',
+      undefined,
+      firstProfile
+    );
+
+    const firstFileSystem = getAcpFileSystemService('session-a');
+    expect(firstFileSystem).toBeInstanceOf(AcpFileSystemService);
+    if (!(firstFileSystem instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    firstFileSystem.recordRemoteAccess('C:\\workspace\\a.ts', 'alpha', 'read');
+    expect(firstFileSystem.getRemoteAccessRecord('C:\\workspace\\a.ts')).toBeDefined();
+
+    AcpServiceContext.destroySession('session-a');
+
+    const secondProfile = createAcpRemotePathProfile('/workspace/posix');
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true } },
+      '/workspace/posix',
+      undefined,
+      secondProfile
+    );
+
+    const rebuiltFileSystem = getAcpFileSystemService('session-a');
+    expect(rebuiltFileSystem).toBeInstanceOf(AcpFileSystemService);
+    if (!(rebuiltFileSystem instanceof AcpFileSystemService)) {
+      throw new Error('expected ACP remote filesystem service');
+    }
+    expect(rebuiltFileSystem).not.toBe(firstFileSystem);
+    expect(
+      rebuiltFileSystem.getRemoteAccessRecord('/workspace/posix/a.ts')
+    ).toBeUndefined();
+    expect(rebuiltFileSystem.getPathProfile()).toEqual(secondProfile);
   });
 
   it('preserves remote mutation quarantine across destroy and rebuild on the same connection but clears it on connection close', async () => {
@@ -389,7 +473,7 @@ describe('AcpServiceContext session isolation', () => {
     );
   });
 
-  it('binds a local terminal to the Session cwd when capability is absent', async () => {
+  it('fails closed without spawning locally when a remote filesystem Session has no terminal capability', async () => {
     const client = new ControlledTerminalClient();
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
@@ -401,7 +485,6 @@ describe('AcpServiceContext session isolation', () => {
       directory
     );
 
-    const marker = join(directory, 'marker');
     const command = [
       JSON.stringify(process.execPath),
       '-e',
@@ -411,10 +494,11 @@ describe('AcpServiceContext session isolation', () => {
       await expect(
         getTerminalService('session-a').execute(command)
       ).resolves.toMatchObject({
-        success: true,
-        transport: 'local',
+        success: false,
+        failureKind: 'unavailable',
+        transport: 'acp',
       });
-      await expect(access(marker)).resolves.toBeUndefined();
+      await expect(access(join(directory, 'marker'))).rejects.toThrow();
       expect(client.createRequests).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });

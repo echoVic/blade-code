@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AcpSession } from '../../../src/acp/Session.js';
+import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { Agent } from '../../../src/agent/Agent.js';
 import { drainLoop } from '../../../src/agent/loop/index.js';
 import type { LoopEvent } from '../../../src/agent/loop/types.js';
@@ -242,7 +242,7 @@ describeReal('workspace runtime environment trajectory (real API)', () => {
     const acpSessionId = `acp-runtime-env-${Date.now()}`;
     const acpSession = new AcpSession(
       acpSessionId,
-      acpWorkspace,
+      createLocalAcpSessionRoots(acpWorkspace),
       createMockACPClient() as never,
       {}
     );

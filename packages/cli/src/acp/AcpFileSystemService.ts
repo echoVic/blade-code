@@ -27,7 +27,12 @@ import {
   createAcpRemoteConnectionPathIdentity,
   getAcpFileRequestCoordinator,
 } from './AcpFileRequestCoordinator.js';
-import { normalizeAcpRemotePath } from './AcpRemotePath.js';
+import {
+  type AcpRemotePath,
+  type AcpRemotePathProfile,
+  normalizeAcpRemotePath,
+  parseAcpRemotePath,
+} from './AcpRemotePath.js';
 
 export { normalizeAcpRemotePath } from './AcpRemotePath.js';
 
@@ -79,16 +84,19 @@ export class AcpFileSystemService implements FileSystemService {
   private readonly capabilities: FileSystemCapabilities;
   private readonly remoteAccessLedger = new Map<string, RemoteFileAccessRecord>();
   private readonly disposeController = new AbortController();
+  private readonly pathProfile: AcpRemotePathProfile;
 
   constructor(
     private readonly connection: AgentSideConnection,
     private readonly sessionId: string,
-    capabilities: FileSystemCapabilities
+    capabilities: FileSystemCapabilities,
+    pathProfile: AcpRemotePathProfile
   ) {
     this.capabilities = {
       readTextFile: capabilities.readTextFile === true,
       writeTextFile: capabilities.writeTextFile === true,
     };
+    this.pathProfile = freezeRemotePathProfile(pathProfile);
   }
 
   /**
@@ -120,7 +128,7 @@ export class AcpFileSystemService implements FileSystemService {
       deadlineAt?: number;
     }
   ): Promise<string> {
-    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const normalizedPath = this.parsePath(filePath).wirePath;
     const coordinator = getAcpFileRequestCoordinator(this.connection);
     const permit = coordinator.beginUserRead(normalizedPath, this.sessionId);
 
@@ -166,7 +174,7 @@ export class AcpFileSystemService implements FileSystemService {
       throw new AcpFileSystemCapabilityError('writeTextFile');
     }
 
-    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const normalizedPath = this.parsePath(filePath).wirePath;
     const ownedLease =
       options?.lease === undefined
         ? this.tryAcquireMutationLease([normalizedPath])
@@ -282,6 +290,14 @@ export class AcpFileSystemService implements FileSystemService {
     return { ...this.capabilities };
   }
 
+  getPathProfile(): AcpRemotePathProfile {
+    return this.pathProfile;
+  }
+
+  parsePath(filePath: string): AcpRemotePath {
+    return parseAcpRemotePath(filePath, this.pathProfile.style);
+  }
+
   /**
    * 检查是否支持读取文件
    */
@@ -310,7 +326,7 @@ export class AcpFileSystemService implements FileSystemService {
   }
 
   createOpaqueLockKey(filePath: string): string {
-    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const normalizedPath = this.parsePath(filePath).wirePath;
     return `acp-remote:${createHash('sha256')
       .update(this.sessionId)
       .update('\0')
@@ -350,7 +366,7 @@ export class AcpFileSystemService implements FileSystemService {
     content: string,
     operation: RemoteFileOperation
   ): void {
-    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const normalizedPath = this.parsePath(filePath).wirePath;
     const record: RemoteFileAccessRecord = {
       filePath: normalizedPath,
       accessTime: Date.now(),
@@ -373,7 +389,7 @@ export class AcpFileSystemService implements FileSystemService {
   }
 
   checkRemoteAccess(filePath: string, content: string): RemoteAccessStatus {
-    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const normalizedPath = this.parsePath(filePath).wirePath;
     const existing = this.remoteAccessLedger.get(normalizedPath);
     if (!existing) {
       return 'missing';
@@ -386,7 +402,7 @@ export class AcpFileSystemService implements FileSystemService {
   }
 
   getRemoteAccessRecord(filePath: string): RemoteFileAccessRecord | undefined {
-    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const normalizedPath = this.parsePath(filePath).wirePath;
     const record = this.remoteAccessLedger.get(normalizedPath);
     if (!record) {
       return undefined;
@@ -396,13 +412,17 @@ export class AcpFileSystemService implements FileSystemService {
   }
 
   precheckMutationPaths(filePaths: readonly string[]): void {
-    const normalizedPaths = filePaths.map(normalizeAcpRemotePath);
+    const normalizedPaths = filePaths.map(
+      (filePath) => this.parsePath(filePath).wirePath
+    );
     const coordinator = getAcpFileRequestCoordinator(this.connection);
     coordinator.precheckMutationPaths(normalizedPaths, this.sessionId);
   }
 
   tryAcquireMutationLease(filePaths: readonly string[]): AcpRemoteMutationLease {
-    const normalizedPaths = filePaths.map(normalizeAcpRemotePath);
+    const normalizedPaths = filePaths.map(
+      (filePath) => this.parsePath(filePath).wirePath
+    );
     const coordinator = getAcpFileRequestCoordinator(this.connection);
     return coordinator.tryAcquireMutationLease(normalizedPaths, this.sessionId);
   }
@@ -426,7 +446,7 @@ export class AcpFileSystemService implements FileSystemService {
       throw new AcpFileSystemCapabilityError('readTextFile');
     }
 
-    const normalizedPath = normalizeAcpRemotePath(filePath);
+    const normalizedPath = this.parsePath(filePath).wirePath;
     const combinedSignal = createCombinedAbortSignal(
       this.disposeController.signal,
       options.signal
@@ -467,8 +487,16 @@ export class AcpFileSystemService implements FileSystemService {
   }
 
   private deleteRemoteAccessRecord(filePath: string): void {
-    this.remoteAccessLedger.delete(normalizeAcpRemotePath(filePath));
+    this.remoteAccessLedger.delete(this.parsePath(filePath).wirePath);
   }
+}
+
+function freezeRemotePathProfile(profile: AcpRemotePathProfile): AcpRemotePathProfile {
+  const workspace = Object.freeze({ ...profile.workspace });
+  return Object.freeze({
+    style: profile.style,
+    workspace,
+  });
 }
 
 function isRequestErrorWithCode(

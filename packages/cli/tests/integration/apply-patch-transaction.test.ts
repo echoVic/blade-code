@@ -10,6 +10,7 @@ import {
   getAcpFileRequestCoordinator,
 } from '../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
+import { createAcpRemotePathProfile } from '../../src/acp/AcpRemotePath.js';
 import { commitVerifiedRemoteTextMutation } from '../../src/acp/RemoteTextMutation.js';
 import { parseApplyPatch } from '../../src/tools/builtin/file/applyPatchParser.js';
 import {
@@ -34,6 +35,7 @@ import {
 const roots: string[] = [];
 const harnesses: PairedAcpHarness[] = [];
 let previousStorageRoot: string | undefined;
+const remoteProfile = createAcpRemotePathProfile('/remote');
 
 async function workspace(name: string): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), `blade-patch-${name}-`));
@@ -237,7 +239,8 @@ describe('ApplyPatch ACP remote transaction', () => {
       {
         readTextFile: true,
         writeTextFile: true,
-      }
+      },
+      remoteProfile
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
 
@@ -279,7 +282,8 @@ describe('ApplyPatch ACP remote transaction', () => {
       {
         readTextFile: true,
         writeTextFile: true,
-      }
+      },
+      remoteProfile
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
 
@@ -1675,9 +1679,14 @@ function createAcpRemoteFileSystem(
   return {
     client,
     harness,
-    service: new AcpFileSystemService(harness.agentConnection, sessionId, {
-      readTextFile: true,
-      writeTextFile: true,
-    }),
+    service: new AcpFileSystemService(
+      harness.agentConnection,
+      sessionId,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      remoteProfile
+    ),
   };
 }

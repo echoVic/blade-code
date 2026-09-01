@@ -3,25 +3,41 @@
  */
 
 import {
+  type ClientCapabilities,
   type ForkSessionRequest,
   type ListSessionsRequest,
   type LoadSessionRequest,
   type LoadSessionResponse,
   PROTOCOL_VERSION,
+  RequestError,
 } from '@agentclientprotocol/sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
 import { BladeAgent } from '../../../../src/acp/BladeAgent.js';
 import { AcpSession } from '../../../../src/acp/Session.js';
 import type { CommunicationStyleConfiguration } from '../../../../src/services/communicationStyle.js';
+import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
+import {
+  createPairedAcpHarness,
+  type PairedAcpHarness,
+} from '../../../support/acp/createPairedAcpHarness.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
 
 const sessionServiceMocks = vi.hoisted(() => ({
   assertSessionWritable: vi.fn(),
+  assertRemoteSessionWritable: vi.fn(),
+  createRemoteSessionMetadata: vi.fn(),
   deleteSession: vi.fn(),
   forkSession: vi.fn(),
   findSessionMetadata: vi.fn(),
   listSessionPage: vi.fn(),
+  listRemoteSessionPage: vi.fn(),
   loadSession: vi.fn(),
+  loadRemoteSession: vi.fn(),
 }));
 
 const sessionTaskServiceMocks = vi.hoisted(() => ({
@@ -31,7 +47,7 @@ const sessionTaskServiceMocks = vi.hoisted(() => ({
 type AcpSessionConstructorArgs = ConstructorParameters<typeof AcpSession>;
 interface MockAcpSessionInstance {
   id: string;
-  cwd: string;
+  roots: AcpSessionConstructorArgs[1];
   connection: AcpSessionConstructorArgs[2];
   clientCapabilities: AcpSessionConstructorArgs[3];
   options: AcpSessionConstructorArgs[4];
@@ -56,6 +72,25 @@ interface MockAcpSessionInstance {
 interface DeferredGate {
   promise: Promise<void>;
   resolve(): void;
+}
+
+function localRoots(root: string) {
+  return {
+    kind: 'local' as const,
+    hostStateRoot: root,
+    executionRoot: root,
+    hostResourceRoot: root,
+  };
+}
+
+function isRequestErrorWithData(
+  error: unknown
+): error is RequestError & { data: Record<string, unknown> } {
+  return (
+    error instanceof RequestError &&
+    typeof error.data === 'object' &&
+    error.data !== null
+  );
 }
 
 function createDeferredGate(): DeferredGate {
@@ -84,17 +119,18 @@ const runtimeResidencyConfig = vi.hoisted(() => ({
   maxResident: 32,
   idleMs: 300_000,
 }));
+const cwdState = vi.hoisted(() => ({ value: '/trusted/agent-start' }));
 
 // Mock AcpSession
 // Vitest 4: vi.fn().mockImplementation(arrowFn) is not constructable with `new`.
 // Use a class wrapper delegating to the mock implementation to ensure constructability.
 vi.mock('../../../../src/acp/Session.js', () => {
   const mockAcpSessionImpl = (
-    ...[id, cwd, connection, clientCapabilities, options]: AcpSessionConstructorArgs
+    ...[id, roots, connection, clientCapabilities, options]: AcpSessionConstructorArgs
   ): MockAcpSessionInstance => {
     const session: MockAcpSessionInstance = {
       id,
-      cwd,
+      roots,
       connection,
       clientCapabilities,
       initialize: vi.fn().mockImplementation(async () => {
@@ -208,6 +244,7 @@ vi.mock('../../../../src/acp/Session.js', () => {
         ...args: AcpSessionConstructorArgs
       ) => MockAcpSessionInstance
     ),
+    createLocalAcpSessionRoots: localRoots,
   };
 });
 
@@ -232,11 +269,15 @@ vi.mock('../../../../src/agent/Agent.js', () => ({
 vi.mock('../../../../src/services/SessionService.js', () => ({
   SessionService: {
     assertSessionWritable: sessionServiceMocks.assertSessionWritable,
+    assertRemoteSessionWritable: sessionServiceMocks.assertRemoteSessionWritable,
+    createRemoteSessionMetadata: sessionServiceMocks.createRemoteSessionMetadata,
     deleteSession: sessionServiceMocks.deleteSession,
     forkSession: sessionServiceMocks.forkSession,
     findSessionMetadata: sessionServiceMocks.findSessionMetadata,
     listSessionPage: sessionServiceMocks.listSessionPage,
+    listRemoteSessionPage: sessionServiceMocks.listRemoteSessionPage,
     loadSession: sessionServiceMocks.loadSession,
+    loadRemoteSession: sessionServiceMocks.loadRemoteSession,
   },
 }));
 
@@ -276,6 +317,10 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
   })),
 }));
 
+vi.mock('../../../../src/utils/cwd.js', () => ({
+  getCwd: vi.fn(() => cwdState.value),
+}));
+
 // Mock Logger
 vi.mock('../../../../src/logging/Logger.js', () => ({
   createLogger: vi.fn(() => ({
@@ -292,6 +337,18 @@ vi.mock('../../../../src/logging/Logger.js', () => ({
 describe('BladeAgent', () => {
   let mockConnection: ReturnType<typeof createMockACPClient>;
   let agent: BladeAgent;
+  const remoteHarnesses: PairedAcpHarness[] = [];
+  const remoteFsCapabilities: ClientCapabilities = {
+    fs: {
+      readTextFile: true,
+      writeTextFile: true,
+    },
+  };
+  const remoteProfile = createAcpRemotePathProfile('C:/Workspace/Child');
+  const remoteDescriptor = createAcpRemoteWorkspaceDescriptor(remoteProfile);
+  const remoteHostStateRoot = deriveAcpRemoteHostStateRoot(
+    remoteDescriptor.collisionIdentity
+  );
 
   function loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
     return (
@@ -301,10 +358,26 @@ describe('BladeAgent', () => {
     ).loadSession(params);
   }
 
+  async function initializeRemoteFsNegotiation(): Promise<void> {
+    await agent.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: remoteFsCapabilities,
+    });
+  }
+
+  async function configureRemoteFsAgent(): Promise<PairedAcpHarness> {
+    const harness = createPairedAcpHarness(new ControlledFileClient());
+    remoteHarnesses.push(harness);
+    agent = new BladeAgent(harness.agentConnection);
+    await initializeRemoteFsNegotiation();
+    return harness;
+  }
+
   beforeEach(() => {
     createdSessions.length = 0;
     runtimeResidencyConfig.maxResident = 32;
     runtimeResidencyConfig.idleMs = 300_000;
+    cwdState.value = '/trusted/agent-start';
 
     // 创建 mock 连接
     mockConnection = createMockACPClient();
@@ -312,6 +385,7 @@ describe('BladeAgent', () => {
     // 创建 BladeAgent 实例
     agent = new BladeAgent(mockConnection as any);
     sessionServiceMocks.listSessionPage.mockResolvedValue({ sessions: [] });
+    sessionServiceMocks.listRemoteSessionPage.mockResolvedValue({ sessions: [] });
     sessionServiceMocks.forkSession.mockImplementation(
       async (_sourceSessionId, options: { newSessionId: string }) => ({
         sessionId: options.newSessionId,
@@ -325,6 +399,17 @@ describe('BladeAgent', () => {
       permissionMode: 'default',
     });
     sessionServiceMocks.loadSession.mockResolvedValue([]);
+    sessionServiceMocks.loadRemoteSession.mockResolvedValue([]);
+    sessionServiceMocks.createRemoteSessionMetadata.mockResolvedValue({
+      permissionMode: 'default',
+      projectPath: remoteHostStateRoot,
+      remoteWorkspace: remoteDescriptor,
+    });
+    sessionServiceMocks.assertRemoteSessionWritable.mockResolvedValue({
+      permissionMode: 'default',
+      projectPath: remoteHostStateRoot,
+      remoteWorkspace: remoteDescriptor,
+    });
     sessionTaskServiceMocks.createSessionTask.mockReset();
     acpSessionMocks.destroyErrors = [];
     acpSessionMocks.initializeGates = [];
@@ -333,7 +418,8 @@ describe('BladeAgent', () => {
     acpSessionMocks.currentModelId = 'model-1';
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(remoteHarnesses.splice(0).map((harness) => harness.close()));
     vi.clearAllMocks();
   });
 
@@ -526,6 +612,63 @@ describe('BladeAgent', () => {
       });
     });
 
+    it('remote list 在给出 cwd 时应该改走 listRemoteSessionPage 且只返回 wirePath cwd', async () => {
+      await configureRemoteFsAgent();
+      sessionServiceMocks.listRemoteSessionPage.mockResolvedValueOnce({
+        sessions: [
+          {
+            sessionId: 'remote-session',
+            projectPath: '/host/state/root',
+            remoteWorkspace: remoteDescriptor,
+            title: 'Remote title',
+            taskStatus: 'running',
+            lastMessageTime: '2026-09-01T00:00:00.000Z',
+          },
+        ],
+        nextCursor: 'remote-cursor',
+      });
+
+      const response = await agent.listSessions({
+        cwd: 'C:/Workspace/Child',
+        cursor: 'remote-page',
+      });
+
+      expect(sessionServiceMocks.listRemoteSessionPage).toHaveBeenCalledWith({
+        descriptor: remoteDescriptor,
+        cursor: 'remote-page',
+        limit: 50,
+        includeSubagents: false,
+      });
+      expect(sessionServiceMocks.listSessionPage).not.toHaveBeenCalled();
+      expect(response).toEqual({
+        sessions: [
+          {
+            sessionId: 'remote-session',
+            cwd: 'C:\\Workspace\\Child',
+            title: 'Remote title',
+            updatedAt: '2026-09-01T00:00:00.000Z',
+            _meta: {
+              'blade/taskStatus': 'running',
+            },
+          },
+        ],
+        nextCursor: 'remote-cursor',
+      });
+    });
+
+    it('remote list 在无 cwd 时应该列出全部 remote sessions', async () => {
+      await configureRemoteFsAgent();
+
+      await agent.listSessions({ cwd: null, cursor: null });
+
+      expect(sessionServiceMocks.listRemoteSessionPage).toHaveBeenCalledWith({
+        cursor: undefined,
+        limit: 50,
+        includeSubagents: false,
+      });
+      expect(sessionServiceMocks.listSessionPage).not.toHaveBeenCalled();
+    });
+
     it('应该在读取 catalog 前拒绝相对 cwd', async () => {
       const request: ListSessionsRequest = { cwd: 'relative/project' };
 
@@ -575,7 +718,7 @@ describe('BladeAgent', () => {
       });
       expect(AcpSession).toHaveBeenCalledWith(
         response.sessionId,
-        '/tmp/project',
+        localRoots('/tmp/project'),
         mockConnection,
         undefined,
         { initialMessages: messages, permissionMode: 'yolo', mcpServers: [] }
@@ -632,6 +775,50 @@ describe('BladeAgent', () => {
       ).rejects.toThrow(`Session not found: ${forkSessionId}`);
     });
 
+    it('remote fork 初始化失败时保留 durable child 且不注册 runtime owner', async () => {
+      await configureRemoteFsAgent();
+      const initializeError = new Error('remote fork runtime initialization failed');
+      acpSessionMocks.nextInitializeError = initializeError;
+      sessionServiceMocks.forkSession.mockImplementationOnce(
+        async (
+          _sourceSessionId,
+          options: {
+            newSessionId: string;
+            targetProjectPath: string;
+          }
+        ) => ({
+          sessionId: options.newSessionId,
+          projectPath: options.targetProjectPath,
+          messages: [],
+          metadata: {
+            permissionMode: 'default',
+            projectPath: options.targetProjectPath,
+            remoteWorkspace: remoteDescriptor,
+          },
+        })
+      );
+
+      await expect(
+        agent.unstable_forkSession({
+          sessionId: 'remote-parent',
+          cwd: remoteDescriptor.wirePath,
+          mcpServers: [],
+        })
+      ).rejects.toBe(initializeError);
+
+      const child = createdSessions[0];
+      expect(child.destroy).toHaveBeenCalledTimes(1);
+      expect(sessionServiceMocks.deleteSession).not.toHaveBeenCalled();
+      const childSessionId = sessionServiceMocks.forkSession.mock.calls[0]?.[1]
+        .newSessionId as string;
+      await expect(
+        agent.prompt({
+          sessionId: childSessionId,
+          prompt: [{ type: 'text', text: 'runtime owner must not exist' }],
+        })
+      ).rejects.toThrow(`Session not found: ${childSessionId}`);
+    });
+
     it('cleanup 失败时仍应该抛出原始 initialize error', async () => {
       const initializeError = new Error('fork initialize failed first');
       acpSessionMocks.nextInitializeError = initializeError;
@@ -652,6 +839,92 @@ describe('BladeAgent', () => {
       ).rejects.toThrow('ACP session fork cwd must be absolute');
       expect(sessionServiceMocks.forkSession).not.toHaveBeenCalled();
       expect(createdSessions).toHaveLength(0);
+    });
+
+    it('在 remote fs 下应该先校验 fork cwd，再进入 runtime reservation 或 durable fork', async () => {
+      await agent.destroy();
+      runtimeResidencyConfig.maxResident = 0;
+      await configureRemoteFsAgent();
+
+      const result = await agent
+        .unstable_forkSession({
+          ...request,
+          cwd: 'C:relative\\project',
+        })
+        .catch((error: unknown) => error);
+
+      expect(result).toMatchObject({
+        name: 'RequestError',
+        code: -32602,
+        message: 'Invalid params',
+        data: {
+          code: 'acp_remote_path_invalid',
+          reason: 'drive-relative',
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain('C:relative\\project');
+      expect(sessionServiceMocks.forkSession).not.toHaveBeenCalled();
+      expect(createdSessions).toHaveLength(0);
+    });
+
+    it('remote fork 成功后应该使用 durable 返回的 child projectPath 构建子会话 profile', async () => {
+      const remoteHarness = await configureRemoteFsAgent();
+      sessionServiceMocks.forkSession.mockImplementationOnce(
+        async (
+          _sourceSessionId,
+          options: {
+            newSessionId: string;
+            remote?: { expectedDescriptor: unknown };
+            sourceProjectPath: string;
+            targetProjectPath: string;
+          }
+        ) => ({
+          sessionId: options.newSessionId,
+          projectPath: deriveAcpRemoteHostStateRoot(remoteDescriptor.collisionIdentity),
+          messages: [],
+          metadata: {
+            permissionMode: 'default',
+            projectPath: options.targetProjectPath,
+            remoteWorkspace: remoteDescriptor,
+          },
+        })
+      );
+
+      const response = await agent.unstable_forkSession({
+        sessionId: 'parent-session',
+        cwd: 'C:/Workspace/Child',
+        mcpServers: [],
+      });
+
+      expect(sessionServiceMocks.forkSession).toHaveBeenCalledWith('parent-session', {
+        sourceProjectPath: remoteHostStateRoot,
+        targetProjectPath: remoteHostStateRoot,
+        newSessionId: response.sessionId,
+        remote: {
+          expectedDescriptor: remoteDescriptor,
+        },
+      });
+
+      expect(AcpSession).toHaveBeenCalledWith(
+        response.sessionId,
+        {
+          kind: 'acp-remote',
+          hostStateRoot: remoteHostStateRoot,
+          executionRoot: remoteDescriptor.wirePath,
+          hostResourceRoot: expect.any(String),
+          profile: remoteProfile,
+          descriptor: remoteDescriptor,
+        },
+        remoteHarness.agentConnection,
+        remoteFsCapabilities,
+        {
+          initialMessages: [],
+          permissionMode: 'default',
+          mcpServers: [],
+        }
+      );
+      expect(response._meta).toBeUndefined();
+      expect(JSON.stringify(response)).not.toContain(remoteHostStateRoot);
     });
 
     it.each([
@@ -689,7 +962,7 @@ describe('BladeAgent', () => {
 
       expect(AcpSession).toHaveBeenCalledWith(
         response.sessionId,
-        '/tmp/project',
+        localRoots('/tmp/project'),
         mockConnection,
         undefined,
         {
@@ -725,7 +998,7 @@ describe('BladeAgent', () => {
       );
       expect(AcpSession).toHaveBeenCalledWith(
         'persisted-session',
-        '/tmp/project',
+        localRoots('/tmp/project'),
         mockConnection,
         undefined,
         {
@@ -778,6 +1051,117 @@ describe('BladeAgent', () => {
 
       expect(sessionServiceMocks.loadSession).not.toHaveBeenCalled();
       expect(createdSessions).toHaveLength(0);
+    });
+
+    it('remote load 在 exact identity 不匹配时应该先拒绝且保留 resident owner', async () => {
+      await configureRemoteFsAgent();
+      const storedProfile = createAcpRemotePathProfile('C:/Workspace');
+      const storedDescriptor = createAcpRemoteWorkspaceDescriptor(storedProfile);
+      const storedRoot = deriveAcpRemoteHostStateRoot(
+        storedDescriptor.collisionIdentity
+      );
+      sessionServiceMocks.assertRemoteSessionWritable.mockResolvedValueOnce({
+        permissionMode: 'default',
+        projectPath: storedRoot,
+        remoteWorkspace: storedDescriptor,
+      });
+      sessionServiceMocks.loadRemoteSession.mockResolvedValueOnce([]);
+
+      await loadSession({
+        sessionId: 'persisted-session',
+        cwd: 'C:\\Workspace',
+        mcpServers: [],
+      });
+
+      const originalOwner = createdSessions[0];
+      const mismatchError = new Error('mismatch');
+      Object.assign(mismatchError, {
+        code: 'acp_remote_workspace_mismatch',
+        reason: 'exact-identity-mismatch',
+      });
+      sessionServiceMocks.assertRemoteSessionWritable.mockRejectedValueOnce(
+        mismatchError
+      );
+
+      const result = await loadSession({
+        sessionId: 'persisted-session',
+        cwd: 'c:/workspace',
+        mcpServers: [],
+      }).catch((error: unknown) => error);
+
+      expect(result).toMatchObject({
+        name: 'RequestError',
+        code: -32602,
+        message: 'Invalid params',
+        data: {
+          code: 'acp_remote_workspace_mismatch',
+          reason: 'exact-identity-mismatch',
+        },
+      });
+      if (!isRequestErrorWithData(result)) {
+        throw new Error('expected RequestError with object data');
+      }
+      expect(result.data).not.toHaveProperty('cwd');
+      expect(result.data).not.toHaveProperty('path');
+      expect(originalOwner.destroy).not.toHaveBeenCalled();
+      expect(createdSessions).toHaveLength(1);
+      await agent.prompt({
+        sessionId: 'persisted-session',
+        prompt: [{ type: 'text', text: 'resident owner must survive mismatch' }],
+      });
+      expect(originalOwner.prompt).toHaveBeenCalledTimes(1);
+    });
+
+    it('remote load 成功时应该使用 persisted wirePath 与 frozen profile', async () => {
+      const remoteHarness = await configureRemoteFsAgent();
+      const persistedProfile = createAcpRemotePathProfile('C:/Workspace/./Child');
+      const persistedDescriptor = createAcpRemoteWorkspaceDescriptor(persistedProfile);
+      const persistedRoot = deriveAcpRemoteHostStateRoot(
+        persistedDescriptor.collisionIdentity
+      );
+      sessionServiceMocks.assertRemoteSessionWritable.mockResolvedValueOnce({
+        permissionMode: 'yolo',
+        projectPath: persistedRoot,
+        remoteWorkspace: persistedDescriptor,
+      });
+      sessionServiceMocks.loadRemoteSession.mockResolvedValueOnce([]);
+
+      await loadSession({
+        sessionId: 'persisted-session',
+        cwd: 'C:/Workspace/Child',
+        mcpServers: [],
+      });
+
+      expect(sessionServiceMocks.assertRemoteSessionWritable).toHaveBeenCalledWith(
+        'persisted-session',
+        persistedRoot,
+        remoteDescriptor
+      );
+      expect(sessionServiceMocks.loadRemoteSession).toHaveBeenCalledWith(
+        'persisted-session',
+        persistedRoot,
+        persistedDescriptor
+      );
+      expect(sessionServiceMocks.loadSession).not.toHaveBeenCalled();
+
+      expect(AcpSession).toHaveBeenCalledWith(
+        'persisted-session',
+        {
+          kind: 'acp-remote',
+          hostStateRoot: persistedRoot,
+          executionRoot: persistedDescriptor.wirePath,
+          hostResourceRoot: expect.any(String),
+          profile: persistedProfile,
+          descriptor: persistedDescriptor,
+        },
+        remoteHarness.agentConnection,
+        remoteFsCapabilities,
+        {
+          initialMessages: [],
+          permissionMode: 'yolo',
+          mcpServers: [],
+        }
+      );
     });
 
     it('重复加载同一 session 时应该先销毁旧 owner', async () => {
@@ -1041,7 +1425,7 @@ describe('BladeAgent', () => {
 
       expect(AcpSession).toHaveBeenCalledWith(
         expect.any(String),
-        '/tmp/test',
+        localRoots('/tmp/test'),
         mockConnection,
         undefined,
         { mcpServers }
@@ -1101,7 +1485,7 @@ describe('BladeAgent', () => {
       });
       expect(AcpSession).toHaveBeenCalledWith(
         response.sessionId,
-        '/tmp/task-worktree',
+        localRoots('/tmp/task-worktree'),
         mockConnection,
         undefined,
         {
@@ -1121,6 +1505,130 @@ describe('BladeAgent', () => {
         'blade/taskBaseCommit': 'abc123',
       });
     });
+
+    it('在 remote fs 下应该先校验 invalid cwd，再进入 runtime reservation', async () => {
+      await agent.destroy();
+      runtimeResidencyConfig.maxResident = 0;
+      await configureRemoteFsAgent();
+
+      const result = await agent
+        .newSession({
+          cwd: 'C:relative\\project',
+          mcpServers: [],
+        })
+        .catch((error: unknown) => error);
+
+      expect(result).toMatchObject({
+        name: 'RequestError',
+        code: -32602,
+        message: 'Invalid params',
+        data: {
+          code: 'acp_remote_path_invalid',
+          reason: 'drive-relative',
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain('C:relative\\project');
+      expect(createdSessions).toHaveLength(0);
+    });
+
+    it('remote new 应该在 reservation 后创建 remote metadata，且不把 hostResourceRoot 交给请求 cwd 覆盖', async () => {
+      const remoteHarness = await configureRemoteFsAgent();
+      cwdState.value = '/changed/after-agent-construction';
+      sessionServiceMocks.createRemoteSessionMetadata.mockImplementationOnce(
+        async (sessionId, hostStateRoot, descriptor) => ({
+          sessionId,
+          permissionMode: 'default',
+          projectPath: hostStateRoot,
+          remoteWorkspace: descriptor,
+        })
+      );
+
+      const response = await agent.newSession({
+        cwd: 'C:/Workspace/Child',
+        mcpServers: [],
+      });
+
+      expect(sessionServiceMocks.createRemoteSessionMetadata).toHaveBeenCalledWith(
+        response.sessionId,
+        remoteHostStateRoot,
+        remoteDescriptor,
+        {}
+      );
+      expect(AcpSession).toHaveBeenCalledWith(
+        response.sessionId,
+        {
+          kind: 'acp-remote',
+          hostStateRoot: remoteHostStateRoot,
+          executionRoot: remoteDescriptor.wirePath,
+          hostResourceRoot: '/trusted/agent-start',
+          profile: remoteProfile,
+          descriptor: remoteDescriptor,
+        },
+        remoteHarness.agentConnection,
+        remoteFsCapabilities,
+        { mcpServers: [] }
+      );
+      expect(response._meta).toBeUndefined();
+      expect(JSON.stringify(response)).not.toContain(remoteHostStateRoot);
+    });
+
+    it('remote new 应该在有效 cwd 解析后先拒绝 runtime capacity，再创建 private metadata', async () => {
+      await agent.destroy();
+      runtimeResidencyConfig.maxResident = 1;
+      await configureRemoteFsAgent();
+      await agent.newSession({
+        cwd: remoteDescriptor.wirePath,
+        mcpServers: [],
+      });
+      sessionServiceMocks.createRemoteSessionMetadata.mockClear();
+      const residentSessionCount = createdSessions.length;
+
+      await expect(
+        agent.newSession({
+          cwd: remoteDescriptor.wirePath,
+          mcpServers: [],
+        })
+      ).rejects.toMatchObject({
+        name: 'RequestError',
+        code: -32603,
+        data: { resource: 'resident_runtimes', limit: 1, retryable: true },
+      });
+
+      expect(sessionServiceMocks.createRemoteSessionMetadata).not.toHaveBeenCalled();
+      expect(createdSessions).toHaveLength(residentSessionCount);
+    });
+
+    it.each(['local', 'worktree'] as const)(
+      '在 remote fs 下应该先拒绝 taskIsolation=%s，再进入 runtime reservation 或 durable task',
+      async (taskIsolation) => {
+        await agent.destroy();
+        runtimeResidencyConfig.maxResident = 0;
+        await configureRemoteFsAgent();
+
+        const result = await agent
+          .newSession({
+            cwd: 'C:\\Workspace',
+            mcpServers: [],
+            _meta: {
+              'blade/taskIsolation': taskIsolation,
+            },
+          })
+          .catch((error: unknown) => error);
+
+        expect(result).toMatchObject({
+          name: 'RequestError',
+          code: -32602,
+          message: 'Invalid params',
+          data: {
+            code: 'acp_remote_task_isolation_unsupported',
+            reason: 'remote task isolation is not supported',
+          },
+        });
+        expect(JSON.stringify(result)).not.toContain('C:\\Workspace');
+        expect(sessionTaskServiceMocks.createSessionTask).not.toHaveBeenCalled();
+        expect(createdSessions).toHaveLength(0);
+      }
+    );
 
     it('初始化失败时应该销毁未注册的 session', async () => {
       const initializeError = new Error('runtime initialization failed');

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AcpSession } from '../../../src/acp/Session.js';
+import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { Agent } from '../../../src/agent/Agent.js';
 import { drainLoop } from '../../../src/agent/loop/index.js';
 import type { LoopEvent } from '../../../src/agent/loop/types.js';
@@ -241,7 +241,7 @@ describeReal('plugin Marketplace trajectory (real API)', () => {
       const acpSessionId = `marketplace-acp-${Date.now()}`;
       acpSession = new AcpSession(
         acpSessionId,
-        workspace,
+        createLocalAcpSessionRoots(workspace),
         createMockACPClient() as never,
         {}
       );

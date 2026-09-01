@@ -8,7 +8,7 @@ import { Hono } from 'hono';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AcpSession } from '../../../src/acp/Session.js';
+import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { Bus } from '../../../src/server/bus.js';
 import { SessionRoutes } from '../../../src/server/routes/session.js';
@@ -230,7 +230,7 @@ describeReal('native read-only code review trajectory (real API)', () => {
     };
     const session = new AcpSession(
       sessionId,
-      fixture.workspace,
+      createLocalAcpSessionRoots(fixture.workspace),
       client as never,
       undefined,
       { permissionMode: PermissionMode.DEFAULT }

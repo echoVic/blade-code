@@ -10,6 +10,9 @@ import * as acp from '@agentclientprotocol/sdk';
 import { registerCleanup } from '../services/GracefulShutdown.js';
 import { BladeAgent } from './BladeAgent.js';
 
+export type { AcpSessionRoots } from './Session.js';
+export { createLocalAcpSessionRoots } from './Session.js';
+
 /**
  * 启动 ACP 集成模式
  *

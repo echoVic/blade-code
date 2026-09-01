@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AcpFileSystemService } from '../../../../../src/acp/AcpFileSystemService.js';
+import { createAcpRemotePathProfile } from '../../../../../src/acp/AcpRemotePath.js';
 import { FileLockManager } from '../../../../../src/tools/execution/FileLockManager.js';
 import { ControlledFileClient } from '../../../../support/acp/ControlledFileClient.js';
 import {
@@ -33,13 +34,21 @@ describe('FileLockManager', () => {
     FileLockManager.resetInstance();
   });
 
-  function createRemoteFileSystemService(sessionId: string): AcpFileSystemService {
+  function createRemoteFileSystemService(
+    sessionId: string,
+    workspaceRoot = '/workspace'
+  ): AcpFileSystemService {
     const harness = createPairedAcpHarness(new ControlledFileClient());
     harnesses.push(harness);
-    return new AcpFileSystemService(harness.agentConnection, sessionId, {
-      readTextFile: true,
-      writeTextFile: true,
-    });
+    return new AcpFileSystemService(
+      harness.agentConnection,
+      sessionId,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      createAcpRemotePathProfile(workspaceRoot)
+    );
   }
 
   describe('单例模式', () => {
@@ -238,8 +247,8 @@ describe('FileLockManager', () => {
     });
 
     it('应该为 remote alias path 生成同一个 opaque lock key，并按 FIFO 串行化', async () => {
-      const serviceA = createRemoteFileSystemService('session-a');
-      const serviceB = createRemoteFileSystemService('session-b');
+      const serviceA = createRemoteFileSystemService('session-a', 'C:\\workspace');
+      const serviceB = createRemoteFileSystemService('session-b', 'C:\\workspace');
 
       const firstKey = serviceA.createOpaqueLockKey('c:/workspace/src/../file.ts');
       const aliasKey = serviceA.createOpaqueLockKey('C:\\workspace\\file.ts');
@@ -284,7 +293,7 @@ describe('FileLockManager', () => {
     });
 
     it('应该为 opaque lock 集合去重排序并串行化重叠事务', async () => {
-      const service = createRemoteFileSystemService('session-a');
+      const service = createRemoteFileSystemService('session-a', 'C:\\workspace');
       const keyA = service.createOpaqueLockKey('C:\\workspace\\b.ts');
       const keyB = service.createOpaqueLockKey('C:\\workspace\\a.ts');
 

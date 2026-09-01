@@ -58,6 +58,7 @@ import {
   toTaskFailure,
 } from '../context/taskFailure.js';
 import type {
+  AcpRemoteWorkspaceDescriptorV1,
   SessionTaskFailure,
   SessionTaskIsolation,
   SessionTaskWorktree,
@@ -75,6 +76,7 @@ import { isClientVisibleMessage } from '../services/clientMessageVisibility.js';
 import { isProviderAdmissionError } from '../services/pi/providerRequestAdmission.js';
 import { SessionInteractionService } from '../services/SessionInteractionService.js';
 import {
+  type RemoteSessionMetadataUpdate,
   SessionMissingCreationError,
   SessionService,
 } from '../services/SessionService.js';
@@ -116,6 +118,7 @@ import {
   SURFACE_EGRESS_MAX_PENDING_ITEMS,
   SURFACE_EGRESS_WRITE_TIMEOUT_MS,
 } from '../utils/BoundedSerialEgress.js';
+import type { AcpRemotePathProfile } from './AcpRemotePath.js';
 import { AcpServiceContext } from './AcpServiceContext.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -132,6 +135,31 @@ type AcpPendingResumeKind = 'pending_input' | 'goal';
  * ACP 模式 ID（与 BladeAgent 返回的 availableModes 对应）
  */
 export type AcpModeId = 'default' | 'auto-edit' | 'yolo' | 'plan';
+
+export type AcpSessionRoots =
+  | {
+      readonly kind: 'local';
+      readonly hostStateRoot: string;
+      readonly executionRoot: string;
+      readonly hostResourceRoot: string;
+    }
+  | {
+      readonly kind: 'acp-remote';
+      readonly hostStateRoot: string;
+      readonly executionRoot: string;
+      readonly hostResourceRoot: string;
+      readonly profile: AcpRemotePathProfile;
+      readonly descriptor: AcpRemoteWorkspaceDescriptorV1;
+    };
+
+export function createLocalAcpSessionRoots(root: string): AcpSessionRoots {
+  return Object.freeze({
+    kind: 'local',
+    hostStateRoot: root,
+    executionRoot: root,
+    hostResourceRoot: root,
+  });
+}
 
 interface ResolvedAcpPrompt {
   content: UserMessageContent;
@@ -306,7 +334,7 @@ export class AcpSession {
 
   constructor(
     private readonly id: string,
-    private readonly cwd: string,
+    private readonly roots: AcpSessionRoots,
     private readonly connection: AgentSideConnection,
     private readonly clientCapabilities: ClientCapabilities | undefined,
     private readonly options: AcpSessionOptions = {}
@@ -329,16 +357,87 @@ export class AcpSession {
 
   private async refreshPersistedMessages(): Promise<void> {
     const [messages, contextMessages] = await Promise.all([
-      SessionService.loadSession(this.id, this.cwd),
-      SessionService.loadSessionModelContext(this.id, this.cwd),
+      this.loadPersistedMessages(),
+      this.loadPersistedModelContext(),
     ]);
     if (messages.length > 0) this.messages = messages;
     if (contextMessages.length > 0) this.contextMessages = contextMessages;
   }
 
   private async loadModelContextOr(fallback: Message[]): Promise<Message[]> {
-    const persisted = await SessionService.loadSessionModelContext(this.id, this.cwd);
+    const persisted = await this.loadPersistedModelContext();
     return persisted.length > 0 ? persisted : [...fallback];
+  }
+
+  private loadPersistedMessages(): Promise<Message[]> {
+    return this.roots.kind === 'acp-remote'
+      ? SessionService.loadRemoteSession(
+          this.id,
+          this.roots.hostStateRoot,
+          this.roots.descriptor
+        )
+      : SessionService.loadSession(this.id, this.roots.hostStateRoot);
+  }
+
+  private loadPersistedModelContext(): Promise<Message[]> {
+    return this.roots.kind === 'acp-remote'
+      ? SessionService.loadRemoteSessionModelContext(
+          this.id,
+          this.roots.hostStateRoot,
+          this.roots.descriptor
+        )
+      : SessionService.loadSessionModelContext(this.id, this.roots.hostStateRoot);
+  }
+
+  private async persistMetadataUpdate(
+    update: RemoteSessionMetadataUpdate,
+    localCreateUpdate: RemoteSessionMetadataUpdate = update
+  ): Promise<void> {
+    if (this.roots.kind === 'acp-remote') {
+      await SessionService.updateRemoteSessionMetadata(
+        this.id,
+        this.roots.hostStateRoot,
+        this.roots.descriptor,
+        update
+      );
+      return;
+    }
+
+    try {
+      await SessionService.updateSessionMetadata(
+        this.id,
+        this.roots.hostStateRoot,
+        update
+      );
+    } catch (error) {
+      if (
+        !(error instanceof SessionMissingCreationError) &&
+        (error as NodeJS.ErrnoException).code !== 'ENOENT'
+      ) {
+        throw error;
+      }
+      await SessionService.createSessionMetadata(this.id, this.roots.hostStateRoot, {
+        taskStatus: 'completed',
+        ...localCreateUpdate,
+      });
+    }
+  }
+
+  private async persistPermissionMode(permissionMode: PermissionMode): Promise<void> {
+    if (this.roots.kind === 'acp-remote') {
+      await SessionService.updateRemoteSessionMetadata(
+        this.id,
+        this.roots.hostStateRoot,
+        this.roots.descriptor,
+        { permissionMode }
+      );
+      return;
+    }
+    await SessionService.setSessionPermissionMode(
+      this.id,
+      this.roots.hostStateRoot,
+      permissionMode
+    );
   }
 
   private mapPermissionModeToMode(
@@ -375,9 +474,7 @@ export class AcpSession {
    */
   async initialize(): Promise<void> {
     logger.debug(`[AcpSession ${this.id}] Initializing...`);
-    await SessionService.setSessionPermissionMode(
-      this.id,
-      this.cwd,
+    await this.persistPermissionMode(
       this.mapModeToPermissionMode() ?? PermissionMode.DEFAULT
     );
 
@@ -386,16 +483,21 @@ export class AcpSession {
       this.connection,
       this.id,
       this.clientCapabilities,
-      this.cwd,
+      this.roots.executionRoot,
       async (update) => {
         await this.sendUpdateAndWait(update);
-      }
+      },
+      this.roots.kind === 'acp-remote' ? this.roots.profile : undefined
     );
     logger.debug(`[AcpSession ${this.id}] ACP service context initialized`);
     const recoveredInteraction =
-      await SessionInteractionService.resolvePendingWithHandler(this.cwd, this.id, {
-        requestConfirmation: (details) => this.requestPermission(details),
-      });
+      await SessionInteractionService.resolvePendingWithHandler(
+        this.roots.hostStateRoot,
+        this.id,
+        {
+          requestConfirmation: (details) => this.requestPermission(details),
+        }
+      );
     if (recoveredInteraction) {
       await this.refreshPersistedMessages();
     } else if ((this.options.initialMessages?.length ?? 0) > 0) {
@@ -410,7 +512,7 @@ export class AcpSession {
     const terminalService = AcpServiceContext.getInstance().getTerminalService(this.id);
     this.runtime = await SessionRuntime.create({
       sessionId: this.id,
-      workspaceRoot: this.cwd,
+      workspaceRoot: this.roots.hostStateRoot,
       permissionMode: this.mapModeToPermissionMode(),
       ...(mcpServers ? { mcpServers } : {}),
       ...(this.options.taskWorktree ? { taskWorktree: this.options.taskWorktree } : {}),
@@ -447,7 +549,7 @@ export class AcpSession {
         : {}),
     });
     const recoveredReview = await CodeReviewService.recoverInterrupted(
-      this.cwd,
+      this.roots.hostStateRoot,
       this.id,
       this.runtime
     );
@@ -455,12 +557,15 @@ export class AcpSession {
       await this.refreshPersistedMessages();
     }
     this.agent = await this.createAgent();
-    await initializeCustomCommands(this.cwd);
+    await initializeCustomCommands(this.roots.hostStateRoot);
 
     logger.debug(`[AcpSession ${this.id}] Agent created successfully`);
     this.taskStatusUnsubscribe?.();
     this.taskStatusUnsubscribe = Bus.subscribe((event) => {
-      if (event.sessionId !== this.id || event.projectPath !== this.cwd) {
+      if (
+        event.sessionId !== this.id ||
+        event.projectPath !== this.roots.hostStateRoot
+      ) {
         return;
       }
       if (event.type === 'subagent.completion.queued') {
@@ -675,9 +780,9 @@ export class AcpSession {
 
       // 创建 slash command 上下文，包含 ACP 回调和取消信号
       const context: SlashCommandContext = {
-        cwd: this.cwd,
+        cwd: this.roots.hostStateRoot,
         surface: 'acp',
-        workspaceRoot: this.cwd,
+        workspaceRoot: this.roots.hostStateRoot,
         sessionId: this.id,
         messages: [...this.contextMessages],
         rewind: {
@@ -856,7 +961,7 @@ export class AcpSession {
             if (!this.runtime) throw new Error('Session runtime is unavailable');
             const run = await CodeReviewService.start({
               sessionId: this.id,
-              projectPath: this.cwd,
+              projectPath: this.roots.hostStateRoot,
               runtime: this.runtime,
               request,
               signal: reviewSignal,
@@ -883,9 +988,9 @@ export class AcpSession {
               },
             });
             const completion = await run.completion;
-            const review = (await CodeReviewService.list(this.cwd, this.id)).find(
-              (candidate) => candidate.start.reviewId === run.reviewId
-            );
+            const review = (
+              await CodeReviewService.list(this.roots.hostStateRoot, this.id)
+            ).find((candidate) => candidate.start.reviewId === run.reviewId);
             if (!review) throw new Error(`Review not found: ${run.reviewId}`);
             await this.refreshPersistedMessages();
             return {
@@ -961,7 +1066,7 @@ export class AcpSession {
         result.data?.compactedMessages
       ) {
         this.contextMessages = [...result.data.compactedMessages];
-        const persistedMessages = await SessionService.loadSession(this.id, this.cwd);
+        const persistedMessages = await this.loadPersistedMessages();
         if (persistedMessages.length > 0) this.messages = persistedMessages;
       }
 
@@ -1050,7 +1155,7 @@ export class AcpSession {
   private async sendAvailableCommands(): Promise<void> {
     try {
       const commands = getRegisteredCommands(
-        this.cwd,
+        this.roots.hostStateRoot,
         this.runtime?.getAgentResources()
       );
 
@@ -1234,7 +1339,7 @@ export class AcpSession {
       const context: ChatContext = {
         sessionId: this.id,
         userId: 'acp-user',
-        workspaceRoot: this.cwd,
+        workspaceRoot: this.roots.hostStateRoot,
         messages: [...this.contextMessages],
         signal: abortController.signal,
         // 根据 ACP 模式映射到 Blade 权限模式
@@ -1830,7 +1935,7 @@ export class AcpSession {
         abortController.abort('acp-egress-failed');
       }
       this.contextMessages = [...context.messages];
-      const persistedMessages = await SessionService.loadSession(this.id, this.cwd);
+      const persistedMessages = await this.loadPersistedMessages();
       this.messages =
         persistedMessages.length > 0 ? persistedMessages : [...context.messages];
       if (!loopResult.success) {
@@ -2441,7 +2546,7 @@ export class AcpSession {
       ? (mode as AcpModeId)
       : 'default';
     const permissionMode = this.mapModeIdToPermissionMode(nextMode);
-    await SessionService.setSessionPermissionMode(this.id, this.cwd, permissionMode);
+    await this.persistPermissionMode(permissionMode);
     this.mode = nextMode;
     logger.info(`[AcpSession ${this.id}] Mode set to: ${this.mode}`);
 
@@ -2518,22 +2623,7 @@ export class AcpSession {
     const previousModelId = this.runtime.getCurrentModelId();
     await this.agent.switchModel(modelId);
     try {
-      try {
-        await SessionService.updateSessionMetadata(this.id, this.cwd, {
-          selectedModelId: modelId,
-        });
-      } catch (error) {
-        if (
-          !(error instanceof SessionMissingCreationError) &&
-          (error as NodeJS.ErrnoException).code !== 'ENOENT'
-        ) {
-          throw error;
-        }
-        await SessionService.createSessionMetadata(this.id, this.cwd, {
-          taskStatus: 'completed',
-          selectedModelId: modelId,
-        });
-      }
+      await this.persistMetadataUpdate({ selectedModelId: modelId });
     } catch (error) {
       if (previousModelId && previousModelId !== modelId) {
         await this.agent.switchModel(previousModelId).catch((rollbackError) => {
@@ -2569,23 +2659,15 @@ export class AcpSession {
     if (previous.selection === reasoningEffort) return;
     await this.runtime.refresh({ reasoningEffort });
     try {
-      try {
-        await SessionService.updateSessionMetadata(this.id, this.cwd, {
+      await this.persistMetadataUpdate(
+        {
           reasoningEffort,
-        });
-      } catch (error) {
-        if (
-          !(error instanceof SessionMissingCreationError) &&
-          (error as NodeJS.ErrnoException).code !== 'ENOENT'
-        ) {
-          throw error;
-        }
-        await SessionService.createSessionMetadata(this.id, this.cwd, {
-          taskStatus: 'completed',
+        },
+        {
           selectedModelId: this.runtime.getCurrentModelId(),
           reasoningEffort,
-        });
-      }
+        }
+      );
     } catch (error) {
       await this.runtime.refresh({ reasoningEffort: previous.selection });
       throw error;
@@ -2608,23 +2690,15 @@ export class AcpSession {
     if (previous.selection === serviceTier) return;
     await this.runtime.refresh({ serviceTier });
     try {
-      try {
-        await SessionService.updateSessionMetadata(this.id, this.cwd, {
+      await this.persistMetadataUpdate(
+        {
           serviceTier,
-        });
-      } catch (error) {
-        if (
-          !(error instanceof SessionMissingCreationError) &&
-          (error as NodeJS.ErrnoException).code !== 'ENOENT'
-        ) {
-          throw error;
-        }
-        await SessionService.createSessionMetadata(this.id, this.cwd, {
-          taskStatus: 'completed',
+        },
+        {
           selectedModelId: this.runtime.getCurrentModelId(),
           serviceTier,
-        });
-      }
+        }
+      );
     } catch (error) {
       await this.runtime.refresh({ serviceTier: previous.selection });
       throw error;
@@ -2651,23 +2725,15 @@ export class AcpSession {
     if (previous.selection === responseVerbosity) return;
     await this.runtime.refresh({ responseVerbosity });
     try {
-      try {
-        await SessionService.updateSessionMetadata(this.id, this.cwd, {
+      await this.persistMetadataUpdate(
+        {
           responseVerbosity,
-        });
-      } catch (error) {
-        if (
-          !(error instanceof SessionMissingCreationError) &&
-          (error as NodeJS.ErrnoException).code !== 'ENOENT'
-        ) {
-          throw error;
-        }
-        await SessionService.createSessionMetadata(this.id, this.cwd, {
-          taskStatus: 'completed',
+        },
+        {
           selectedModelId: this.runtime.getCurrentModelId(),
           responseVerbosity,
-        });
-      }
+        }
+      );
     } catch (error) {
       await this.runtime.refresh({ responseVerbosity: previous.selection });
       throw error;
@@ -2692,28 +2758,20 @@ export class AcpSession {
     if (previous.selection === communicationStyle) return;
     await this.runtime.refresh({ communicationStyle });
     try {
-      try {
-        await SessionService.updateSessionMetadata(this.id, this.cwd, {
+      await this.persistMetadataUpdate(
+        {
           communicationStyle,
           communicationStyleDigest:
             next.source === 'built-in' ? null : next.contentSha256,
-        });
-      } catch (error) {
-        if (
-          !(error instanceof SessionMissingCreationError) &&
-          (error as NodeJS.ErrnoException).code !== 'ENOENT'
-        ) {
-          throw error;
-        }
-        await SessionService.createSessionMetadata(this.id, this.cwd, {
-          taskStatus: 'completed',
+        },
+        {
           selectedModelId: this.runtime.getCurrentModelId(),
           communicationStyle,
           ...(next.source !== 'built-in' && next.contentSha256
             ? { communicationStyleDigest: next.contentSha256 }
             : {}),
-        });
-      }
+        }
+      );
     } catch (error) {
       await this.runtime.refresh({ communicationStyle: previous.selection });
       throw error;

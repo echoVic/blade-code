@@ -3,9 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AcpSession } from '../../../src/acp/Session.js';
-import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
+import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { runHeadless } from '../../../src/commands/headless.js';
+import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { Bus } from '../../../src/server/bus.js';
 import { SessionRoutes } from '../../../src/server/routes/session.js';
 import { SessionService } from '../../../src/services/SessionService.js';
@@ -172,7 +172,7 @@ describeReal('turn-scoped structured output trajectory (real API)', () => {
       const client = createMockACPClient();
       const session = new AcpSession(
         sessionId,
-        test.workspace,
+        createLocalAcpSessionRoots(test.workspace),
         client as never,
         undefined,
         { permissionMode: PermissionMode.YOLO }

@@ -14,7 +14,7 @@ import { promisify } from 'node:util';
 import * as acp from '@agentclientprotocol/sdk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
-import { AcpSession } from '../../../src/acp/Session.js';
+import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.js';
@@ -189,7 +189,7 @@ describe('direct ACP session transport fixture', () => {
     const harness = createHarness(client);
     const session = new AcpSession(
       'direct-transport-abort',
-      process.cwd(),
+      createLocalAcpSessionRoots(process.cwd()),
       harness.agentConnection,
       {},
       {
@@ -887,7 +887,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
       const harness = createHarness(client);
       const session = new AcpSession(
         `acp-steering-${Date.now()}`,
-        workspace,
+        createLocalAcpSessionRoots(workspace),
         harness.agentConnection,
         {}
       );
@@ -963,7 +963,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
           );
           session = new AcpSession(
             sessionId,
-            workspace,
+            createLocalAcpSessionRoots(workspace),
             harness.agentConnection,
             {},
             { initialMessages }
