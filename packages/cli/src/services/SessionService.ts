@@ -11,6 +11,7 @@ import {
   type AcpRemoteStateScope,
   assertAcpRemoteSessionTranscriptIdentity,
   assertAcpRemoteStateFile,
+  assertAcpRemoteStateFileHandle,
   deriveAcpRemoteHostStateRoot,
   ensureAcpRemoteHostStateRoot,
   listValidatedAcpRemoteStateScopes,
@@ -599,6 +600,33 @@ export interface SessionMetadataUpdate {
   communicationStyleDigest?: string | null;
   projectInstructionsDigest?: string | null;
 }
+
+export type RemoteSessionMetadataUpdate = Pick<
+  SessionMetadataUpdate,
+  | 'title'
+  | 'taskStatus'
+  | 'taskStatusReason'
+  | 'taskFailure'
+  | 'taskStartedAt'
+  | 'taskCompletedAt'
+  | 'taskOwnerPid'
+  | 'taskPromptSummary'
+  | 'taskPriority'
+  | 'taskKind'
+  | 'taskDueAt'
+  | 'taskModelId'
+  | 'taskQueuePosition'
+  | 'taskQueueDepth'
+  | 'taskConcurrencyLimit'
+  | 'selectedModelId'
+  | 'permissionMode'
+  | 'reasoningEffort'
+  | 'serviceTier'
+  | 'responseVerbosity'
+  | 'communicationStyle'
+  | 'communicationStyleDigest'
+  | 'projectInstructionsDigest'
+>;
 
 export interface SessionPage {
   sessions: SessionMetadata[];
@@ -3225,6 +3253,186 @@ export class SessionService {
         filePath
       )
     );
+  }
+
+  static async updateRemoteSessionMetadata(
+    sessionId: string,
+    hostStateRoot: string,
+    expectedDescriptor: AcpRemoteWorkspaceDescriptorV1,
+    update: RemoteSessionMetadataUpdate
+  ): Promise<SessionMetadata> {
+    assertValidSessionId(sessionId);
+    SessionService.validateTaskMetadataUpdate(update, sessionId);
+    if (
+      update.taskStatus !== undefined &&
+      !SESSION_TASK_STATUSES.has(update.taskStatus)
+    ) {
+      throw new Error(`Invalid session task status: ${String(update.taskStatus)}`);
+    }
+    if (
+      update.taskOwnerPid !== undefined &&
+      update.taskOwnerPid !== null &&
+      (!Number.isInteger(update.taskOwnerPid) || update.taskOwnerPid <= 0)
+    ) {
+      throw new Error('Session task owner PID must be a positive integer');
+    }
+
+    let descriptor: AcpRemoteWorkspaceDescriptorV1;
+    try {
+      descriptor = parseAcpRemoteWorkspaceDescriptor(expectedDescriptor);
+      if (
+        deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity) !== hostStateRoot
+      ) {
+        throw new RemoteSessionStateError();
+      }
+    } catch (error) {
+      throw sanitizeRemoteStateError(error);
+    }
+
+    try {
+      return await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+        const filePath = getAcpRemoteSessionFilePath(scope, sessionId);
+        await assertAcpRemoteStateFile(scope, filePath);
+        const store = new JSONLStore(filePath);
+        let persistedEntries: SessionEvent[] = [];
+        await store.appendValidatedAsync(
+          async (entries) => {
+            const stored = validateProjectedRemoteMetadata(
+              SessionService.projectMetadataFromEntries(
+                entries,
+                sessionId,
+                hostStateRoot,
+                filePath
+              ),
+              descriptor
+            );
+            if (stored.archivedAt) {
+              throw new SessionArchivedError(sessionId, sessionId);
+            }
+            if (stored.parentId) {
+              const ancestor = await SessionService.findRemoteArchivedAncestor(
+                stored.parentId,
+                scope,
+                stored.remoteWorkspace
+              );
+              if (ancestor) {
+                throw new SessionArchivedError(sessionId, ancestor.sessionId);
+              }
+            }
+            const now = new Date().toISOString();
+            const next: Extract<SessionEvent, { type: 'session_updated' }> = {
+              id: nanoid(),
+              sessionId,
+              projectPath: hostStateRoot,
+              timestamp: now,
+              type: 'session_updated',
+              cwd: hostStateRoot,
+              version: getVersion(),
+              data: {
+                sessionId,
+                ...(update.title !== undefined ? { title: update.title } : {}),
+                ...(update.taskStatus !== undefined
+                  ? { taskStatus: update.taskStatus }
+                  : {}),
+                ...(update.taskStatusReason !== undefined
+                  ? { taskStatusReason: update.taskStatusReason }
+                  : {}),
+                ...(update.taskFailure !== undefined
+                  ? { taskFailure: update.taskFailure }
+                  : {}),
+                ...(update.taskStartedAt !== undefined
+                  ? { taskStartedAt: update.taskStartedAt }
+                  : {}),
+                ...(update.taskCompletedAt !== undefined
+                  ? { taskCompletedAt: update.taskCompletedAt }
+                  : {}),
+                ...(update.taskOwnerPid !== undefined
+                  ? { taskOwnerPid: update.taskOwnerPid }
+                  : {}),
+                ...(update.taskPromptSummary !== undefined
+                  ? { taskPromptSummary: update.taskPromptSummary }
+                  : {}),
+                ...(update.taskPriority !== undefined
+                  ? { taskPriority: update.taskPriority }
+                  : {}),
+                ...(update.taskKind !== undefined ? { taskKind: update.taskKind } : {}),
+                ...(update.taskDueAt !== undefined
+                  ? {
+                      taskDueAt:
+                        update.taskDueAt === null
+                          ? null
+                          : new Date(update.taskDueAt).toISOString(),
+                    }
+                  : {}),
+                ...(update.taskModelId !== undefined
+                  ? { taskModelId: update.taskModelId }
+                  : {}),
+                ...(update.taskQueuePosition !== undefined
+                  ? { taskQueuePosition: update.taskQueuePosition }
+                  : {}),
+                ...(update.taskQueueDepth !== undefined
+                  ? { taskQueueDepth: update.taskQueueDepth }
+                  : {}),
+                ...(update.taskConcurrencyLimit !== undefined
+                  ? { taskConcurrencyLimit: update.taskConcurrencyLimit }
+                  : {}),
+                ...(update.selectedModelId !== undefined
+                  ? { selectedModelId: update.selectedModelId }
+                  : {}),
+                ...(update.permissionMode !== undefined
+                  ? { permissionMode: update.permissionMode }
+                  : {}),
+                ...(update.reasoningEffort !== undefined
+                  ? { reasoningEffort: update.reasoningEffort }
+                  : {}),
+                ...(update.serviceTier !== undefined
+                  ? { serviceTier: update.serviceTier }
+                  : {}),
+                ...(update.responseVerbosity !== undefined
+                  ? { responseVerbosity: update.responseVerbosity }
+                  : {}),
+                ...(update.communicationStyle !== undefined
+                  ? { communicationStyle: update.communicationStyle }
+                  : {}),
+                ...(update.communicationStyleDigest !== undefined
+                  ? { communicationStyleDigest: update.communicationStyleDigest }
+                  : {}),
+                ...(update.projectInstructionsDigest !== undefined
+                  ? { projectInstructionsDigest: update.projectInstructionsDigest }
+                  : {}),
+                updatedAt: now,
+              },
+            };
+            persistedEntries = [...entries, next];
+            return next;
+          },
+          {
+            noFollow: true,
+            validateHandle: (handle) =>
+              assertAcpRemoteStateFileHandle(scope, filePath, handle),
+          }
+        );
+        return SessionService.toPublicMetadata(
+          validateProjectedRemoteMetadata(
+            SessionService.projectMetadataFromEntries(
+              persistedEntries,
+              sessionId,
+              hostStateRoot,
+              filePath
+            ),
+            descriptor
+          )
+        );
+      });
+    } catch (error) {
+      if (
+        error instanceof RemoteSessionMismatchError ||
+        error instanceof SessionArchivedError
+      ) {
+        throw error;
+      }
+      throw sanitizeRemoteStateError(error);
+    }
   }
 
   static async setSessionPermissionMode(

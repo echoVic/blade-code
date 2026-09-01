@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAcpRemotePathProfile } from '../../../src/acp/AcpRemotePath.js';
+import * as remoteWorkspaceModule from '../../../src/acp/AcpRemoteWorkspace.js';
 import {
   createAcpRemoteWorkspaceDescriptor,
   deriveAcpRemoteHostStateRoot,
@@ -426,6 +427,257 @@ describe('SessionService remote durable sessions', () => {
         [sessionId, forgedSessionId, hostStateRoot, descriptor.wirePath]
       );
     }
+  });
+
+  it('updates remote metadata in the protected transcript without changing its descriptor', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-metadata-update';
+    await SessionService.createRemoteSessionMetadata(
+      sessionId,
+      hostStateRoot,
+      descriptor,
+      { permissionMode: 'default' }
+    );
+
+    const attemptedUpdate = {
+      permissionMode: 'yolo' as const,
+      selectedModelId: 'remote-model',
+      gitBranch: 'must-not-persist',
+      taskIsolation: 'worktree' as const,
+      taskSourceProjectPath: '/must-not-persist',
+      taskWorktree: {
+        sessionId,
+        name: 'must-not-persist',
+        branch: 'must-not-persist',
+        baseCommit: 'abc123',
+        originalBranch: 'main',
+        repositoryRoot: '/must-not-persist/repository',
+        originalWorkspaceRoot: '/must-not-persist/source',
+        worktreeRoot: '/must-not-persist/worktree',
+        workspaceRoot: '/must-not-persist/worktree',
+        sourceHadChanges: false,
+      },
+      taskDiffStat: { changedFiles: 1, additions: 1, deletions: 0, commits: 0 },
+      remoteWorkspace: createAcpRemoteWorkspaceDescriptor(
+        createAcpRemotePathProfile('D:\\MustNotPersist')
+      ),
+    };
+    const updated = await SessionService.updateRemoteSessionMetadata(
+      sessionId,
+      hostStateRoot,
+      descriptor,
+      attemptedUpdate
+    );
+
+    expect(updated).toMatchObject({
+      sessionId,
+      projectPath: hostStateRoot,
+      remoteWorkspace: descriptor,
+      permissionMode: 'yolo',
+      selectedModelId: 'remote-model',
+    });
+    const directFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, sessionId)
+    );
+    const entries = parseSessionJSONL(await readFile(directFilePath, 'utf8'));
+    const update = entries.at(-1);
+    expect(update).toMatchObject({
+      sessionId,
+      projectPath: hostStateRoot,
+      type: 'session_updated',
+      cwd: hostStateRoot,
+      data: {
+        sessionId,
+        permissionMode: 'yolo',
+        selectedModelId: 'remote-model',
+      },
+    });
+    expect(update).not.toHaveProperty('gitBranch');
+    expect(update?.data).not.toHaveProperty('remoteWorkspace');
+    expect(update?.data).not.toHaveProperty('taskIsolation');
+    expect(update?.data).not.toHaveProperty('taskSourceProjectPath');
+    expect(update?.data).not.toHaveProperty('taskWorktree');
+    expect(update?.data).not.toHaveProperty('taskDiffStat');
+    await expect(
+      access(getSessionFilePath(hostStateRoot, sessionId))
+    ).rejects.toThrow();
+  });
+
+  it('rejects an exact-distinct remote metadata update before appending', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const exactMismatch = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('c:\\repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-metadata-mismatch';
+    await SessionService.createRemoteSessionMetadata(
+      sessionId,
+      hostStateRoot,
+      descriptor
+    );
+    const directFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, sessionId)
+    );
+    const before = await readFile(directFilePath, 'utf8');
+
+    const error = await captureError(() =>
+      SessionService.updateRemoteSessionMetadata(
+        sessionId,
+        hostStateRoot,
+        exactMismatch,
+        { permissionMode: 'yolo' }
+      )
+    );
+
+    expectRemoteError(
+      error,
+      {
+        code: REMOTE_WORKSPACE_MISMATCH_CODE,
+        message: REMOTE_WORKSPACE_MISMATCH_MESSAGE,
+        reason: 'exact-identity-mismatch',
+      },
+      [sessionId, hostStateRoot, descriptor.wirePath, exactMismatch.wirePath]
+    );
+    expect(await readFile(directFilePath, 'utf8')).toBe(before);
+  });
+
+  it('rejects forged remote event identity before appending metadata', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-metadata-forged-event';
+    const messageEvents = makeRemoteMessageEvents(
+      sessionId,
+      hostStateRoot,
+      '2024-01-01T00:00:01.000Z',
+      'user',
+      'must remain unchanged'
+    );
+    const message = messageEvents[0];
+    if (!message) throw new Error('Expected complete remote message fixture');
+    await writeRemoteTranscript(hostStateRoot, sessionId, [
+      makeRemoteCreatedEvent(
+        sessionId,
+        hostStateRoot,
+        '2024-01-01T00:00:00.000Z',
+        descriptor
+      ),
+      { ...message, projectPath: '/forged/host/root', cwd: '/forged/host/root' },
+      ...messageEvents.slice(1),
+    ]);
+    const directFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, sessionId)
+    );
+    const before = await readFile(directFilePath, 'utf8');
+
+    const error = await captureError(() =>
+      SessionService.updateRemoteSessionMetadata(sessionId, hostStateRoot, descriptor, {
+        permissionMode: 'yolo',
+      })
+    );
+
+    expectRemoteError(
+      error,
+      {
+        code: REMOTE_STATE_INVALID_CODE,
+        message: REMOTE_STATE_INVALID_MESSAGE,
+      },
+      [sessionId, hostStateRoot, descriptor.wirePath, '/forged/host/root']
+    );
+    expect(await readFile(directFilePath, 'utf8')).toBe(before);
+  });
+
+  it('does not follow a remote transcript symlink swapped in after path validation', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-metadata-open-race';
+    await SessionService.createRemoteSessionMetadata(
+      sessionId,
+      hostStateRoot,
+      descriptor
+    );
+    const directFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, sessionId)
+    );
+    const outsideFilePath = path.join(storageRoot, 'outside-remote-session.jsonl');
+    const outsideContent = await readFile(directFilePath, 'utf8');
+    await writeFile(outsideFilePath, outsideContent, { mode: 0o600 });
+    const originalAssert = remoteWorkspaceModule.assertAcpRemoteStateFile;
+    const assertion = vi
+      .spyOn(remoteWorkspaceModule, 'assertAcpRemoteStateFile')
+      .mockImplementationOnce(async (scope, filePath) => {
+        await originalAssert(scope, filePath);
+        await rm(filePath);
+        await symlink(outsideFilePath, filePath);
+      });
+
+    const error = await captureError(() =>
+      SessionService.updateRemoteSessionMetadata(sessionId, hostStateRoot, descriptor, {
+        permissionMode: 'yolo',
+      })
+    );
+
+    expect(assertion).toHaveBeenCalledTimes(1);
+    expectRemoteError(
+      error,
+      { code: REMOTE_STATE_INVALID_CODE, message: REMOTE_STATE_INVALID_MESSAGE },
+      [sessionId, hostStateRoot, descriptor.wirePath, outsideFilePath]
+    );
+    expect(await readFile(outsideFilePath, 'utf8')).toBe(outsideContent);
+  });
+
+  it('rejects remote metadata updates when a same-exact ancestor is archived', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const ancestorId = 'remote-metadata-archived-parent';
+    const sessionId = 'remote-metadata-active-child';
+    await writeRemoteTranscript(hostStateRoot, ancestorId, [
+      makeRemoteCreatedEvent(
+        ancestorId,
+        hostStateRoot,
+        '2024-01-01T00:00:00.000Z',
+        descriptor,
+        { archivedAt: '2024-01-03T00:00:00.000Z' }
+      ),
+    ]);
+    await writeRemoteTranscript(hostStateRoot, sessionId, [
+      makeRemoteCreatedEvent(
+        sessionId,
+        hostStateRoot,
+        '2024-01-02T00:00:00.000Z',
+        descriptor,
+        { rootId: ancestorId, parentId: ancestorId, relationType: 'fork' }
+      ),
+    ]);
+    const directFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, sessionId)
+    );
+    const before = await readFile(directFilePath, 'utf8');
+
+    await expect(
+      SessionService.updateRemoteSessionMetadata(sessionId, hostStateRoot, descriptor, {
+        permissionMode: 'yolo',
+      })
+    ).rejects.toMatchObject({
+      code: 'BLADE_SESSION_ARCHIVED',
+      archivedBySessionId: ancestorId,
+    });
+    expect(await readFile(directFilePath, 'utf8')).toBe(before);
   });
 
   it('createRemoteSessionMetadata is idempotent under concurrent same-descriptor create and persists a descriptor-bearing first record', async () => {

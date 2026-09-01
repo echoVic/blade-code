@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import type { Dirent } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import { lstat, mkdir, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { getBladeStorageRoot } from '../context/storage/BladeStorageRoot.js';
@@ -147,6 +148,43 @@ export async function assertAcpRemoteStateFile(
       ? Number(stats.mode & BigInt(0o777))
       : stats.mode & 0o777;
   if (process.platform !== 'win32' && mode !== 0o600) {
+    throw new AcpRemoteWorkspaceStateError('state-file-mode');
+  }
+  await ensureExactRealpathChild(filePath, expectedParent, path.basename(filePath));
+}
+
+export async function assertAcpRemoteStateFileHandle(
+  scope: AcpRemoteStateScope,
+  filePath: string,
+  handle: FileHandle
+): Promise<void> {
+  const expectedParent = String(scope);
+  if (path.dirname(filePath) !== expectedParent) {
+    throw new AcpRemoteWorkspaceStateError('state-file-path');
+  }
+  const [handleStats, pathStats] = await Promise.all([
+    handle.stat({ bigint: true }),
+    lstat(filePath, { bigint: true }),
+  ]);
+  if (
+    pathStats.isSymbolicLink() ||
+    !pathStats.isFile() ||
+    !handleStats.isFile() ||
+    pathStats.dev !== handleStats.dev ||
+    pathStats.ino !== handleStats.ino
+  ) {
+    throw new AcpRemoteWorkspaceStateError('state-file-replaced');
+  }
+  if (
+    typeof process.getuid === 'function' &&
+    (Number(pathStats.uid) !== process.getuid() ||
+      Number(handleStats.uid) !== process.getuid())
+  ) {
+    throw new AcpRemoteWorkspaceStateError('state-file-owner');
+  }
+  const pathMode = Number(pathStats.mode & BigInt(0o777));
+  const handleMode = Number(handleStats.mode & BigInt(0o777));
+  if (process.platform !== 'win32' && (pathMode !== 0o600 || handleMode !== 0o600)) {
     throw new AcpRemoteWorkspaceStateError('state-file-mode');
   }
   await ensureExactRealpathChild(filePath, expectedParent, path.basename(filePath));

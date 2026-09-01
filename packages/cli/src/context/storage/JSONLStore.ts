@@ -7,6 +7,11 @@ import type { SessionEvent } from '../types.js';
 
 const TAIL_SCAN_CHUNK_SIZE = 64 * 1024;
 
+export interface JSONLValidatedAppendOptions {
+  noFollow?: boolean;
+  validateHandle?: (handle: fs.FileHandle) => Promise<void>;
+}
+
 function serializeSessionEvent(entry: SessionEvent): string {
   const data = (entry as { data?: unknown }).data;
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
@@ -420,11 +425,16 @@ export class JSONLStore {
   }
 
   async appendValidatedAsync(
-    buildEntry: (entries: readonly SessionEvent[]) => Promise<SessionEvent>
+    buildEntry: (entries: readonly SessionEvent[]) => Promise<SessionEvent>,
+    options: JSONLValidatedAppendOptions = {}
   ): Promise<SessionEvent> {
     return this.enqueue(async () => {
-      const handle = await fs.open(this.filePath, 'r+');
+      const flags = options.noFollow
+        ? fsSync.constants.O_RDWR | (fsSync.constants.O_NOFOLLOW ?? 0)
+        : 'r+';
+      const handle = await fs.open(this.filePath, flags);
       try {
+        await options.validateHandle?.(handle);
         const { entries, separator, size } = await this.readCommittedState(
           handle,
           'session transcript'
@@ -434,6 +444,7 @@ export class JSONLStore {
         const line = `${separator}${serializeSessionEvent(stamped)}\n`;
         await handle.write(line, size, 'utf8');
         await handle.sync();
+        await options.validateHandle?.(handle);
         return stamped;
       } finally {
         await handle.close();
