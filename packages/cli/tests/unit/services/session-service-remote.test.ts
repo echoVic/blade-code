@@ -89,6 +89,74 @@ function makeRemoteUpdatedEvent(
   };
 }
 
+function makeRemoteMessageEvents(
+  sessionId: string,
+  hostStateRoot: string,
+  timestamp: string,
+  role: 'user' | 'assistant',
+  text: string
+): SessionEvent[] {
+  const messageId = `${sessionId}-message-${timestamp}`;
+  return [
+    {
+      id: messageId,
+      sessionId,
+      projectPath: hostStateRoot,
+      timestamp,
+      type: 'message_created',
+      cwd: hostStateRoot,
+      version: 'test',
+      data: {
+        messageId,
+        role,
+        createdAt: timestamp,
+      },
+    },
+    {
+      id: `${sessionId}-part-${timestamp}`,
+      sessionId,
+      projectPath: hostStateRoot,
+      timestamp,
+      type: 'part_created',
+      cwd: hostStateRoot,
+      version: 'test',
+      data: {
+        partId: `${sessionId}-part-${timestamp}`,
+        messageId,
+        partType: 'text',
+        payload: { text },
+        createdAt: timestamp,
+      },
+    },
+  ];
+}
+
+function makeRemoteCompactionEvent(
+  sessionId: string,
+  hostStateRoot: string,
+  timestamp: string
+): Extract<SessionEvent, { type: 'part_created' }> {
+  return {
+    id: `${sessionId}-compaction-${timestamp}`,
+    sessionId,
+    projectPath: hostStateRoot,
+    timestamp,
+    type: 'part_created',
+    cwd: hostStateRoot,
+    version: 'test',
+    data: {
+      partId: `${sessionId}-compaction-${timestamp}`,
+      messageId: `${sessionId}-compaction-message`,
+      partType: 'summary',
+      payload: {
+        text: 'compacted summary',
+        replacementMessages: [{ role: 'user', content: 'replacement model context' }],
+      },
+      createdAt: timestamp,
+    },
+  };
+}
+
 async function writeRemoteTranscript(
   hostStateRoot: string,
   sessionId: string,
@@ -222,6 +290,142 @@ describe('SessionService remote durable sessions', () => {
       process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
     }
     await rm(storageRoot, { recursive: true, force: true });
+  });
+
+  it('loads full remote history and compacted model context from the protected direct transcript', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-load';
+
+    await writeRemoteTranscript(hostStateRoot, sessionId, [
+      makeRemoteCreatedEvent(
+        sessionId,
+        hostStateRoot,
+        '2024-01-01T00:00:00.000Z',
+        descriptor
+      ),
+      ...makeRemoteMessageEvents(
+        sessionId,
+        hostStateRoot,
+        '2024-01-01T00:00:01.000Z',
+        'user',
+        'full history before compaction'
+      ),
+      makeRemoteCompactionEvent(sessionId, hostStateRoot, '2024-01-01T00:00:02.000Z'),
+      ...makeRemoteMessageEvents(
+        sessionId,
+        hostStateRoot,
+        '2024-01-01T00:00:03.000Z',
+        'assistant',
+        'continued after compaction'
+      ),
+    ]);
+
+    await expect(
+      SessionService.loadRemoteSession(sessionId, hostStateRoot, descriptor)
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        { role: 'user', content: 'full history before compaction' },
+        { role: 'assistant', content: 'continued after compaction' },
+      ])
+    );
+    await expect(
+      SessionService.loadRemoteSessionModelContext(sessionId, hostStateRoot, descriptor)
+    ).resolves.toEqual([
+      { role: 'user', content: 'replacement model context' },
+      { role: 'assistant', content: 'continued after compaction' },
+    ]);
+  });
+
+  it('keeps exact descriptor mismatch typed and redacted for both remote loaders', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const exactMismatch = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('c:\\repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-load-mismatch';
+    await writeRemoteTranscript(hostStateRoot, sessionId, [
+      makeRemoteCreatedEvent(
+        sessionId,
+        hostStateRoot,
+        '2024-01-01T00:00:00.000Z',
+        descriptor
+      ),
+    ]);
+
+    for (const operation of [
+      () => SessionService.loadRemoteSession(sessionId, hostStateRoot, exactMismatch),
+      () =>
+        SessionService.loadRemoteSessionModelContext(
+          sessionId,
+          hostStateRoot,
+          exactMismatch
+        ),
+    ]) {
+      const error = await captureError(operation);
+      expectRemoteError(
+        error,
+        {
+          code: REMOTE_WORKSPACE_MISMATCH_CODE,
+          message: REMOTE_WORKSPACE_MISMATCH_MESSAGE,
+          reason: 'exact-identity-mismatch',
+        },
+        [sessionId, hostStateRoot, descriptor.wirePath, exactMismatch.wirePath]
+      );
+    }
+  });
+
+  it('rejects forged later event identity with the fixed redacted state error', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-load-forged-event';
+    const forgedSessionId = 'other-session';
+    const events = makeRemoteMessageEvents(
+      sessionId,
+      hostStateRoot,
+      '2024-01-01T00:00:01.000Z',
+      'user',
+      'must not load'
+    );
+    const firstMessage = events[0];
+    if (!firstMessage) throw new Error('Expected complete remote message fixture');
+
+    await writeRemoteTranscript(hostStateRoot, sessionId, [
+      makeRemoteCreatedEvent(
+        sessionId,
+        hostStateRoot,
+        '2024-01-01T00:00:00.000Z',
+        descriptor
+      ),
+      { ...firstMessage, sessionId: forgedSessionId },
+      ...events.slice(1),
+    ]);
+
+    for (const operation of [
+      () => SessionService.loadRemoteSession(sessionId, hostStateRoot, descriptor),
+      () =>
+        SessionService.loadRemoteSessionModelContext(
+          sessionId,
+          hostStateRoot,
+          descriptor
+        ),
+    ]) {
+      const error = await captureError(operation);
+      expectRemoteError(
+        error,
+        {
+          code: REMOTE_STATE_INVALID_CODE,
+          message: REMOTE_STATE_INVALID_MESSAGE,
+        },
+        [sessionId, forgedSessionId, hostStateRoot, descriptor.wirePath]
+      );
+    }
   });
 
   it('createRemoteSessionMetadata is idempotent under concurrent same-descriptor create and persists a descriptor-bearing first record', async () => {

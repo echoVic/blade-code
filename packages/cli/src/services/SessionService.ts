@@ -1423,6 +1423,32 @@ export class SessionService {
     }
   }
 
+  static async loadRemoteSession(
+    sessionId: string,
+    hostStateRoot: string,
+    expectedDescriptor: AcpRemoteWorkspaceDescriptorV1
+  ): Promise<Message[]> {
+    const entries = await this.readValidatedRemoteSessionSnapshot(
+      sessionId,
+      hostStateRoot,
+      expectedDescriptor
+    );
+    return this.convertJSONLToMessages(entries);
+  }
+
+  static async loadRemoteSessionModelContext(
+    sessionId: string,
+    hostStateRoot: string,
+    expectedDescriptor: AcpRemoteWorkspaceDescriptorV1
+  ): Promise<Message[]> {
+    const entries = await this.readValidatedRemoteSessionSnapshot(
+      sessionId,
+      hostStateRoot,
+      expectedDescriptor
+    );
+    return this.convertJSONLToModelContext(entries);
+  }
+
   static async exportSessionMarkdown(
     sessionId: string,
     projectPath: string,
@@ -4519,6 +4545,45 @@ export class SessionService {
       throw new RemoteSessionMismatchError();
     }
     return this.toPublicMetadata(stored);
+  }
+
+  private static async readValidatedRemoteSessionSnapshot(
+    sessionId: string,
+    hostStateRoot: string,
+    requestedDescriptor: AcpRemoteWorkspaceDescriptorV1
+  ): Promise<SessionEvent[]> {
+    let validatedDescriptor: AcpRemoteWorkspaceDescriptorV1;
+    try {
+      assertValidSessionId(sessionId);
+      validatedDescriptor = parseAcpRemoteWorkspaceDescriptor(requestedDescriptor);
+      if (
+        deriveAcpRemoteHostStateRoot(validatedDescriptor.collisionIdentity) !==
+        hostStateRoot
+      ) {
+        throw new RemoteSessionStateError();
+      }
+    } catch (error) {
+      throw sanitizeRemoteStateError(error);
+    }
+
+    try {
+      return await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+        const filePath = getAcpRemoteSessionFilePath(scope, sessionId);
+        await assertAcpRemoteStateFile(scope, filePath);
+        const entries = await this.readStableSessionSnapshot(filePath, sessionId);
+        const stored = this.projectMetadataFromEntries(
+          entries,
+          sessionId,
+          hostStateRoot,
+          filePath
+        );
+        validateProjectedRemoteMetadata(stored, validatedDescriptor);
+        return entries;
+      });
+    } catch (error) {
+      if (error instanceof RemoteSessionMismatchError) throw error;
+      throw sanitizeRemoteStateError(error);
+    }
   }
 
   private static toPublicMetadata(session: StoredSessionMetadata): SessionMetadata {
