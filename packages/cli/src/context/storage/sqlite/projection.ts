@@ -7,25 +7,56 @@
  * 正确处理 rewind（seq 截断）与文件重写。多进程安全靠 WAL + 幂等 upsert。
  */
 
-import { stat } from 'node:fs/promises';
+import type { BigIntStats } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  type AcpRemoteStateScope,
+  AcpRemoteWorkspaceStateError,
+  assertAcpRemoteSessionTranscriptIdentity,
+  assertAcpRemoteStateFile,
+  deriveAcpRemoteHostStateRoot,
+  listValidatedAcpRemoteStateScopes,
+  parseAcpRemoteWorkspaceDescriptor,
+  withValidatedAcpRemoteStateScope,
+} from '../../../acp/AcpRemoteWorkspace.js';
 import { createLogger, LogCategory } from '../../../logging/Logger.js';
 import { sessionCatalogSortKey } from '../../../services/sessionCatalog.js';
 import { materializeSessionEvents } from '../../../services/sessionRewind.js';
 import type { SessionEvent } from '../../types.js';
 import { JSONLStore } from '../JSONLStore.js';
 import {
+  getAcpRemoteSessionFilePath,
   getBladeStorageRoot,
   getSessionFilePath,
   isValidSessionId,
-  listProjectDirectories,
-  unescapeProjectPath,
+  listSessionStorageScopes,
 } from '../pathUtils.js';
 import type { SqliteDb } from './driver.js';
 import { openDb } from './driver.js';
 import { migrate } from './schema.js';
 
 const logger = createLogger(LogCategory.SERVICE);
+type ProjectionSourceKind = 'local' | 'acp-remote';
+
+interface ProjectionIO {
+  readSession(store: JSONLStore): Promise<SessionEvent[]>;
+}
+
+const defaultProjectionIO: ProjectionIO = {
+  readSession(store) {
+    return store.readAll();
+  },
+};
+let projectionIO = defaultProjectionIO;
+
+export function __setProjectionIOForTesting(io: ProjectionIO): void {
+  projectionIO = io;
+}
+
+export function __resetProjectionIOForTesting(): void {
+  projectionIO = defaultProjectionIO;
+}
 
 export interface ProjectedSession {
   /** 完整元数据（序列化存入 sessions.metadata_json）。 */
@@ -57,7 +88,9 @@ export interface ProjectedSession {
 export type MetadataDeriver = (
   entries: readonly SessionEvent[],
   sessionId: string,
-  projectPath: string
+  projectPath: string,
+  sourceKind: ProjectionSourceKind,
+  actualFilePath?: string
 ) => ProjectedSession['metadata'] | null;
 
 let dbCache: { path: string; db: Promise<SqliteDb | null> } | undefined;
@@ -106,18 +139,17 @@ function extractSearchText(payload: unknown): string | null {
  */
 function writeParts(
   db: SqliteDb,
+  sourceKind: ProjectionSourceKind,
   projectPath: string,
   sessionId: string,
   events: readonly SessionEvent[]
 ): void {
-  db.prepare('DELETE FROM parts WHERE project_path=? AND session_id=?').run(
-    projectPath,
-    sessionId
-  );
-  db.prepare('DELETE FROM parts_fts WHERE project_path=? AND session_id=?').run(
-    projectPath,
-    sessionId
-  );
+  db.prepare(
+    'DELETE FROM parts WHERE source_kind=? AND project_path=? AND session_id=?'
+  ).run(sourceKind, projectPath, sessionId);
+  db.prepare(
+    'DELETE FROM parts_fts WHERE source_kind=? AND project_path=? AND session_id=?'
+  ).run(sourceKind, projectPath, sessionId);
 
   const roleByMessage = new Map<string, string>();
   for (const event of events) {
@@ -128,12 +160,14 @@ function writeParts(
 
   const insertPart = db.prepare(
     `INSERT OR REPLACE INTO parts
-       (project_path, session_id, part_id, message_id, part_type, role, seq, timestamp, text)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (source_kind, project_path, session_id, part_id, message_id, part_type, role,
+        seq, timestamp, text)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertFts = db.prepare(
-    `INSERT INTO parts_fts (text, project_path, session_id, part_id, role, timestamp, seq)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO parts_fts
+       (text, source_kind, project_path, session_id, part_id, role, timestamp, seq)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
   for (const event of events) {
@@ -144,6 +178,7 @@ function writeParts(
     const role = roleByMessage.get(event.data.messageId) ?? 'assistant';
     const seq = event.seq ?? 0;
     insertPart.run(
+      sourceKind,
       projectPath,
       sessionId,
       event.data.partId,
@@ -158,6 +193,7 @@ function writeParts(
     if (role === 'user' || role === 'assistant') {
       insertFts.run(
         text,
+        sourceKind,
         projectPath,
         sessionId,
         event.data.partId,
@@ -169,16 +205,20 @@ function writeParts(
   }
 }
 
-function upsertSession(db: SqliteDb, meta: ProjectedSession['metadata']): void {
+function upsertSession(
+  db: SqliteDb,
+  sourceKind: ProjectionSourceKind,
+  meta: ProjectedSession['metadata']
+): void {
   db.prepare(
     `INSERT INTO sessions
-       (project_path, session_id, root_id, parent_id, relation_type, title,
+       (source_kind, project_path, session_id, root_id, parent_id, relation_type, title,
         agent_type, model, task_status, task_priority, task_kind, task_due_at,
         archived_at, last_message_time, project_sort_key,
         session_sort_key, first_message_time, message_count, has_errors,
         is_subagent, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(project_path, session_id) DO UPDATE SET
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(source_kind, project_path, session_id) DO UPDATE SET
        root_id=excluded.root_id, parent_id=excluded.parent_id,
        relation_type=excluded.relation_type, title=excluded.title,
        agent_type=excluded.agent_type, model=excluded.model,
@@ -192,6 +232,7 @@ function upsertSession(db: SqliteDb, meta: ProjectedSession['metadata']): void {
        has_errors=excluded.has_errors, is_subagent=excluded.is_subagent,
        metadata_json=excluded.metadata_json`
   ).run(
+    sourceKind,
     meta.projectPath,
     meta.sessionId,
     meta.rootId,
@@ -218,52 +259,102 @@ function upsertSession(db: SqliteDb, meta: ProjectedSession['metadata']): void {
 
 function deleteSessionContentRows(
   db: SqliteDb,
+  sourceKind: ProjectionSourceKind,
   projectPath: string,
   sessionId: string
 ): void {
   for (const table of ['sessions', 'parts', 'parts_fts']) {
-    db.prepare(`DELETE FROM ${table} WHERE project_path=? AND session_id=?`).run(
-      projectPath,
-      sessionId
-    );
+    db.prepare(
+      `DELETE FROM ${table} WHERE source_kind=? AND project_path=? AND session_id=?`
+    ).run(sourceKind, projectPath, sessionId);
   }
 }
 
-function deleteSessionRows(db: SqliteDb, projectPath: string, sessionId: string): void {
-  deleteSessionContentRows(db, projectPath, sessionId);
-  db.prepare('DELETE FROM projection_state WHERE project_path=? AND session_id=?').run(
-    projectPath,
-    sessionId
-  );
+function deleteSessionRows(
+  db: SqliteDb,
+  sourceKind: ProjectionSourceKind,
+  projectPath: string,
+  sessionId: string
+): void {
+  deleteSessionContentRows(db, sourceKind, projectPath, sessionId);
+  db.prepare(
+    'DELETE FROM projection_state WHERE source_kind=? AND project_path=? AND session_id=?'
+  ).run(sourceKind, projectPath, sessionId);
+}
+
+function deleteSessionContentForSourceFile(
+  db: SqliteDb,
+  sourceKind: ProjectionSourceKind,
+  filePath: string
+): void {
+  const rows = db
+    .prepare(
+      `SELECT project_path, session_id FROM sessions
+       WHERE source_kind=? AND json_extract(metadata_json, '$.filePath')=?`
+    )
+    .all<{ project_path: string; session_id: string }>(sourceKind, filePath);
+  for (const row of rows) {
+    deleteSessionContentRows(db, sourceKind, row.project_path, row.session_id);
+  }
 }
 
 function upsertProjectionState(
   db: SqliteDb,
+  sourceKind: ProjectionSourceKind,
   projectPath: string,
   sessionId: string,
   lastSeq: number,
   fileSize: number,
-  mtimeMs: number
+  mtimeMs: number,
+  statFingerprint: string
 ): void {
   db.prepare(
     `INSERT INTO projection_state
-       (project_path, session_id, last_seq, file_size, mtime_ms)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(project_path, session_id) DO UPDATE SET
+       (source_kind, project_path, session_id, last_seq, file_size, mtime_ms,
+        stat_fingerprint)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(source_kind, project_path, session_id) DO UPDATE SET
        last_seq=excluded.last_seq, file_size=excluded.file_size,
-       mtime_ms=excluded.mtime_ms`
-  ).run(projectPath, sessionId, lastSeq, fileSize, mtimeMs);
+       mtime_ms=excluded.mtime_ms, stat_fingerprint=excluded.stat_fingerprint`
+  ).run(
+    sourceKind,
+    projectPath,
+    sessionId,
+    lastSeq,
+    fileSize,
+    mtimeMs,
+    statFingerprint
+  );
 }
 
 interface StateRow {
   last_seq: number;
   file_size: number;
   mtime_ms: number;
+  stat_fingerprint: string;
 }
 
 interface ProjectionStateRow extends StateRow {
+  source_kind: ProjectionSourceKind;
   project_path: string;
   session_id: string;
+}
+
+interface ProjectionIdentityRow {
+  source_kind: ProjectionSourceKind;
+  project_path: string;
+  session_id: string;
+}
+
+interface ProjectionCandidate {
+  kind: ProjectionSourceKind;
+  projectPath: string;
+  sessionId: string;
+  filePath: string;
+}
+
+function statFingerprint(value: BigIntStats): string {
+  return [value.dev, value.ino, value.size, value.mtimeNs, value.ctimeNs].join(':');
 }
 
 /**
@@ -277,52 +368,194 @@ export async function syncSession(
   sessionId: string,
   projectPath: string,
   derive: MetadataDeriver,
-  filePath: string = getSessionFilePath(projectPath, sessionId)
+  filePath?: string,
+  sourceKind: ProjectionSourceKind = 'local'
 ): Promise<boolean> {
-  let fileStat: { size: number; mtimeMs: number };
+  if (sourceKind === 'acp-remote') {
+    return withValidatedAcpRemoteStateScope(projectPath, async (validatedScope) => {
+      const expectedFilePath = getAcpRemoteSessionFilePath(validatedScope, sessionId);
+      const actualFilePath = filePath ?? expectedFilePath;
+      if (actualFilePath !== expectedFilePath) {
+        throw new AcpRemoteWorkspaceStateError('remote-session-file-path');
+      }
+      return syncSessionValidated(
+        db,
+        sessionId,
+        projectPath,
+        derive,
+        actualFilePath,
+        sourceKind,
+        validatedScope
+      );
+    });
+  }
+
+  return syncSessionValidated(
+    db,
+    sessionId,
+    projectPath,
+    derive,
+    filePath ?? getSessionFilePath(projectPath, sessionId),
+    sourceKind
+  );
+}
+
+async function syncSessionValidated(
+  db: SqliteDb,
+  sessionId: string,
+  projectPath: string,
+  derive: MetadataDeriver,
+  filePath: string,
+  sourceKind: ProjectionSourceKind,
+  validatedRemoteScope?: AcpRemoteStateScope
+): Promise<boolean> {
+  if (sourceKind === 'acp-remote') {
+    if (!validatedRemoteScope) {
+      throw new AcpRemoteWorkspaceStateError('remote-session-scope');
+    }
+    try {
+      await assertAcpRemoteStateFile(validatedRemoteScope, filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      db.transaction(() => deleteSessionRows(db, sourceKind, projectPath, sessionId));
+      return true;
+    }
+  }
+  let fileStat: BigIntStats;
   try {
-    const s = await stat(filePath);
-    fileStat = { size: s.size, mtimeMs: s.mtimeMs };
-  } catch {
+    fileStat = await stat(filePath, { bigint: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (sourceKind === 'acp-remote' && code !== 'ENOENT') {
+      throw error;
+    }
     // 文件不存在 → GC 掉可能残留的行。
-    db.transaction(() => deleteSessionRows(db, projectPath, sessionId));
+    db.transaction(() => deleteSessionRows(db, sourceKind, projectPath, sessionId));
     return true;
   }
 
   const state = db
     .prepare(
-      'SELECT last_seq, file_size, mtime_ms FROM projection_state WHERE project_path=? AND session_id=?'
+      `SELECT last_seq, file_size, mtime_ms, stat_fingerprint FROM projection_state
+       WHERE source_kind=? AND project_path=? AND session_id=?`
     )
-    .get<StateRow>(projectPath, sessionId);
+    .get<StateRow>(sourceKind, projectPath, sessionId);
 
   if (
+    sourceKind === 'local' &&
     state &&
-    state.file_size === fileStat.size &&
-    state.mtime_ms === Math.floor(fileStat.mtimeMs)
+    state.stat_fingerprint === statFingerprint(fileStat)
   ) {
     return false; // 未变，廉价跳过（列表加速的关键）。
   }
 
   // 整条重物化：始终正确（含 rewind seq 截断 / 文件重写），只对已变更的会话执行。
   const store = new JSONLStore(filePath);
-  const raw = await store.readAll();
+  let raw: SessionEvent[];
+  try {
+    raw = await projectionIO.readSession(store);
+  } catch (error) {
+    if (
+      sourceKind !== 'acp-remote' ||
+      (error as NodeJS.ErrnoException).code !== 'ENOENT'
+    ) {
+      throw error;
+    }
+    db.transaction(() => deleteSessionRows(db, sourceKind, projectPath, sessionId));
+    return true;
+  }
+  if (sourceKind === 'acp-remote' && raw.length === 0) {
+    try {
+      await assertAcpRemoteStateFile(validatedRemoteScope!, filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        db.transaction(() => deleteSessionRows(db, sourceKind, projectPath, sessionId));
+        return true;
+      }
+      throw error;
+    }
+    throw new AcpRemoteWorkspaceStateError('remote-session-empty');
+  }
+  const localCreated =
+    sourceKind === 'local'
+      ? raw.find(
+          (entry): entry is Extract<SessionEvent, { type: 'session_created' }> =>
+            entry.type === 'session_created'
+        )
+      : undefined;
+  const localSourceContainsRemoteDescriptor =
+    sourceKind === 'local' &&
+    localCreated !== undefined &&
+    Object.hasOwn(localCreated.data, 'remoteWorkspace');
+  let durableRemoteDescriptor: ReturnType<
+    typeof parseAcpRemoteWorkspaceDescriptor
+  > | null = null;
+  if (sourceKind === 'acp-remote') {
+    const remoteCreated = assertAcpRemoteSessionTranscriptIdentity(
+      raw,
+      sessionId,
+      projectPath
+    );
+    durableRemoteDescriptor = parseAcpRemoteWorkspaceDescriptor(
+      remoteCreated.data.remoteWorkspace
+    );
+  } else if (localSourceContainsRemoteDescriptor) {
+    parseAcpRemoteWorkspaceDescriptor(localCreated.data.remoteWorkspace);
+  }
   const lastSeq = raw.reduce(
     (max, e) => (typeof e.seq === 'number' && e.seq > max ? e.seq : max),
     0
   );
   const events = materializeSessionEvents(raw);
-  const meta = derive(raw, sessionId, projectPath);
-  if (raw.length === 0 || !meta) {
+  const meta = localSourceContainsRemoteDescriptor
+    ? null
+    : derive(raw, sessionId, projectPath, sourceKind, filePath);
+  const projectedRemoteWorkspace = meta?.remoteWorkspace;
+  if (sourceKind === 'acp-remote') {
+    if (
+      !meta ||
+      meta.sessionId !== sessionId ||
+      meta.projectPath !== projectPath ||
+      projectedRemoteWorkspace === undefined
+    ) {
+      throw new AcpRemoteWorkspaceStateError('remote-session-metadata');
+    }
+    const descriptor = parseAcpRemoteWorkspaceDescriptor(projectedRemoteWorkspace);
+    if (
+      !durableRemoteDescriptor ||
+      descriptor.style !== durableRemoteDescriptor.style ||
+      descriptor.wirePath !== durableRemoteDescriptor.wirePath ||
+      descriptor.exactIdentity !== durableRemoteDescriptor.exactIdentity ||
+      descriptor.collisionIdentity !== durableRemoteDescriptor.collisionIdentity
+    ) {
+      throw new AcpRemoteWorkspaceStateError('remote-session-descriptor');
+    }
+    if (deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity) !== projectPath) {
+      throw new AcpRemoteWorkspaceStateError('remote-session-project-path');
+    }
+  }
+  if (
+    raw.length === 0 ||
+    !meta ||
+    (sourceKind === 'local' && projectedRemoteWorkspace !== undefined)
+  ) {
     db.transaction(() => {
-      deleteSessionContentRows(db, projectPath, sessionId);
-      upsertProjectionState(
-        db,
-        projectPath,
-        sessionId,
-        lastSeq,
-        fileStat.size,
-        Math.floor(fileStat.mtimeMs)
-      );
+      if (localSourceContainsRemoteDescriptor) {
+        deleteSessionContentForSourceFile(db, sourceKind, filePath);
+        deleteSessionRows(db, sourceKind, projectPath, sessionId);
+      } else {
+        deleteSessionContentRows(db, sourceKind, projectPath, sessionId);
+        upsertProjectionState(
+          db,
+          sourceKind,
+          projectPath,
+          sessionId,
+          lastSeq,
+          Number(fileStat.size),
+          Number(fileStat.mtimeMs),
+          statFingerprint(fileStat)
+        );
+      }
     });
     return true;
   }
@@ -331,12 +564,20 @@ export async function syncSession(
   // 更新的一条（与 JSONL 扫描 + compareSessionCatalogItems 的择新语义一致）。
   const existing = db
     .prepare(
-      'SELECT last_message_time FROM sessions WHERE project_path=? AND session_id=?'
+      `SELECT last_message_time FROM sessions
+       WHERE source_kind=? AND project_path=? AND session_id=?`
     )
-    .get<{ last_message_time: string | null }>(meta.projectPath, meta.sessionId);
+    .get<{ last_message_time: string | null }>(
+      sourceKind,
+      meta.projectPath,
+      meta.sessionId
+    );
+  const expectedCanonicalPath =
+    sourceKind === 'acp-remote' && validatedRemoteScope
+      ? getAcpRemoteSessionFilePath(validatedRemoteScope, meta.sessionId)
+      : getSessionFilePath(meta.projectPath, meta.sessionId);
   const isCanonicalSource =
-    path.resolve(filePath) ===
-    path.resolve(getSessionFilePath(meta.projectPath, meta.sessionId));
+    path.resolve(filePath) === path.resolve(expectedCanonicalPath);
   if (
     existing &&
     !isCanonicalSource &&
@@ -346,25 +587,29 @@ export async function syncSession(
     // 已有更新的一条：仅登记同步游标，避免用较旧数据覆盖。
     upsertProjectionState(
       db,
+      sourceKind,
       projectPath,
       sessionId,
       lastSeq,
-      fileStat.size,
-      Math.floor(fileStat.mtimeMs)
+      Number(fileStat.size),
+      Number(fileStat.mtimeMs),
+      statFingerprint(fileStat)
     );
     return true;
   }
 
   db.transaction(() => {
-    upsertSession(db, meta);
-    writeParts(db, meta.projectPath, meta.sessionId, events);
+    upsertSession(db, sourceKind, meta);
+    writeParts(db, sourceKind, meta.projectPath, meta.sessionId, events);
     upsertProjectionState(
       db,
+      sourceKind,
       projectPath,
       sessionId,
       lastSeq,
-      fileStat.size,
-      Math.floor(fileStat.mtimeMs)
+      Number(fileStat.size),
+      Number(fileStat.mtimeMs),
+      statFingerprint(fileStat)
     );
   });
   return true;
@@ -377,6 +622,125 @@ const syncAllState = new WeakMap<
   SqliteDb,
   { inFlight?: Promise<void>; lastCompletedAt?: number }
 >();
+
+function removeMissingProjectionRows(
+  db: SqliteDb,
+  sourceKind: ProjectionSourceKind,
+  projectPath: string,
+  seenSessionIds: ReadonlySet<string>
+): void {
+  const known = db
+    .prepare(
+      `SELECT session_id FROM projection_state
+       WHERE source_kind=? AND project_path=?
+       UNION
+       SELECT session_id FROM sessions
+       WHERE source_kind=? AND project_path=?
+       UNION
+       SELECT session_id FROM parts
+       WHERE source_kind=? AND project_path=?
+       UNION
+       SELECT session_id FROM parts_fts
+       WHERE source_kind=? AND project_path=?`
+    )
+    .all<{ session_id: string }>(
+      sourceKind,
+      projectPath,
+      sourceKind,
+      projectPath,
+      sourceKind,
+      projectPath,
+      sourceKind,
+      projectPath
+    );
+  for (const row of known) {
+    if (!seenSessionIds.has(row.session_id)) {
+      deleteSessionRows(db, sourceKind, projectPath, row.session_id);
+    }
+  }
+}
+
+export async function syncAcpRemoteScope(
+  db: SqliteDb,
+  derive: MetadataDeriver,
+  projectPath: string
+): Promise<void> {
+  try {
+    await withValidatedAcpRemoteStateScope(projectPath, async (validatedScope) => {
+      const candidates = (await readdir(String(validatedScope))).flatMap((file) => {
+        if (!file.endsWith('.jsonl')) return [];
+        const sessionId = file.slice(0, -'.jsonl'.length);
+        if (!isValidSessionId(sessionId)) return [];
+        return [
+          {
+            filePath: getAcpRemoteSessionFilePath(validatedScope, sessionId),
+            sessionId,
+          },
+        ];
+      });
+      const seenSessionIds = new Set(
+        candidates.map((candidate) => candidate.sessionId)
+      );
+      const concurrency = Math.min(32, candidates.length);
+      let nextIndex = 0;
+      await Promise.all(
+        Array.from({ length: concurrency }, async () => {
+          while (nextIndex < candidates.length) {
+            const candidate = candidates[nextIndex++];
+            if (!candidate) continue;
+            await syncSessionValidated(
+              db,
+              candidate.sessionId,
+              projectPath,
+              derive,
+              candidate.filePath,
+              'acp-remote',
+              validatedScope
+            );
+          }
+        })
+      );
+      db.transaction(() => {
+        removeMissingProjectionRows(db, 'acp-remote', projectPath, seenSessionIds);
+      });
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    db.transaction(() => {
+      removeMissingProjectionRows(db, 'acp-remote', projectPath, new Set());
+    });
+  }
+}
+
+export async function syncAllAcpRemoteScopes(
+  db: SqliteDb,
+  derive: MetadataDeriver
+): Promise<void> {
+  const scopes = await listValidatedAcpRemoteStateScopes();
+  for (const scope of scopes) {
+    await syncAcpRemoteScope(db, derive, String(scope));
+  }
+
+  const liveRoots = new Set(scopes.map(String));
+  const projectedRoots = db
+    .prepare(
+      `SELECT project_path FROM projection_state WHERE source_kind='acp-remote'
+       UNION
+       SELECT project_path FROM sessions WHERE source_kind='acp-remote'
+       UNION
+       SELECT project_path FROM parts WHERE source_kind='acp-remote'
+       UNION
+       SELECT project_path FROM parts_fts WHERE source_kind='acp-remote'`
+    )
+    .all<{ project_path: string }>();
+  for (const row of projectedRoots) {
+    if (!liveRoots.has(row.project_path)) {
+      db.transaction(() => {
+        removeMissingProjectionRows(db, 'acp-remote', row.project_path, new Set());
+      });
+    }
+  }
+}
 
 export async function syncAll(
   db: SqliteDb,
@@ -405,45 +769,71 @@ export async function syncAll(
 }
 
 async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<void> {
-  const { readdir } = await import('node:fs/promises');
-  const dirs = await listProjectDirectories();
   const seen = new Set<string>();
+  const scopes = await listSessionStorageScopes();
   const projectFiles = await Promise.all(
-    dirs.map(async (dir) => {
-      const projectPath = unescapeProjectPath(dir);
-      const projectDir = path.join(getBladeStorageRoot(), 'projects', dir);
-      try {
-        const files = await readdir(projectDir);
-        return files.flatMap((file) => {
-          if (!file.endsWith('.jsonl')) return [];
-          const sessionId = file.slice(0, -'.jsonl'.length);
-          if (!isValidSessionId(sessionId)) return [];
-          return [
-            {
-              filePath: path.join(projectDir, file),
-              projectPath,
-              sessionId,
-            },
-          ];
-        });
-      } catch {
-        return [];
+    scopes.map(async (scope) => {
+      if (scope.kind === 'local') {
+        try {
+          const files = await readdir(scope.storagePath);
+          return files.flatMap((file) => {
+            if (!file.endsWith('.jsonl')) return [];
+            const sessionId = file.slice(0, -'.jsonl'.length);
+            if (!isValidSessionId(sessionId)) return [];
+            return [
+              {
+                kind: 'local' as const,
+                filePath: path.join(scope.storagePath, file),
+                projectPath: scope.projectPath,
+                sessionId,
+              },
+            ];
+          });
+        } catch {
+          return [];
+        }
       }
+
+      return withValidatedAcpRemoteStateScope(
+        scope.storagePath,
+        async (validatedScope) => {
+          const files = await readdir(String(validatedScope));
+          return files.flatMap((file) => {
+            if (!file.endsWith('.jsonl')) return [];
+            const sessionId = file.slice(0, -'.jsonl'.length);
+            if (!isValidSessionId(sessionId)) return [];
+            return [
+              {
+                kind: 'acp-remote' as const,
+                filePath: getAcpRemoteSessionFilePath(validatedScope, sessionId),
+                projectPath: scope.projectPath,
+                sessionId,
+              },
+            ];
+          });
+        }
+      );
     })
   );
-  const candidates = projectFiles.flat();
+  const candidates: ProjectionCandidate[] = projectFiles.flat();
   for (const candidate of candidates) {
-    seen.add(`${candidate.projectPath}\u0000${candidate.sessionId}`);
+    seen.add(
+      `${candidate.kind}\u0000${candidate.projectPath}\u0000${candidate.sessionId}`
+    );
   }
 
-  const known = db
+  const knownState = db
     .prepare(
-      `SELECT project_path, session_id, last_seq, file_size, mtime_ms
+      `SELECT source_kind, project_path, session_id, last_seq, file_size, mtime_ms,
+              stat_fingerprint
        FROM projection_state`
     )
     .all<ProjectionStateRow>();
   const stateBySession = new Map(
-    known.map((row) => [`${row.project_path}\u0000${row.session_id}`, row])
+    knownState.map((row) => [
+      `${row.source_kind}\u0000${row.project_path}\u0000${row.session_id}`,
+      row,
+    ])
   );
   const staleCandidates: typeof candidates = [];
   const statConcurrency = Math.min(128, candidates.length);
@@ -453,20 +843,22 @@ async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<v
       while (nextStatIndex < candidates.length) {
         const candidate = candidates[nextStatIndex++];
         if (!candidate) continue;
+        if (candidate.kind === 'acp-remote') {
+          staleCandidates.push(candidate);
+          continue;
+        }
         try {
-          const fileStat = await stat(candidate.filePath);
+          const fileStat = await stat(candidate.filePath, { bigint: true });
           const state = stateBySession.get(
-            `${candidate.projectPath}\u0000${candidate.sessionId}`
+            `${candidate.kind}\u0000${candidate.projectPath}\u0000${candidate.sessionId}`
           );
-          if (
-            state &&
-            state.file_size === fileStat.size &&
-            state.mtime_ms === Math.floor(fileStat.mtimeMs)
-          ) {
+          if (state && state.stat_fingerprint === statFingerprint(fileStat)) {
             continue;
           }
-        } catch {
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
           // Let syncSession handle a file removed after directory enumeration.
+          if (code !== 'ENOENT') throw error;
         }
         staleCandidates.push(candidate);
       }
@@ -481,16 +873,34 @@ async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<v
         const candidate = staleCandidates[nextSyncIndex++];
         if (!candidate) continue;
         try {
-          await syncSession(
-            db,
-            candidate.sessionId,
-            candidate.projectPath,
-            derive,
-            candidate.filePath
-          );
+          if (candidate.kind === 'acp-remote') {
+            await syncSession(
+              db,
+              candidate.sessionId,
+              candidate.projectPath,
+              derive,
+              candidate.filePath,
+              'acp-remote'
+            );
+          } else {
+            await syncSession(
+              db,
+              candidate.sessionId,
+              candidate.projectPath,
+              derive,
+              candidate.filePath,
+              'local'
+            );
+          }
         } catch (error) {
-          // 与 JSONL 扫描保持一致的诊断：损坏 transcript 记一次告警（不含路径）。
           const code = (error as NodeJS.ErrnoException).code;
+          if (candidate.kind === 'acp-remote') {
+            if (code === 'ENOENT') continue;
+            throw error;
+          }
+          if (code === 'acp_remote_workspace_state_invalid') {
+            throw error;
+          }
           if (code !== 'ENOENT') {
             logger.warn(
               `[SessionService] Skipping invalid session transcript: ${candidate.sessionId}`
@@ -502,9 +912,27 @@ async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<v
   );
 
   // GC：projection_state 中 JSONL 已不存在的行。
-  for (const row of known) {
-    if (!seen.has(`${row.project_path}\u0000${row.session_id}`)) {
-      db.transaction(() => deleteSessionRows(db, row.project_path, row.session_id));
+  const knownIdentities = db
+    .prepare(
+      `SELECT source_kind, project_path, session_id FROM projection_state
+       UNION
+       SELECT source_kind, project_path, session_id FROM sessions
+       WHERE source_kind='acp-remote'
+       UNION
+       SELECT source_kind, project_path, session_id FROM parts
+       WHERE source_kind='acp-remote'
+       UNION
+       SELECT source_kind, project_path, session_id FROM parts_fts
+       WHERE source_kind='acp-remote'`
+    )
+    .all<ProjectionIdentityRow>();
+  for (const row of knownIdentities) {
+    if (
+      !seen.has(`${row.source_kind}\u0000${row.project_path}\u0000${row.session_id}`)
+    ) {
+      db.transaction(() =>
+        deleteSessionRows(db, row.source_kind, row.project_path, row.session_id)
+      );
     }
   }
 }
@@ -513,9 +941,10 @@ async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<v
 export function removeSessionFromProjection(
   db: SqliteDb,
   sessionId: string,
-  projectPath: string
+  projectPath: string,
+  sourceKind: ProjectionSourceKind = 'local'
 ): void {
-  db.transaction(() => deleteSessionRows(db, projectPath, sessionId));
+  db.transaction(() => deleteSessionRows(db, sourceKind, projectPath, sessionId));
 }
 
 /**
@@ -562,10 +991,10 @@ export function searchProjectionText(
   const match = `"${token}"*`;
   const sql = projectPath
     ? `SELECT session_id, role, timestamp, text FROM parts_fts
-         WHERE parts_fts MATCH ? AND project_path = ?
+         WHERE parts_fts MATCH ? AND source_kind = 'local' AND project_path = ?
          ORDER BY timestamp DESC LIMIT ?`
     : `SELECT session_id, role, timestamp, text FROM parts_fts
-         WHERE parts_fts MATCH ?
+         WHERE parts_fts MATCH ? AND source_kind = 'local'
          ORDER BY timestamp DESC LIMIT ?`;
   const stmt = db.prepare(sql);
   return projectPath

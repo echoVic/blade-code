@@ -262,8 +262,10 @@ invalid version, shape, or identity is durable corruption and cannot fall back
 to a host path. A legacy Session with no descriptor remains local only.
 
 The protected namespace is also included in Session catalog and SQLite
-projection scans. No schema migration is needed: `project_path` continues to
-store the host-absolute state scope while `metadata_json` carries the validated
+projection scans. No durable transcript migration is needed. The disposable
+SQLite projection cache advances its schema so `source_kind` participates in
+the session, projection-state, part, and FTS identities; `project_path` continues
+to store the host-absolute state scope while `metadata_json` carries the validated
 descriptor. A scoped ACP remote list first derives `hostStateRoot`, then filters
 the bucket by exact identity before pagination. An unscoped remote list returns
 only descriptor-bearing Sessions; an ACP-local list returns only local Sessions.

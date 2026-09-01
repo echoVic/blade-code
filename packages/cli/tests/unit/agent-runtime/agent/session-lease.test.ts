@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import {
@@ -7,13 +7,24 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+  withValidatedAcpRemoteStateScope,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
 import { SessionLease } from '../../../../src/agent/runtime/SessionLease.js';
-import { getProjectStoragePath } from '../../../../src/context/storage/pathUtils.js';
+import {
+  getAcpRemoteSessionLeaseFilePath,
+  getProjectStoragePath,
+} from '../../../../src/context/storage/pathUtils.js';
 
 describe('SessionLease', () => {
   let storageRoot: string;
@@ -94,6 +105,56 @@ describe('SessionLease', () => {
     const lease = await SessionLease.acquire(sessionId, projectPath);
 
     await expect(lease.release()).resolves.toBeUndefined();
+  });
+
+  it('stores remote session leases directly inside a validated protected scope', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-lease-session';
+
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      const lockPath = getAcpRemoteSessionLeaseFilePath(scope, sessionId);
+      const lease = await SessionLease.acquireRemote(sessionId, scope);
+      expect(existsSync(lockPath)).toBe(true);
+      await lease.release();
+      expect(existsSync(lockPath)).toBe(false);
+    });
+
+    expect(existsSync(getProjectStoragePath(hostStateRoot))).toBe(false);
+  });
+
+  it('rejects a symlinked remote session lease without following or deleting it', async () => {
+    if (process.platform === 'win32') return;
+
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sessionId = 'remote-symlink-lease';
+    const outsideLease = path.join(storageRoot, 'outside-lease.json');
+    const outsideContent = `${JSON.stringify({
+      version: 1,
+      sessionId,
+      ownerId: 'outside-owner',
+      pid: process.pid,
+      acquiredAt: new Date().toISOString(),
+    })}\n`;
+    writeFileSync(outsideLease, outsideContent);
+
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      const lockPath = getAcpRemoteSessionLeaseFilePath(scope, sessionId);
+      symlinkSync(outsideLease, lockPath);
+
+      await expect(SessionLease.acquireRemote(sessionId, scope)).rejects.toMatchObject({
+        code: 'acp_remote_workspace_state_invalid',
+      });
+      expect(readFileSync(outsideLease, 'utf8')).toBe(outsideContent);
+      expect(existsSync(lockPath)).toBe(true);
+    });
   });
 
   it('recovers a reused live PID when the process identity changed', async () => {

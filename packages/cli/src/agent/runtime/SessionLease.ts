@@ -1,7 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { getProjectStoragePath } from '../../context/storage/pathUtils.js';
+import {
+  type AcpRemoteStateScope,
+  assertAcpRemoteStateFile,
+} from '../../acp/AcpRemoteWorkspace.js';
+import {
+  getAcpRemoteSessionLeaseFilePath,
+  getProjectStoragePath,
+} from '../../context/storage/pathUtils.js';
 import { getCwd } from '../../utils/cwd.js';
 import {
   captureProcessIdentity,
@@ -120,7 +127,33 @@ export class SessionLease {
     sessionId: string,
     projectPath: string = getCwd()
   ): Promise<SessionLease> {
-    const filePath = leasePath(projectPath, sessionId);
+    return SessionLease.acquireAtPath(sessionId, leasePath(projectPath, sessionId));
+  }
+
+  static async acquireRemote(
+    sessionId: string,
+    scope: AcpRemoteStateScope
+  ): Promise<SessionLease> {
+    const filePath = getAcpRemoteSessionLeaseFilePath(scope, sessionId);
+    try {
+      await assertAcpRemoteStateFile(scope, filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const lease = await SessionLease.acquireAtPath(sessionId, filePath);
+    try {
+      await assertAcpRemoteStateFile(scope, filePath);
+      return lease;
+    } catch (error) {
+      await lease.release();
+      throw error;
+    }
+  }
+
+  private static async acquireAtPath(
+    sessionId: string,
+    filePath: string
+  ): Promise<SessionLease> {
     const record: SessionLeaseRecord = {
       version: SESSION_LEASE_VERSION,
       sessionId,

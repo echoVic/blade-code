@@ -1,9 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
+import type { Dirent } from 'node:fs';
 import { lstat, mkdir, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { getBladeStorageRoot } from '../context/storage/BladeStorageRoot.js';
-import type { AcpRemoteWorkspaceDescriptorV1 } from '../context/types.js';
+import type { AcpRemoteWorkspaceDescriptorV1, SessionEvent } from '../context/types.js';
 import type { AcpRemotePath, AcpRemotePathProfile } from './AcpRemotePath.js';
 import { parseAcpRemotePath } from './AcpRemotePath.js';
 
@@ -11,6 +12,7 @@ const ACP_REMOTE_NAMESPACE = 'acp-remote-workspaces';
 const ACP_REMOTE_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const ACP_REMOTE_STATE_MUTEX = new Map<string, Promise<void>>();
 const ACP_REMOTE_STATE_CONTEXT = new AsyncLocalStorage<ReadonlySet<string>>();
+let remoteScopeEnumerationHook: (() => Promise<void>) | undefined;
 
 declare const acpRemoteStateScopeBrand: unique symbol;
 
@@ -125,6 +127,59 @@ export async function withValidatedAcpRemoteStateScope<T>(
   );
 }
 
+export async function assertAcpRemoteStateFile(
+  scope: AcpRemoteStateScope,
+  filePath: string
+): Promise<void> {
+  const expectedParent = String(scope);
+  if (path.dirname(filePath) !== expectedParent) {
+    throw new AcpRemoteWorkspaceStateError('state-file-path');
+  }
+  const stats = await lstat(filePath);
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new AcpRemoteWorkspaceStateError('state-file-type');
+  }
+  if (typeof process.getuid === 'function' && stats.uid !== process.getuid()) {
+    throw new AcpRemoteWorkspaceStateError('state-file-owner');
+  }
+  const mode =
+    typeof stats.mode === 'bigint'
+      ? Number(stats.mode & BigInt(0o777))
+      : stats.mode & 0o777;
+  if (process.platform !== 'win32' && mode !== 0o600) {
+    throw new AcpRemoteWorkspaceStateError('state-file-mode');
+  }
+  await ensureExactRealpathChild(filePath, expectedParent, path.basename(filePath));
+}
+
+export function assertAcpRemoteSessionTranscriptIdentity(
+  entries: readonly SessionEvent[],
+  sessionId: string,
+  hostStateRoot: string
+): Extract<SessionEvent, { type: 'session_created' }> {
+  const created = entries[0];
+  if (
+    created?.type !== 'session_created' ||
+    created.sessionId !== sessionId ||
+    created.data.sessionId !== sessionId ||
+    created.cwd !== hostStateRoot ||
+    created.projectPath !== hostStateRoot
+  ) {
+    throw new AcpRemoteWorkspaceStateError('remote-session-identity');
+  }
+
+  for (const entry of entries) {
+    if (
+      entry.sessionId !== sessionId ||
+      entry.cwd !== hostStateRoot ||
+      entry.projectPath !== hostStateRoot
+    ) {
+      throw new AcpRemoteWorkspaceStateError('remote-session-event-identity');
+    }
+  }
+  return created;
+}
+
 export function isAcpRemoteWorkspaceDigest(name: string): boolean {
   return ACP_REMOTE_DIGEST_PATTERN.test(name);
 }
@@ -136,26 +191,13 @@ export async function listValidatedAcpRemoteStateScopes(
   return withSerializedAcpRemoteStateRoot(
     `${normalizedStorageRoot}\0${ACP_REMOTE_NAMESPACE}`,
     async () => {
+      const namespacePath = path.join(normalizedStorageRoot, ACP_REMOTE_NAMESPACE);
+      let entries: Dirent<string>[];
       try {
-        return await withValidatedAcpRemoteNamespace(
+        entries = await withValidatedAcpRemoteNamespace(
           normalizedStorageRoot,
-          async (namespacePath) => {
-            const entries = await readdir(namespacePath, { withFileTypes: true });
-            const scopes: AcpRemoteStateScope[] = [];
-            for (const entry of entries) {
-              if (!isAcpRemoteWorkspaceDigest(entry.name)) {
-                continue;
-              }
-              const scopePath = path.join(namespacePath, entry.name);
-              const scope = await withValidatedAcpRemoteStateScopeForStorageRoot(
-                scopePath,
-                normalizedStorageRoot,
-                async (validatedScope) => validatedScope
-              );
-              scopes.push(scope);
-            }
-            return scopes.sort((left, right) => left.localeCompare(right));
-          }
+          (validatedNamespacePath) =>
+            readdir(validatedNamespacePath, { withFileTypes: true })
         );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -163,8 +205,37 @@ export async function listValidatedAcpRemoteStateScopes(
         }
         throw error;
       }
+
+      await remoteScopeEnumerationHook?.();
+      const scopes: AcpRemoteStateScope[] = [];
+      for (const entry of entries) {
+        if (!isAcpRemoteWorkspaceDigest(entry.name)) {
+          continue;
+        }
+        const scopePath = path.join(namespacePath, entry.name);
+        try {
+          const scope = await withValidatedAcpRemoteStateScopeForStorageRoot(
+            scopePath,
+            normalizedStorageRoot,
+            async (validatedScope) => validatedScope
+          );
+          scopes.push(scope);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            throw new AcpRemoteWorkspaceStateError('protected-root-missing');
+          }
+          throw error;
+        }
+      }
+      return scopes.sort((left, right) => left.localeCompare(right));
     }
   );
+}
+
+export function __setAcpRemoteScopeEnumerationHookForTesting(
+  hook: (() => Promise<void>) | undefined
+): void {
+  remoteScopeEnumerationHook = hook;
 }
 
 export function __getAcpRemoteStateGateCountForTesting(): number {

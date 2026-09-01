@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import * as path from 'node:path';
 import {
@@ -147,6 +148,18 @@ export function getAcpRemoteSessionGoalFilePath(
 ): string {
   assertValidSessionId(sessionId);
   return path.join(getAcpRemoteSessionStoragePath(scope), `${sessionId}.goal.json`);
+}
+
+export function getAcpRemoteSessionLeaseFilePath(
+  scope: AcpRemoteStateScope,
+  sessionId: string
+): string {
+  assertValidSessionId(sessionId);
+  const digest = createHash('sha256').update(sessionId).digest('hex');
+  return path.join(
+    getAcpRemoteSessionStoragePath(scope),
+    `.session-lease-${digest}.lock`
+  );
 }
 
 /**

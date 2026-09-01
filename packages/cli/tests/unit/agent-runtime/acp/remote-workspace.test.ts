@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
 import {
   __getAcpRemoteStateGateCountForTesting,
+  __setAcpRemoteScopeEnumerationHookForTesting,
   createAcpRemoteWorkspaceDescriptor,
   deriveAcpRemoteHostStateRoot,
   ensureAcpRemoteHostStateRoot,
@@ -35,6 +36,7 @@ describe('AcpRemoteWorkspace', () => {
   });
 
   afterEach(async () => {
+    __setAcpRemoteScopeEnumerationHookForTesting(undefined);
     if (previousStorageRoot === undefined) {
       delete process.env.BLADE_STORAGE_ROOT;
     } else {
@@ -374,6 +376,27 @@ describe('AcpRemoteWorkspace', () => {
     await rm(remoteRootB, { force: true });
     await rm(damagedTarget, { recursive: true, force: true });
     expect(namespace).toBe(path.join(storageRoot, 'acp-remote-workspaces'));
+  });
+
+  it('rejects a digest leaf removed after namespace enumeration instead of treating the namespace as absent', async () => {
+    const remoteA = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const remoteB = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('D:\\Other')
+    );
+    const remoteRootA = deriveAcpRemoteHostStateRoot(remoteA.collisionIdentity);
+    const remoteRootB = deriveAcpRemoteHostStateRoot(remoteB.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(remoteRootA);
+    await ensureAcpRemoteHostStateRoot(remoteRootB);
+
+    __setAcpRemoteScopeEnumerationHookForTesting(async () => {
+      await rm(remoteRootB, { recursive: true, force: true });
+    });
+
+    await expect(listValidatedAcpRemoteStateScopes()).rejects.toMatchObject({
+      code: 'acp_remote_workspace_state_invalid',
+    });
   });
 
   it('serializes ensure and validated gate entry for the same root and releases the gate afterward', async () => {

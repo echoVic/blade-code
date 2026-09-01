@@ -14,6 +14,7 @@ import {
   getAcpRemoteSessionFilePath,
   getAcpRemoteSessionGoalFilePath,
   getAcpRemoteSessionInboxFilePath,
+  getAcpRemoteSessionLeaseFilePath,
   getAcpRemoteSessionStoragePath,
   getBladeStorageRoot,
   getProjectStoragePath,
@@ -126,6 +127,12 @@ describe('context storage paths', () => {
       expect(getAcpRemoteSessionGoalFilePath(scope, 'remote-session')).toBe(
         path.join(hostStateRoot, 'remote-session.goal.json')
       );
+      expect(
+        path.dirname(getAcpRemoteSessionLeaseFilePath(scope, 'remote-session'))
+      ).toBe(hostStateRoot);
+      expect(
+        path.basename(getAcpRemoteSessionLeaseFilePath(scope, 'remote-session'))
+      ).toMatch(/^\.session-lease-[a-f0-9]{64}\.lock$/);
       return undefined;
     });
   });

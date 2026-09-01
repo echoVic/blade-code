@@ -9,8 +9,11 @@ import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import {
   type AcpRemoteStateScope,
+  assertAcpRemoteSessionTranscriptIdentity,
+  assertAcpRemoteStateFile,
   deriveAcpRemoteHostStateRoot,
   ensureAcpRemoteHostStateRoot,
+  listValidatedAcpRemoteStateScopes,
   parseAcpRemoteWorkspaceDescriptor,
   withValidatedAcpRemoteStateScope,
 } from '../acp/AcpRemoteWorkspace.js';
@@ -57,7 +60,9 @@ import {
   getProjectionDb,
   type MetadataDeriver,
   removeSessionFromProjection,
+  syncAcpRemoteScope,
   syncAll,
+  syncAllAcpRemoteScopes,
 } from '../context/storage/sqlite/projection.js';
 import {
   findCurrentTokenBudgetHandoff,
@@ -101,12 +106,20 @@ import {
 } from './SessionMarkdownExporter.js';
 import { createStructuredOutputContract } from './StructuredOutputService.js';
 import {
+  compareRemoteSessionCatalogItems,
   compareSessionCatalogItems,
+  type NormalizedRemoteSessionListOptions,
   type NormalizedSessionListOptions,
   type NormalizedSessionTaskFilters,
+  normalizeRemoteSessionListOptions,
   normalizeSessionListOptions,
   normalizeSessionTaskFilters,
+  paginateRemoteSessionCatalog,
   paginateSessionCatalog,
+  type RemoteSessionCatalogItem,
+  type RemoteSessionListOptions,
+  type RemoteSessionScanOptions,
+  resolveRemoteSessionCursorBoundary,
   resolveSessionCursorBoundary,
   type SessionListOptions,
   type SessionScanOptions,
@@ -592,6 +605,16 @@ export interface SessionPage {
   nextCursor?: string;
 }
 
+interface RemoteSessionScope {
+  hostStateRoot: string;
+  descriptor?: AcpRemoteWorkspaceDescriptorV1;
+}
+
+type RemoteCatalogEntry = StoredSessionMetadata & RemoteSessionCatalogItem;
+type ValidatedProjectedRemoteMetadata = StoredSessionMetadata & {
+  remoteWorkspace: AcpRemoteWorkspaceDescriptorV1;
+};
+
 export class SessionMissingCreationError extends Error {
   constructor(sessionId: string) {
     super(`Session has no durable creation record: ${sessionId}`);
@@ -698,6 +721,50 @@ function exactRemoteIdentityMatches(
   );
 }
 
+function validateProjectedRemoteMetadata(
+  metadata: StoredSessionMetadata,
+  requestedDescriptor?: AcpRemoteWorkspaceDescriptorV1
+): ValidatedProjectedRemoteMetadata {
+  if (!metadata.remoteWorkspace) {
+    throw new RemoteSessionStateError();
+  }
+
+  let descriptor: AcpRemoteWorkspaceDescriptorV1;
+  try {
+    descriptor = parseAcpRemoteWorkspaceDescriptor(metadata.remoteWorkspace);
+  } catch (error) {
+    throw sanitizeRemoteStateError(error);
+  }
+
+  const expectedHostStateRoot = deriveAcpRemoteHostStateRoot(
+    descriptor.collisionIdentity
+  );
+  if (expectedHostStateRoot !== metadata.projectPath) {
+    throw new RemoteSessionStateError();
+  }
+  if (
+    requestedDescriptor &&
+    !exactRemoteIdentityMatches(descriptor, requestedDescriptor)
+  ) {
+    throw new RemoteSessionMismatchError();
+  }
+
+  return {
+    ...metadata,
+    remoteWorkspace: descriptor,
+  };
+}
+
+function parseRequestedRemoteDescriptor(
+  descriptor: AcpRemoteWorkspaceDescriptorV1
+): AcpRemoteWorkspaceDescriptorV1 {
+  try {
+    return parseAcpRemoteWorkspaceDescriptor(descriptor);
+  } catch (error) {
+    throw sanitizeRemoteStateError(error);
+  }
+}
+
 function reviewPromptFromTarget(target: SessionReviewTargetInfo): string {
   if (target.kind === 'base') {
     return `/review base ${target.baseSha ?? target.label}`;
@@ -759,6 +826,52 @@ function filterArchiveState(
   archived: boolean | null
 ): StoredSessionMetadata[] {
   const projected = projectEffectiveArchiveState(sessions);
+  if (archived === null) return projected;
+  return projected.filter((session) => Boolean(session.archivedAt) === archived);
+}
+
+function remoteArchiveKey(session: StoredSessionMetadata): string {
+  if (!session.remoteWorkspace) {
+    throw new RemoteSessionStateError();
+  }
+  return `${session.remoteWorkspace.exactIdentity}\0${session.projectPath}\0${session.sessionId}`;
+}
+
+function filterRemoteArchiveState(
+  sessions: readonly ValidatedProjectedRemoteMetadata[],
+  archived: boolean | null
+): ValidatedProjectedRemoteMetadata[] {
+  const byKey = new Map(
+    sessions.map((session) => [remoteArchiveKey(session), session])
+  );
+  const projected: ValidatedProjectedRemoteMetadata[] = sessions.map((session) => {
+    let current: ValidatedProjectedRemoteMetadata | undefined = session;
+    const visited = new Set<string>();
+    while (current) {
+      const key = remoteArchiveKey(current);
+      if (visited.has(key)) break;
+      visited.add(key);
+      if (isValidArchiveTimestamp(current.archivedAt)) {
+        return {
+          ...session,
+          archivedAt: current.archivedAt,
+          archivedBySessionId: current.sessionId,
+        };
+      }
+      current = current.parentId
+        ? byKey.get(
+            `${session.remoteWorkspace.exactIdentity}\0${session.projectPath}\0${current.parentId}`
+          )
+        : undefined;
+    }
+
+    const {
+      archivedAt: _archivedAt,
+      archivedBySessionId: _archivedBySessionId,
+      ...active
+    } = session;
+    return active as ValidatedProjectedRemoteMetadata;
+  });
   if (archived === null) return projected;
   return projected.filter((session) => Boolean(session.archivedAt) === archived);
 }
@@ -845,6 +958,34 @@ export class SessionService {
     };
   }
 
+  static async listRemoteSessionPage(
+    options: RemoteSessionListOptions = {}
+  ): Promise<SessionPage> {
+    const normalized = normalizeRemoteSessionListOptions(
+      options.descriptor !== undefined
+        ? {
+            ...options,
+            descriptor: parseRequestedRemoteDescriptor(options.descriptor),
+          }
+        : options
+    );
+    const projected = await this.listRemoteSessionPageFromProjection(normalized);
+    if (projected) return projected;
+
+    const stored = await this.scanRemoteStoredSessions(
+      normalized,
+      normalized.cursor ? 5_000 : 0
+    );
+    const filtered = this.toRemoteCatalogEntries(stored).sort(
+      compareRemoteSessionCatalogItems
+    );
+    const page = paginateRemoteSessionCatalog(filtered, normalized);
+    return {
+      sessions: page.sessions.map((session) => this.toPublicMetadata(session)),
+      nextCursor: page.nextCursor,
+    };
+  }
+
   private static async listSessionPageFromProjection(
     options: NormalizedSessionListOptions
   ): Promise<SessionPage | null> {
@@ -852,10 +993,11 @@ export class SessionService {
     try {
       const db = await getProjectionDb();
       if (!db) return null;
-      await syncAll(db, this.projectionDeriver(), options.cursor ? 5_000 : 0);
+      await syncAll(db, this.projectionDeriver(), 0);
 
       const filters: string[] = [];
       const parameters: unknown[] = [];
+      filters.push(`s.source_kind = 'local'`);
       if (options.cwd) {
         filters.push('s.project_path = ?');
         parameters.push(options.cwd);
@@ -894,13 +1036,14 @@ export class SessionService {
            ) AS (
              SELECT project_path, session_id, session_id, archived_at, 0
              FROM sessions
-             WHERE archived_at IS NOT NULL
+             WHERE source_kind = 'local' AND archived_at IS NOT NULL
              UNION ALL
              SELECT child.project_path, child.session_id, parent.archive_root_id,
                     parent.effective_archived_at, parent.depth + 1
              FROM sessions child
              JOIN archive_members parent
-               ON child.project_path = parent.project_path
+               ON child.source_kind = 'local'
+              AND child.project_path = parent.project_path
               AND child.parent_id = parent.session_id
              WHERE parent.depth < 128
            ),
@@ -916,7 +1059,8 @@ export class SessionService {
            SELECT s.metadata_json, a.archive_root_id, a.effective_archived_at
            FROM sessions s
            LEFT JOIN ranked_archive a
-             ON a.project_path = s.project_path
+             ON s.source_kind = 'local'
+            AND a.project_path = s.project_path
             AND a.session_id = s.session_id
             AND a.rank = 1
            ${filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : ''}
@@ -933,6 +1077,9 @@ export class SessionService {
       const sessions = await Promise.all(
         rows.map(async (row) => {
           const metadata = JSON.parse(row.metadata_json) as StoredSessionMetadata;
+          if (metadata.remoteWorkspace) {
+            throw new Error('Local projection contains remote session metadata');
+          }
           if (row.archive_root_id && row.effective_archived_at) {
             return this.reconcileInterruptedTask({
               ...metadata,
@@ -955,6 +1102,26 @@ export class SessionService {
       };
     } catch {
       return null;
+    }
+  }
+
+  private static async listRemoteSessionPageFromProjection(
+    options: NormalizedRemoteSessionListOptions
+  ): Promise<SessionPage | null> {
+    resolveRemoteSessionCursorBoundary(options);
+    try {
+      const sessions = await this.scanRemoteStoredSessionsFromProjection(options, 0);
+      if (!sessions) return null;
+      const page = paginateRemoteSessionCatalog(
+        this.toRemoteCatalogEntries(sessions).sort(compareRemoteSessionCatalogItems),
+        options
+      );
+      return {
+        sessions: page.sessions.map((session) => this.toPublicMetadata(session)),
+        nextCursor: page.nextCursor,
+      };
+    } catch (error) {
+      throw sanitizeRemoteStateError(error);
     }
   }
 
@@ -981,6 +1148,29 @@ export class SessionService {
       seenSessions.add(key);
       return [this.toPublicMetadata(session)];
     });
+  }
+
+  static async listRemoteSessions(
+    options: RemoteSessionScanOptions = {}
+  ): Promise<SessionMetadata[]> {
+    const normalized = normalizeRemoteSessionListOptions(
+      options.descriptor !== undefined
+        ? {
+            ...options,
+            descriptor: parseRequestedRemoteDescriptor(options.descriptor),
+          }
+        : options
+    );
+    const stored = await this.scanRemoteStoredSessions(normalized, 0);
+    const seenSessions = new Set<string>();
+    return this.toRemoteCatalogEntries(stored)
+      .sort(compareRemoteSessionCatalogItems)
+      .flatMap((session) => {
+        const key = `${session.projectPath}\0${session.sessionId}`;
+        if (seenSessions.has(key)) return [];
+        seenSessions.add(key);
+        return [this.toPublicMetadata(session)];
+      });
   }
 
   /**
@@ -3004,17 +3194,25 @@ export class SessionService {
    * 元数据聚合器（注入投影层，复用 projectMetadataFromEntries 保证与 JSONL 逐条一致）。
    */
   private static projectionDeriver(): MetadataDeriver {
-    return (entries, sessionId, projectPath) => {
+    return (entries, sessionId, projectPath, sourceKind, actualFilePath) => {
       try {
-        const filePath = getSessionFilePath(projectPath, sessionId);
+        const filePath = actualFilePath ?? getSessionFilePath(projectPath, sessionId);
         const stored = this.projectMetadataFromEntries(
           entries,
           sessionId,
           projectPath,
           filePath
         );
+        if (sourceKind === 'acp-remote') {
+          return validateProjectedRemoteMetadata(
+            stored
+          ) as unknown as ReturnType<MetadataDeriver>;
+        }
         return stored as unknown as ReturnType<MetadataDeriver>;
-      } catch {
+      } catch (error) {
+        if (sourceKind === 'acp-remote') {
+          throw sanitizeRemoteStateError(error);
+        }
         return null;
       }
     };
@@ -3042,6 +3240,7 @@ export class SessionService {
       await syncAll(db, this.projectionDeriver(), projectionSyncMaxAgeMs);
 
       const conditions: string[] = [];
+      conditions.push(`source_kind = 'local'`);
       const parameters: unknown[] = [];
       if (scopedProjectPath !== undefined) {
         conditions.push('project_path=?');
@@ -3059,6 +3258,7 @@ export class SessionService {
         if (!includeSubagents && row.is_subagent === 1) continue;
         try {
           const meta = JSON.parse(row.metadata_json) as StoredSessionMetadata;
+          if (meta.remoteWorkspace) continue;
           if (
             scopedProjectPath !== undefined &&
             meta.projectPath !== scopedProjectPath
@@ -3097,7 +3297,7 @@ export class SessionService {
     const projected = await this.scanStoredSessionsFromProjection(
       scopedProjectPath,
       includeSubagents,
-      projectionSyncMaxAgeMs,
+      0,
       archived,
       taskFilters
     );
@@ -3128,11 +3328,12 @@ export class SessionService {
         const sessionId = file.slice(0, -'.jsonl'.length);
         const filePath = path.join(project.storagePath, file);
         try {
-          const metadata = await this.readStoredSessionMetadata(
+          const metadata = await this.readLocalCatalogSessionMetadata(
             filePath,
             sessionId,
             project.projectPath
           );
+          if (!metadata) continue;
           if (
             scopedProjectPath !== undefined &&
             metadata.projectPath !== scopedProjectPath
@@ -3144,11 +3345,12 @@ export class SessionService {
           }
           if (!includeSubagents && metadata.relationType === 'subagent') continue;
           if (!matchesTaskFilters(metadata, taskFilters)) continue;
-          sessions.push(metadata);
+          sessions.push(await this.reconcileInterruptedTask(metadata));
         } catch (error) {
           const code = (error as NodeJS.ErrnoException).code;
           if (code === 'ENOENT') continue;
           if (code) throw error;
+          if (error instanceof RemoteSessionStateError) throw error;
           logger.warn(
             `[SessionService] Skipping invalid session transcript: ${sessionId}`
           );
@@ -3184,20 +3386,269 @@ export class SessionService {
       }));
   }
 
+  private static async listRemoteSessionScopes(
+    options: NormalizedRemoteSessionListOptions
+  ): Promise<RemoteSessionScope[]> {
+    if (options.descriptor) {
+      const hostStateRoot = deriveAcpRemoteHostStateRoot(
+        options.descriptor.collisionIdentity
+      );
+      try {
+        return await withValidatedAcpRemoteStateScope(hostStateRoot, async () => [
+          {
+            hostStateRoot,
+            descriptor: options.descriptor,
+          },
+        ]);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return [];
+        }
+        throw sanitizeRemoteStateError(error);
+      }
+    }
+
+    const scopes = await listValidatedAcpRemoteStateScopes();
+    return scopes.map((scope) => ({
+      hostStateRoot: String(scope),
+    }));
+  }
+
+  private static async scanRemoteStoredSessions(
+    options: NormalizedRemoteSessionListOptions,
+    projectionSyncMaxAgeMs = 0
+  ): Promise<StoredSessionMetadata[]> {
+    const projected = await this.scanRemoteStoredSessionsFromProjection(
+      options,
+      projectionSyncMaxAgeMs
+    );
+    if (projected) return projected;
+
+    const scopes = await this.listRemoteSessionScopes(options);
+    const sessions: ValidatedProjectedRemoteMetadata[] = [];
+
+    for (const scope of scopes) {
+      await withValidatedAcpRemoteStateScope(
+        scope.hostStateRoot,
+        async (validatedScope) => {
+          let files: string[];
+          try {
+            files = await readdir(String(validatedScope));
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === 'ENOENT') return;
+            throw sanitizeRemoteStateError(error);
+          }
+
+          for (const file of files) {
+            if (!file.endsWith('.jsonl')) continue;
+            const sessionId = file.slice(0, -'.jsonl'.length);
+            if (!isValidSessionId(sessionId)) continue;
+            const filePath = getAcpRemoteSessionFilePath(validatedScope, sessionId);
+            let metadata: ValidatedProjectedRemoteMetadata | undefined;
+            try {
+              metadata = await this.readRemoteStoredSessionMetadata(
+                filePath,
+                sessionId,
+                scope.hostStateRoot,
+                validatedScope,
+                options.descriptor
+              );
+            } catch (error) {
+              const code = (error as NodeJS.ErrnoException).code;
+              if (code === 'ENOENT') continue;
+              if (error instanceof Error && (error as Error).message) {
+                throw sanitizeRemoteStateError(error);
+              }
+              throw error;
+            }
+            if (!metadata) continue;
+            if (!options.includeSubagents && metadata.relationType === 'subagent')
+              continue;
+            sessions.push(metadata);
+          }
+        }
+      );
+    }
+
+    return filterRemoteArchiveState(sessions, options.archived);
+  }
+
+  private static async scanRemoteStoredSessionsFromProjection(
+    options: NormalizedRemoteSessionListOptions,
+    projectionSyncMaxAgeMs = 0
+  ): Promise<StoredSessionMetadata[] | null> {
+    try {
+      const db = await getProjectionDb();
+      if (!db) return null;
+      if (options.descriptor) {
+        await syncAcpRemoteScope(
+          db,
+          this.projectionDeriver(),
+          deriveAcpRemoteHostStateRoot(options.descriptor.collisionIdentity)
+        );
+      } else {
+        await syncAllAcpRemoteScopes(db, this.projectionDeriver());
+      }
+
+      const conditions = [`source_kind = 'acp-remote'`];
+      const parameters: unknown[] = [];
+      if (options.descriptor) {
+        conditions.push('project_path=?');
+        parameters.push(
+          deriveAcpRemoteHostStateRoot(options.descriptor.collisionIdentity)
+        );
+      }
+      const whereClause =
+        conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+      const rows = db
+        .prepare(`SELECT metadata_json, is_subagent FROM sessions${whereClause}`)
+        .all<{ metadata_json: string; is_subagent: number }>(...parameters);
+
+      const sessions: ValidatedProjectedRemoteMetadata[] = [];
+      for (const row of rows) {
+        if (!options.includeSubagents && row.is_subagent === 1) continue;
+        const meta = validateProjectedRemoteMetadata(
+          JSON.parse(row.metadata_json) as StoredSessionMetadata,
+          undefined
+        );
+        if (
+          options.descriptor &&
+          !exactRemoteIdentityMatches(meta.remoteWorkspace, options.descriptor)
+        ) {
+          continue;
+        }
+        sessions.push(meta);
+      }
+      const requestedDescriptor = options.descriptor;
+      const exactMatches = requestedDescriptor
+        ? sessions.filter((session) =>
+            exactRemoteIdentityMatches(session.remoteWorkspace, requestedDescriptor)
+          )
+        : sessions;
+      const reconciled = await Promise.all(
+        exactMatches.map((session) =>
+          this.reconcileInterruptedTask(session, 'acp-remote')
+        )
+      );
+      return filterRemoteArchiveState(
+        reconciled.map((session) => validateProjectedRemoteMetadata(session)),
+        options.archived
+      );
+    } catch (error) {
+      throw sanitizeRemoteStateError(error);
+    }
+  }
+
+  private static toRemoteCatalogEntries(
+    sessions: readonly StoredSessionMetadata[]
+  ): RemoteCatalogEntry[] {
+    return sessions.flatMap((session) => {
+      if (!session.remoteWorkspace) return [];
+      return [
+        {
+          ...session,
+          workspaceIdentity: session.remoteWorkspace.exactIdentity,
+        },
+      ];
+    });
+  }
+
   private static async readStoredSessionMetadata(
+    filePath: string,
+    sessionId: string,
+    projectPath: string,
+    sourceKind: 'local' | 'acp-remote' = 'local',
+    validatedRemoteScope?: AcpRemoteStateScope
+  ): Promise<StoredSessionMetadata> {
+    if (sourceKind === 'acp-remote') {
+      if (!validatedRemoteScope || String(validatedRemoteScope) !== projectPath) {
+        throw new RemoteSessionStateError();
+      }
+      const expectedFilePath = getAcpRemoteSessionFilePath(
+        validatedRemoteScope,
+        sessionId
+      );
+      if (filePath !== expectedFilePath) {
+        throw new RemoteSessionStateError();
+      }
+    }
+    const metadata = await this.readStoredSessionMetadataWithoutReconciliation(
+      filePath,
+      sessionId,
+      projectPath
+    );
+    if (sourceKind === 'acp-remote') {
+      validateProjectedRemoteMetadata(metadata);
+    }
+    return this.reconcileInterruptedTask(metadata, sourceKind, validatedRemoteScope);
+  }
+
+  private static async readStoredSessionMetadataWithoutReconciliation(
     filePath: string,
     sessionId: string,
     projectPath: string
   ): Promise<StoredSessionMetadata> {
     const content = await readFile(filePath, 'utf-8');
     const entries = this.parseStoredSession(content, sessionId);
-    return this.reconcileInterruptedTask(
+    return this.projectMetadataFromEntries(entries, sessionId, projectPath, filePath);
+  }
+
+  private static async readLocalCatalogSessionMetadata(
+    filePath: string,
+    sessionId: string,
+    projectPath: string
+  ): Promise<StoredSessionMetadata | undefined> {
+    const content = await readFile(filePath, 'utf-8');
+    const entries = this.parseStoredSession(content, sessionId);
+    const created = this.getSessionCreatedEntry(entries, sessionId);
+    if (Object.hasOwn(created.data, 'remoteWorkspace')) {
+      try {
+        parseAcpRemoteWorkspaceDescriptor(created.data.remoteWorkspace);
+      } catch (error) {
+        throw sanitizeRemoteStateError(error);
+      }
+      return undefined;
+    }
+    return this.projectMetadataFromEntries(entries, sessionId, projectPath, filePath);
+  }
+
+  private static async readRemoteStoredSessionMetadata(
+    filePath: string,
+    sessionId: string,
+    projectPath: string,
+    validatedRemoteScope: AcpRemoteStateScope,
+    requestedDescriptor?: AcpRemoteWorkspaceDescriptorV1
+  ): Promise<ValidatedProjectedRemoteMetadata | undefined> {
+    if (
+      String(validatedRemoteScope) !== projectPath ||
+      filePath !== getAcpRemoteSessionFilePath(validatedRemoteScope, sessionId)
+    ) {
+      throw new RemoteSessionStateError();
+    }
+    await assertAcpRemoteStateFile(validatedRemoteScope, filePath);
+    const content = await readFile(filePath, 'utf-8');
+    const entries = this.parseStoredSession(content, sessionId);
+    this.validateSessionWorkspace(entries, sessionId, projectPath);
+    const metadata = validateProjectedRemoteMetadata(
       this.projectMetadataFromEntries(entries, sessionId, projectPath, filePath)
+    );
+    if (
+      requestedDescriptor &&
+      !exactRemoteIdentityMatches(metadata.remoteWorkspace, requestedDescriptor)
+    ) {
+      return undefined;
+    }
+    return validateProjectedRemoteMetadata(
+      await this.reconcileInterruptedTask(metadata, 'acp-remote', validatedRemoteScope),
+      metadata.remoteWorkspace
     );
   }
 
   private static async reconcileInterruptedTask(
-    session: StoredSessionMetadata
+    session: StoredSessionMetadata,
+    sourceKind: 'local' | 'acp-remote' = 'local',
+    validatedRemoteScope?: AcpRemoteStateScope
   ): Promise<StoredSessionMetadata> {
     const ownerPid = session.taskOwnerPid;
     if (
@@ -3208,18 +3659,61 @@ export class SessionService {
       return session;
     }
 
+    if (sourceKind === 'acp-remote') {
+      if (validatedRemoteScope) {
+        return this.reconcileInterruptedTaskInScope(
+          session,
+          ownerPid,
+          validatedRemoteScope
+        );
+      }
+      return withValidatedAcpRemoteStateScope(session.projectPath, async (scope) =>
+        this.reconcileInterruptedTaskInScope(session, ownerPid, scope)
+      );
+    }
+
+    return this.reconcileInterruptedTaskInScope(session, ownerPid);
+  }
+
+  private static async reconcileInterruptedTaskInScope(
+    session: StoredSessionMetadata,
+    ownerPid: number,
+    remoteScope?: AcpRemoteStateScope
+  ): Promise<StoredSessionMetadata> {
+    const expectedDescriptor = remoteScope
+      ? validateProjectedRemoteMetadata(session).remoteWorkspace
+      : undefined;
+    if (remoteScope) {
+      const expectedFilePath = getAcpRemoteSessionFilePath(
+        remoteScope,
+        session.sessionId
+      );
+      if (
+        session.projectPath !== String(remoteScope) ||
+        session.filePath !== expectedFilePath
+      ) {
+        throw new RemoteSessionStateError();
+      }
+      await assertAcpRemoteStateFile(remoteScope, session.filePath);
+    }
+
     let lease: SessionLease;
     try {
-      lease = await SessionLease.acquire(session.sessionId, session.projectPath);
+      lease = remoteScope
+        ? await SessionLease.acquireRemote(session.sessionId, remoteScope)
+        : await SessionLease.acquire(session.sessionId, session.projectPath);
     } catch (error) {
       if (!(error instanceof SessionInUseError)) throw error;
       const content = await readFile(session.filePath, 'utf-8');
-      return this.projectMetadataFromEntries(
+      const current = this.projectMetadataFromEntries(
         this.parseStoredSession(content, session.sessionId),
         session.sessionId,
         session.projectPath,
         session.filePath
       );
+      return expectedDescriptor
+        ? validateProjectedRemoteMetadata(current, expectedDescriptor)
+        : current;
     }
 
     const store = new JSONLStore(session.filePath);
@@ -3233,6 +3727,9 @@ export class SessionService {
             session.projectPath,
             session.filePath
           );
+          if (expectedDescriptor) {
+            validateProjectedRemoteMetadata(current, expectedDescriptor);
+          }
           if (
             current.taskStatus !== 'running' ||
             current.taskOwnerPid !== ownerPid ||
@@ -3248,7 +3745,8 @@ export class SessionService {
             timestamp: now,
             type: 'session_updated',
             cwd: session.projectPath,
-            gitBranch: detectGitBranch(session.projectPath),
+            ...(remoteScope ? { projectPath: session.projectPath } : {}),
+            ...(remoteScope ? {} : { gitBranch: detectGitBranch(session.projectPath) }),
             version: getVersion(),
             data: {
               sessionId: session.sessionId,
@@ -3272,12 +3770,15 @@ export class SessionService {
         const content = await readFile(session.filePath, 'utf-8');
         persistedEntries = this.parseStoredSession(content, session.sessionId);
       }
-      return this.projectMetadataFromEntries(
+      const reconciled = this.projectMetadataFromEntries(
         persistedEntries,
         session.sessionId,
         session.projectPath,
         session.filePath
       );
+      return expectedDescriptor
+        ? validateProjectedRemoteMetadata(reconciled, expectedDescriptor)
+        : reconciled;
     } finally {
       await lease.release();
     }
@@ -3294,6 +3795,14 @@ export class SessionService {
     }
 
     const created = this.getSessionCreatedEntry(entries, sessionId);
+    if (Object.hasOwn(created.data, 'remoteWorkspace')) {
+      this.validateRemoteSessionCreationRecord(
+        entries,
+        created,
+        sessionId,
+        projectPath
+      );
+    }
 
     const durable = entries.reduce(
       (state, entry) =>
@@ -3587,7 +4096,13 @@ export class SessionService {
     scope: AcpRemoteStateScope
   ): Promise<SessionMetadata> {
     const filePath = getAcpRemoteSessionFilePath(scope, sessionId);
-    const entries = await this.readStableSessionSnapshot(filePath, sessionId);
+    let entries: SessionEvent[];
+    try {
+      await assertAcpRemoteStateFile(scope, filePath);
+      entries = await this.readStableSessionSnapshot(filePath, sessionId);
+    } catch (error) {
+      throw sanitizeRemoteStateError(error);
+    }
     let stored: StoredSessionMetadata;
     try {
       stored = this.projectMetadataFromEntries(
@@ -3642,6 +4157,20 @@ export class SessionService {
     );
     if (!created) throw new SessionMissingCreationError(sessionId);
     return created;
+  }
+
+  private static validateRemoteSessionCreationRecord(
+    entries: readonly SessionEvent[],
+    created: Extract<SessionEvent, { type: 'session_created' }>,
+    sessionId: string,
+    projectPath: string
+  ): void {
+    const validatedCreated = assertAcpRemoteSessionTranscriptIdentity(
+      entries,
+      sessionId,
+      projectPath
+    );
+    if (validatedCreated !== created) throw new RemoteSessionStateError();
   }
 
   private static resolveCatalogWorkspace(projectPath: string): string {

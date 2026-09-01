@@ -159,10 +159,13 @@
 - Modify: `packages/cli/src/context/types.ts`
 - Modify: `packages/cli/src/context/storage/pathUtils.ts`
 - Modify: `packages/cli/src/context/storage/PersistentStore.ts`
+- Modify: `packages/cli/src/agent/runtime/SessionLease.ts`
+- Modify: `packages/cli/src/context/storage/sqlite/schema.ts`
 - Modify: `packages/cli/src/context/storage/sqlite/projection.ts`
 - Modify: `packages/cli/src/services/sessionCatalog.ts`
 - Modify: `packages/cli/src/services/SessionService.ts`
 - Modify: `packages/cli/tests/unit/agent-runtime/context/storage-path-utils.test.ts`
+- Modify: `packages/cli/tests/unit/agent-runtime/agent/session-lease.test.ts`
 - Modify: `packages/cli/tests/unit/services/session-service-catalog.test.ts`
 - Modify: `packages/cli/tests/unit/services/session-service-fork.test.ts`
 
@@ -310,8 +313,11 @@
 
   Add `assertRemoteSessionWritable()` and a remote page API whose cursor scope
   includes the requested exact identity. Extend Session storage enumeration and
-  projection sync to include protected remote scopes, but keep generic local list
-  APIs filtered to descriptor-free records. In `forkSession`, accept an expected
+  projection sync to include protected remote scopes. Give the disposable SQLite
+  projection a trusted `source_kind` provenance key so local and remote records
+  with the same host-state identity and Session ID cannot overwrite each other,
+  and keep generic local list/search APIs limited to local-source records. In
+  `forkSession`, accept an expected
   remote descriptor, validate it inside the stable source snapshot, copy it into
   the child's first event, suppress `detectGitBranch()`, and omit local task
   isolation/source/worktree fields. Never use `wirePath` as a host path.

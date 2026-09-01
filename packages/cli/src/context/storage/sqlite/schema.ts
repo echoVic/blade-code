@@ -8,19 +8,22 @@
  */
 
 /** schema 版本；不兼容变更时递增，落后版本直接 drop 重建（缓存可弃）。 */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projection_state (
+  source_kind  TEXT NOT NULL CHECK(source_kind IN ('local', 'acp-remote')),
   project_path TEXT NOT NULL,
   session_id   TEXT NOT NULL,
   last_seq     INTEGER NOT NULL DEFAULT 0,
   file_size    INTEGER NOT NULL DEFAULT 0,
   mtime_ms     INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (project_path, session_id)
+  stat_fingerprint TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (source_kind, project_path, session_id)
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
+  source_kind        TEXT NOT NULL CHECK(source_kind IN ('local', 'acp-remote')),
   project_path       TEXT NOT NULL,
   session_id         TEXT NOT NULL,
   root_id            TEXT,
@@ -43,14 +46,16 @@ CREATE TABLE IF NOT EXISTS sessions (
   is_subagent        INTEGER NOT NULL DEFAULT 0,
   -- 完整 StoredSessionMetadata JSON，读回时直接反序列化，保证与 JSONL 路径一致。
   metadata_json      TEXT NOT NULL,
-  PRIMARY KEY (project_path, session_id)
+  PRIMARY KEY (source_kind, project_path, session_id)
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_catalog ON sessions(
+  source_kind,
   last_message_time DESC,
   project_sort_key ASC,
   session_sort_key ASC
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_archived ON sessions(
+  source_kind,
   archived_at,
   project_path,
   parent_id
@@ -60,21 +65,26 @@ CREATE INDEX IF NOT EXISTS idx_sessions_task_board ON sessions(
   project_path,
   task_status,
   task_priority,
-  task_due_at
+  task_due_at,
+  source_kind
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_task_status ON sessions(
   task_status,
-  project_path
+  project_path,
+  source_kind
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_task_priority ON sessions(
   task_priority,
-  task_due_at
+  task_due_at,
+  source_kind
 ) WHERE task_priority IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_task_due_at ON sessions(
-  task_due_at
+  task_due_at,
+  source_kind
 ) WHERE task_due_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS parts (
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('local', 'acp-remote')),
   project_path TEXT NOT NULL,
   session_id   TEXT NOT NULL,
   part_id      TEXT NOT NULL,
@@ -84,12 +94,15 @@ CREATE TABLE IF NOT EXISTS parts (
   seq          INTEGER,
   timestamp    TEXT,
   text         TEXT,
-  PRIMARY KEY (project_path, session_id, part_id)
+  PRIMARY KEY (source_kind, project_path, session_id, part_id)
 );
-CREATE INDEX IF NOT EXISTS idx_parts_session ON parts(project_path, session_id);
+CREATE INDEX IF NOT EXISTS idx_parts_session ON parts(
+  source_kind, project_path, session_id
+);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS parts_fts USING fts5(
   text,
+  source_kind UNINDEXED,
   project_path UNINDEXED,
   session_id   UNINDEXED,
   part_id      UNINDEXED,
