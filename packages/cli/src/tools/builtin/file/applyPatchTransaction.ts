@@ -12,6 +12,7 @@ import {
   AcpFileSystemService,
   isAcpResourceNotFoundError,
 } from '../../../acp/AcpFileSystemService.js';
+import type { AcpRemotePath } from '../../../acp/AcpRemotePath.js';
 import {
   AcpRemoteMutationError,
   commitVerifiedRemoteTextMutation,
@@ -397,6 +398,7 @@ export async function commitRemotePatchTransaction(
   const effectiveForwardDeadlineAt = forwardDeadlineAt;
   const attempted: Array<
     PatchFileChange & {
+      remotePath: AcpRemotePath;
       forwardVerified: boolean;
       pendingForwardWrite: boolean;
       rollbackEligible: boolean;
@@ -411,11 +413,12 @@ export async function commitRemotePatchTransaction(
       if (change.oldContent === null || change.newContent === null) {
         throw new Error('ACP remote transaction received an unsupported change');
       }
+      const remotePath = remoteService.parsePath(change.path);
       const compareDeadlineAt = Math.min(
         effectiveForwardDeadlineAt,
         Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS
       );
-      const current = await remoteService.readTextFile(change.path, {
+      const current = await remoteService.readTextFileForParsedPath(remotePath, {
         signal,
         deadlineAt: compareDeadlineAt,
         purpose: 'preflight',
@@ -426,6 +429,7 @@ export async function commitRemotePatchTransaction(
       }
       const attemptedChange = {
         ...change,
+        remotePath,
         forwardVerified: false,
         pendingForwardWrite: false,
         rollbackEligible: false,
@@ -435,7 +439,7 @@ export async function commitRemotePatchTransaction(
         await commitVerifiedRemoteTextMutation({
           service: remoteService,
           lease: transactionLease,
-          filePath: change.path,
+          filePath: remotePath,
           previous: { exists: true, content: change.oldContent },
           intendedContent: change.newContent,
           operation: 'edit',
@@ -462,9 +466,13 @@ export async function commitRemotePatchTransaction(
         throw error;
       }
     }
-    for (const change of plan.changes) {
+    for (const change of attempted) {
       if (change.newContent !== null) {
-        remoteService.recordRemoteAccess(change.path, change.newContent, 'edit');
+        remoteService.recordRemoteAccessForParsedPath(
+          change.remotePath,
+          change.newContent,
+          'edit'
+        );
       }
     }
   } catch (error) {
@@ -505,12 +513,12 @@ export async function commitRemotePatchTransaction(
           );
         }
         {
-          const recoveryLease = transactionLease.beginRecovery(change.path);
+          const recoveryLease = transactionLease.beginRecovery(change.remotePath);
           try {
             await commitVerifiedRemoteTextMutation({
               service: remoteService,
               lease: recoveryLease,
-              filePath: change.path,
+              filePath: change.remotePath,
               previous: { exists: true, content: rollbackNewContent },
               intendedContent: rollbackOldContent,
               operation: 'edit',
@@ -564,6 +572,7 @@ function normalizeForwardTransactionError(
 function markRemainingRollbackPathsUncertain(
   remaining: ReadonlyArray<
     PatchFileChange & {
+      remotePath: AcpRemotePath;
       forwardVerified: boolean;
       pendingForwardWrite: boolean;
       rollbackEligible: boolean;
@@ -578,7 +587,7 @@ function markRemainingRollbackPathsUncertain(
     if (!change.forwardVerified && !change.rollbackEligible) {
       continue;
     }
-    lease.markUncertain(change.path);
+    lease.markUncertain(change.remotePath);
   }
 }
 

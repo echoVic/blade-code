@@ -14,6 +14,9 @@ export interface AcpRemotePathProfile {
   readonly workspace: AcpRemotePath;
 }
 
+const canonicalRemotePaths = new WeakSet<object>();
+const canonicalRemotePathProfiles = new WeakSet<object>();
+
 export type AcpRemotePathErrorReason =
   | 'not-absolute'
   | 'style-mismatch'
@@ -122,6 +125,46 @@ export class AcpRemotePathError extends Error {
   }
 }
 
+export class AcpRemotePathIdentityError extends Error {
+  readonly name = 'AcpRemotePathIdentityError';
+  readonly code = 'acp_remote_path_identity_invalid';
+
+  constructor() {
+    super('ACP remote path identity is invalid');
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function assertCanonicalAcpRemotePath(remotePath: AcpRemotePath): void {
+  if (!canonicalRemotePaths.has(remotePath)) {
+    throw new AcpRemotePathIdentityError();
+  }
+}
+
+export function assertCanonicalAcpRemotePathProfile(
+  profile: AcpRemotePathProfile
+): void {
+  if (!canonicalRemotePathProfiles.has(profile)) {
+    throw new AcpRemotePathIdentityError();
+  }
+  assertCanonicalAcpRemotePath(profile.workspace);
+  if (profile.style !== profile.workspace.style) {
+    throw new AcpRemotePathIdentityError();
+  }
+}
+
+export function cloneAcpRemotePathProfile(
+  profile: AcpRemotePathProfile
+): AcpRemotePathProfile {
+  assertCanonicalAcpRemotePathProfile(profile);
+  const clonedProfile: AcpRemotePathProfile = Object.freeze({
+    style: profile.style,
+    workspace: profile.workspace,
+  });
+  canonicalRemotePathProfiles.add(clonedProfile);
+  return clonedProfile;
+}
+
 export function inferAcpRemotePathStyle(path: string): AcpRemotePathStyle {
   const classification = classifyAcpRemotePath(path);
 
@@ -134,10 +177,12 @@ export function inferAcpRemotePathStyle(path: string): AcpRemotePathStyle {
 
 export function createAcpRemotePathProfile(root: string): AcpRemotePathProfile {
   const workspace = parseAcpRemotePath(root);
-  return {
+  const profile: AcpRemotePathProfile = Object.freeze({
     style: workspace.style,
     workspace,
-  };
+  });
+  canonicalRemotePathProfiles.add(profile);
+  return profile;
 }
 
 export function parseAcpRemotePath(
@@ -262,12 +307,14 @@ function createAcpRemotePath(
 ): AcpRemotePath {
   const collisionForm = style === 'win32' ? wirePath.toUpperCase() : wirePath;
 
-  return {
+  const remotePath: AcpRemotePath = Object.freeze({
     style,
     wirePath,
     exactIdentity: hashIdentity('acp-remote-exact-path', style, wirePath),
     collisionIdentity: hashIdentity('acp-remote-collision-path', style, collisionForm),
-  };
+  });
+  canonicalRemotePaths.add(remotePath);
+  return remotePath;
 }
 
 function hashIdentity<

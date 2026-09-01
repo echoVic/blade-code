@@ -8,7 +8,10 @@ vi.unmock('node:child_process');
 vi.unmock('child_process');
 
 import { AcpFileSystemService } from '../../../../src/acp/AcpFileSystemService.js';
-import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemotePathProfile,
+  parseAcpRemotePath,
+} from '../../../../src/acp/AcpRemotePath.js';
 import {
   AcpServiceContext,
   getAcpFileSystemService,
@@ -395,7 +398,7 @@ describe('AcpServiceContext session isolation', () => {
     const initialLease = initialFileSystem.tryAcquireMutationLease([
       '/workspace/shared.ts',
     ]);
-    initialLease.markUncertain('/workspace/shared.ts');
+    initialLease.markUncertain(parseAcpRemotePath('/workspace/shared.ts'));
     initialLease.release();
 
     AcpServiceContext.destroySession('session-a');
@@ -446,7 +449,9 @@ describe('AcpServiceContext session isolation', () => {
     const recoveredLease = afterReconnectFileSystem.tryAcquireMutationLease([
       '/workspace/shared.ts',
     ]);
-    expect(recoveredLease.isCurrent('/workspace/shared.ts')).toBe(true);
+    expect(recoveredLease.isCurrent(parseAcpRemotePath('/workspace/shared.ts'))).toBe(
+      true
+    );
     recoveredLease.release();
   });
 

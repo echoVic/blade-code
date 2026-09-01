@@ -10,7 +10,10 @@ import {
   getAcpFileRequestCoordinator,
 } from '../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
-import { createAcpRemotePathProfile } from '../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemotePathProfile,
+  parseAcpRemotePath,
+} from '../../src/acp/AcpRemotePath.js';
 import { commitVerifiedRemoteTextMutation } from '../../src/acp/RemoteTextMutation.js';
 import { parseApplyPatch } from '../../src/tools/builtin/file/applyPatchParser.js';
 import {
@@ -228,6 +231,35 @@ describe('ApplyPatch local transaction', () => {
 });
 
 describe('ApplyPatch ACP remote transaction', () => {
+  it('parses a self-owned mutation path once and reuses that identity through lease transitions', async () => {
+    const client = new ControlledFileClient();
+    client.files.set('/remote/file.ts', 'before\n');
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'parse-once-mutation',
+      { readTextFile: true, writeTextFile: true },
+      remoteProfile
+    );
+    const parseSpy = vi.spyOn(service, 'parsePath');
+
+    await expect(
+      commitVerifiedRemoteTextMutation({
+        service,
+        filePath: '/remote/file.ts',
+        previous: { exists: true, content: 'before\n' },
+        intendedContent: 'after\n',
+        operation: 'edit',
+        recordAccess: true,
+      })
+    ).resolves.toMatchObject({ writeVerified: true });
+
+    expect(parseSpy).toHaveBeenCalledTimes(1);
+    expect(service.checkRemoteAccess('/remote/file.ts', 'after\n')).toBe('current');
+    parseSpy.mockRestore();
+  });
+
   it('self-owned verified remote mutations release their lease so the same path can be reacquired immediately', async () => {
     const client = new ControlledFileClient();
     client.files.set('/remote/file.ts', 'const value = false;\n');
@@ -267,7 +299,7 @@ describe('ApplyPatch ACP remote transaction', () => {
     });
 
     const lease = service.tryAcquireMutationLease(['/remote/file.ts']);
-    expect(lease.isCurrent('/remote/file.ts')).toBe(true);
+    expect(lease.isCurrent(parseAcpRemotePath('/remote/file.ts'))).toBe(true);
     lease.release();
   });
 
@@ -315,7 +347,7 @@ describe('ApplyPatch ACP remote transaction', () => {
     });
 
     const lease = service.tryAcquireMutationLease(['/remote/file.ts']);
-    expect(lease.isCurrent('/remote/file.ts')).toBe(true);
+    expect(lease.isCurrent(parseAcpRemotePath('/remote/file.ts'))).toBe(true);
     lease.release();
   });
 
@@ -392,36 +424,27 @@ describe('ApplyPatch ACP remote transaction', () => {
       purpose: string;
       content?: string;
     }> = [];
-    const originalReadTextFile = service.readTextFile.bind(service);
-    const originalWriteTextFile = service.writeTextFile.bind(service);
-    const originalReadTextFileIfExists = service.readTextFileIfExists.bind(service);
-    vi.spyOn(service, 'readTextFile').mockImplementation(async (filePath, options) => {
-      requests.push({
-        kind: 'read',
-        path: filePath,
-        purpose: options?.purpose ?? 'preflight',
-      });
-      return originalReadTextFile(filePath, options);
-    });
-    vi.spyOn(service, 'writeTextFile').mockImplementation(
-      async (filePath, content, options) => {
+    const originalReadTextFile = service.readTextFileForParsedPath.bind(service);
+    const originalWriteTextFile = service.writeTextFileForParsedPath.bind(service);
+    vi.spyOn(service, 'readTextFileForParsedPath').mockImplementation(
+      async (remotePath, options) => {
+        requests.push({
+          kind: 'read',
+          path: remotePath.wirePath,
+          purpose: options.purpose,
+        });
+        return originalReadTextFile(remotePath, options);
+      }
+    );
+    vi.spyOn(service, 'writeTextFileForParsedPath').mockImplementation(
+      async (remotePath, content, options) => {
         requests.push({
           kind: 'write',
-          path: filePath,
+          path: remotePath.wirePath,
           purpose: options?.purpose ?? 'mutation',
           content,
         });
-        return originalWriteTextFile(filePath, content, options);
-      }
-    );
-    vi.spyOn(service, 'readTextFileIfExists').mockImplementation(
-      async (filePath, options) => {
-        requests.push({
-          kind: 'read',
-          path: filePath,
-          purpose: options?.purpose ?? 'preflight',
-        });
-        return originalReadTextFileIfExists(filePath, options);
+        return originalWriteTextFile(remotePath, content, options);
       }
     );
 
@@ -545,6 +568,47 @@ describe('ApplyPatch ACP remote transaction', () => {
     expect(thrown.sideEffectsUncertain).toBe(false);
     expect(client.files.get('/remote/first.ts')).toBe('const first = false;\n');
     expect(client.files.get('/remote/second.ts')).toBe('const second = false;\n');
+  });
+
+  it('parses each attempted change once and reuses it for forward and rollback lease transitions', async () => {
+    const { client, service } = createAcpRemoteFileSystem(
+      new Map([
+        ['/remote/first.ts', 'const first = false;\n'],
+        ['/remote/second.ts', 'const second = false;\n'],
+      ]),
+      'transaction-parse-once'
+    );
+    client.enqueueWriteBehavior({ kind: 'apply-and-ack' });
+    client.enqueueWriteBehavior({
+      kind: 'leave-old-and-throw',
+      error: new Error('remote write failed'),
+    });
+    const operations = parseApplyPatch(`*** Begin Patch
+*** Update File: first.ts
+@@
+-const first = false;
++const first = true;
+*** Update File: second.ts
+@@
+-const second = false;
++const second = true;
+*** End Patch`);
+    const prepared = await prepareRemotePatchTransactionForTest(
+      operations,
+      '/remote',
+      service
+    );
+    const parseSpy = vi.spyOn(service, 'parsePath');
+
+    await expect(
+      commitPreparedRemotePatchTransactionForTest(prepared, service)
+    ).rejects.toMatchObject({
+      name: 'AcpRemotePatchTransactionError',
+      sideEffectsUncertain: false,
+    });
+
+    expect(parseSpy.mock.calls).toEqual([['/remote/first.ts'], ['/remote/second.ts']]);
+    parseSpy.mockRestore();
   });
 
   it('verifies rollback and reports sideEffectsUncertain=false after restoring prior writes', async () => {
@@ -1123,16 +1187,16 @@ describe('ApplyPatch ACP remote transaction', () => {
         startedAt: number;
         deadlineAt: number | undefined;
       }> = [];
-      const originalWriteTextFile = service.writeTextFile.bind(service);
-      vi.spyOn(service, 'writeTextFile').mockImplementation(
-        async (filePath, content, options) => {
+      const originalWriteTextFile = service.writeTextFileForParsedPath.bind(service);
+      vi.spyOn(service, 'writeTextFileForParsedPath').mockImplementation(
+        async (remotePath, content, options) => {
           writeCalls.push({
-            path: filePath,
+            path: remotePath.wirePath,
             purpose: options?.purpose ?? 'mutation',
             startedAt: Date.now(),
             deadlineAt: options?.deadlineAt,
           });
-          return originalWriteTextFile(filePath, content, options);
+          return originalWriteTextFile(remotePath, content, options);
         }
       );
 
@@ -1250,14 +1314,15 @@ describe('ApplyPatch ACP remote transaction', () => {
         deadlineAt: number | undefined;
         purpose: string;
       }> = [];
-      const originalReadTextFileIfExists = service.readTextFileIfExists.bind(service);
-      vi.spyOn(service, 'readTextFileIfExists').mockImplementation(
-        async (filePath, options) => {
+      const originalReadTextFileIfExists =
+        service.readTextFileIfExistsForParsedPath.bind(service);
+      vi.spyOn(service, 'readTextFileIfExistsForParsedPath').mockImplementation(
+        async (remotePath, options) => {
           readbackCalls.push({
             deadlineAt: options?.deadlineAt,
             purpose: options?.purpose ?? 'preflight',
           });
-          return originalReadTextFileIfExists(filePath, options);
+          return originalReadTextFileIfExists(remotePath, options);
         }
       );
       const operations = parseApplyPatch(`*** Begin Patch
@@ -1308,35 +1373,32 @@ describe('ApplyPatch ACP remote transaction', () => {
         deadlineAt: number | undefined;
         purpose: string;
       }> = [];
-      const originalReadTextFile = service.readTextFile.bind(service);
-      const originalWriteTextFile = service.writeTextFile.bind(service);
-      const originalReadTextFileIfExists = service.readTextFileIfExists.bind(service);
-      vi.spyOn(service, 'readTextFile').mockImplementation(
-        async (filePath, options) => {
-          readCalls.push({
-            phase: readCalls.length === 0 ? 'preflight' : 'compare',
-            deadlineAt: options?.deadlineAt,
-            purpose: options?.purpose ?? 'preflight',
-          });
-          return originalReadTextFile(filePath, options);
+      const originalReadTextFile = service.readTextFileForParsedPath.bind(service);
+      const originalWriteTextFile = service.writeTextFileForParsedPath.bind(service);
+      vi.spyOn(service, 'readTextFileForParsedPath').mockImplementation(
+        async (remotePath, options) => {
+          if (options.purpose === 'readback') {
+            readbackCalls.push({
+              deadlineAt: options.deadlineAt,
+              purpose: options.purpose,
+            });
+          } else {
+            readCalls.push({
+              phase: readCalls.length === 0 ? 'preflight' : 'compare',
+              deadlineAt: options.deadlineAt,
+              purpose: options.purpose,
+            });
+          }
+          return originalReadTextFile(remotePath, options);
         }
       );
-      vi.spyOn(service, 'writeTextFile').mockImplementation(
-        async (filePath, content, options) => {
+      vi.spyOn(service, 'writeTextFileForParsedPath').mockImplementation(
+        async (remotePath, content, options) => {
           writeCalls.push({
             deadlineAt: options?.deadlineAt,
             purpose: options?.purpose ?? 'mutation',
           });
-          return originalWriteTextFile(filePath, content, options);
-        }
-      );
-      vi.spyOn(service, 'readTextFileIfExists').mockImplementation(
-        async (filePath, options) => {
-          readbackCalls.push({
-            deadlineAt: options?.deadlineAt,
-            purpose: options?.purpose ?? 'preflight',
-          });
-          return originalReadTextFileIfExists(filePath, options);
+          return originalWriteTextFile(remotePath, content, options);
         }
       );
       const operations = parseApplyPatch(`*** Begin Patch
@@ -1509,15 +1571,15 @@ describe('ApplyPatch ACP remote transaction', () => {
         'forward-deadline-stops-next-change'
       );
       const writeCalls: Array<{ path: string; purpose: string }> = [];
-      const originalWriteTextFile = service.writeTextFile.bind(service);
-      vi.spyOn(service, 'writeTextFile').mockImplementation(
-        async (filePath, content, options) => {
+      const originalWriteTextFile = service.writeTextFileForParsedPath.bind(service);
+      vi.spyOn(service, 'writeTextFileForParsedPath').mockImplementation(
+        async (remotePath, content, options) => {
           void content;
           writeCalls.push({
-            path: filePath,
+            path: remotePath.wirePath,
             purpose: options?.purpose ?? 'mutation',
           });
-          return originalWriteTextFile(filePath, content, options);
+          return originalWriteTextFile(remotePath, content, options);
         }
       );
       const operations = parseApplyPatch(`*** Begin Patch
@@ -1539,20 +1601,24 @@ describe('ApplyPatch ACP remote transaction', () => {
 +const fourth = true;
 *** End Patch`);
       const readbackCalls: Array<{ path: string; purpose: string }> = [];
-      const originalReadTextFileIfExists = service.readTextFileIfExists.bind(service);
+      const originalReadTextFileIfExists =
+        service.readTextFileIfExistsForParsedPath.bind(service);
       const prepared = await prepareRemotePatchTransactionForTest(
         operations,
         '/remote',
         service
       );
-      vi.spyOn(service, 'readTextFileIfExists').mockImplementation(
-        async (filePath, options) => {
+      vi.spyOn(service, 'readTextFileIfExistsForParsedPath').mockImplementation(
+        async (remotePath, options) => {
           readbackCalls.push({
-            path: filePath,
+            path: remotePath.wirePath,
             purpose: options?.purpose ?? 'preflight',
           });
-          const result = await originalReadTextFileIfExists(filePath, options);
-          if (filePath === '/remote/third.ts' && options?.purpose === 'readback') {
+          const result = await originalReadTextFileIfExists(remotePath, options);
+          if (
+            remotePath.wirePath === '/remote/third.ts' &&
+            options?.purpose === 'readback'
+          ) {
             vi.setSystemTime(prepared.forwardDeadlineAt + 1);
           }
           return result;
@@ -1620,11 +1686,12 @@ describe('ApplyPatch ACP remote transaction', () => {
     });
     client.enqueueWriteBehavior({ kind: 'apply-and-ack' });
     const readbackPurposes: string[] = [];
-    const originalReadTextFileIfExists = service.readTextFileIfExists.bind(service);
-    vi.spyOn(service, 'readTextFileIfExists').mockImplementation(
-      async (filePath, options) => {
+    const originalReadTextFileIfExists =
+      service.readTextFileIfExistsForParsedPath.bind(service);
+    vi.spyOn(service, 'readTextFileIfExistsForParsedPath').mockImplementation(
+      async (remotePath, options) => {
         readbackPurposes.push(options?.purpose ?? 'preflight');
-        return originalReadTextFileIfExists(filePath, options);
+        return originalReadTextFileIfExists(remotePath, options);
       }
     );
 

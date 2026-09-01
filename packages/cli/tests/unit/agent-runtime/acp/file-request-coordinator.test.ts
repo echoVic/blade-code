@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import * as acp from '@agentclientprotocol/sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -9,12 +8,16 @@ import {
   AcpRemoteFileBoundaryError,
   type AcpRemoteMutationLease,
   type AcpRemoteMutationRecoveryLease,
+  createAcpRemoteConnectionPathIdentity,
   getAcpFileRequestCoordinator,
   MAX_ACP_NORMAL_FILE_REQUESTS,
   MAX_ACP_REMOTE_FILE_REQUESTS,
   MAX_ACP_REMOTE_MUTATION_PATHS,
 } from '../../../../src/acp/AcpFileRequestCoordinator.js';
-import { normalizeAcpRemotePath } from '../../../../src/acp/AcpFileSystemService.js';
+import {
+  type AcpRemotePath,
+  parseAcpRemotePath,
+} from '../../../../src/acp/AcpRemotePath.js';
 import {
   closePairedAcpHarness,
   createPairedAcpAppHarness,
@@ -52,10 +55,88 @@ async function expectEventually(check: () => void): Promise<void> {
   }
 }
 
-function makeIdentity(filePath: string): string {
-  return `acp-remote-connection-path:${createHash('sha256')
-    .update(normalizeAcpRemotePath(filePath))
-    .digest('hex')}`;
+type RemotePathFixture = string | AcpRemotePath;
+type TestCoordinator = ReturnType<typeof getAcpFileRequestCoordinator>;
+
+function makeRemotePath(filePath: RemotePathFixture): AcpRemotePath {
+  return typeof filePath === 'string' ? parseAcpRemotePath(filePath) : filePath;
+}
+
+function makeRemotePaths(filePaths: readonly RemotePathFixture[]): AcpRemotePath[] {
+  return filePaths.map((filePath) => makeRemotePath(filePath));
+}
+
+function makeIdentity(filePath: RemotePathFixture): string {
+  return createAcpRemoteConnectionPathIdentity(makeRemotePath(filePath));
+}
+
+function requestPath(filePath: RemotePathFixture): {
+  pathIdentity: string;
+  exactPathIdentity: string;
+} {
+  const remotePath = makeRemotePath(filePath);
+  return {
+    pathIdentity: createAcpRemoteConnectionPathIdentity(remotePath),
+    exactPathIdentity: remotePath.exactIdentity,
+  };
+}
+
+function beginUserReadPermitForPath(
+  coordinator: TestCoordinator,
+  filePath: RemotePathFixture,
+  sessionId: string
+) {
+  return coordinator.beginUserRead(makeRemotePath(filePath), sessionId);
+}
+
+function acquireMutationLeaseForPaths(
+  coordinator: TestCoordinator,
+  filePaths: readonly RemotePathFixture[],
+  sessionId: string
+) {
+  return coordinator.tryAcquireMutationLease(makeRemotePaths(filePaths), sessionId);
+}
+
+function mutationGenerationFor(
+  lease: AcpRemoteMutationLease,
+  filePath: RemotePathFixture
+): number {
+  return lease.generationFor(makeRemotePath(filePath));
+}
+
+function mutationIsCurrent(
+  lease: AcpRemoteMutationLease,
+  filePath: RemotePathFixture
+): boolean {
+  return lease.isCurrent(makeRemotePath(filePath));
+}
+
+function markMutationForwardVerified(
+  lease: AcpRemoteMutationLease,
+  filePath: RemotePathFixture
+): void {
+  lease.markForwardVerified(makeRemotePath(filePath));
+}
+
+function markMutationDefinite(
+  lease: AcpRemoteMutationLease,
+  filePath: RemotePathFixture
+): void {
+  lease.markDefinite(makeRemotePath(filePath));
+}
+
+function markMutationUncertain(
+  lease: AcpRemoteMutationLease,
+  filePath: RemotePathFixture
+): void {
+  lease.markUncertain(makeRemotePath(filePath));
+}
+
+function beginMutationRecovery(
+  lease: AcpRemoteMutationLease,
+  filePath: RemotePathFixture
+): AcpRemoteMutationRecoveryLease {
+  return lease.beginRecovery(makeRemotePath(filePath));
 }
 
 function createSyntheticMutationLease(
@@ -63,29 +144,31 @@ function createSyntheticMutationLease(
   filePath: string,
   generation: number
 ): AcpRemoteMutationLease {
-  const pathIdentity = makeIdentity(filePath);
+  const remotePath = makeRemotePath(filePath);
+  const pathIdentity = makeIdentity(remotePath);
   return {
     sessionId,
     pathIdentities: [pathIdentity],
-    generationFor(path: string): number {
-      return path === filePath ? generation : 0;
+    generationFor(path: AcpRemotePath): number {
+      return path.exactIdentity === remotePath.exactIdentity ? generation : 0;
     },
-    isCurrent(path: string): boolean {
-      return path === filePath;
+    isCurrent(path: AcpRemotePath): boolean {
+      return path.exactIdentity === remotePath.exactIdentity;
     },
-    markForwardVerified(_filePath: string): void {
+    markForwardVerified(_filePath: AcpRemotePath): void {
       // Synthetic negative-path lease does not own coordinator state.
     },
-    markDefinite(_filePath: string): void {
+    markDefinite(_filePath: AcpRemotePath): void {
       // Synthetic negative-path lease does not own coordinator state.
     },
-    markUncertain(_filePath: string): void {
+    markUncertain(_filePath: AcpRemotePath): void {
       // Synthetic negative-path lease does not own coordinator state.
     },
-    beginRecovery(path: string): AcpRemoteMutationRecoveryLease {
+    beginRecovery(path: AcpRemotePath): AcpRemoteMutationRecoveryLease {
       return {
         generation: this.generationFor(path),
-        pathIdentity,
+        pathIdentity: makeIdentity(path),
+        exactPathIdentity: path.exactIdentity,
         finish(_outcome: 'restored' | 'uncertain'): void {
           // Synthetic negative-path lease does not own coordinator state.
         },
@@ -158,6 +241,9 @@ describe('AcpFileRequestCoordinator', () => {
     expect(makeIdentity('C:\\\\temp\\\\file.txt')).toMatch(
       /^acp-remote-connection-path:[0-9a-f]{64}$/
     );
+    const opaqueIdentity = makeIdentity('C:/Sensitive/secret-file.txt');
+    expect(opaqueIdentity).not.toContain('Sensitive');
+    expect(opaqueIdentity).not.toContain('secret-file.txt');
     expect(JSON.stringify(first.getStatsForTests())).not.toContain('/tmp/file.txt');
     expect(JSON.stringify(first.getStatsForTests())).not.toContain('C:/temp/file.txt');
   });
@@ -180,7 +266,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity('/repo/file.txt'),
+      ...requestPath('/repo/file.txt'),
       deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
       signal: controller.signal,
       dispatch: (cancellationSignal) =>
@@ -229,7 +315,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity('/repo/late-fulfill.txt'),
+      ...requestPath('/repo/late-fulfill.txt'),
       deadlineAt,
       dispatch: (cancellationSignal) =>
         harness.agentConnection.request(
@@ -242,7 +328,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity('/repo/late-reject.txt'),
+      ...requestPath('/repo/late-reject.txt'),
       deadlineAt,
       dispatch: (cancellationSignal) =>
         harness.agentConnection.request(
@@ -297,7 +383,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-a',
-        pathIdentity: makeIdentity('/repo/success.txt'),
+        ...requestPath('/repo/success.txt'),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         signal,
         dispatch: (cancellationSignal) =>
@@ -313,7 +399,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-a',
-        pathIdentity: makeIdentity('/repo/error.txt'),
+        ...requestPath('/repo/error.txt'),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         signal,
         dispatch: (cancellationSignal) =>
@@ -329,7 +415,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-a',
-        pathIdentity: makeIdentity('/repo/sync-throw.txt'),
+        ...requestPath('/repo/sync-throw.txt'),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         signal,
         dispatch: () => {
@@ -341,7 +427,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity('/repo/abort.txt'),
+      ...requestPath('/repo/abort.txt'),
       deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
       signal: abortController.signal,
       dispatch: (cancellationSignal) =>
@@ -357,7 +443,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity('/repo/timeout.txt'),
+      ...requestPath('/repo/timeout.txt'),
       deadlineAt: Date.now() + 25,
       signal,
       dispatch: (cancellationSignal) =>
@@ -374,7 +460,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity('/repo/close.txt'),
+      ...requestPath('/repo/close.txt'),
       deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
       signal,
       dispatch: (cancellationSignal) =>
@@ -417,7 +503,7 @@ describe('AcpFileRequestCoordinator', () => {
           operation: 'read',
           purpose: 'user-read',
           sessionId: `session-${index}`,
-          pathIdentity: makeIdentity(`/repo/normal-${index}.txt`),
+          ...requestPath(`/repo/normal-${index}.txt`),
           deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
           dispatch: (cancellationSignal) =>
             harness.agentConnection.request(
@@ -427,7 +513,8 @@ describe('AcpFileRequestCoordinator', () => {
             ),
         })
     );
-    const recoveryPermit = coordinator.beginUserRead(
+    const recoveryPermit = beginUserReadPermitForPath(
+      coordinator,
       '/repo/recovery.txt',
       'recovery-session'
     );
@@ -435,7 +522,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'rollback',
       sessionId: 'recovery-session',
-      pathIdentity: makeIdentity('/repo/recovery.txt'),
+      ...requestPath('/repo/recovery.txt'),
       deadlineAt: Date.now() + ACP_REMOTE_PATCH_COMPENSATION_TIMEOUT_MS,
       userReadPermit: recoveryPermit,
       dispatch: (cancellationSignal) =>
@@ -457,7 +544,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'overflow-session',
-        pathIdentity: makeIdentity('/repo/overflow.txt'),
+        ...requestPath('/repo/overflow.txt'),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         dispatch: () => Promise.resolve({ content: 'overflow' }),
       })
@@ -494,7 +581,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity(path),
+      ...requestPath(path),
       deadlineAt: Date.now() + 25,
       dispatch: (cancellationSignal) =>
         harness.agentConnection.request(
@@ -510,7 +597,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-a',
-        pathIdentity: makeIdentity(path),
+        ...requestPath(path),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         dispatch: () => Promise.resolve({ content: 'duplicate' }),
       })
@@ -520,7 +607,11 @@ describe('AcpFileRequestCoordinator', () => {
       requestPending: false,
     });
 
-    const mutationLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    const mutationLease = acquireMutationLeaseForPaths(
+      coordinator,
+      [path],
+      'session-a'
+    );
     expect(mutationLease.pathIdentities).toEqual([makeIdentity(path)]);
 
     vi.advanceTimersByTime(26);
@@ -536,7 +627,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-a',
-        pathIdentity: makeIdentity(path),
+        ...requestPath(path),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         dispatch: () => Promise.resolve({ content: 'duplicate-detached' }),
       })
@@ -553,13 +644,71 @@ describe('AcpFileRequestCoordinator', () => {
     expect(unhandled).toEqual([]);
   });
 
+  it('rejects a collision-equivalent exact-distinct Windows Read without sharing its RPC result', async () => {
+    const blocked = deferred<void>();
+    let dispatchCount = 0;
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp
+          .client({ name: 'coordinator-windows-read-collision-client' })
+          .onRequest(acp.CLIENT_METHODS.fs_read_text_file, async () => {
+            dispatchCount += 1;
+            await blocked.promise;
+            return { content: 'exact content' };
+          })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const exactPath = 'C:\\repo\\Folder\\File.txt';
+    const aliasPath = 'c:/repo/folder/file.txt';
+
+    const exactRead = coordinator.runRequest({
+      operation: 'read',
+      purpose: 'user-read',
+      sessionId: 'session-a',
+      ...requestPath(exactPath),
+      deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+      dispatch: (cancellationSignal) =>
+        harness.agentConnection.request(
+          acp.CLIENT_METHODS.fs_read_text_file,
+          { path: exactPath, sessionId: 'session-a' },
+          { cancellationSignal }
+        ),
+    });
+    await Promise.resolve();
+
+    await expect(
+      coordinator.runRequest({
+        operation: 'read',
+        purpose: 'user-read',
+        sessionId: 'session-a',
+        ...requestPath(aliasPath),
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        dispatch: () => {
+          dispatchCount += 1;
+          return Promise.resolve({ content: 'alias content' });
+        },
+      })
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+    expect(dispatchCount).toBe(1);
+
+    blocked.resolve();
+    await expect(exactRead).resolves.toEqual({ content: 'exact content' });
+    expect(dispatchCount).toBe(1);
+  });
+
   it('atomically acquires sorted mutation paths and rejects the 1025th retained path without eviction', async () => {
     const harness = trackHarness(
       createPairedAcpAppHarness(acp.client({ name: 'coordinator-mutation-client' }))
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
 
-    const deduped = coordinator.tryAcquireMutationLease(
+    const deduped = acquireMutationLeaseForPaths(
+      coordinator,
       ['/repo/b.txt', '/repo/a.txt', '/repo/a.txt'],
       'session-a'
     );
@@ -570,7 +719,7 @@ describe('AcpFileRequestCoordinator', () => {
 
     await expect(
       Promise.resolve().then(() =>
-        coordinator.tryAcquireMutationLease(['/repo/a.txt'], 'session-b')
+        acquireMutationLeaseForPaths(coordinator, ['/repo/a.txt'], 'session-b')
       )
     ).rejects.toMatchObject({
       reason: 'busy',
@@ -578,7 +727,8 @@ describe('AcpFileRequestCoordinator', () => {
       requestPending: false,
     });
 
-    const independent = coordinator.tryAcquireMutationLease(
+    const independent = acquireMutationLeaseForPaths(
+      coordinator,
       ['/repo/c.txt'],
       'session-c'
     );
@@ -589,7 +739,8 @@ describe('AcpFileRequestCoordinator', () => {
       independent.pathIdentities.length -
       deduped.pathIdentities.length;
     const retained = Array.from({ length: retainedCount }, (_, index) =>
-      coordinator.tryAcquireMutationLease(
+      acquireMutationLeaseForPaths(
+        coordinator,
         [`/repo/retained-${index}.txt`],
         `session-retained-${index}`
       )
@@ -597,7 +748,11 @@ describe('AcpFileRequestCoordinator', () => {
 
     await expect(
       Promise.resolve().then(() =>
-        coordinator.tryAcquireMutationLease(['/repo/overflow.txt'], 'session-overflow')
+        acquireMutationLeaseForPaths(
+          coordinator,
+          ['/repo/overflow.txt'],
+          'session-overflow'
+        )
       )
     ).rejects.toMatchObject({
       reason: 'capacity',
@@ -607,7 +762,8 @@ describe('AcpFileRequestCoordinator', () => {
 
     await expect(
       Promise.resolve().then(() =>
-        coordinator.tryAcquireMutationLease(
+        acquireMutationLeaseForPaths(
+          coordinator,
           ['/repo/a.txt', '/repo/overflow-2.txt'],
           'session-overlap'
         )
@@ -640,19 +796,21 @@ describe('AcpFileRequestCoordinator', () => {
       )
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
-    const lease = coordinator.tryAcquireMutationLease(['/repo/file.txt'], 'session-a');
+    const path = 'C:\\repo\\Folder\\File.txt';
+    const aliasPath = 'c:/repo/folder/file.txt';
+    const lease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
 
     const writePromise = coordinator.runRequest({
       operation: 'write',
       purpose: 'mutation',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity('/repo/file.txt'),
+      ...requestPath(path),
       deadlineAt: Date.now() + 25,
       lease,
       dispatch: (cancellationSignal) =>
         harness.agentConnection.request(
           acp.CLIENT_METHODS.fs_write_text_file,
-          { path: '/repo/file.txt', content: 'updated', sessionId: 'session-a' },
+          { path, content: 'updated', sessionId: 'session-a' },
           { cancellationSignal }
         ),
     });
@@ -669,6 +827,16 @@ describe('AcpFileRequestCoordinator', () => {
       pendingWrites: 1,
       needsRead: 0,
     });
+    await expect(
+      Promise.resolve().then(() =>
+        beginUserReadPermitForPath(coordinator, aliasPath, 'session-a')
+      )
+    ).rejects.toMatchObject({ reason: 'busy' });
+    await expect(
+      Promise.resolve().then(() =>
+        acquireMutationLeaseForPaths(coordinator, [aliasPath], 'session-a')
+      )
+    ).rejects.toMatchObject({ reason: 'busy' });
 
     blocked.resolve();
     vi.runAllTimers();
@@ -689,23 +857,26 @@ describe('AcpFileRequestCoordinator', () => {
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const firstPath = '/repo/verified-a.txt';
     const secondPath = '/repo/verified-b.txt';
-    const lease = coordinator.tryAcquireMutationLease(
+    const lease = acquireMutationLeaseForPaths(
+      coordinator,
       [firstPath, secondPath],
       'session-a'
     );
 
-    lease.markForwardVerified(firstPath);
+    markMutationForwardVerified(lease, firstPath);
     expect(coordinator.getStatsForTests()).toMatchObject({
       mutationPaths: 2,
       needsRead: 0,
       activeMutations: 2,
       pendingWrites: 0,
     });
-    expect(lease.isCurrent(firstPath)).toBe(true);
-    expect(lease.isCurrent(secondPath)).toBe(true);
+    expect(mutationIsCurrent(lease, firstPath)).toBe(true);
+    expect(mutationIsCurrent(lease, secondPath)).toBe(true);
 
     await expect(
-      Promise.resolve().then(() => coordinator.beginUserRead(firstPath, 'session-a'))
+      Promise.resolve().then(() =>
+        beginUserReadPermitForPath(coordinator, firstPath, 'session-a')
+      )
     ).rejects.toMatchObject({
       reason: 'busy',
       dispatched: false,
@@ -718,7 +889,9 @@ describe('AcpFileRequestCoordinator', () => {
       pendingWrites: 0,
     });
     await expect(
-      Promise.resolve().then(() => coordinator.beginUserRead(firstPath, 'session-b'))
+      Promise.resolve().then(() =>
+        beginUserReadPermitForPath(coordinator, firstPath, 'session-b')
+      )
     ).rejects.toMatchObject({
       reason: 'busy',
       dispatched: false,
@@ -741,12 +914,13 @@ describe('AcpFileRequestCoordinator', () => {
       pendingWrites: 0,
     });
 
-    const nextLease = coordinator.tryAcquireMutationLease(
+    const nextLease = acquireMutationLeaseForPaths(
+      coordinator,
       [firstPath, secondPath],
       'session-b'
     );
-    expect(nextLease.isCurrent(firstPath)).toBe(true);
-    expect(nextLease.isCurrent(secondPath)).toBe(true);
+    expect(mutationIsCurrent(nextLease, firstPath)).toBe(true);
+    expect(mutationIsCurrent(nextLease, secondPath)).toBe(true);
     nextLease.release();
   });
 
@@ -758,10 +932,10 @@ describe('AcpFileRequestCoordinator', () => {
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const path = '/repo/forward-verified-recovery.txt';
-    const lease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    const lease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
 
-    lease.markForwardVerified(path);
-    const recoveryLease = lease.beginRecovery(path);
+    markMutationForwardVerified(lease, path);
+    const recoveryLease = beginMutationRecovery(lease, path);
     expect(recoveryLease.pathIdentity).toBe(makeIdentity(path));
     recoveryLease.finish('restored');
     expect(coordinator.getStatsForTests()).toMatchObject({
@@ -771,11 +945,15 @@ describe('AcpFileRequestCoordinator', () => {
       needsRead: 0,
     });
 
-    const releasedLease = coordinator.tryAcquireMutationLease([path], 'session-a');
-    releasedLease.markForwardVerified(path);
+    const releasedLease = acquireMutationLeaseForPaths(
+      coordinator,
+      [path],
+      'session-a'
+    );
+    markMutationForwardVerified(releasedLease, path);
     releasedLease.release();
     await expect(
-      Promise.resolve().then(() => releasedLease.beginRecovery(path))
+      Promise.resolve().then(() => beginMutationRecovery(releasedLease, path))
     ).rejects.toMatchObject({
       reason: 'stale-reconciliation',
       dispatched: false,
@@ -798,12 +976,13 @@ describe('AcpFileRequestCoordinator', () => {
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const firstPath = '/repo/reconcile-a.txt';
     const secondPath = '/repo/reconcile-b.txt';
-    const lease = coordinator.tryAcquireMutationLease(
+    const lease = acquireMutationLeaseForPaths(
+      coordinator,
       [firstPath, secondPath],
       'session-a'
     );
 
-    lease.markForwardVerified(firstPath);
+    markMutationForwardVerified(lease, firstPath);
     expect(coordinator.getStatsForTests()).toMatchObject({
       mutationPaths: 2,
       activeMutations: 2,
@@ -819,20 +998,150 @@ describe('AcpFileRequestCoordinator', () => {
       needsRead: 1,
     });
 
-    const permit = coordinator.beginUserRead(firstPath, 'session-a');
-    expect(permit.lane).toBe('recovery');
     await expect(
-      Promise.resolve().then(() => coordinator.beginUserRead(firstPath, 'session-b'))
+      Promise.resolve().then(() =>
+        beginUserReadPermitForPath(coordinator, firstPath, 'session-b')
+      )
     ).rejects.toMatchObject({
       reason: 'busy',
       dispatched: false,
       requestPending: false,
     });
+    const permit = beginUserReadPermitForPath(coordinator, firstPath, 'session-a');
+    expect(permit.lane).toBe('recovery');
 
-    const cleanLease = coordinator.tryAcquireMutationLease([secondPath], 'session-b');
-    expect(cleanLease.isCurrent(secondPath)).toBe(true);
+    const cleanLease = acquireMutationLeaseForPaths(
+      coordinator,
+      [secondPath],
+      'session-b'
+    );
+    expect(mutationIsCurrent(cleanLease, secondPath)).toBe(true);
     cleanLease.release();
     permit.fail();
+  });
+
+  it('does not treat a Windows exact-distinct alias as current and does not let it clear the active collision fence', async () => {
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp.client({ name: 'coordinator-windows-exact-origin-client' })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const exactPath = 'C:\\repo\\Folder\\File.txt';
+    const aliasPath = 'c:/repo/folder/file.txt';
+    const lease = acquireMutationLeaseForPaths(coordinator, [exactPath], 'session-a');
+
+    expect(mutationIsCurrent(lease, exactPath)).toBe(true);
+    expect(mutationIsCurrent(lease, aliasPath)).toBe(false);
+    expect(mutationGenerationFor(lease, exactPath)).toBeGreaterThan(0);
+    expect(mutationGenerationFor(lease, aliasPath)).toBe(0);
+    let aliasWriteDispatches = 0;
+    await expect(
+      coordinator.runRequest({
+        operation: 'write',
+        purpose: 'mutation',
+        sessionId: 'session-a',
+        ...requestPath(aliasPath),
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        lease,
+        dispatch: () => {
+          aliasWriteDispatches += 1;
+          return Promise.resolve({});
+        },
+      })
+    ).rejects.toMatchObject({ reason: 'busy', dispatched: false });
+    expect(aliasWriteDispatches).toBe(0);
+
+    markMutationDefinite(lease, aliasPath);
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 1,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+    await expect(
+      Promise.resolve().then(() =>
+        acquireMutationLeaseForPaths(coordinator, [aliasPath], 'session-b')
+      )
+    ).rejects.toMatchObject({ reason: 'busy' });
+
+    lease.release();
+  });
+
+  it('does not allow a Windows case alias to reconcile a same-session needs-read fence', async () => {
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp.client({ name: 'coordinator-windows-alias-recovery-client' })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const exactPath = 'C:\\repo\\Folder\\File.txt';
+    const aliasPath = 'c:/repo/folder/file.txt';
+    const lease = acquireMutationLeaseForPaths(coordinator, [exactPath], 'session-a');
+
+    markMutationUncertain(lease, exactPath);
+    lease.release();
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 1,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 1,
+    });
+
+    await expect(
+      Promise.resolve().then(() =>
+        beginUserReadPermitForPath(coordinator, aliasPath, 'session-a')
+      )
+    ).rejects.toMatchObject({
+      reason: 'busy',
+      dispatched: false,
+      requestPending: false,
+    });
+    await expect(
+      Promise.resolve().then(() =>
+        acquireMutationLeaseForPaths(coordinator, [aliasPath], 'session-a')
+      )
+    ).rejects.toMatchObject({ reason: 'busy' });
+
+    const permit = beginUserReadPermitForPath(coordinator, exactPath, 'session-a');
+    expect(permit.lane).toBe('recovery');
+    permit.fail();
+  });
+
+  it('keeps POSIX case variants independent for mutation fencing', async () => {
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp.client({ name: 'coordinator-posix-case-independence-client' })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const upperPath = '/repo/File.txt';
+    const lowerPath = '/repo/file.txt';
+    const upperLease = acquireMutationLeaseForPaths(
+      coordinator,
+      [upperPath],
+      'session-a'
+    );
+    const lowerLease = acquireMutationLeaseForPaths(
+      coordinator,
+      [lowerPath],
+      'session-b'
+    );
+
+    expect(mutationIsCurrent(upperLease, upperPath)).toBe(true);
+    expect(mutationIsCurrent(lowerLease, lowerPath)).toBe(true);
+    expect(makeRemotePath(upperPath).collisionIdentity).not.toBe(
+      makeRemotePath(lowerPath).collisionIdentity
+    );
+    expect(coordinator.getStatsForTests()).toMatchObject({
+      mutationPaths: 2,
+      activeMutations: 2,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+
+    upperLease.release();
+    lowerLease.release();
   });
 
   it('ignores stale active-lease mutators and recovery after release plus reacquire on the same session/path', async () => {
@@ -844,18 +1153,20 @@ describe('AcpFileRequestCoordinator', () => {
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const path = '/repo/stale-active-lease.txt';
 
-    const staleUncertainLease = coordinator.tryAcquireMutationLease(
+    const staleUncertainLease = acquireMutationLeaseForPaths(
+      coordinator,
       [path],
       'session-a'
     );
     staleUncertainLease.release();
-    const currentAfterUncertain = coordinator.tryAcquireMutationLease(
+    const currentAfterUncertain = acquireMutationLeaseForPaths(
+      coordinator,
       [path],
       'session-a'
     );
-    expect(staleUncertainLease.isCurrent(path)).toBe(false);
-    expect(currentAfterUncertain.isCurrent(path)).toBe(true);
-    staleUncertainLease.markUncertain(path);
+    expect(mutationIsCurrent(staleUncertainLease, path)).toBe(false);
+    expect(mutationIsCurrent(currentAfterUncertain, path)).toBe(true);
+    markMutationUncertain(staleUncertainLease, path);
     expect(coordinator.getStatsForTests()).toMatchObject({
       mutationPaths: 1,
       activeMutations: 1,
@@ -864,16 +1175,18 @@ describe('AcpFileRequestCoordinator', () => {
     });
     currentAfterUncertain.release();
 
-    const staleForwardVerifiedLease = coordinator.tryAcquireMutationLease(
+    const staleForwardVerifiedLease = acquireMutationLeaseForPaths(
+      coordinator,
       [path],
       'session-a'
     );
     staleForwardVerifiedLease.release();
-    const currentAfterForwardVerified = coordinator.tryAcquireMutationLease(
+    const currentAfterForwardVerified = acquireMutationLeaseForPaths(
+      coordinator,
       [path],
       'session-a'
     );
-    staleForwardVerifiedLease.markForwardVerified(path);
+    markMutationForwardVerified(staleForwardVerifiedLease, path);
     expect(coordinator.getStatsForTests()).toMatchObject({
       mutationPaths: 1,
       activeMutations: 1,
@@ -882,13 +1195,18 @@ describe('AcpFileRequestCoordinator', () => {
     });
     currentAfterForwardVerified.release();
 
-    const staleDefiniteLease = coordinator.tryAcquireMutationLease([path], 'session-a');
-    staleDefiniteLease.release();
-    const currentAfterDefinite = coordinator.tryAcquireMutationLease(
+    const staleDefiniteLease = acquireMutationLeaseForPaths(
+      coordinator,
       [path],
       'session-a'
     );
-    staleDefiniteLease.markDefinite(path);
+    staleDefiniteLease.release();
+    const currentAfterDefinite = acquireMutationLeaseForPaths(
+      coordinator,
+      [path],
+      'session-a'
+    );
+    markMutationDefinite(staleDefiniteLease, path);
     expect(coordinator.getStatsForTests()).toMatchObject({
       mutationPaths: 1,
       activeMutations: 1,
@@ -897,21 +1215,26 @@ describe('AcpFileRequestCoordinator', () => {
     });
     currentAfterDefinite.release();
 
-    const staleRecoveryLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    const staleRecoveryLease = acquireMutationLeaseForPaths(
+      coordinator,
+      [path],
+      'session-a'
+    );
     staleRecoveryLease.release();
-    const currentAfterRecovery = coordinator.tryAcquireMutationLease(
+    const currentAfterRecovery = acquireMutationLeaseForPaths(
+      coordinator,
       [path],
       'session-a'
     );
     await expect(
-      Promise.resolve().then(() => staleRecoveryLease.beginRecovery(path))
+      Promise.resolve().then(() => beginMutationRecovery(staleRecoveryLease, path))
     ).rejects.toMatchObject({
       reason: 'stale-reconciliation',
       dispatched: false,
       requestPending: false,
     });
     staleRecoveryLease.release();
-    expect(currentAfterRecovery.isCurrent(path)).toBe(true);
+    expect(mutationIsCurrent(currentAfterRecovery, path)).toBe(true);
     expect(coordinator.getStatsForTests()).toMatchObject({
       mutationPaths: 1,
       activeMutations: 1,
@@ -930,9 +1253,9 @@ describe('AcpFileRequestCoordinator', () => {
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const path = '/repo/stale-recovery-finish.txt';
 
-    const firstLease = coordinator.tryAcquireMutationLease([path], 'session-a');
-    firstLease.markUncertain(path);
-    const firstRecovery = firstLease.beginRecovery(path);
+    const firstLease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
+    markMutationUncertain(firstLease, path);
+    const firstRecovery = beginMutationRecovery(firstLease, path);
     firstRecovery.finish('restored');
     firstRecovery.finish('restored');
     firstLease.release();
@@ -943,10 +1266,10 @@ describe('AcpFileRequestCoordinator', () => {
       needsRead: 0,
     });
 
-    const secondLease = coordinator.tryAcquireMutationLease([path], 'session-a');
-    secondLease.markUncertain(path);
-    const secondRecovery = secondLease.beginRecovery(path);
-    expect(secondLease.isCurrent(path)).toBe(false);
+    const secondLease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
+    markMutationUncertain(secondLease, path);
+    const secondRecovery = beginMutationRecovery(secondLease, path);
+    expect(mutationIsCurrent(secondLease, path)).toBe(false);
     expect(coordinator.getStatsForTests()).toMatchObject({
       mutationPaths: 1,
       activeMutations: 1,
@@ -954,7 +1277,9 @@ describe('AcpFileRequestCoordinator', () => {
       needsRead: 0,
     });
     await expect(
-      Promise.resolve().then(() => coordinator.beginUserRead(path, 'session-a'))
+      Promise.resolve().then(() =>
+        beginUserReadPermitForPath(coordinator, path, 'session-a')
+      )
     ).rejects.toMatchObject({
       reason: 'busy',
       dispatched: false,
@@ -962,7 +1287,7 @@ describe('AcpFileRequestCoordinator', () => {
     });
     await expect(
       Promise.resolve().then(() =>
-        coordinator.tryAcquireMutationLease([path], 'session-b')
+        acquireMutationLeaseForPaths(coordinator, [path], 'session-b')
       )
     ).rejects.toMatchObject({
       reason: 'busy',
@@ -987,7 +1312,9 @@ describe('AcpFileRequestCoordinator', () => {
     });
 
     await expect(
-      Promise.resolve().then(() => coordinator.beginUserRead(path, 'session-a'))
+      Promise.resolve().then(() =>
+        beginUserReadPermitForPath(coordinator, path, 'session-a')
+      )
     ).rejects.toMatchObject({
       reason: 'busy',
       dispatched: false,
@@ -1009,7 +1336,7 @@ describe('AcpFileRequestCoordinator', () => {
       needsRead: 1,
     });
 
-    const permit = coordinator.beginUserRead(path, 'session-a');
+    const permit = beginUserReadPermitForPath(coordinator, path, 'session-a');
     expect(permit.lane).toBe('recovery');
     permit.fail();
     secondLease.release();
@@ -1024,8 +1351,8 @@ describe('AcpFileRequestCoordinator', () => {
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const path = '/repo/stale-release-after-definite.txt';
 
-    const staleLease = coordinator.tryAcquireMutationLease([path], 'session-a');
-    staleLease.markDefinite(path);
+    const staleLease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
+    markMutationDefinite(staleLease, path);
     expect(coordinator.getStatsForTests()).toMatchObject({
       mutationPaths: 0,
       activeMutations: 0,
@@ -1033,14 +1360,14 @@ describe('AcpFileRequestCoordinator', () => {
       needsRead: 0,
     });
 
-    const currentLease = coordinator.tryAcquireMutationLease([path], 'session-a');
-    expect(staleLease.isCurrent(path)).toBe(false);
-    expect(currentLease.isCurrent(path)).toBe(true);
+    const currentLease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
+    expect(mutationIsCurrent(staleLease, path)).toBe(false);
+    expect(mutationIsCurrent(currentLease, path)).toBe(true);
 
     staleLease.commitVerified();
     staleLease.release();
 
-    expect(currentLease.isCurrent(path)).toBe(true);
+    expect(mutationIsCurrent(currentLease, path)).toBe(true);
     expect(coordinator.getStatsForTests()).toMatchObject({
       mutationPaths: 1,
       activeMutations: 1,
@@ -1075,7 +1402,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'normal-expired',
-      pathIdentity: makeIdentity('/repo/expired-normal.txt'),
+      ...requestPath('/repo/expired-normal.txt'),
       deadlineAt: Date.now(),
       dispatch: (cancellationSignal) =>
         harness.agentConnection.request(
@@ -1101,7 +1428,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'reused-normal',
-        pathIdentity: makeIdentity('/repo/expired-normal.txt'),
+        ...requestPath('/repo/expired-normal.txt'),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         dispatch: (cancellationSignal) =>
           harness.agentConnection.request(
@@ -1113,12 +1440,14 @@ describe('AcpFileRequestCoordinator', () => {
     ).resolves.toEqual({ content: 'late' });
     expect(dispatchCount).toBe(1);
 
-    const mutationLease = coordinator.tryAcquireMutationLease(
+    const mutationLease = acquireMutationLeaseForPaths(
+      coordinator,
       ['/repo/recovery-expired.txt'],
       'session-a'
     );
-    mutationLease.markUncertain('/repo/recovery-expired.txt');
-    const recoveryPermit = coordinator.beginUserRead(
+    markMutationUncertain(mutationLease, '/repo/recovery-expired.txt');
+    const recoveryPermit = beginUserReadPermitForPath(
+      coordinator,
       '/repo/recovery-expired.txt',
       'session-a'
     );
@@ -1127,7 +1456,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity('/repo/recovery-expired.txt'),
+      ...requestPath('/repo/recovery-expired.txt'),
       deadlineAt: Date.now(),
       userReadPermit: recoveryPermit,
       dispatch: (cancellationSignal) =>
@@ -1154,9 +1483,10 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-a',
-        pathIdentity: makeIdentity('/repo/recovery-expired.txt'),
+        ...requestPath('/repo/recovery-expired.txt'),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
-        userReadPermit: coordinator.beginUserRead(
+        userReadPermit: beginUserReadPermitForPath(
+          coordinator,
           '/repo/recovery-expired.txt',
           'session-a'
         ),
@@ -1193,16 +1523,15 @@ describe('AcpFileRequestCoordinator', () => {
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const path = '/repo/file.txt';
-    const pathIdentity = makeIdentity(path);
-    const activeLease = coordinator.tryAcquireMutationLease([path], 'session-a');
-    const staleGeneration = activeLease.generationFor(path);
+    const activeLease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
+    const staleGeneration = mutationGenerationFor(activeLease, path);
 
     await expect(
       coordinator.runRequest({
         operation: 'write',
         purpose: 'mutation',
         sessionId: 'session-a',
-        pathIdentity,
+        ...requestPath(path),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         dispatch: (cancellationSignal) =>
           harness.agentConnection.request(
@@ -1228,7 +1557,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'write',
         purpose: 'mutation',
         sessionId: 'session-a',
-        pathIdentity,
+        ...requestPath(path),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         lease: foreignLease,
         dispatch: (cancellationSignal) =>
@@ -1246,13 +1575,13 @@ describe('AcpFileRequestCoordinator', () => {
     expect(dispatchCount).toBe(0);
 
     activeLease.release();
-    const currentLease = coordinator.tryAcquireMutationLease([path], 'session-a');
+    const currentLease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
     await expect(
       coordinator.runRequest({
         operation: 'write',
         purpose: 'mutation',
         sessionId: 'session-a',
-        pathIdentity,
+        ...requestPath(path),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         lease: activeLease,
         dispatch: (cancellationSignal) =>
@@ -1274,14 +1603,14 @@ describe('AcpFileRequestCoordinator', () => {
       needsRead: 0,
     });
 
-    currentLease.markUncertain(path);
-    const recoveryLease = currentLease.beginRecovery(path);
+    markMutationUncertain(currentLease, path);
+    const recoveryLease = beginMutationRecovery(currentLease, path);
     await expect(
       coordinator.runRequest({
         operation: 'write',
         purpose: 'rollback',
         sessionId: 'session-a',
-        pathIdentity,
+        ...requestPath(path),
         deadlineAt: Date.now() + ACP_REMOTE_PATCH_COMPENSATION_TIMEOUT_MS,
         lease: recoveryLease,
         dispatch: (cancellationSignal) =>
@@ -1316,13 +1645,11 @@ describe('AcpFileRequestCoordinator', () => {
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const path = '/repo/shared.txt';
-    const pathIdentity = makeIdentity(path);
-
     const detachedRead = coordinator.runRequest({
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity,
+      ...requestPath(path),
       deadlineAt: Date.now() + 25,
       dispatch: (cancellationSignal) =>
         harness.agentConnection.request(
@@ -1340,9 +1667,9 @@ describe('AcpFileRequestCoordinator', () => {
       requestPending: true,
     });
 
-    const lease = coordinator.tryAcquireMutationLease([path], 'session-a');
-    lease.markUncertain(path);
-    const permit = coordinator.beginUserRead(path, 'session-a');
+    const lease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
+    markMutationUncertain(lease, path);
+    const permit = beginUserReadPermitForPath(coordinator, path, 'session-a');
     expect(permit.lane).toBe('recovery');
 
     await expect(
@@ -1350,7 +1677,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-b',
-        pathIdentity,
+        ...requestPath(path),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         dispatch: () => Promise.resolve({ content: 'other-session' }),
       })
@@ -1365,7 +1692,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-a',
-        pathIdentity,
+        ...requestPath(path),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         userReadPermit: permit,
         dispatch: (cancellationSignal) =>
@@ -1397,7 +1724,8 @@ describe('AcpFileRequestCoordinator', () => {
       pendingWriteHarness.agentConnection
     );
     const pendingPath = '/repo/pending-write.txt';
-    const pendingLease = pendingWriteCoordinator.tryAcquireMutationLease(
+    const pendingLease = acquireMutationLeaseForPaths(
+      pendingWriteCoordinator,
       [pendingPath],
       'session-a'
     );
@@ -1405,7 +1733,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'write',
       purpose: 'mutation',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity(pendingPath),
+      ...requestPath(pendingPath),
       deadlineAt: Date.now() + 25,
       lease: pendingLease,
       dispatch: (cancellationSignal) =>
@@ -1425,7 +1753,7 @@ describe('AcpFileRequestCoordinator', () => {
     });
     await expect(
       Promise.resolve().then(() =>
-        pendingWriteCoordinator.beginUserRead(pendingPath, 'session-a')
+        beginUserReadPermitForPath(pendingWriteCoordinator, pendingPath, 'session-a')
       )
     ).rejects.toMatchObject({
       reason: 'busy',
@@ -1459,13 +1787,11 @@ describe('AcpFileRequestCoordinator', () => {
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const path = '/repo/aba.txt';
-    const pathIdentity = makeIdentity(path);
-
     const detachedRead = coordinator.runRequest({
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-detached',
-      pathIdentity,
+      ...requestPath(path),
       deadlineAt: Date.now() + 25,
       dispatch: (cancellationSignal) =>
         harness.agentConnection.request(
@@ -1483,14 +1809,14 @@ describe('AcpFileRequestCoordinator', () => {
       requestPending: true,
     });
 
-    const lease = coordinator.tryAcquireMutationLease([path], 'session-a');
-    lease.markUncertain(path);
-    const permit = coordinator.beginUserRead(path, 'session-a');
+    const lease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
+    markMutationUncertain(lease, path);
+    const permit = beginUserReadPermitForPath(coordinator, path, 'session-a');
     const recoveryRead = coordinator.runRequest({
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity,
+      ...requestPath(path),
       deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
       userReadPermit: permit,
       dispatch: (cancellationSignal) =>
@@ -1514,7 +1840,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-b',
-        pathIdentity,
+        ...requestPath(path),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         dispatch: () => Promise.resolve({ content: 'duplicate-normal' }),
       })
@@ -1528,7 +1854,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-a',
-        pathIdentity,
+        ...requestPath(path),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         userReadPermit: permit,
         dispatch: () => Promise.resolve({ content: 'duplicate-recovery' }),
@@ -1567,7 +1893,8 @@ describe('AcpFileRequestCoordinator', () => {
       )
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
-    const writeLease = coordinator.tryAcquireMutationLease(
+    const writeLease = acquireMutationLeaseForPaths(
+      coordinator,
       ['/repo/file.txt'],
       'session-a'
     );
@@ -1576,7 +1903,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'write',
       purpose: 'mutation',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity('/repo/file.txt'),
+      ...requestPath('/repo/file.txt'),
       deadlineAt: Date.now() + 25,
       lease: writeLease,
       dispatch: (cancellationSignal) =>
@@ -1603,9 +1930,13 @@ describe('AcpFileRequestCoordinator', () => {
         needsRead: 1,
       });
     });
-    const stalePermit = coordinator.beginUserRead('/repo/file.txt', 'session-a');
+    const stalePermit = beginUserReadPermitForPath(
+      coordinator,
+      '/repo/file.txt',
+      'session-a'
+    );
     expect(stalePermit.lane).toBe('recovery');
-    const recoveryLease = writeLease.beginRecovery('/repo/file.txt');
+    const recoveryLease = beginMutationRecovery(writeLease, '/repo/file.txt');
     recoveryLease.finish('uncertain');
     writeLease.release();
     writeLease.release();
@@ -1620,6 +1951,69 @@ describe('AcpFileRequestCoordinator', () => {
 
     stalePermit.fail();
     expect(coordinator.getStatsForTests().needsRead).toBeGreaterThanOrEqual(0);
+  });
+
+  it('does not let an old recovery permit impersonate or delete a reused exact generation', async () => {
+    const harness = trackHarness(
+      createPairedAcpAppHarness(
+        acp.client({ name: 'coordinator-recovery-permit-aba-client' })
+      )
+    );
+    const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
+    const path = '/repo/recovery-permit-aba.txt';
+
+    const firstLease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
+    markMutationUncertain(firstLease, path);
+    firstLease.release();
+    const stalePermit = beginUserReadPermitForPath(coordinator, path, 'session-a');
+    const firstRead = await coordinator.runRequest({
+      operation: 'read',
+      purpose: 'user-read',
+      sessionId: 'session-a',
+      ...requestPath(path),
+      deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+      userReadPermit: stalePermit,
+      dispatch: () => Promise.resolve({ content: 'first generation' }),
+    });
+    expect(firstRead).toEqual({ content: 'first generation' });
+    stalePermit.complete('content', () => undefined);
+
+    const secondLease = acquireMutationLeaseForPaths(coordinator, [path], 'session-a');
+    markMutationUncertain(secondLease, path);
+    secondLease.release();
+    const currentPermit = beginUserReadPermitForPath(coordinator, path, 'session-a');
+    expect(currentPermit.generation).toBe(stalePermit.generation);
+
+    let staleDispatches = 0;
+    await expect(
+      coordinator.runRequest({
+        operation: 'read',
+        purpose: 'user-read',
+        sessionId: 'session-a',
+        ...requestPath(path),
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        userReadPermit: stalePermit,
+        dispatch: () => {
+          staleDispatches += 1;
+          return Promise.resolve({ content: 'stale generation' });
+        },
+      })
+    ).rejects.toMatchObject({ reason: 'stale-reconciliation' });
+    expect(staleDispatches).toBe(0);
+
+    stalePermit.fail();
+    await expect(
+      coordinator.runRequest({
+        operation: 'read',
+        purpose: 'user-read',
+        sessionId: 'session-a',
+        ...requestPath(path),
+        deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
+        userReadPermit: currentPermit,
+        dispatch: () => Promise.resolve({ content: 'current generation' }),
+      })
+    ).resolves.toEqual({ content: 'current generation' });
+    currentPermit.complete('content', () => undefined);
   });
 
   it('clears the connection generation and rejects local waiters when the connection closes', async () => {
@@ -1639,7 +2033,7 @@ describe('AcpFileRequestCoordinator', () => {
       operation: 'read',
       purpose: 'user-read',
       sessionId: 'session-a',
-      pathIdentity: makeIdentity('/repo/file.txt'),
+      ...requestPath('/repo/file.txt'),
       deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
       dispatch: (cancellationSignal) =>
         harness.agentConnection.request(
@@ -1669,7 +2063,7 @@ describe('AcpFileRequestCoordinator', () => {
         operation: 'read',
         purpose: 'user-read',
         sessionId: 'session-a',
-        pathIdentity: makeIdentity('/repo/file.txt'),
+        ...requestPath('/repo/file.txt'),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         dispatch: () => Promise.resolve({ content: 'new' }),
       })

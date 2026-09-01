@@ -32,11 +32,12 @@ import {
   closeRejectToken,
   createCoordinatorMutableState,
   createMutationLease,
-  dedupeNormalizedPathIdentities,
+  dedupeRemotePaths,
   handleSettlementState,
   type RequestToken,
   reserveRequestToken,
 } from './AcpFileRequestCoordinator.state.js';
+import type { AcpRemotePath } from './AcpRemotePath.js';
 
 export type {
   AcpFileRequestCoordinatorStats,
@@ -147,7 +148,7 @@ export class AcpFileRequestCoordinator {
       pending = spec.dispatch(childController.signal);
       token.dispatched = true;
       token.requestPending = true;
-      this.observeUnderlyingSettlement(token, pending, spec);
+      this.observeUnderlyingSettlement(token, pending);
     } catch (error) {
       this.clearLocalBoundaryResources(token);
       this.cleanupReservedButUndispatchedToken(token);
@@ -163,26 +164,29 @@ export class AcpFileRequestCoordinator {
     return token.localPromise;
   }
 
-  precheckMutationPaths(normalizedPaths: readonly string[], sessionId: string): void {
+  precheckMutationPaths(paths: readonly AcpRemotePath[], sessionId: string): void {
     this.assertOpen('write');
-    const identities = dedupeNormalizedPathIdentities(normalizedPaths);
+    const identities = dedupeRemotePaths(paths).map(
+      createAcpRemoteConnectionPathIdentity
+    );
     this.assertMutationPathsAvailable(identities);
     void sessionId;
   }
 
   tryAcquireMutationLease(
-    normalizedPaths: readonly string[],
+    paths: readonly AcpRemotePath[],
     sessionId: string
   ): AcpRemoteMutationLease {
     this.assertOpen('write');
-    const pathIdentities = dedupeNormalizedPathIdentities(normalizedPaths);
+    const dedupedPaths = dedupeRemotePaths(paths);
+    const pathIdentities = dedupedPaths.map(createAcpRemoteConnectionPathIdentity);
     this.assertMutationPathsAvailable(pathIdentities);
-    return createMutationLease(this.state, pathIdentities, sessionId);
+    return createMutationLease(this.state, dedupedPaths, sessionId);
   }
 
-  beginUserRead(normalizedPath: string, sessionId: string): AcpRemoteUserReadPermit {
+  beginUserRead(path: AcpRemotePath, sessionId: string): AcpRemoteUserReadPermit {
     this.assertOpen('read');
-    return beginUserReadPermit(this.state, normalizedPath, sessionId);
+    return beginUserReadPermit(this.state, path, sessionId);
   }
 
   getStatsForTests(): AcpFileRequestCoordinatorStats {
@@ -219,22 +223,20 @@ export class AcpFileRequestCoordinator {
 
   private observeUnderlyingSettlement<T>(
     token: RequestToken<T>,
-    pending: Promise<T>,
-    spec: AcpRemoteFileRequestSpec<T>
+    pending: Promise<T>
   ): void {
     pending.then(
       (value) => {
-        this.handleSettlement(token, spec, { status: 'fulfilled', value });
+        this.handleSettlement(token, { status: 'fulfilled', value });
       },
       (reason) => {
-        this.handleSettlement(token, spec, { status: 'rejected', reason });
+        this.handleSettlement(token, { status: 'rejected', reason });
       }
     );
   }
 
   private handleSettlement<T>(
     token: RequestToken<T>,
-    spec: AcpRemoteFileRequestSpec<T>,
     result: { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown }
   ): void {
     if (this.state.closed) {
@@ -242,7 +244,7 @@ export class AcpFileRequestCoordinator {
       this.cleanupToken(token);
       return;
     }
-    handleSettlementState(this.state, token, spec);
+    handleSettlementState(this.state, token);
 
     if (token.boundaryError) {
       this.clearLocalBoundaryResources(token);

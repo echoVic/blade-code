@@ -8,6 +8,7 @@ import {
   getAcpFileRequestCoordinator,
 } from '../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
+import { parseAcpRemotePath } from '../../src/acp/AcpRemotePath.js';
 import {
   AcpServiceContext,
   getAcpFileSystemService,
@@ -981,7 +982,7 @@ describe('ApplyPatch builtin tool', () => {
     const quarantineLease = service.tryAcquireMutationLease([
       'C:\\workspace\\source.ts',
     ]);
-    quarantineLease.markUncertain('C:\\workspace\\source.ts');
+    quarantineLease.markUncertain(parseAcpRemotePath('C:\\workspace\\source.ts'));
     quarantineLease.release();
 
     const result = await applyPatchTool.execute(
@@ -1089,9 +1090,10 @@ describe('ApplyPatch builtin tool', () => {
 
     await expect(execution).resolves.toMatchObject({ success: true });
     expect(acquireOpaqueLocksSpy).toHaveBeenCalledWith(
-      opaqueKeys,
+      expect.arrayContaining(opaqueKeys),
       expect.any(Function)
     );
+    expect(acquireOpaqueLocksSpy.mock.calls[0]?.[0]).toHaveLength(opaqueKeys.length);
     expect(tryAcquireSpy).toHaveBeenCalledTimes(1);
     expect(tryAcquireSpy).toHaveBeenCalledWith([
       'C:\\workspace\\alpha.ts',
@@ -1100,7 +1102,7 @@ describe('ApplyPatch builtin tool', () => {
     expect(events).toEqual([
       `workspace:${createRemotePatchWorkspaceIdentity(sessionId, 'C:\\workspace')}`,
       'workspace:entered',
-      `opaque:${JSON.stringify(opaqueKeys)}`,
+      `opaque:${JSON.stringify(acquireOpaqueLocksSpy.mock.calls[0]?.[0])}`,
       'lease:["C:\\\\workspace\\\\alpha.ts","C:\\\\workspace\\\\zeta.ts"]',
     ]);
     workspaceSpy.mockRestore();
@@ -1118,7 +1120,7 @@ describe('ApplyPatch builtin tool', () => {
     });
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const conflictingLease = coordinator.tryAcquireMutationLease(
-      ['C:\\workspace\\first.ts'],
+      [parseAcpRemotePath('C:\\workspace\\first.ts')],
       'foreign-session'
     );
     const workspaceIdentity = createRemotePatchWorkspaceIdentity(
@@ -1162,10 +1164,12 @@ describe('ApplyPatch builtin tool', () => {
       FileLockManager.getInstance().acquireOpaqueLocks(opaqueKeys, async () => 'ok')
     ).resolves.toBe('ok');
     const cleanLease = coordinator.tryAcquireMutationLease(
-      ['C:\\workspace\\second.ts'],
+      [parseAcpRemotePath('C:\\workspace\\second.ts')],
       sessionId
     );
-    expect(cleanLease.isCurrent('C:\\workspace\\second.ts')).toBe(true);
+    expect(cleanLease.isCurrent(parseAcpRemotePath('C:\\workspace\\second.ts'))).toBe(
+      true
+    );
     cleanLease.release();
     conflictingLease.release();
   });

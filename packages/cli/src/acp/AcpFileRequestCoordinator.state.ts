@@ -11,6 +11,7 @@ import {
   MAX_ACP_NORMAL_FILE_REQUESTS,
   MAX_ACP_REMOTE_MUTATION_PATHS,
 } from './AcpFileRequestCoordinator.contracts.js';
+import type { AcpRemotePath } from './AcpRemotePath.js';
 
 type MutationPathStateKind =
   | 'active-mutation'
@@ -22,17 +23,22 @@ type MutationLeaseKind = 'active' | 'recovery';
 
 export interface MutationPathState {
   readonly pathIdentity: string;
+  readonly exactPathIdentity: string;
   readonly sessionId: string;
   generation: number;
   kind: MutationPathStateKind;
   leaseKind: MutationLeaseKind;
   leaseId: symbol;
+  reconciliationPermitId?: symbol;
   forwardVerified?: boolean;
   retiredGenerations?: Set<number>;
 }
 
 export interface ReadTokenState {
   readonly pathIdentity: string;
+  readonly exactPathIdentity: string;
+  readonly generation: number | undefined;
+  readonly permitId: symbol | undefined;
   settled: boolean;
   detached: boolean;
 }
@@ -43,6 +49,7 @@ export interface RequestToken<T> {
   readonly purpose: AcpRemoteFileRequestPurpose;
   readonly sessionId: string;
   readonly pathIdentity: string;
+  readonly exactPathIdentity: string;
   readonly controller: AbortController;
   readonly localPromise: Promise<T>;
   resolve(value: T): void;
@@ -62,13 +69,16 @@ export interface RequestToken<T> {
     generation: number;
     leaseId: symbol;
     leaseKind: MutationLeaseKind;
+    exactPathIdentity: string;
   };
 }
 
 export interface RecoveryPermitState {
   readonly sessionId: string;
   readonly pathIdentity: string;
+  readonly exactPathIdentity: string;
   readonly generation: number;
+  readonly permitId: symbol;
   active: boolean;
 }
 
@@ -86,6 +96,7 @@ interface ActiveLeaseMetadata {
   readonly sessionId: string;
   readonly leaseId: symbol;
   readonly generations: Map<string, number>;
+  readonly exactPathIdentities: Map<string, string>;
   released: boolean;
 }
 
@@ -94,6 +105,7 @@ interface RecoveryLeaseMetadata {
   readonly sessionId: string;
   readonly leaseId: symbol;
   readonly pathIdentity: string;
+  readonly exactPathIdentity: string;
   readonly generation: number;
   finished: boolean;
 }
@@ -101,6 +113,7 @@ interface RecoveryLeaseMetadata {
 type LeaseMetadata = ActiveLeaseMetadata | RecoveryLeaseMetadata;
 
 const leaseMetadata = new WeakMap<object, LeaseMetadata>();
+const userReadPermitMetadata = new WeakMap<object, { readonly permitId: symbol }>();
 
 export function createCoordinatorMutableState(): AcpCoordinatorMutableState {
   return {
@@ -130,6 +143,7 @@ export function createLocalPromiseToken<T>(
     purpose: spec.purpose,
     sessionId: spec.sessionId,
     pathIdentity: spec.pathIdentity,
+    exactPathIdentity: spec.exactPathIdentity,
     controller: new AbortController(),
     localPromise,
     resolve,
@@ -174,33 +188,57 @@ export function reserveRequestToken<T>(
   const metadata = getLeaseMetadata(spec.lease);
   if (spec.operation === 'write' && metadata) {
     if (metadata.kind === 'active') {
+      const exactPathIdentity = metadata.exactPathIdentities.get(spec.pathIdentity);
+      if (exactPathIdentity === undefined) {
+        throw new AcpRemoteFileBoundaryError('busy', spec.operation, false, false);
+      }
       token.writeLeaseSnapshot = {
         generation: metadata.generations.get(spec.pathIdentity) ?? 0,
         leaseId: metadata.leaseId,
         leaseKind: metadata.kind,
+        exactPathIdentity,
       };
     } else {
       token.writeLeaseSnapshot = {
         generation: metadata.generation,
         leaseId: metadata.leaseId,
         leaseKind: metadata.kind,
+        exactPathIdentity: metadata.exactPathIdentity,
       };
     }
   }
   if (spec.operation === 'read') {
+    const permitMetadata = spec.userReadPermit
+      ? userReadPermitMetadata.get(spec.userReadPermit)
+      : undefined;
     token.readToken = {
       pathIdentity: spec.pathIdentity,
+      exactPathIdentity: spec.exactPathIdentity,
+      generation: spec.userReadPermit?.generation,
+      permitId: permitMetadata?.permitId,
       detached: false,
       settled: false,
     };
     state.readTokens.set(spec.pathIdentity, token.readToken);
     if (spec.userReadPermit?.lane === 'recovery') {
       const mutationState = state.mutationStates.get(spec.pathIdentity);
-      if (mutationState) {
-        mutationState.kind = 'reconciling';
-      }
       const permitState = state.recoveryPermits.get(spec.pathIdentity);
-      if (permitState) {
+      if (
+        mutationState?.sessionId === spec.sessionId &&
+        mutationState.exactPathIdentity === spec.exactPathIdentity &&
+        mutationState.generation === spec.userReadPermit.generation &&
+        permitState !== undefined &&
+        permitMetadata !== undefined &&
+        permitState.permitId === permitMetadata.permitId
+      ) {
+        mutationState.kind = 'reconciling';
+        mutationState.reconciliationPermitId = permitState.permitId;
+      }
+      if (
+        permitState?.sessionId === spec.sessionId &&
+        permitState.exactPathIdentity === spec.exactPathIdentity &&
+        permitState.generation === spec.userReadPermit.generation
+      ) {
         permitState.active = true;
       }
     }
@@ -291,12 +329,16 @@ export function boundaryRejectToken<T>(
   }
   if (token.operation === 'write' && token.dispatched) {
     const mutationState = state.mutationStates.get(token.pathIdentity);
+    const writeLeaseSnapshot = token.writeLeaseSnapshot;
     if (
       mutationState &&
+      writeLeaseSnapshot &&
       mutationState.sessionId === token.sessionId &&
-      mutationState.generation === token.writeLeaseSnapshot?.generation &&
-      mutationState.leaseId === token.writeLeaseSnapshot.leaseId &&
-      mutationState.leaseKind === token.writeLeaseSnapshot.leaseKind
+      mutationState.exactPathIdentity === token.exactPathIdentity &&
+      mutationState.exactPathIdentity === writeLeaseSnapshot.exactPathIdentity &&
+      mutationState.generation === writeLeaseSnapshot.generation &&
+      mutationState.leaseId === writeLeaseSnapshot.leaseId &&
+      mutationState.leaseKind === writeLeaseSnapshot.leaseKind
     ) {
       mutationState.kind = 'pending-write';
       mutationState.forwardVerified = false;
@@ -361,35 +403,60 @@ export function assertMutationPathsAvailable(
   }
 }
 
-export function dedupeNormalizedPathIdentities(
-  normalizedPaths: readonly string[]
-): string[] {
-  return [
-    ...new Set(normalizedPaths.map(createAcpRemoteConnectionPathIdentity)),
-  ].sort();
+export function dedupeRemotePaths(
+  remotePaths: readonly AcpRemotePath[]
+): AcpRemotePath[] {
+  const pathsByIdentity = new Map<string, AcpRemotePath>();
+  for (const remotePath of remotePaths) {
+    const pathIdentity = createAcpRemoteConnectionPathIdentity(remotePath);
+    if (!pathsByIdentity.has(pathIdentity)) {
+      pathsByIdentity.set(pathIdentity, remotePath);
+    }
+  }
+  return [...pathsByIdentity.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, remotePath]) => remotePath);
 }
 
 export function createMutationLease(
   state: AcpCoordinatorMutableState,
-  pathIdentities: readonly string[],
+  remotePaths: readonly AcpRemotePath[],
   sessionId: string
 ): AcpRemoteMutationLease {
+  const pathEntries = dedupeRemotePaths(remotePaths).map((remotePath) => ({
+    pathIdentity: createAcpRemoteConnectionPathIdentity(remotePath),
+    exactPathIdentity: remotePath.exactIdentity,
+  }));
+  return createMutationLeaseForIdentities(state, pathEntries, sessionId);
+}
+
+function createMutationLeaseForIdentities(
+  state: AcpCoordinatorMutableState,
+  pathEntries: ReadonlyArray<{
+    readonly pathIdentity: string;
+    readonly exactPathIdentity: string;
+  }>,
+  sessionId: string
+): AcpRemoteMutationLease {
+  const pathIdentities = pathEntries.map(({ pathIdentity }) => pathIdentity);
   const activeLeaseId = Symbol('acp-mutation-lease');
   const activeMetadata: ActiveLeaseMetadata = {
     kind: 'active',
     sessionId,
     leaseId: activeLeaseId,
     generations: new Map<string, number>(),
+    exactPathIdentities: new Map<string, string>(),
     released: false,
   };
   const generations = new Map<string, number>();
-  for (const pathIdentity of pathIdentities) {
+  for (const { pathIdentity, exactPathIdentity } of pathEntries) {
     const existing = state.mutationStates.get(pathIdentity);
     const generation = (existing?.generation ?? 0) + 1;
     generations.set(pathIdentity, generation);
     activeMetadata.generations.set(pathIdentity, generation);
+    activeMetadata.exactPathIdentities.set(pathIdentity, exactPathIdentity);
   }
-  for (const pathIdentity of pathIdentities) {
+  for (const { pathIdentity, exactPathIdentity } of pathEntries) {
     const existing = state.mutationStates.get(pathIdentity);
     const retiredGenerations = new Set(existing?.retiredGenerations ?? []);
     if (existing) {
@@ -397,6 +464,7 @@ export function createMutationLease(
     }
     state.mutationStates.set(pathIdentity, {
       pathIdentity,
+      exactPathIdentity,
       sessionId,
       generation: generations.get(pathIdentity) ?? 1,
       kind: 'active-mutation',
@@ -410,7 +478,8 @@ export function createMutationLease(
   let released = false;
   let verified = false;
   const getExactCurrentActiveState = (
-    pathIdentity: string
+    pathIdentity: string,
+    exactPathIdentity: string
   ): MutationPathState | undefined => {
     const generation = generations.get(pathIdentity);
     const mutationState = state.mutationStates.get(pathIdentity);
@@ -419,6 +488,7 @@ export function createMutationLease(
       !mutationState ||
       mutationState.sessionId !== sessionId ||
       mutationState.generation !== generation ||
+      mutationState.exactPathIdentity !== exactPathIdentity ||
       mutationState.leaseKind !== 'active' ||
       mutationState.leaseId !== activeLeaseId
     ) {
@@ -429,46 +499,63 @@ export function createMutationLease(
   const lease: AcpRemoteMutationLease = {
     sessionId,
     pathIdentities,
-    generationFor(filePath: string): number {
-      return generations.get(createAcpRemoteConnectionPathIdentity(filePath)) ?? 0;
+    generationFor(remotePath: AcpRemotePath): number {
+      const pathIdentity = createAcpRemoteConnectionPathIdentity(remotePath);
+      const mutationState = getExactCurrentActiveState(
+        pathIdentity,
+        remotePath.exactIdentity
+      );
+      return mutationState?.generation ?? 0;
     },
-    isCurrent(filePath: string): boolean {
-      const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
-      return !released && getExactCurrentActiveState(pathIdentity) !== undefined;
+    isCurrent(remotePath: AcpRemotePath): boolean {
+      const pathIdentity = createAcpRemoteConnectionPathIdentity(remotePath);
+      return (
+        !released &&
+        getExactCurrentActiveState(pathIdentity, remotePath.exactIdentity) !== undefined
+      );
     },
-    markForwardVerified(filePath: string): void {
+    markForwardVerified(remotePath: AcpRemotePath): void {
       if (released) {
         return;
       }
-      const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
-      const mutationState = getExactCurrentActiveState(pathIdentity);
+      const pathIdentity = createAcpRemoteConnectionPathIdentity(remotePath);
+      const mutationState = getExactCurrentActiveState(
+        pathIdentity,
+        remotePath.exactIdentity
+      );
       if (mutationState) {
         mutationState.kind = 'active-mutation';
         mutationState.forwardVerified = true;
       }
     },
-    markDefinite(filePath: string): void {
+    markDefinite(remotePath: AcpRemotePath): void {
       if (released) {
         return;
       }
-      const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
-      const mutationState = getExactCurrentActiveState(pathIdentity);
+      const pathIdentity = createAcpRemoteConnectionPathIdentity(remotePath);
+      const mutationState = getExactCurrentActiveState(
+        pathIdentity,
+        remotePath.exactIdentity
+      );
       if (mutationState) {
         state.mutationStates.delete(pathIdentity);
       }
     },
-    markUncertain(filePath: string): void {
+    markUncertain(remotePath: AcpRemotePath): void {
       if (released) {
         return;
       }
-      const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
-      const mutationState = getExactCurrentActiveState(pathIdentity);
+      const pathIdentity = createAcpRemoteConnectionPathIdentity(remotePath);
+      const mutationState = getExactCurrentActiveState(
+        pathIdentity,
+        remotePath.exactIdentity
+      );
       if (mutationState) {
         mutationState.kind = 'needs-read';
         mutationState.forwardVerified = false;
       }
     },
-    beginRecovery(filePath: string): AcpRemoteMutationRecoveryLease {
+    beginRecovery(remotePath: AcpRemotePath): AcpRemoteMutationRecoveryLease {
       if (released) {
         throw new AcpRemoteFileBoundaryError(
           'stale-reconciliation',
@@ -477,8 +564,9 @@ export function createMutationLease(
           false
         );
       }
-      const pathIdentity = createAcpRemoteConnectionPathIdentity(filePath);
-      const mutationState = getExactCurrentActiveState(pathIdentity);
+      const pathIdentity = createAcpRemoteConnectionPathIdentity(remotePath);
+      const exactPathIdentity = remotePath.exactIdentity;
+      const mutationState = getExactCurrentActiveState(pathIdentity, exactPathIdentity);
       if (!mutationState || mutationState.kind === 'pending-write') {
         throw new AcpRemoteFileBoundaryError(
           'stale-reconciliation',
@@ -499,10 +587,12 @@ export function createMutationLease(
       mutationState.leaseKind = 'recovery';
       mutationState.leaseId = recoveryLeaseId;
       mutationState.forwardVerified = false;
+      mutationState.reconciliationPermitId = undefined;
       mutationState.retiredGenerations = retiredGenerations;
       const recoveryLease: AcpRemoteMutationRecoveryLease = {
         generation: nextGeneration,
         pathIdentity,
+        exactPathIdentity,
         finish(outcome: 'restored' | 'uncertain'): void {
           if (recoveryMetadata.finished) {
             return;
@@ -512,6 +602,7 @@ export function createMutationLease(
             !current ||
             current.sessionId !== sessionId ||
             current.generation !== nextGeneration ||
+            current.exactPathIdentity !== exactPathIdentity ||
             current.leaseKind !== 'recovery' ||
             current.leaseId !== recoveryLeaseId
           ) {
@@ -526,6 +617,7 @@ export function createMutationLease(
           } else {
             current.kind = 'needs-read';
             current.forwardVerified = false;
+            current.reconciliationPermitId = undefined;
           }
         },
       };
@@ -534,6 +626,7 @@ export function createMutationLease(
         sessionId,
         leaseId: recoveryLeaseId,
         pathIdentity,
+        exactPathIdentity,
         generation: nextGeneration,
         finished: false,
       };
@@ -547,8 +640,11 @@ export function createMutationLease(
       if (released) {
         return;
       }
-      for (const pathIdentity of pathIdentities) {
-        const mutationState = getExactCurrentActiveState(pathIdentity);
+      for (const { pathIdentity, exactPathIdentity } of pathEntries) {
+        const mutationState = getExactCurrentActiveState(
+          pathIdentity,
+          exactPathIdentity
+        );
         if (!mutationState) {
           continue;
         }
@@ -563,6 +659,7 @@ export function createMutationLease(
           }
           mutationState.kind = 'needs-read';
           mutationState.forwardVerified = false;
+          mutationState.reconciliationPermitId = undefined;
           continue;
         }
         if (mutationState.kind === 'pending-write') {
@@ -586,15 +683,16 @@ export function createMutationLease(
 
 export function beginUserReadPermit(
   state: AcpCoordinatorMutableState,
-  normalizedPath: string,
+  remotePath: AcpRemotePath,
   sessionId: string
 ): AcpRemoteUserReadPermit {
-  const pathIdentity = createAcpRemoteConnectionPathIdentity(normalizedPath);
+  const pathIdentity = createAcpRemoteConnectionPathIdentity(remotePath);
   const mutationState = state.mutationStates.get(pathIdentity);
   if (!mutationState) {
-    return {
+    return Object.freeze({
       sessionId,
       pathIdentity,
+      exactPathIdentity: remotePath.exactIdentity,
       generation: undefined,
       lane: 'normal',
       complete: (_outcome: 'content' | 'not-found', updateLedger: () => void) => {
@@ -603,7 +701,7 @@ export function beginUserReadPermit(
       fail: () => {
         // Ordinary reads have no retained reconciliation state to release.
       },
-    };
+    });
   }
   if (mutationState.kind === 'pending-write') {
     throw withRequiresRead(
@@ -614,28 +712,36 @@ export function beginUserReadPermit(
   if (
     mutationState.kind === 'needs-read' &&
     mutationState.sessionId === sessionId &&
+    mutationState.exactPathIdentity === remotePath.exactIdentity &&
     !state.recoveryToken &&
     !state.recoveryPermits.has(pathIdentity)
   ) {
+    const permitId = Symbol('acp-recovery-permit');
     const permitState: RecoveryPermitState = {
       sessionId,
       pathIdentity,
+      exactPathIdentity: remotePath.exactIdentity,
       generation: mutationState.generation,
+      permitId,
       active: false,
     };
     state.recoveryPermits.set(pathIdentity, permitState);
-    return {
+    const permit: AcpRemoteUserReadPermit = {
       sessionId,
       pathIdentity,
+      exactPathIdentity: remotePath.exactIdentity,
       generation: mutationState.generation,
       lane: 'recovery',
       complete: (outcome: 'content' | 'not-found', updateLedger: () => void): void => {
         const current = state.mutationStates.get(pathIdentity);
         if (
+          state.recoveryPermits.get(pathIdentity) !== permitState ||
           !permitState.active ||
           !current ||
           current.sessionId !== sessionId ||
           current.generation !== permitState.generation ||
+          current.exactPathIdentity !== permitState.exactPathIdentity ||
+          current.reconciliationPermitId !== permitState.permitId ||
           current.kind !== 'needs-read'
         ) {
           throw new AcpRemoteFileBoundaryError(
@@ -653,10 +759,22 @@ export function beginUserReadPermit(
         }
       },
       fail: (): void => {
-        state.recoveryPermits.delete(pathIdentity);
+        if (state.recoveryPermits.get(pathIdentity) === permitState) {
+          state.recoveryPermits.delete(pathIdentity);
+          const current = state.mutationStates.get(pathIdentity);
+          if (
+            current?.kind === 'needs-read' &&
+            current.reconciliationPermitId === permitId
+          ) {
+            current.reconciliationPermitId = undefined;
+          }
+        }
         permitState.active = false;
       },
     };
+    const frozenPermit = Object.freeze(permit);
+    userReadPermitMetadata.set(frozenPermit, { permitId });
+    return frozenPermit;
   }
   throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
 }
@@ -682,9 +800,19 @@ export function assertReadPathAvailability<T>(
       );
     }
     const permitState = state.recoveryPermits.get(spec.pathIdentity);
+    const permitMetadata = userReadPermitMetadata.get(spec.userReadPermit);
     if (
       !permitState ||
+      !permitMetadata ||
+      permitState.permitId !== permitMetadata.permitId ||
+      spec.userReadPermit.pathIdentity !== spec.pathIdentity ||
+      spec.userReadPermit.exactPathIdentity !== spec.exactPathIdentity ||
+      spec.userReadPermit.sessionId !== spec.sessionId ||
+      mutationState.sessionId !== spec.sessionId ||
+      mutationState.exactPathIdentity !== spec.exactPathIdentity ||
+      mutationState.generation !== spec.userReadPermit.generation ||
       permitState.sessionId !== spec.userReadPermit.sessionId ||
+      permitState.exactPathIdentity !== spec.userReadPermit.exactPathIdentity ||
       permitState.generation !== spec.userReadPermit.generation
     ) {
       throw new AcpRemoteFileBoundaryError(
@@ -706,6 +834,9 @@ export function assertReadPathAvailability<T>(
         false
       );
     }
+    if (mutationState.exactPathIdentity !== spec.exactPathIdentity) {
+      throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
+    }
     return;
   }
   const readToken = state.readTokens.get(spec.pathIdentity);
@@ -713,14 +844,17 @@ export function assertReadPathAvailability<T>(
     throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
   }
   const mutationState = state.mutationStates.get(spec.pathIdentity);
-  if (
-    mutationState?.kind === 'pending-write' ||
-    mutationState?.kind === 'reconciling'
-  ) {
+  if (!mutationState) {
+    return;
+  }
+  if (mutationState.kind !== 'active-mutation') {
     throw withRequiresRead(
       new AcpRemoteFileBoundaryError('busy', 'read', false, false),
-      mutationState?.kind === 'pending-write'
+      mutationState.kind === 'pending-write' || mutationState.kind === 'needs-read'
     );
+  }
+  if (!isLeaseAuthorizedForState(spec, mutationState)) {
+    throw new AcpRemoteFileBoundaryError('busy', 'read', false, false);
   }
 }
 
@@ -746,7 +880,9 @@ export function assertWritePathAvailability<T>(
     if (
       metadata.released ||
       !metadata.generations.has(spec.pathIdentity) ||
+      metadata.exactPathIdentities.get(spec.pathIdentity) !== spec.exactPathIdentity ||
       metadata.generations.get(spec.pathIdentity) !== mutationState.generation ||
+      mutationState.exactPathIdentity !== spec.exactPathIdentity ||
       mutationState.leaseKind !== metadata.kind ||
       mutationState.leaseId !== metadata.leaseId
     ) {
@@ -757,12 +893,46 @@ export function assertWritePathAvailability<T>(
   if (
     metadata.finished ||
     metadata.pathIdentity !== spec.pathIdentity ||
+    metadata.exactPathIdentity !== spec.exactPathIdentity ||
     metadata.generation !== mutationState.generation ||
+    mutationState.exactPathIdentity !== spec.exactPathIdentity ||
     mutationState.leaseKind !== metadata.kind ||
     mutationState.leaseId !== metadata.leaseId
   ) {
     throw new AcpRemoteFileBoundaryError('busy', 'write', false, false);
   }
+}
+
+function isLeaseAuthorizedForState<T>(
+  spec: AcpRemoteFileRequestSpec<T>,
+  mutationState: MutationPathState
+): boolean {
+  const metadata = getLeaseMetadata(spec.lease);
+  if (
+    !metadata ||
+    metadata.sessionId !== spec.sessionId ||
+    mutationState.sessionId !== spec.sessionId ||
+    mutationState.exactPathIdentity !== spec.exactPathIdentity
+  ) {
+    return false;
+  }
+  if (metadata.kind === 'active') {
+    return (
+      !metadata.released &&
+      metadata.generations.get(spec.pathIdentity) === mutationState.generation &&
+      metadata.exactPathIdentities.get(spec.pathIdentity) === spec.exactPathIdentity &&
+      mutationState.leaseKind === 'active' &&
+      mutationState.leaseId === metadata.leaseId
+    );
+  }
+  return (
+    !metadata.finished &&
+    metadata.pathIdentity === spec.pathIdentity &&
+    metadata.exactPathIdentity === spec.exactPathIdentity &&
+    metadata.generation === mutationState.generation &&
+    mutationState.leaseKind === 'recovery' &&
+    mutationState.leaseId === metadata.leaseId
+  );
 }
 
 function withRequiresRead(
@@ -782,21 +952,25 @@ function withRequiresRead(
 
 export function handleSettlementState<T>(
   state: AcpCoordinatorMutableState,
-  token: RequestToken<T>,
-  spec: AcpRemoteFileRequestSpec<T>
+  token: RequestToken<T>
 ): void {
   token.requestPending = false;
 
-  if (spec.operation === 'read') {
-    if (spec.userReadPermit?.lane === 'recovery') {
-      const mutationState = state.mutationStates.get(spec.pathIdentity);
+  if (token.operation === 'read') {
+    if (token.kind === 'recovery') {
+      const mutationState = state.mutationStates.get(token.pathIdentity);
       if (
         mutationState &&
         mutationState.kind === 'reconciling' &&
-        mutationState.sessionId === spec.userReadPermit.sessionId &&
-        mutationState.generation === spec.userReadPermit.generation
+        mutationState.sessionId === token.sessionId &&
+        mutationState.exactPathIdentity === token.exactPathIdentity &&
+        mutationState.generation === token.readToken?.generation &&
+        mutationState.reconciliationPermitId === token.readToken?.permitId
       ) {
         mutationState.kind = 'needs-read';
+        if (token.boundaryError) {
+          mutationState.reconciliationPermitId = undefined;
+        }
       }
     }
     if (token.readToken) {
@@ -805,17 +979,22 @@ export function handleSettlementState<T>(
     return;
   }
 
-  const mutationState = state.mutationStates.get(spec.pathIdentity);
+  const mutationState = state.mutationStates.get(token.pathIdentity);
+  const writeLeaseSnapshot = token.writeLeaseSnapshot;
   if (
     mutationState &&
-    mutationState.sessionId === spec.sessionId &&
+    writeLeaseSnapshot &&
+    mutationState.sessionId === token.sessionId &&
+    mutationState.exactPathIdentity === token.exactPathIdentity &&
+    mutationState.exactPathIdentity === writeLeaseSnapshot.exactPathIdentity &&
     token.boundaryError?.dispatched &&
-    mutationState.generation === token.writeLeaseSnapshot?.generation &&
-    mutationState.leaseId === token.writeLeaseSnapshot.leaseId &&
-    mutationState.leaseKind === token.writeLeaseSnapshot.leaseKind
+    mutationState.generation === writeLeaseSnapshot.generation &&
+    mutationState.leaseId === writeLeaseSnapshot.leaseId &&
+    mutationState.leaseKind === writeLeaseSnapshot.leaseKind
   ) {
     mutationState.kind = 'needs-read';
     mutationState.forwardVerified = false;
+    mutationState.reconciliationPermitId = undefined;
   }
 }
 
@@ -826,10 +1005,25 @@ export function cleanupReservedButUndispatchedToken<T>(
   if (token.operation === 'read' && token.readToken) {
     if (token.kind === 'recovery') {
       const mutationState = state.mutationStates.get(token.pathIdentity);
-      if (mutationState?.kind === 'reconciling') {
+      if (
+        mutationState?.kind === 'reconciling' &&
+        mutationState.sessionId === token.sessionId &&
+        mutationState.exactPathIdentity === token.exactPathIdentity &&
+        mutationState.generation === token.readToken.generation &&
+        mutationState.reconciliationPermitId === token.readToken.permitId
+      ) {
         mutationState.kind = 'needs-read';
+        mutationState.reconciliationPermitId = undefined;
       }
-      state.recoveryPermits.delete(token.pathIdentity);
+      const permitState = state.recoveryPermits.get(token.pathIdentity);
+      if (
+        permitState?.sessionId === token.sessionId &&
+        permitState.exactPathIdentity === token.exactPathIdentity &&
+        permitState.generation === token.readToken.generation &&
+        permitState.permitId === token.readToken.permitId
+      ) {
+        state.recoveryPermits.delete(token.pathIdentity);
+      }
     }
     token.readToken.settled = true;
   }

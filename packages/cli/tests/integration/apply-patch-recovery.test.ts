@@ -9,6 +9,7 @@ import {
   getAcpFileRequestCoordinator,
   MAX_ACP_NORMAL_FILE_REQUESTS,
 } from '../../src/acp/AcpFileRequestCoordinator.js';
+import { parseAcpRemotePath } from '../../src/acp/AcpRemotePath.js';
 import { commitVerifiedRemoteTextMutation } from '../../src/acp/RemoteTextMutation.js';
 import { parseApplyPatch } from '../../src/tools/builtin/file/applyPatchParser.js';
 import type { PatchTransactionPlan } from '../../src/tools/builtin/file/applyPatchTransaction.js';
@@ -222,18 +223,19 @@ describe('ApplyPatch crash recovery and cross-process lock', () => {
       }
       return originalWriteTextFile(params);
     };
-    const originalServiceWrite = service.writeTextFile.bind(service);
-    vi.spyOn(service, 'writeTextFile').mockImplementation(
-      async (filePath, content, options) => {
+    const originalServiceWrite = service.writeTextFileForParsedPath.bind(service);
+    vi.spyOn(service, 'writeTextFileForParsedPath').mockImplementation(
+      async (remotePath, content, options) => {
         writePurposes.push(options?.purpose ?? 'mutation');
-        return originalServiceWrite(filePath, content, options);
+        return originalServiceWrite(remotePath, content, options);
       }
     );
-    const originalReadTextFileIfExists = service.readTextFileIfExists.bind(service);
-    vi.spyOn(service, 'readTextFileIfExists').mockImplementation(
-      async (filePath, options) => {
+    const originalReadTextFileIfExists =
+      service.readTextFileIfExistsForParsedPath.bind(service);
+    vi.spyOn(service, 'readTextFileIfExistsForParsedPath').mockImplementation(
+      async (remotePath, options) => {
         readbackPurposes.push(options?.purpose ?? 'preflight');
-        return originalReadTextFileIfExists(filePath, options);
+        return originalReadTextFileIfExists(remotePath, options);
       }
     );
 
@@ -336,7 +338,9 @@ describe('ApplyPatch crash recovery and cross-process lock', () => {
       );
       expect(client.files.get(filePath)).toBe('const value = true;\n');
 
-      const currentRecoveryLease = firstLease.beginRecovery(filePath);
+      const currentRecoveryLease = firstLease.beginRecovery(
+        parseAcpRemotePath(filePath)
+      );
       await expect(
         commitVerifiedRemoteTextMutation({
           service,
@@ -387,7 +391,9 @@ describe('ApplyPatch crash recovery and cross-process lock', () => {
       });
 
       await expect(
-        Promise.resolve().then(() => firstLease.beginRecovery(filePath))
+        Promise.resolve().then(() =>
+          firstLease.beginRecovery(parseAcpRemotePath(filePath))
+        )
       ).rejects.toMatchObject({
         reason: 'stale-reconciliation',
         dispatched: false,
@@ -617,7 +623,7 @@ describe('ApplyPatch crash recovery and cross-process lock', () => {
           coordinator.getStatsForTests().reconciling === 1
       );
 
-      const currentRecoveryLease = lease.beginRecovery(filePath);
+      const currentRecoveryLease = lease.beginRecovery(parseAcpRemotePath(filePath));
       currentRecoveryLease.finish('uncertain');
       expect(coordinator.getStatsForTests()).toMatchObject({
         pendingRecovery: 1,
@@ -826,15 +832,15 @@ describe('ApplyPatch crash recovery and cross-process lock', () => {
       let rollbackThirdReadbackStarted = false;
       let rollbackSecondReadbackStarted = false;
       const writeCalls: Array<{ path: string; purpose: string }> = [];
-      const originalServiceWrite = service.writeTextFile.bind(service);
-      vi.spyOn(service, 'writeTextFile').mockImplementation(
-        async (filePath, content, options) => {
+      const originalServiceWrite = service.writeTextFileForParsedPath.bind(service);
+      vi.spyOn(service, 'writeTextFileForParsedPath').mockImplementation(
+        async (remotePath, content, options) => {
           void content;
           writeCalls.push({
-            path: filePath,
+            path: remotePath.wirePath,
             purpose: options?.purpose ?? 'mutation',
           });
-          return originalServiceWrite(filePath, content, options);
+          return originalServiceWrite(remotePath, content, options);
         }
       );
       const originalWriteTextFile = client.writeTextFile.bind(client);
@@ -853,18 +859,25 @@ describe('ApplyPatch crash recovery and cross-process lock', () => {
         }
         return originalWriteTextFile(params);
       };
-      const originalReadTextFileIfExists = service.readTextFileIfExists.bind(service);
-      vi.spyOn(service, 'readTextFileIfExists').mockImplementation(
-        async (filePath, options) => {
-          if (filePath === '/remote/third.ts' && options?.purpose === 'rollback') {
+      const originalReadTextFileIfExists =
+        service.readTextFileIfExistsForParsedPath.bind(service);
+      vi.spyOn(service, 'readTextFileIfExistsForParsedPath').mockImplementation(
+        async (remotePath, options) => {
+          if (
+            remotePath.wirePath === '/remote/third.ts' &&
+            options?.purpose === 'rollback'
+          ) {
             rollbackThirdReadbackStarted = true;
             await blockedRollbackThirdReadback.promise;
           }
-          if (filePath === '/remote/second.ts' && options?.purpose === 'rollback') {
+          if (
+            remotePath.wirePath === '/remote/second.ts' &&
+            options?.purpose === 'rollback'
+          ) {
             rollbackSecondReadbackStarted = true;
             await blockedRollbackSecondReadback.promise;
           }
-          return originalReadTextFileIfExists(filePath, options);
+          return originalReadTextFileIfExists(remotePath, options);
         }
       );
       releaseBlockedCurrentWrite = () => blockedCurrentWrite.resolve();

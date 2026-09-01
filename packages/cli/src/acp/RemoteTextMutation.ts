@@ -9,6 +9,7 @@ import {
   AcpFileSystemService,
   isAcpResourceNotFoundError,
 } from './AcpFileSystemService.js';
+import type { AcpRemotePath } from './AcpRemotePath.js';
 
 export class AcpRemoteMutationError extends Error {
   readonly writeVerified = false as const;
@@ -37,7 +38,7 @@ export interface AcpRemoteMutationReceipt {
 export async function commitVerifiedRemoteTextMutation(options: {
   service: AcpFileSystemService;
   lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
-  filePath: string;
+  filePath: string | AcpRemotePath;
   previous: { exists: false } | { exists: true; content: string };
   intendedContent: string;
   operation: 'edit' | 'write';
@@ -48,10 +49,14 @@ export async function commitVerifiedRemoteTextMutation(options: {
   preserveWriteFailureOnPreviousReadback?: boolean;
 }): Promise<AcpRemoteMutationReceipt> {
   options.signal?.throwIfAborted?.();
+  const remotePath =
+    typeof options.filePath === 'string'
+      ? options.service.parsePath(options.filePath)
+      : options.filePath;
 
   const ownedLease =
     options.lease === undefined
-      ? options.service.tryAcquireMutationLease([options.filePath])
+      ? options.service.tryAcquireMutationLeaseForParsedPaths([remotePath])
       : undefined;
   const lease = options.lease ?? ownedLease;
   const deadlineAt =
@@ -65,12 +70,16 @@ export async function commitVerifiedRemoteTextMutation(options: {
         deadlineAt,
         Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS
       );
-      await options.service.writeTextFile(options.filePath, options.intendedContent, {
-        signal: options.signal,
-        deadlineAt: writeDeadlineAt,
-        purpose: writePurpose,
-        lease,
-      });
+      await options.service.writeTextFileForParsedPath(
+        remotePath,
+        options.intendedContent,
+        {
+          signal: options.signal,
+          deadlineAt: writeDeadlineAt,
+          purpose: writePurpose,
+          lease,
+        }
+      );
       writeAcknowledged = true;
     } catch (error) {
       if (
@@ -105,7 +114,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
     const activeLease = getActiveLease(lease);
     const readback = await readBackWithDeadline(
       options.service,
-      options.filePath,
+      remotePath,
       Math.min(deadlineAt, Date.now() + ACP_REMOTE_READBACK_TIMEOUT_MS),
       activeLease,
       writePurpose === 'rollback' ? 'rollback' : 'readback'
@@ -113,13 +122,13 @@ export async function commitVerifiedRemoteTextMutation(options: {
 
     if (readback.kind === 'content') {
       if (readback.content === options.intendedContent) {
-        markForwardVerified(activeLease, options.filePath);
+        markForwardVerified(activeLease, remotePath);
         if (ownedLease) {
           ownedLease.commitVerified();
         }
         if (options.recordAccess !== false) {
-          options.service.recordRemoteAccess(
-            options.filePath,
+          options.service.recordRemoteAccessForParsedPath(
+            remotePath,
             options.intendedContent,
             options.operation
           );
@@ -133,7 +142,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
       }
 
       if (options.previous.exists && readback.content === options.previous.content) {
-        markDefinite(activeLease, options.filePath);
+        markDefinite(activeLease, remotePath);
         if (
           options.preserveWriteFailureOnPreviousReadback &&
           writeFailure instanceof Error
@@ -154,7 +163,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
         );
       }
 
-      markUncertain(activeLease, options.filePath);
+      markUncertain(activeLease, remotePath);
       throw new AcpRemoteMutationError(
         `${options.operation} readback returned unexpected remote content`,
         writeAcknowledged,
@@ -165,7 +174,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
 
     if (readback.kind === 'missing') {
       if (!options.previous.exists) {
-        markDefinite(activeLease, options.filePath);
+        markDefinite(activeLease, remotePath);
         throw new AcpRemoteMutationError(
           `${options.operation} readback could not find the remote file`,
           writeAcknowledged,
@@ -174,7 +183,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
         );
       }
 
-      markUncertain(activeLease, options.filePath);
+      markUncertain(activeLease, remotePath);
       throw new AcpRemoteMutationError(
         `${options.operation} readback became unavailable`,
         writeAcknowledged,
@@ -183,7 +192,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
       );
     }
 
-    markUncertain(activeLease, options.filePath);
+    markUncertain(activeLease, remotePath);
     throw new AcpRemoteMutationError(
       `${options.operation} readback could not verify the remote side effects`,
       writeAcknowledged,
@@ -199,7 +208,7 @@ export async function commitVerifiedRemoteTextMutation(options: {
 
 async function readBackWithDeadline(
   service: AcpFileSystemService,
-  filePath: string,
+  remotePath: AcpRemotePath,
   deadlineAt: number,
   lease: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease,
   purpose: 'readback' | 'rollback'
@@ -207,7 +216,7 @@ async function readBackWithDeadline(
   { kind: 'content'; content: string } | { kind: 'missing' } | { kind: 'error' }
 > {
   try {
-    const result = await service.readTextFileIfExists(filePath, {
+    const result = await service.readTextFileIfExistsForParsedPath(remotePath, {
       deadlineAt,
       purpose,
       lease,
@@ -227,34 +236,34 @@ async function readBackWithDeadline(
 
 function markForwardVerified(
   lease: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease,
-  filePath: string
+  remotePath: AcpRemotePath
 ): void {
   if ('markForwardVerified' in lease) {
-    lease.markForwardVerified(filePath);
+    lease.markForwardVerified(remotePath);
   }
 }
 
 function markDefinite(
   lease: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease,
-  filePath: string
+  remotePath: AcpRemotePath
 ): void {
   if ('markDefinite' in lease) {
-    lease.markDefinite(filePath);
+    lease.markDefinite(remotePath);
     return;
   }
-  void filePath;
+  void remotePath;
   lease.finish('restored');
 }
 
 function markUncertain(
   lease: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease,
-  filePath: string
+  remotePath: AcpRemotePath
 ): void {
   if ('markUncertain' in lease) {
-    lease.markUncertain(filePath);
+    lease.markUncertain(remotePath);
     return;
   }
-  void filePath;
+  void remotePath;
   lease.finish('uncertain');
 }
 

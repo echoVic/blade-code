@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { normalizeAcpRemotePath } from './AcpFileSystemService.js';
+import { type AcpRemotePath, assertCanonicalAcpRemotePath } from './AcpRemotePath.js';
 
 export const ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS = 30_000;
 export const ACP_REMOTE_READBACK_TIMEOUT_MS = 5_000;
@@ -56,18 +56,19 @@ export class AcpRemoteFileBoundaryError extends Error {
 export interface AcpRemoteMutationRecoveryLease {
   readonly generation: number;
   readonly pathIdentity: string;
+  readonly exactPathIdentity: string;
   finish(outcome: 'restored' | 'uncertain'): void;
 }
 
 export interface AcpRemoteMutationLease {
   readonly sessionId: string;
   readonly pathIdentities: readonly string[];
-  generationFor(filePath: string): number;
-  isCurrent(filePath: string): boolean;
-  markForwardVerified(filePath: string): void;
-  markDefinite(filePath: string): void;
-  markUncertain(filePath: string): void;
-  beginRecovery(filePath: string): AcpRemoteMutationRecoveryLease;
+  generationFor(filePath: AcpRemotePath): number;
+  isCurrent(filePath: AcpRemotePath): boolean;
+  markForwardVerified(filePath: AcpRemotePath): void;
+  markDefinite(filePath: AcpRemotePath): void;
+  markUncertain(filePath: AcpRemotePath): void;
+  beginRecovery(filePath: AcpRemotePath): AcpRemoteMutationRecoveryLease;
   commitVerified(): void;
   release(): void;
 }
@@ -75,6 +76,7 @@ export interface AcpRemoteMutationLease {
 export interface AcpRemoteUserReadPermit {
   readonly sessionId: string;
   readonly pathIdentity: string;
+  readonly exactPathIdentity: string;
   readonly generation: number | undefined;
   readonly lane: 'normal' | 'recovery';
   complete(outcome: 'content' | 'not-found', updateLedger: () => void): void;
@@ -98,6 +100,7 @@ export interface AcpRemoteFileRequestSpec<T> {
   purpose: AcpRemoteFileRequestPurpose;
   sessionId: string;
   pathIdentity: string;
+  exactPathIdentity: string;
   deadlineAt: number;
   signal?: AbortSignal;
   lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
@@ -105,9 +108,12 @@ export interface AcpRemoteFileRequestSpec<T> {
   dispatch(cancellationSignal: AbortSignal): Promise<T>;
 }
 
-export function createAcpRemoteConnectionPathIdentity(filePath: string): string {
+export function createAcpRemoteConnectionPathIdentity(
+  remotePath: AcpRemotePath
+): string {
+  assertCanonicalAcpRemotePath(remotePath);
   return `acp-remote-connection-path:${createHash('sha256')
-    .update(normalizeAcpRemotePath(filePath))
+    .update(remotePath.collisionIdentity)
     .digest('hex')}`;
 }
 

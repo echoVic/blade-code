@@ -30,6 +30,9 @@ import {
 import {
   type AcpRemotePath,
   type AcpRemotePathProfile,
+  assertCanonicalAcpRemotePath,
+  assertCanonicalAcpRemotePathProfile,
+  cloneAcpRemotePathProfile,
   normalizeAcpRemotePath,
   parseAcpRemotePath,
 } from './AcpRemotePath.js';
@@ -51,6 +54,11 @@ export interface RemoteFileAccessRecord {
 }
 
 export type RemoteAccessStatus = 'missing' | 'current' | 'modified';
+
+interface RemoteAccessLedgerEntry {
+  readonly collisionIdentity: AcpRemotePath['collisionIdentity'];
+  readonly record: RemoteFileAccessRecord;
+}
 
 export class AcpFileSystemCapabilityError extends Error {
   readonly name = 'AcpFileSystemCapabilityError';
@@ -82,7 +90,14 @@ export function isAcpResourceNotFoundError(error: unknown): boolean {
 
 export class AcpFileSystemService implements FileSystemService {
   private readonly capabilities: FileSystemCapabilities;
-  private readonly remoteAccessLedger = new Map<string, RemoteFileAccessRecord>();
+  private readonly remoteAccessLedger = new Map<
+    AcpRemotePath['exactIdentity'],
+    RemoteAccessLedgerEntry
+  >();
+  private readonly remoteAccessCollisionIndex = new Map<
+    AcpRemotePath['collisionIdentity'],
+    AcpRemotePath['exactIdentity']
+  >();
   private readonly disposeController = new AbortController();
   private readonly pathProfile: AcpRemotePathProfile;
 
@@ -92,11 +107,12 @@ export class AcpFileSystemService implements FileSystemService {
     capabilities: FileSystemCapabilities,
     pathProfile: AcpRemotePathProfile
   ) {
+    assertCanonicalAcpRemotePathProfile(pathProfile);
     this.capabilities = {
       readTextFile: capabilities.readTextFile === true,
       writeTextFile: capabilities.writeTextFile === true,
     };
-    this.pathProfile = freezeRemotePathProfile(pathProfile);
+    this.pathProfile = cloneAcpRemotePathProfile(pathProfile);
   }
 
   /**
@@ -113,12 +129,27 @@ export class AcpFileSystemService implements FileSystemService {
       lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
     }
   ): Promise<string> {
-    return this.runBoundedTextRead(filePath, {
+    const remotePath = this.parsePath(filePath);
+    return this.readTextFileForParsedPath(remotePath, {
       signal: options?.signal,
       deadlineAt: options?.deadlineAt,
       purpose: options?.purpose ?? 'preflight',
       lease: options?.lease,
     });
+  }
+
+  async readTextFileForParsedPath(
+    remotePath: AcpRemotePath,
+    options: {
+      signal?: AbortSignal;
+      deadlineAt?: number;
+      purpose: AcpRemoteFileRequestPurpose;
+      userReadPermit?: AcpRemoteUserReadPermit;
+      lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
+    }
+  ): Promise<string> {
+    this.assertParsedPathStyle(remotePath);
+    return this.runBoundedTextReadPath(remotePath, options);
   }
 
   async readTextFileForUser(
@@ -128,25 +159,25 @@ export class AcpFileSystemService implements FileSystemService {
       deadlineAt?: number;
     }
   ): Promise<string> {
-    const normalizedPath = this.parsePath(filePath).wirePath;
+    const remotePath = this.parsePath(filePath);
     const coordinator = getAcpFileRequestCoordinator(this.connection);
-    const permit = coordinator.beginUserRead(normalizedPath, this.sessionId);
+    const permit = coordinator.beginUserRead(remotePath, this.sessionId);
 
     try {
-      const content = await this.runBoundedTextRead(normalizedPath, {
+      const content = await this.readTextFileForParsedPath(remotePath, {
         signal: options?.signal,
         deadlineAt: options?.deadlineAt,
         purpose: 'user-read',
         userReadPermit: permit,
       });
       permit.complete('content', () => {
-        this.recordRemoteAccess(normalizedPath, content, 'read');
+        this.recordRemoteAccessForPath(remotePath, content, 'read');
       });
       return content;
     } catch (error) {
       if (isAcpResourceNotFoundError(error)) {
         permit.complete('not-found', () => {
-          this.deleteRemoteAccessRecord(normalizedPath);
+          this.deleteRemoteAccessCollisionClass(remotePath);
         });
         throw error;
       }
@@ -170,14 +201,28 @@ export class AcpFileSystemService implements FileSystemService {
       lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
     }
   ): Promise<void> {
+    const remotePath = this.parsePath(filePath);
+    return this.writeTextFileForParsedPath(remotePath, content, options);
+  }
+
+  async writeTextFileForParsedPath(
+    remotePath: AcpRemotePath,
+    content: string,
+    options?: {
+      signal?: AbortSignal;
+      deadlineAt?: number;
+      purpose?: AcpRemoteFileRequestPurpose;
+      lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
+    }
+  ): Promise<void> {
+    this.assertParsedPathStyle(remotePath);
     if (!this.capabilities.writeTextFile) {
       throw new AcpFileSystemCapabilityError('writeTextFile');
     }
 
-    const normalizedPath = this.parsePath(filePath).wirePath;
     const ownedLease =
       options?.lease === undefined
-        ? this.tryAcquireMutationLease([normalizedPath])
+        ? this.tryAcquireMutationLeaseForParsedPaths([remotePath])
         : undefined;
     const lease = options?.lease ?? ownedLease;
     const combinedSignal = createCombinedAbortSignal(
@@ -193,7 +238,8 @@ export class AcpFileSystemService implements FileSystemService {
         operation: 'write',
         purpose: options?.purpose ?? 'mutation',
         sessionId: this.sessionId,
-        pathIdentity: createAcpRemoteConnectionPathIdentity(normalizedPath),
+        pathIdentity: createAcpRemoteConnectionPathIdentity(remotePath),
+        exactPathIdentity: remotePath.exactIdentity,
         deadlineAt,
         signal: combinedSignal.signal,
         lease,
@@ -201,7 +247,7 @@ export class AcpFileSystemService implements FileSystemService {
           this.connection.request(
             acp.CLIENT_METHODS.fs_write_text_file,
             {
-              path: normalizedPath,
+              path: remotePath.wirePath,
               content,
               sessionId: this.sessionId,
             },
@@ -211,12 +257,12 @@ export class AcpFileSystemService implements FileSystemService {
           ),
       });
       if (ownedLease) {
-        ownedLease.markDefinite(normalizedPath);
+        ownedLease.markDefinite(remotePath);
       }
     } catch (error) {
       logger.warn('[AcpFileSystem] writeTextFile ACP request failed');
       if (ownedLease && shouldMarkWriteUncertain(error)) {
-        ownedLease.markUncertain(normalizedPath);
+        ownedLease.markUncertain(remotePath);
       }
       throw error;
     } finally {
@@ -238,7 +284,8 @@ export class AcpFileSystemService implements FileSystemService {
     }
 
     try {
-      await this.runBoundedTextRead(filePath, {
+      const remotePath = this.parsePath(filePath);
+      await this.readTextFileForParsedPath(remotePath, {
         purpose: 'preflight',
       });
       return true;
@@ -326,11 +373,11 @@ export class AcpFileSystemService implements FileSystemService {
   }
 
   createOpaqueLockKey(filePath: string): string {
-    const normalizedPath = this.parsePath(filePath).wirePath;
+    const remotePath = this.parsePath(filePath);
     return `acp-remote:${createHash('sha256')
       .update(this.sessionId)
       .update('\0')
-      .update(normalizedPath)
+      .update(remotePath.collisionIdentity)
       .digest('hex')}`;
   }
 
@@ -344,8 +391,23 @@ export class AcpFileSystemService implements FileSystemService {
       lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
     }
   ): Promise<{ exists: false } | { exists: true; content: string }> {
+    const remotePath = this.parsePath(filePath);
+    return this.readTextFileIfExistsForParsedPath(remotePath, options);
+  }
+
+  async readTextFileIfExistsForParsedPath(
+    remotePath: AcpRemotePath,
+    options?: {
+      signal?: AbortSignal;
+      deadlineAt?: number;
+      purpose?: AcpRemoteFileRequestPurpose;
+      userReadPermit?: AcpRemoteUserReadPermit;
+      lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
+    }
+  ): Promise<{ exists: false } | { exists: true; content: string }> {
+    this.assertParsedPathStyle(remotePath);
     try {
-      const content = await this.runBoundedTextRead(filePath, {
+      const content = await this.readTextFileForParsedPath(remotePath, {
         signal: options?.signal,
         deadlineAt: options?.deadlineAt,
         purpose: options?.purpose ?? 'preflight',
@@ -366,9 +428,26 @@ export class AcpFileSystemService implements FileSystemService {
     content: string,
     operation: RemoteFileOperation
   ): void {
-    const normalizedPath = this.parsePath(filePath).wirePath;
+    const remotePath = this.parsePath(filePath);
+    this.recordRemoteAccessForPath(remotePath, content, operation);
+  }
+
+  recordRemoteAccessForParsedPath(
+    remotePath: AcpRemotePath,
+    content: string,
+    operation: RemoteFileOperation
+  ): void {
+    this.assertParsedPathStyle(remotePath);
+    this.recordRemoteAccessForPath(remotePath, content, operation);
+  }
+
+  private recordRemoteAccessForPath(
+    remotePath: AcpRemotePath,
+    content: string,
+    operation: RemoteFileOperation
+  ): void {
     const record: RemoteFileAccessRecord = {
-      filePath: normalizedPath,
+      filePath: remotePath.wirePath,
       accessTime: Date.now(),
       contentSha256: sha256(content),
       sessionId: this.sessionId,
@@ -376,64 +455,83 @@ export class AcpFileSystemService implements FileSystemService {
       source: 'remote',
     };
 
-    this.remoteAccessLedger.delete(normalizedPath);
-    this.remoteAccessLedger.set(normalizedPath, record);
+    const previousExactIdentity = this.remoteAccessCollisionIndex.get(
+      remotePath.collisionIdentity
+    );
+    if (previousExactIdentity) {
+      this.deleteRemoteAccessEntry(previousExactIdentity);
+    }
+
+    this.remoteAccessLedger.set(remotePath.exactIdentity, {
+      collisionIdentity: remotePath.collisionIdentity,
+      record,
+    });
+    this.remoteAccessCollisionIndex.set(
+      remotePath.collisionIdentity,
+      remotePath.exactIdentity
+    );
 
     while (this.remoteAccessLedger.size > MAX_REMOTE_ACCESS_RECORDS) {
       const oldestKey = this.remoteAccessLedger.keys().next().value;
       if (oldestKey === undefined) {
         break;
       }
-      this.remoteAccessLedger.delete(oldestKey);
+      this.deleteRemoteAccessEntry(oldestKey);
     }
   }
 
   checkRemoteAccess(filePath: string, content: string): RemoteAccessStatus {
-    const normalizedPath = this.parsePath(filePath).wirePath;
-    const existing = this.remoteAccessLedger.get(normalizedPath);
+    const remotePath = this.parsePath(filePath);
+    const existing = this.remoteAccessLedger.get(remotePath.exactIdentity);
     if (!existing) {
       return 'missing';
     }
 
-    this.remoteAccessLedger.delete(normalizedPath);
-    this.remoteAccessLedger.set(normalizedPath, existing);
+    this.remoteAccessLedger.delete(remotePath.exactIdentity);
+    this.remoteAccessLedger.set(remotePath.exactIdentity, existing);
 
-    return existing.contentSha256 === sha256(content) ? 'current' : 'modified';
+    return existing.record.contentSha256 === sha256(content) ? 'current' : 'modified';
   }
 
   getRemoteAccessRecord(filePath: string): RemoteFileAccessRecord | undefined {
-    const normalizedPath = this.parsePath(filePath).wirePath;
-    const record = this.remoteAccessLedger.get(normalizedPath);
-    if (!record) {
+    const remotePath = this.parsePath(filePath);
+    const entry = this.remoteAccessLedger.get(remotePath.exactIdentity);
+    if (!entry) {
       return undefined;
     }
 
-    return { ...record };
+    return { ...entry.record };
   }
 
   precheckMutationPaths(filePaths: readonly string[]): void {
-    const normalizedPaths = filePaths.map(
-      (filePath) => this.parsePath(filePath).wirePath
-    );
+    const normalizedPaths = filePaths.map((filePath) => this.parsePath(filePath));
     const coordinator = getAcpFileRequestCoordinator(this.connection);
     coordinator.precheckMutationPaths(normalizedPaths, this.sessionId);
   }
 
   tryAcquireMutationLease(filePaths: readonly string[]): AcpRemoteMutationLease {
-    const normalizedPaths = filePaths.map(
-      (filePath) => this.parsePath(filePath).wirePath
-    );
+    const normalizedPaths = filePaths.map((filePath) => this.parsePath(filePath));
+    return this.tryAcquireMutationLeaseForParsedPaths(normalizedPaths);
+  }
+
+  tryAcquireMutationLeaseForParsedPaths(
+    remotePaths: readonly AcpRemotePath[]
+  ): AcpRemoteMutationLease {
+    for (const remotePath of remotePaths) {
+      this.assertParsedPathStyle(remotePath);
+    }
     const coordinator = getAcpFileRequestCoordinator(this.connection);
-    return coordinator.tryAcquireMutationLease(normalizedPaths, this.sessionId);
+    return coordinator.tryAcquireMutationLease(remotePaths, this.sessionId);
   }
 
   dispose(): void {
     this.disposeController.abort();
     this.remoteAccessLedger.clear();
+    this.remoteAccessCollisionIndex.clear();
   }
 
-  private async runBoundedTextRead(
-    filePath: string,
+  private async runBoundedTextReadPath(
+    remotePath: AcpRemotePath,
     options: {
       signal?: AbortSignal;
       deadlineAt?: number;
@@ -446,7 +544,6 @@ export class AcpFileSystemService implements FileSystemService {
       throw new AcpFileSystemCapabilityError('readTextFile');
     }
 
-    const normalizedPath = this.parsePath(filePath).wirePath;
     const combinedSignal = createCombinedAbortSignal(
       this.disposeController.signal,
       options.signal
@@ -460,7 +557,8 @@ export class AcpFileSystemService implements FileSystemService {
         operation: 'read',
         purpose: options.purpose,
         sessionId: this.sessionId,
-        pathIdentity: createAcpRemoteConnectionPathIdentity(normalizedPath),
+        pathIdentity: createAcpRemoteConnectionPathIdentity(remotePath),
+        exactPathIdentity: remotePath.exactIdentity,
         deadlineAt,
         signal: combinedSignal.signal,
         lease: options.lease,
@@ -469,7 +567,7 @@ export class AcpFileSystemService implements FileSystemService {
           this.connection.request(
             acp.CLIENT_METHODS.fs_read_text_file,
             {
-              path: normalizedPath,
+              path: remotePath.wirePath,
               sessionId: this.sessionId,
             },
             {
@@ -479,6 +577,9 @@ export class AcpFileSystemService implements FileSystemService {
       });
       return response.content;
     } catch (error) {
+      if (isAcpResourceNotFoundError(error)) {
+        this.deleteRemoteAccessCollisionClass(remotePath);
+      }
       logger.warn('[AcpFileSystem] readTextFile ACP request failed');
       throw error;
     } finally {
@@ -486,17 +587,35 @@ export class AcpFileSystemService implements FileSystemService {
     }
   }
 
-  private deleteRemoteAccessRecord(filePath: string): void {
-    this.remoteAccessLedger.delete(this.parsePath(filePath).wirePath);
+  private deleteRemoteAccessCollisionClass(remotePath: AcpRemotePath): void {
+    const exactIdentity = this.remoteAccessCollisionIndex.get(
+      remotePath.collisionIdentity
+    );
+    if (!exactIdentity) {
+      return;
+    }
+    this.deleteRemoteAccessEntry(exactIdentity);
   }
-}
 
-function freezeRemotePathProfile(profile: AcpRemotePathProfile): AcpRemotePathProfile {
-  const workspace = Object.freeze({ ...profile.workspace });
-  return Object.freeze({
-    style: profile.style,
-    workspace,
-  });
+  private deleteRemoteAccessEntry(exactIdentity: AcpRemotePath['exactIdentity']): void {
+    const entry = this.remoteAccessLedger.get(exactIdentity);
+    if (!entry) {
+      return;
+    }
+    this.remoteAccessLedger.delete(exactIdentity);
+    if (
+      this.remoteAccessCollisionIndex.get(entry.collisionIdentity) === exactIdentity
+    ) {
+      this.remoteAccessCollisionIndex.delete(entry.collisionIdentity);
+    }
+  }
+
+  private assertParsedPathStyle(remotePath: AcpRemotePath): void {
+    assertCanonicalAcpRemotePath(remotePath);
+    if (remotePath.style !== this.pathProfile.style) {
+      this.parsePath(remotePath.wirePath);
+    }
+  }
 }
 
 function isRequestErrorWithCode(

@@ -292,6 +292,38 @@ describe('FileLockManager', () => {
       expect(lockManager.getLockedFileCount()).toBe(0);
     });
 
+    it('应该让 Windows case alias 共享 opaque lock key，但 POSIX case variants 保持不同', () => {
+      const windowsService = createRemoteFileSystemService(
+        'session-a',
+        'C:\\workspace'
+      );
+      const posixService = createRemoteFileSystemService('session-a', '/workspace');
+
+      expect(windowsService.createOpaqueLockKey('C:\\workspace\\Folder\\File.ts')).toBe(
+        windowsService.createOpaqueLockKey('c:/workspace/folder/file.ts')
+      );
+      expect(posixService.createOpaqueLockKey('/workspace/File.ts')).not.toBe(
+        posixService.createOpaqueLockKey('/workspace/file.ts')
+      );
+    });
+
+    it('应该固定使用 ECMAScript toUpperCase 处理 Greek sigma 与 I/i/dotless-ı 的 Windows alias key', () => {
+      const service = createRemoteFileSystemService('session-a', 'C:\\workspace');
+
+      expect(service.createOpaqueLockKey('C:\\workspace\\σιγμα.ts')).toBe(
+        service.createOpaqueLockKey('c:/workspace/ΣΙΓΜΑ.ts')
+      );
+      expect(service.createOpaqueLockKey('C:\\workspace\\diyarbakir.ts')).toBe(
+        service.createOpaqueLockKey('c:/workspace/DIYARBAKIR.ts')
+      );
+      expect(service.createOpaqueLockKey('C:\\workspace\\dır.ts')).toBe(
+        service.createOpaqueLockKey('c:/workspace/DIR.ts')
+      );
+      expect(service.createOpaqueLockKey('C:\\workspace\\i.ts')).toBe(
+        service.createOpaqueLockKey('c:/workspace/I.ts')
+      );
+    });
+
     it('应该为 opaque lock 集合去重排序并串行化重叠事务', async () => {
       const service = createRemoteFileSystemService('session-a', 'C:\\workspace');
       const keyA = service.createOpaqueLockKey('C:\\workspace\\b.ts');

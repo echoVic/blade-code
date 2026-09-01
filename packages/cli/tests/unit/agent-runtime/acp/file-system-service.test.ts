@@ -14,7 +14,11 @@ import {
   isAcpResourceNotFoundError,
   normalizeAcpRemotePath,
 } from '../../../../src/acp/AcpFileSystemService.js';
-import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  type AcpRemotePathProfile,
+  createAcpRemotePathProfile,
+  parseAcpRemotePath,
+} from '../../../../src/acp/AcpRemotePath.js';
 import { Logger } from '../../../../src/logging/Logger.js';
 import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
 import {
@@ -33,6 +37,7 @@ const errorSpy = vi
   .spyOn(Logger.prototype, 'error')
   .mockImplementation(() => undefined);
 const posixProfile = createAcpRemotePathProfile('/workspace');
+const winProfile = createAcpRemotePathProfile('C:\\workspace');
 const remoteProfile = createAcpRemotePathProfile('/remote');
 
 function profileForTestPath(filePath: string) {
@@ -521,6 +526,172 @@ describe('AcpFileSystemService remote ownership', () => {
     expect(client.requests).toEqual([]);
   });
 
+  it('rejects invalid Windows Read and Write paths before any ACP request', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      { readTextFile: true, writeTextFile: true },
+      winProfile
+    );
+
+    await expect(service.readTextFile('C:\\workspace\\NUL.txt')).rejects.toMatchObject({
+      name: 'AcpRemotePathError',
+      reason: 'reserved-device-name',
+    });
+    await expect(
+      service.writeTextFile('C:\\workspace\\file.ts:stream', 'blocked')
+    ).rejects.toMatchObject({
+      name: 'AcpRemotePathError',
+      reason: 'alternate-data-stream',
+    });
+    expect(client.requests).toEqual([]);
+  });
+
+  it('parses public user-read and write operations exactly once and sends the canonical wire path', async () => {
+    const client = new ControlledFileClient();
+    client.files.set('C:\\workspace\\Mixed\\File.ts', 'alpha');
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      winProfile
+    );
+    const parseSpy = vi.spyOn(service, 'parsePath');
+
+    await expect(
+      service.readTextFileForUser('c:/workspace/Mixed/File.ts')
+    ).resolves.toBe('alpha');
+    expect(parseSpy).toHaveBeenCalledTimes(1);
+    expect(client.requests.at(-1)).toEqual({
+      kind: 'read',
+      request: {
+        path: 'C:\\workspace\\Mixed\\File.ts',
+        sessionId: 'session-a',
+      },
+    });
+
+    parseSpy.mockClear();
+    await expect(
+      service.writeTextFile('c:/workspace/Mixed/Write.ts', 'beta')
+    ).resolves.toBeUndefined();
+    expect(parseSpy).toHaveBeenCalledTimes(1);
+    expect(client.requests.at(-1)).toEqual({
+      kind: 'write',
+      request: {
+        path: 'C:\\workspace\\Mixed\\Write.ts',
+        content: 'beta',
+        sessionId: 'session-a',
+      },
+    });
+  });
+
+  it('rejects forged parsed identities before requests, ledger updates, or mutation fencing', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      { readTextFile: true, writeTextFile: true },
+      winProfile
+    );
+    const canonical = service.parsePath('C:\\workspace\\source.ts');
+    const forged = Object.freeze({
+      ...canonical,
+      wirePath: 'C:\\workspace\\target.ts',
+    });
+    const forgedProfile = Object.freeze({
+      ...winProfile,
+      workspace: forged,
+    });
+
+    expect(Object.isFrozen(canonical)).toBe(true);
+    expect(Object.isFrozen(winProfile)).toBe(true);
+    const assertIdentityError = (operation: () => unknown): void => {
+      try {
+        operation();
+        throw new Error('expected canonical path identity rejection');
+      } catch (error) {
+        expect(error).toMatchObject({
+          name: 'AcpRemotePathIdentityError',
+          code: 'acp_remote_path_identity_invalid',
+          message: 'ACP remote path identity is invalid',
+        });
+        expect(JSON.stringify(error)).not.toContain('source.ts');
+        expect(JSON.stringify(error)).not.toContain('target.ts');
+      }
+    };
+    assertIdentityError(
+      () =>
+        new AcpFileSystemService(
+          harness.agentConnection,
+          'forged-profile',
+          { readTextFile: true, writeTextFile: true },
+          forgedProfile
+        )
+    );
+    assertIdentityError(() =>
+      service.recordRemoteAccessForParsedPath(forged, 'forged', 'read')
+    );
+    assertIdentityError(() => service.tryAcquireMutationLeaseForParsedPaths([forged]));
+    await expect(
+      service.writeTextFileForParsedPath(forged, 'forged')
+    ).rejects.toMatchObject({
+      name: 'AcpRemotePathIdentityError',
+      code: 'acp_remote_path_identity_invalid',
+      message: 'ACP remote path identity is invalid',
+    });
+
+    expect(client.requests).toEqual([]);
+    expect(service.getRemoteAccessRecord('C:\\workspace\\source.ts')).toBeUndefined();
+    expect(service.getRemoteAccessRecord('C:\\workspace\\target.ts')).toBeUndefined();
+    expect(
+      getAcpFileRequestCoordinator(harness.agentConnection).getStatsForTests()
+    ).toMatchObject({
+      mutationPaths: 0,
+      activeMutations: 0,
+      pendingWrites: 0,
+      needsRead: 0,
+    });
+  });
+
+  it('rejects copied and stateful remote path profiles before reading their properties', () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const copiedProfile: AcpRemotePathProfile = { ...winProfile };
+    let styleReads = 0;
+    const statefulProfile: AcpRemotePathProfile = {
+      get style(): AcpRemotePathProfile['style'] {
+        styleReads += 1;
+        return styleReads <= 2 ? 'win32' : 'posix';
+      },
+      workspace: winProfile.workspace,
+    };
+
+    for (const profile of [copiedProfile, statefulProfile]) {
+      expect(
+        () =>
+          new AcpFileSystemService(
+            harness.agentConnection,
+            'forged-profile',
+            { readTextFile: true, writeTextFile: true },
+            profile
+          )
+      ).toThrow('ACP remote path identity is invalid');
+    }
+    expect(styleReads).toBe(0);
+    expect(client.requests).toEqual([]);
+  });
+
   it('tracks a session-scoped remote digest ledger without storing content', () => {
     const client = new ControlledFileClient();
     const harness = createPairedAcpHarness(client);
@@ -688,6 +859,44 @@ describe('AcpFileSystemService remote ownership', () => {
     expect(service.getRemoteAccessRecord('/workspace/file-1024.ts')).toBeDefined();
   });
 
+  it('keys ledger authority by exact identity, evicts collision aliases, and preserves unrelated LRU entries', () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      winProfile
+    );
+    const firstExact = 'C:\\workspace\\Folder\\File-0.ts';
+    const aliasExact = 'c:/workspace/folder/file-0.ts';
+
+    service.recordRemoteAccess(firstExact, 'content-0', 'read');
+    for (let index = 1; index < 1024; index += 1) {
+      service.recordRemoteAccess(
+        `C:\\workspace\\file-${index}.ts`,
+        `content-${index}`,
+        'read'
+      );
+    }
+
+    expect(service.checkRemoteAccess(firstExact, 'content-0')).toBe('current');
+
+    service.recordRemoteAccess(aliasExact, 'alias-content', 'read');
+
+    expect(service.checkRemoteAccess(firstExact, 'content-0')).toBe('missing');
+    expect(service.checkRemoteAccess(aliasExact, 'alias-content')).toBe('current');
+    expect(service.getRemoteAccessRecord('C:\\workspace\\file-1.ts')).toBeDefined();
+    expect(service.getRemoteAccessRecord(aliasExact)).toMatchObject({
+      filePath: 'C:\\workspace\\folder\\file-0.ts',
+      sessionId: 'session-a',
+      contentSha256: createHash('sha256').update('alias-content').digest('hex'),
+    });
+  });
+
   it('readTextFileForUser dispatches via request() with cancellationSignal and records the ledger on success', async () => {
     const clientApp = acp
       .client({ name: 'file-system-user-read-client' })
@@ -756,6 +965,38 @@ describe('AcpFileSystemService remote ownership', () => {
       code: -32002,
     });
     expect(service.getRemoteAccessRecord('/workspace/user-read.ts')).toBeUndefined();
+  });
+
+  it('readTextFileForUser clears the full Windows collision class on explicit not-found from a case alias', async () => {
+    const clientApp = acp
+      .client({ name: 'file-system-user-read-win32-not-found-alias-client' })
+      .onRequest(acp.CLIENT_METHODS.fs_read_text_file, async ({ params }) => {
+        throw RequestError.resourceNotFound(params.path);
+      });
+    const harness = createPairedAcpAppHarness(clientApp);
+    harnesses.push(harness);
+    const service = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      {
+        readTextFile: true,
+      },
+      winProfile
+    );
+    const recordedExact = 'C:\\workspace\\Folder\\File.ts';
+    service.recordRemoteAccess(recordedExact, 'stale content', 'read');
+
+    await expect(
+      service.readTextFileForUser('c:/workspace/folder/file.ts')
+    ).rejects.toMatchObject({
+      name: 'RequestError',
+      code: -32002,
+    });
+
+    expect(service.getRemoteAccessRecord(recordedExact)).toBeUndefined();
+    expect(
+      service.getRemoteAccessRecord('C:\\workspace\\folder\\file.ts')
+    ).toBeUndefined();
   });
 
   it('readTextFileForUser uses the default absolute deadline and settles locally on timeout', async () => {
@@ -865,7 +1106,7 @@ describe('AcpFileSystemService remote ownership', () => {
       needsRead: 1,
     });
     const recoveryPermit = coordinator.beginUserRead(
-      '/workspace/compat-error.ts',
+      parseAcpRemotePath('/workspace/compat-error.ts'),
       'session-a'
     );
     expect(recoveryPermit.lane).toBe('recovery');
@@ -927,7 +1168,7 @@ describe('AcpFileSystemService remote ownership', () => {
     );
     const coordinator = getAcpFileRequestCoordinator(harness.agentConnection);
     const lease = coordinator.tryAcquireMutationLease(
-      ['/workspace/caller-owned.ts'],
+      [parseAcpRemotePath('/workspace/caller-owned.ts')],
       'session-a'
     );
     const acquireLeaseSpy = vi.spyOn(coordinator, 'tryAcquireMutationLease');
@@ -976,8 +1217,10 @@ describe('AcpFileSystemService remote ownership', () => {
     ).not.toThrow();
 
     const lease = service.tryAcquireMutationLease(['/workspace/./shared.ts']);
-    expect(lease.generationFor('/workspace/shared.ts')).toBeGreaterThan(0);
-    expect(lease.isCurrent('/workspace/shared.ts')).toBe(true);
+    expect(
+      lease.generationFor(parseAcpRemotePath('/workspace/shared.ts'))
+    ).toBeGreaterThan(0);
+    expect(lease.isCurrent(parseAcpRemotePath('/workspace/shared.ts'))).toBe(true);
 
     await expect(
       Promise.resolve().then(() =>

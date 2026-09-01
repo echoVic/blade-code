@@ -232,7 +232,7 @@ describe('ACP remote Read builtin tool', () => {
     await expect(fs.readFile(filePath, 'utf8')).resolves.toBe(hostCanary);
   });
 
-  it('remote Read records the ACP ledger exactly once via the service permit', async () => {
+  it('remote Read records exactly one current ACP ledger entry via the service permit', async () => {
     const root = await createTempRoot('blade-acp-remote-ledger-once-');
     const filePath = path.join(root, 'ledger-once.txt');
     const remoteContent = 'alpha\nbeta\ngamma\n';
@@ -248,7 +248,7 @@ describe('ACP remote Read builtin tool', () => {
     if (!(service instanceof AcpFileSystemService)) {
       throw new Error('expected ACP remote filesystem service');
     }
-    const recordSpy = vi.spyOn(service, 'recordRemoteAccess');
+    const parseSpy = vi.spyOn(service, 'parsePath');
 
     const result = await executeRead(filePath, sessionId, { offset: 1, limit: 1 });
 
@@ -256,10 +256,15 @@ describe('ACP remote Read builtin tool', () => {
       success: true,
       llmContent: '     2|beta',
     });
-    expect(recordSpy).toHaveBeenCalledTimes(1);
-    expect(recordSpy).toHaveBeenCalledWith(filePath, remoteContent, 'read');
+    expect(parseSpy).toHaveBeenCalledTimes(1);
     expect(service.checkRemoteAccess(filePath, remoteContent)).toBe('current');
-    recordSpy.mockRestore();
+    expect(service.getRemoteAccessRecord(filePath)).toMatchObject({
+      filePath,
+      sessionId,
+      lastOperation: 'read',
+      source: 'remote',
+    });
+    parseSpy.mockRestore();
   });
 
   it('remote Read releases the opaque lock after a local deadline timeout even while the client handler is still pending', async () => {

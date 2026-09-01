@@ -13,6 +13,10 @@ import {
 } from '../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
 import {
+  createAcpRemotePathProfile,
+  parseAcpRemotePath,
+} from '../../src/acp/AcpRemotePath.js';
+import {
   AcpServiceContext,
   getAcpFileSystemService,
 } from '../../src/acp/AcpServiceContext.js';
@@ -117,6 +121,10 @@ function createReadExecutor(): ToolExecutor {
 async function createWorkspace(prefix: string): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   return fs.realpath(root);
+}
+
+function exactPathIdentity(filePath: string): string {
+  return parseAcpRemotePath(filePath).exactIdentity;
 }
 
 describe('ACP filesystem request lifecycle', () => {
@@ -237,6 +245,7 @@ describe('ACP filesystem request lifecycle', () => {
       purpose: 'user-read',
       sessionId: 'session-a',
       pathIdentity: client.pathIdentityFor('/repo/file.txt'),
+      exactPathIdentity: exactPathIdentity('/repo/file.txt'),
       deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
       signal: controller.signal,
       dispatch: (cancellationSignal) =>
@@ -349,6 +358,7 @@ describe('ACP filesystem request lifecycle', () => {
       purpose: 'user-read',
       sessionId: 'session-a',
       pathIdentity: client.pathIdentityFor('/repo/cooperate.txt'),
+      exactPathIdentity: exactPathIdentity('/repo/cooperate.txt'),
       deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
       signal: controller.signal,
       dispatch: (cancellationSignal) =>
@@ -431,6 +441,7 @@ describe('ACP filesystem request lifecycle', () => {
       purpose: 'user-read',
       sessionId: 'session-a',
       pathIdentity: client.pathIdentityFor('/repo/cooperate-reject.txt'),
+      exactPathIdentity: exactPathIdentity('/repo/cooperate-reject.txt'),
       deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
       signal: controller.signal,
       dispatch: (cancellationSignal) =>
@@ -777,65 +788,65 @@ describe('ACP filesystem request lifecycle', () => {
     expect(FileLockManager.getInstance().getLockedFiles()).toEqual([]);
   });
 
-  it('shares same-connection quarantine across Session services and isolates a new connection generation', async () => {
-    const root = await createWorkspace('blade-acp-request-lifecycle-generation-');
-    roots.push(root);
-    const sharedPath = path.join(root, 'shared.txt');
+  it('preserves Windows exact-origin quarantine across same-connection service replacement and isolates a new connection', async () => {
+    const sharedPath = 'C:\\Repo\\Folder\\File.ts';
+    const collisionAlias = 'c:/repo/folder/file.ts';
+    const profile = createAcpRemotePathProfile('C:\\Repo');
     const client = new ControlledFileClient();
     client.files.set(sharedPath, 'alpha\n');
     const harness = trackHarness(createPairedAcpAppHarness(client.createApp()));
-    initializeSession(harness, 'session-a', root, {
-      readTextFile: true,
-      writeTextFile: true,
-    });
-    initializeSession(harness, 'session-b', root, {
-      readTextFile: true,
-      writeTextFile: true,
-    });
-
-    const serviceA = getAcpFileSystemService('session-a');
-    const serviceB = getAcpFileSystemService('session-b');
-    if (!(serviceA instanceof AcpFileSystemService)) {
-      throw new Error('expected session-a ACP remote filesystem service');
-    }
-    if (!(serviceB instanceof AcpFileSystemService)) {
-      throw new Error('expected session-b ACP remote filesystem service');
-    }
+    const serviceA = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      { readTextFile: true, writeTextFile: true },
+      profile
+    );
 
     const lease = serviceA.tryAcquireMutationLease([sharedPath]);
-    lease.markUncertain(sharedPath);
+    lease.markUncertain(serviceA.parsePath(sharedPath));
     lease.release();
+    serviceA.dispose();
+
+    const replacementService = new AcpFileSystemService(
+      harness.agentConnection,
+      'session-a',
+      { readTextFile: true, writeTextFile: true },
+      profile
+    );
+    expect(replacementService.getRemoteAccessRecord(sharedPath)).toBeUndefined();
+    const requestCountBeforeAlias = client.requests.length;
 
     await expect(
-      Promise.resolve().then(() => serviceB.tryAcquireMutationLease([sharedPath]))
+      replacementService.readTextFileForUser(collisionAlias)
     ).rejects.toMatchObject({
       name: 'AcpRemoteFileBoundaryError',
       reason: 'busy',
       dispatched: false,
       requestPending: false,
     });
+    expect(client.requests).toHaveLength(requestCountBeforeAlias);
 
-    await closePairedAcpHarness(harness);
-
-    const replacementClient = new ControlledFileClient();
-    replacementClient.files.set(sharedPath, 'alpha\n');
-    const replacementHarness = trackHarness(
-      createPairedAcpAppHarness(replacementClient.createApp())
+    const cleanClient = new ControlledFileClient();
+    const cleanHarness = trackHarness(
+      createPairedAcpAppHarness(cleanClient.createApp())
     );
-    AcpServiceContext.destroySession('session-a');
-    AcpServiceContext.destroySession('session-b');
-    sessionIds.delete('session-a');
-    sessionIds.delete('session-b');
-    initializeSession(replacementHarness, 'session-a', root, {
-      readTextFile: true,
-      writeTextFile: true,
-    });
-    const replacementService = getAcpFileSystemService('session-a');
-    if (!(replacementService instanceof AcpFileSystemService)) {
-      throw new Error('expected replacement ACP remote filesystem service');
-    }
+    const cleanService = new AcpFileSystemService(
+      cleanHarness.agentConnection,
+      'session-a',
+      { readTextFile: true, writeTextFile: true },
+      profile
+    );
+    const cleanLease = cleanService.tryAcquireMutationLease([collisionAlias]);
+    expect(cleanLease.isCurrent(cleanService.parsePath(collisionAlias))).toBe(true);
+    cleanLease.release();
+
+    await expect(replacementService.readTextFileForUser(sharedPath)).resolves.toBe(
+      'alpha\n'
+    );
     const recoveredLease = replacementService.tryAcquireMutationLease([sharedPath]);
-    expect(recoveredLease.isCurrent(sharedPath)).toBe(true);
+    expect(recoveredLease.isCurrent(replacementService.parsePath(sharedPath))).toBe(
+      true
+    );
     recoveredLease.release();
   });
 
@@ -978,7 +989,7 @@ describe('ACP filesystem request lifecycle', () => {
       throw new Error('expected ACP remote filesystem service');
     }
     const uncertainLease = service.tryAcquireMutationLease([filePath]);
-    uncertainLease.markUncertain(filePath);
+    uncertainLease.markUncertain(parseAcpRemotePath(filePath));
     uncertainLease.release();
     expect(coordinator.getStatsForTests()).toMatchObject({
       needsRead: 1,
@@ -992,6 +1003,7 @@ describe('ACP filesystem request lifecycle', () => {
           purpose: 'user-read',
           sessionId: `session-${index}`,
           pathIdentity: client.pathIdentityFor(`/repo/normal-${index}.txt`),
+          exactPathIdentity: exactPathIdentity(`/repo/normal-${index}.txt`),
           deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
           dispatch: (cancellationSignal) =>
             harness.agentConnection.request(
@@ -1022,6 +1034,7 @@ describe('ACP filesystem request lifecycle', () => {
         purpose: 'user-read',
         sessionId: 'overflow-session',
         pathIdentity: client.pathIdentityFor('/repo/overflow.txt'),
+        exactPathIdentity: exactPathIdentity('/repo/overflow.txt'),
         deadlineAt: Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS,
         dispatch: () => Promise.resolve({ content: 'overflow' }),
       })

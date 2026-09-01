@@ -1,6 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import { createAcpRemoteConnectionPathIdentity } from '../../../src/acp/AcpFileRequestCoordinator.js';
+import { parseAcpRemotePath } from '../../../src/acp/AcpRemotePath.js';
 
 export type ControlledFileRequest =
   | {
@@ -162,7 +163,7 @@ export class ControlledFileClient implements acp.Client {
   }
 
   pathIdentityFor(filePath: string): string {
-    return createAcpRemoteConnectionPathIdentity(filePath);
+    return createAcpRemoteConnectionPathIdentity(parseAcpRemotePath(filePath));
   }
 
   createApp(): acp.ClientApp {
