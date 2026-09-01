@@ -43,6 +43,24 @@ import { sessionActions } from '../store/vanilla.js';
 
 export type SessionSelectionIntent = 'resume' | 'fork';
 
+export type SlashCommandWorkspaceKind = 'local' | 'acp-remote';
+
+export const REMOTE_SAFE_SLASH_COMMAND_NAMES = Object.freeze([
+  'help',
+  'version',
+  'btw',
+  'effort',
+  'speed',
+  'verbosity',
+  'style',
+] as const);
+
+const remoteSafeSlashCommandNames = new Set<string>(REMOTE_SAFE_SLASH_COMMAND_NAMES);
+
+export function isRemoteSafeSlashCommandName(name: string): boolean {
+  return remoteSafeSlashCommandNames.has(name);
+}
+
 export type SessionSelectionAction =
   | {
       action: 'select_session';
@@ -160,6 +178,8 @@ export interface AcpCallbacks {
  */
 export interface SlashCommandContext {
   cwd: string;
+  /** Immutable workspace ownership; callers default to local for compatibility. */
+  workspaceKind?: SlashCommandWorkspaceKind;
   /** Owning user surface. Host interactions must fail closed when omitted. */
   surface?: 'tui' | 'headless' | 'acp';
   /** 当前 Agent session，用于隔离 session-owned runtime resources */

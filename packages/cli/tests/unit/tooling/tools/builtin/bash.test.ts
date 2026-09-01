@@ -5,6 +5,8 @@ import path from 'node:path';
 import type * as acp from '@agentclientprotocol/sdk';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AcpServiceContext } from '../../../../../src/acp/AcpServiceContext.js';
+import { DEFAULT_FOREGROUND_COMMAND_HANDOFF_MS } from '../../../../../src/config/foregroundCommandHandoff.js';
+import { BackgroundShellManager } from '../../../../../src/tools/builtin/shell/BackgroundShellManager.js';
 import { bashTool } from '../../../../../src/tools/builtin/shell/bash.js';
 import {
   installWorkspaceSandboxBackendForTests,
@@ -320,6 +322,95 @@ describe('Bash Tool', () => {
     expect(client.createRequests).toEqual([
       expect.objectContaining({ cwd: 'C:\\Remote\\Project' }),
     ]);
+  });
+
+  it('rejects explicit background Bash for remote ACP sessions before BackgroundShellManager admission', async () => {
+    const sessionId = 'bash-acp-no-background';
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    const startSpy = vi.spyOn(
+      BackgroundShellManager.getInstance(),
+      'startBackgroundProcess'
+    );
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      sessionId,
+      { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+      'C:\\Remote\\Project'
+    );
+    cleanups.push(
+      () => AcpServiceContext.destroySession(sessionId),
+      () => harness.close(),
+      () => startSpy.mockRestore()
+    );
+
+    const result = await bashTool.execute(
+      {
+        command: 'npm run dev',
+        timeout: 10_000,
+        env: {},
+        run_in_background: true,
+      },
+      undefined,
+      {
+        sessionId,
+        workspaceRoot: '/private/remote-state',
+        executionRoot: 'C:\\Remote\\Project',
+        workspaceKind: 'acp-remote',
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.message).toMatch(/background|ACP|remote/i);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(client.createRequests).toEqual([]);
+  });
+
+  it('does not register ACP remote foreground commands as external foreground candidates', async () => {
+    const sessionId = 'bash-acp-no-handoff';
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    const candidateSpy = vi.spyOn(
+      BackgroundShellManager.getInstance(),
+      'startExternalForegroundCandidate'
+    );
+    client.enqueueBlockedOutput({ output: '', truncated: false });
+    client.resolveWait({ exitCode: 0 });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      sessionId,
+      { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+      'C:\\Remote\\Project'
+    );
+    cleanups.push(
+      () => AcpServiceContext.destroySession(sessionId),
+      () => harness.close(),
+      () => candidateSpy.mockRestore()
+    );
+
+    const result = await bashTool.execute(
+      {
+        command: 'node -e "setTimeout(() => process.exit(0), 10)"',
+        timeout: DEFAULT_FOREGROUND_COMMAND_HANDOFF_MS + 5_000,
+        env: {},
+        run_in_background: false,
+      },
+      undefined,
+      {
+        sessionId,
+        workspaceRoot: '/private/remote-state',
+        executionRoot: 'C:\\Remote\\Project',
+        workspaceKind: 'acp-remote',
+        foregroundCommandHandoffMs: DEFAULT_FOREGROUND_COMMAND_HANDOFF_MS,
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.metadata).toMatchObject({
+      acp_mode: true,
+      terminal_transport: 'acp',
+    });
+    expect(candidateSpy).not.toHaveBeenCalled();
   });
 
   it('fails closed when the real ACP terminal cannot be created', async () => {

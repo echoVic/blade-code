@@ -294,7 +294,8 @@ class AcpTerminalService implements TerminalService {
   constructor(
     private readonly connection: AgentSideConnection,
     private readonly sessionId: string,
-    private readonly fallback: TerminalService = new LocalTerminalService()
+    private readonly remoteFileSystem = false,
+    private readonly fallback?: TerminalService
   ) {}
 
   async execute(
@@ -524,6 +525,7 @@ class AcpTerminalService implements TerminalService {
       };
 
       if (
+        !this.remoteFileSystem &&
         options?.foregroundHandoffMs &&
         options.foregroundHandoffMs > 0 &&
         options.durableOwnership
@@ -602,7 +604,7 @@ class AcpTerminalService implements TerminalService {
       );
     } catch (error) {
       if (terminal) await terminal.release().catch(() => undefined);
-      if (options?.allowLocalFallback !== true) {
+      if (this.remoteFileSystem || options?.allowLocalFallback !== true) {
         return {
           success: false,
           stdout: '',
@@ -617,7 +619,9 @@ class AcpTerminalService implements TerminalService {
         };
       }
       logger.warn(`[AcpTerminal] ACP terminal failed, using fallback:`, error);
-      const fallbackResult = await this.fallback.execute(command, options);
+      const fallbackResult = await (
+        this.fallback ?? new LocalTerminalService(options?.cwd)
+      ).execute(command, options);
       return { ...fallbackResult, transport: 'local_fallback' };
     }
   }
@@ -709,7 +713,7 @@ export class AcpServiceContext {
 
     // Respect capability negotiation: unsupported ACP methods must not be called.
     const terminalService: TerminalService = clientCapabilities?.terminal
-      ? new AcpTerminalService(connection, sessionId)
+      ? new AcpTerminalService(connection, sessionId, usesRemoteFileSystem)
       : usesRemoteFileSystem
         ? new UnavailableTerminalService()
         : new LocalTerminalService(executionRoot);
@@ -847,6 +851,7 @@ export class AcpServiceContext {
     if (targetSessionId) {
       const services = AcpServiceContext.sessions.get(targetSessionId);
       if (services) return services.terminalService;
+      if (sessionId) return new UnavailableTerminalService();
     }
     return new LocalTerminalService();
   }

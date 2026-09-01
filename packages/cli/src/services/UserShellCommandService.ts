@@ -58,6 +58,19 @@ export interface UserShellExecutor {
   ): Promise<UserShellExecutorResult>;
 }
 
+export function createUnavailableUserShellExecutor(): UserShellExecutor {
+  return {
+    async execute() {
+      return {
+        exitCode: null,
+        stdout: '',
+        stderr: '',
+        error: 'ACP terminal capability is unavailable',
+      };
+    },
+  };
+}
+
 export type UserShellCommandEvent =
   | {
       type: 'started';

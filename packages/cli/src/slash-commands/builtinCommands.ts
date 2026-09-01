@@ -35,6 +35,7 @@ import speedCommand from './speed.js';
 import styleCommand from './style.js';
 import {
   getUI,
+  REMOTE_SAFE_SLASH_COMMAND_NAMES,
   type SlashCommand,
   type SlashCommandContext,
   type SlashCommandResult,
@@ -53,7 +54,24 @@ const helpCommand: SlashCommand = {
   ): Promise<SlashCommandResult> {
     const ui = getUI(context);
 
-    let helpText = `**可用的 Slash Commands:**
+    let helpText: string;
+    if (context.workspaceKind === 'acp-remote') {
+      const descriptions = new Map<string, string>([
+        ['help', '显示此帮助信息'],
+        ['version', '显示 Blade Code 版本信息'],
+        ['btw', '在不改变主对话的情况下询问一个旁路问题'],
+        ['effort', '查看或设置当前 Session 的推理强度'],
+        ['speed', '查看或设置当前 Session 的 provider 服务等级'],
+        ['verbosity', '查看或设置当前 Session 的响应详略'],
+        ['style', '查看或设置当前 Session 的沟通风格'],
+      ]);
+      helpText = `**可用的 Slash Commands:**
+
+${REMOTE_SAFE_SLASH_COMMAND_NAMES.map(
+  (name) => `**/${name}** - ${descriptions.get(name)}`
+).join('\n')}`;
+    } else {
+      helpText = `**可用的 Slash Commands:**
 
 **/init** - 分析当前项目并生成 BLADE.md 配置文件
 **/git** - Git 仓库查询和 AI 辅助 (status/log/diff/review/commit)
@@ -80,10 +98,14 @@ const helpCommand: SlashCommand = {
 **/version** - 显示 Blade Code 版本信息
 **/status** - 显示当前配置状态
 **/permissions** - 管理本地权限规则`;
+    }
 
     // 添加自定义命令列表
     const workspaceRoot = context.workspaceRoot || context.cwd || getCwd();
-    const customRegistry = CustomCommandRegistry.getExistingInstance(workspaceRoot);
+    const customRegistry =
+      context.workspaceKind === 'acp-remote'
+        ? undefined
+        : CustomCommandRegistry.getExistingInstance(workspaceRoot);
     if (customRegistry?.isInitialized()) {
       const customCommands = customRegistry.getAllCommands();
       if (customCommands.length > 0) {

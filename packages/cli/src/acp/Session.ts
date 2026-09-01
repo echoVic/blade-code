@@ -802,6 +802,7 @@ export class AcpSession {
       // 创建 slash command 上下文，包含 ACP 回调和取消信号
       const context: SlashCommandContext = {
         cwd: this.roots.hostStateRoot,
+        workspaceKind: this.roots.kind,
         surface: 'acp',
         workspaceRoot: this.roots.hostStateRoot,
         sessionId: this.id,
@@ -865,163 +866,182 @@ export class AcpSession {
             return this.runtime.getCommunicationStyleConfiguration();
           },
         },
-        subagents: {
-          list: async () => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            return this.runtime.listSubagents();
-          },
-          resume: async (agentId, prompt) => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            let announced = false;
-            let pendingCompletion:
-              | import('../agent/subagents/AgentSessionStore.js').AgentSession
-              | undefined;
-            const sendCompletion = (
-              session: import('../agent/subagents/AgentSessionStore.js').AgentSession
-            ) => {
-              this.sendUpdate({
-                sessionUpdate: 'tool_call_update',
-                toolCallId: session.id,
-                status:
-                  session.status === 'completed'
-                    ? ('completed' as ToolCallStatus)
-                    : ('failed' as ToolCallStatus),
-                content: [
-                  {
-                    type: 'content',
-                    content: {
-                      type: 'text',
-                      text:
-                        session.result?.message ||
-                        session.result?.error ||
-                        `Subagent ${session.status}`,
-                    },
-                  },
-                ],
-              });
-            };
-            const result = this.runtime.resumeSubagent({
-              agentId,
-              prompt,
-              onCompleted: (session) => {
-                if (announced) sendCompletion(session);
-                else pendingCompletion = session;
-              },
-            });
-            this.sendUpdate({
-              sessionUpdate: 'tool_call',
-              toolCallId: result.session.id,
-              status: 'in_progress' as ToolCallStatus,
-              title: `Resuming ${result.session.subagentType} subagent`,
-              content: [
-                {
-                  type: 'content',
-                  content: {
-                    type: 'text',
-                    text: `Resumed from ${result.source.id} at depth ${result.session.resumeDepth}`,
-                  },
+        ...(this.roots.kind === 'local'
+          ? {
+              subagents: {
+                list: async () => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  return this.runtime.listSubagents();
                 },
-              ],
-              kind: this.mapToolKind('readonly'),
-            });
-            announced = true;
-            if (pendingCompletion) sendCompletion(pendingCompletion);
-            return result;
-          },
-        },
-        mcp: {
-          getCatalog: async () => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            return this.runtime.getMcpContentCatalog();
-          },
-          refresh: async (serverName) => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            await this.runtime.refreshMcpContentCatalogs(serverName);
-          },
-          getPrompt: async (serverName, name, arguments_) => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            return this.runtime.getMcpPrompt(serverName, name, arguments_);
-          },
-          complete: async (serverName, input, signal) => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            return this.runtime.completeMcpArgument(serverName, input, signal);
-          },
-          listTasks: async (serverName) => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            return this.runtime.listMcpTasks(serverName);
-          },
-          getTask: async (taskId) => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            return this.runtime.getMcpTask(taskId);
-          },
-          cancelTask: async (taskId, signal) => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            return this.runtime.cancelMcpTask(taskId, signal);
-          },
-          getLogs: async (serverName, options) => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            return this.runtime.getMcpLogs(serverName, options);
-          },
-          setLoggingLevel: async (serverName, level) => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            await this.runtime.setMcpLoggingLevel(serverName, level);
-          },
-          getInstructions: async () => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            return this.runtime.getMcpInstructions();
-          },
-        },
+                resume: async (agentId: string, prompt: string) => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  let announced = false;
+                  let pendingCompletion:
+                    | import('../agent/subagents/AgentSessionStore.js').AgentSession
+                    | undefined;
+                  const sendCompletion = (
+                    session: import('../agent/subagents/AgentSessionStore.js').AgentSession
+                  ) => {
+                    this.sendUpdate({
+                      sessionUpdate: 'tool_call_update',
+                      toolCallId: session.id,
+                      status:
+                        session.status === 'completed'
+                          ? ('completed' as ToolCallStatus)
+                          : ('failed' as ToolCallStatus),
+                      content: [
+                        {
+                          type: 'content',
+                          content: {
+                            type: 'text',
+                            text:
+                              session.result?.message ||
+                              session.result?.error ||
+                              `Subagent ${session.status}`,
+                          },
+                        },
+                      ],
+                    });
+                  };
+                  const result = this.runtime.resumeSubagent({
+                    agentId,
+                    prompt,
+                    onCompleted: (session) => {
+                      if (announced) sendCompletion(session);
+                      else pendingCompletion = session;
+                    },
+                  });
+                  this.sendUpdate({
+                    sessionUpdate: 'tool_call',
+                    toolCallId: result.session.id,
+                    status: 'in_progress' as ToolCallStatus,
+                    title: `Resuming ${result.session.subagentType} subagent`,
+                    content: [
+                      {
+                        type: 'content',
+                        content: {
+                          type: 'text',
+                          text: `Resumed from ${result.source.id} at depth ${result.session.resumeDepth}`,
+                        },
+                      },
+                    ],
+                    kind: this.mapToolKind('readonly'),
+                  });
+                  announced = true;
+                  if (pendingCompletion) sendCompletion(pendingCompletion);
+                  return result;
+                },
+              },
+            }
+          : {}),
+        ...(this.roots.kind === 'local'
+          ? {
+              mcp: {
+                getCatalog: async () => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  return this.runtime.getMcpContentCatalog();
+                },
+                refresh: async (serverName) => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  await this.runtime.refreshMcpContentCatalogs(serverName);
+                },
+                getPrompt: async (serverName, name, arguments_) => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  return this.runtime.getMcpPrompt(serverName, name, arguments_);
+                },
+                complete: async (serverName, input, signal) => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  return this.runtime.completeMcpArgument(serverName, input, signal);
+                },
+                listTasks: async (serverName) => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  return this.runtime.listMcpTasks(serverName);
+                },
+                getTask: async (taskId) => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  return this.runtime.getMcpTask(taskId);
+                },
+                cancelTask: async (taskId, signal) => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  return this.runtime.cancelMcpTask(taskId, signal);
+                },
+                getLogs: async (serverName, options) => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  return this.runtime.getMcpLogs(serverName, options);
+                },
+                setLoggingLevel: async (serverName, level) => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  await this.runtime.setMcpLoggingLevel(serverName, level);
+                },
+                getInstructions: async () => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  return this.runtime.getMcpInstructions();
+                },
+              },
+            }
+          : {}),
         sideConversation: {
           ask: async (question, sideSignal) => {
             if (!this.runtime) throw new Error('Session runtime is unavailable');
             return this.runtime.askSideQuestion(question, { signal: sideSignal });
           },
         },
-        codeReview: {
-          run: async (request, reviewSignal) => {
-            if (!this.runtime) throw new Error('Session runtime is unavailable');
-            const run = await CodeReviewService.start({
-              sessionId: this.id,
-              projectPath: this.roots.hostStateRoot,
-              runtime: this.runtime,
-              request,
-              signal: reviewSignal,
-              onEvent: (event) => {
-                if (event.kind === 'tool_start') {
-                  this.sendUpdate({
-                    sessionUpdate: 'tool_call',
-                    toolCallId: event.toolCall.id,
-                    status: 'in_progress' as ToolCallStatus,
-                    title: `Review: ${event.toolCall.function.name}`,
-                    content: [],
-                    kind: this.mapToolKind(event.toolKind),
+        ...(this.roots.kind === 'local'
+          ? {
+              codeReview: {
+                run: async (
+                  request: {
+                    kind: 'uncommitted' | 'base' | 'commit';
+                    ref?: string;
+                    instructions?: string;
+                  },
+                  reviewSignal?: AbortSignal
+                ) => {
+                  if (!this.runtime) throw new Error('Session runtime is unavailable');
+                  const run = await CodeReviewService.start({
+                    sessionId: this.id,
+                    projectPath: this.roots.hostStateRoot,
+                    runtime: this.runtime,
+                    request,
+                    signal: reviewSignal,
+                    onEvent: (event) => {
+                      if (event.kind === 'tool_start') {
+                        this.sendUpdate({
+                          sessionUpdate: 'tool_call',
+                          toolCallId: event.toolCall.id,
+                          status: 'in_progress' as ToolCallStatus,
+                          title: `Review: ${event.toolCall.function.name}`,
+                          content: [],
+                          kind: this.mapToolKind(event.toolKind),
+                        });
+                      } else if (event.kind === 'tool_result') {
+                        this.sendUpdate({
+                          sessionUpdate: 'tool_call_update',
+                          toolCallId: event.toolCall.id,
+                          status: event.result.success
+                            ? ('completed' as ToolCallStatus)
+                            : ('failed' as ToolCallStatus),
+                          content: [],
+                        });
+                      }
+                    },
                   });
-                } else if (event.kind === 'tool_result') {
-                  this.sendUpdate({
-                    sessionUpdate: 'tool_call_update',
-                    toolCallId: event.toolCall.id,
-                    status: event.result.success
-                      ? ('completed' as ToolCallStatus)
-                      : ('failed' as ToolCallStatus),
-                    content: [],
-                  });
-                }
+                  const completion = await run.completion;
+                  const review = (
+                    await CodeReviewService.list(this.roots.hostStateRoot, this.id)
+                  ).find((candidate) => candidate.start.reviewId === run.reviewId);
+                  if (!review) throw new Error(`Review not found: ${run.reviewId}`);
+                  await this.refreshPersistedMessages();
+                  return {
+                    reviewId: run.reviewId,
+                    status: completion.status,
+                    findings: completion.findings.length,
+                    content: renderCodeReview(review.start, completion),
+                  };
+                },
               },
-            });
-            const completion = await run.completion;
-            const review = (
-              await CodeReviewService.list(this.roots.hostStateRoot, this.id)
-            ).find((candidate) => candidate.start.reviewId === run.reviewId);
-            if (!review) throw new Error(`Review not found: ${run.reviewId}`);
-            await this.refreshPersistedMessages();
-            return {
-              reviewId: run.reviewId,
-              status: completion.status,
-              findings: completion.findings.length,
-              content: renderCodeReview(review.start, completion),
-            };
-          },
-        },
+            }
+          : {}),
         signal, // 传递取消信号
         acp: {
           // 发送文本消息给 IDE
@@ -1177,7 +1197,8 @@ export class AcpSession {
     try {
       const commands = getRegisteredCommands(
         this.roots.hostStateRoot,
-        this.runtime?.getAgentResources()
+        this.runtime?.getAgentResources(),
+        this.roots.kind
       );
 
       // 在 ACP 模式下过滤掉不需要的命令

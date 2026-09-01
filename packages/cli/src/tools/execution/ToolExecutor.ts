@@ -42,6 +42,12 @@ import {
   createRejectedResult,
 } from './ToolExecutionResults.js';
 import { executeToolInvocation, formatToolResult } from './ToolInvocationRunner.js';
+import {
+  createRemoteToolUnavailableResult,
+  evaluateBuiltinToolAccess,
+  freezeWorkspaceToolPolicy,
+  type WorkspaceToolPolicy,
+} from './WorkspaceToolPolicy.js';
 
 interface ToolExecutorEventMap {
   executionStarted: [
@@ -87,6 +93,7 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
   private readonly autoVerifyRuntime?: Pick<AutoVerifyRuntime, 'verify'>;
   private readonly lspManager?: Pick<LspSessionManager, 'afterToolUse'>;
   private readonly onDispose?: () => void;
+  private readonly workspaceToolPolicy?: WorkspaceToolPolicy;
   private readonly ownerId = `tool-executor-${randomUUID()}`;
   private disposed = false;
 
@@ -101,6 +108,9 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     this.autoVerifyRuntime = config.autoVerifyRuntime;
     this.lspManager = config.lspManager;
     this.onDispose = config.onDispose;
+    this.workspaceToolPolicy = config.workspaceToolPolicy
+      ? freezeWorkspaceToolPolicy(config.workspaceToolPolicy)
+      : undefined;
     this.toolWhitelist = config.toolWhitelist?.length
       ? new Set(config.toolWhitelist)
       : null;
@@ -222,6 +232,15 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
       return createRejectedResult(`Tool "${toolName}" not found`, {
         errorType: ToolErrorType.VALIDATION_ERROR,
       });
+    }
+    if (this.workspaceToolPolicy) {
+      const isBuiltin = this.registry.getBuiltinTools().includes(tool);
+      if (isBuiltin) {
+        const access = evaluateBuiltinToolAccess(this.workspaceToolPolicy, toolName);
+        if (!access.allowed) {
+          return createRemoteToolUnavailableResult(access.reason);
+        }
+      }
     }
 
     const validation = validateToolCall(
@@ -704,6 +723,7 @@ export interface ToolExecutorConfig {
   approvalStore?: SessionApprovalStore;
   toolWhitelist?: readonly string[];
   toolBlacklist?: readonly string[];
+  workspaceToolPolicy?: WorkspaceToolPolicy;
   scheduler?: ConcurrencyScheduler;
   concurrencyLimits?: ConcurrencyLimits;
   contextDefaults?: ExecutionContext;

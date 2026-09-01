@@ -18,7 +18,11 @@ import { createTool } from '../../../../src/tools/core/createTool.js';
 import { FileLockManager } from '../../../../src/tools/execution/FileLockManager.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
-import { type Tool, ToolKind } from '../../../../src/tools/types/ToolTypes.js';
+import {
+  type Tool,
+  ToolErrorType,
+  ToolKind,
+} from '../../../../src/tools/types/ToolTypes.js';
 import { ControlledFileClient } from '../../../support/acp/ControlledFileClient.js';
 import {
   createPairedAcpHarness,
@@ -55,6 +59,28 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Condition not met within ${timeoutMs}ms`);
+}
+
+function createMatrixTool(
+  name: string,
+  kind: ToolKind,
+  execute: () => Promise<string | object>
+) {
+  return createTool({
+    name,
+    displayName: name,
+    kind,
+    isConcurrencySafe: kind === ToolKind.ReadOnly,
+    parallelism: 'shared',
+    schema: Type.Unknown(),
+    description: { short: `${name} matrix tool` },
+    async execute() {
+      return {
+        success: true,
+        llmContent: await execute(),
+      };
+    },
+  });
 }
 
 describe('ToolExecutor — file lock logic', () => {
@@ -642,6 +668,199 @@ describe('ToolExecutor — file lock logic', () => {
         file_path: '/x.ts',
       });
       expect(result.needsLock).toBe(false);
+    });
+  });
+
+  describe('remote capability fail-closed execution stage', () => {
+    it('rejects crafted host-only calls before schema validation despite a forged local context', async () => {
+      const executeSpy = vi.fn(async () => ({
+        success: true as const,
+        llmContent: 'should not run',
+      }));
+      const registry = new ToolRegistry();
+      registry.register(
+        createMatrixTool('Glob', ToolKind.ReadOnly, async () => await executeSpy())
+      );
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: true,
+        },
+      });
+
+      const result = await executor.execute(
+        'Glob',
+        {},
+        {
+          sessionId: 'remote-lock-session-a',
+          workspaceKind: 'local',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.type).toBe(ToolErrorType.VALIDATION_ERROR);
+      expect(result.error?.code).toBe('acp_remote_tool_unavailable');
+      expect(result.error?.details).toEqual({ reason: 'host-only' });
+      expect(result.error?.message).toMatch(/remote|ACP|host-only/i);
+      expect(executeSpy).not.toHaveBeenCalled();
+    });
+
+    it('uses the frozen policy instead of caller-controlled workspace context', async () => {
+      const executeSpy = vi.fn(async () => 'should not run');
+      const registry = new ToolRegistry();
+      registry.register(createMatrixTool('Bash', ToolKind.Execute, executeSpy));
+      const sourcePolicy = {
+        kind: 'acp-remote' as const,
+        readTextFile: true,
+        writeTextFile: true,
+        terminal: false,
+      };
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: sourcePolicy,
+      });
+      sourcePolicy.terminal = true;
+
+      const result = await executor.execute(
+        'Bash',
+        { command: 'echo unsafe' },
+        { workspaceKind: 'local' }
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          code: 'acp_remote_tool_unavailable',
+          details: { reason: 'terminal-required' },
+        },
+      });
+      expect(executeSpy).not.toHaveBeenCalled();
+    });
+
+    it('allows explicitly configured dynamic MCP tools independently of builtin names', async () => {
+      const runMcp = vi.fn(async () => 'mcp ok');
+      const registry = new ToolRegistry();
+      registry.registerMcpTool(
+        createMatrixTool('mcp__safe__inspect', ToolKind.ReadOnly, runMcp)
+      );
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: true,
+        },
+      });
+
+      await expect(
+        executor.execute('mcp__safe__inspect', {}, { workspaceKind: 'local' })
+      ).resolves.toMatchObject({ success: true });
+      expect(runMcp).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      {
+        label: 'allows Read when remote fs has read capability',
+        capabilities: { fs: { readTextFile: true, writeTextFile: false } },
+        toolName: 'Read',
+        kind: ToolKind.ReadOnly,
+        params: { file_path: 'C:\\workspace\\file.ts' },
+        shouldSucceed: true,
+      },
+      {
+        label: 'rejects Write when remote fs lacks read capability',
+        capabilities: { fs: { readTextFile: false, writeTextFile: true } },
+        toolName: 'Write',
+        kind: ToolKind.Write,
+        params: { file_path: 'C:\\workspace\\file.ts' },
+        shouldSucceed: false,
+      },
+      {
+        label: 'allows Edit only when remote fs has read+write capability',
+        capabilities: { fs: { readTextFile: true, writeTextFile: true } },
+        toolName: 'Edit',
+        kind: ToolKind.Write,
+        params: { file_path: 'C:\\workspace\\file.ts' },
+        shouldSucceed: true,
+      },
+      {
+        label: 'rejects ApplyPatch when remote fs lacks read capability',
+        capabilities: { fs: { readTextFile: false, writeTextFile: true } },
+        toolName: 'ApplyPatch',
+        kind: ToolKind.Write,
+        params: { input: '*** Begin Patch\n*** End Patch\n' },
+        shouldSucceed: false,
+      },
+      {
+        label: 'allows Bash only when terminal capability is present',
+        capabilities: { terminal: true },
+        toolName: 'Bash',
+        kind: ToolKind.Execute,
+        params: { command: 'echo ok', run_in_background: false },
+        shouldSucceed: true,
+      },
+      {
+        label: 'rejects host-only Glob for ACP remote sessions',
+        capabilities: {
+          fs: { readTextFile: true, writeTextFile: true },
+          terminal: true,
+        },
+        toolName: 'Glob',
+        kind: ToolKind.ReadOnly,
+        params: { pattern: '**/*.ts' },
+        shouldSucceed: false,
+      },
+    ])('$label', async ({ capabilities, toolName, kind, params, shouldSucceed }) => {
+      const sessionId = `remote-matrix-${toolName}`;
+      const harness = createPairedAcpHarness(new ControlledFileClient());
+      harnesses.push(harness);
+      AcpServiceContext.initializeSession(
+        harness.agentConnection,
+        sessionId,
+        capabilities,
+        'C:\\workspace'
+      );
+      const executeSpy = vi.fn(async () => ({
+        toolName,
+      }));
+      const registry = new ToolRegistry();
+      registry.register(
+        createMatrixTool(toolName, kind, async () => {
+          await executeSpy();
+          return { toolName };
+        })
+      );
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: capabilities.fs?.readTextFile === true,
+          writeTextFile: capabilities.fs?.writeTextFile === true,
+          terminal: capabilities.terminal === true,
+        },
+      });
+
+      const result = await executor.execute(toolName, params, {
+        sessionId,
+        workspaceKind: 'acp-remote',
+        workspaceRoot: '/private/remote-state',
+        executionRoot: 'C:\\workspace',
+      });
+
+      expect(result.success).toBe(shouldSucceed);
+      if (shouldSucceed) {
+        expect(executeSpy).toHaveBeenCalledTimes(1);
+      } else {
+        expect(result.error?.code).toBe('acp_remote_tool_unavailable');
+        expect(result.error?.message).toMatch(/remote|ACP|host-only|capability/i);
+        expect(executeSpy).not.toHaveBeenCalled();
+      }
     });
   });
 });

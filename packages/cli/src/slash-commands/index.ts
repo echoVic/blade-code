@@ -40,6 +40,7 @@ import type {
   SlashCommandRegistry,
   SlashCommandResult,
 } from './types.js';
+import { isRemoteSafeSlashCommandName } from './types.js';
 
 // 注册所有 slash commands
 const slashCommands: SlashCommandRegistry = {
@@ -164,6 +165,15 @@ export async function executeSlashCommand(
 
     // 1. 先查找内置命令（支持别名）
     const slashCommand = findCommand(command);
+    if (context.workspaceKind === 'acp-remote') {
+      if (!slashCommand || !isRemoteSafeSlashCommandName(slashCommand.name)) {
+        return {
+          success: false,
+          error: 'This command is unavailable for ACP remote workspaces',
+        };
+      }
+      return await slashCommand.handler(args, context);
+    }
     if (slashCommand) {
       return await slashCommand.handler(args, context);
     }
@@ -256,9 +266,14 @@ export async function executeSlashCommand(
  */
 export function getRegisteredCommands(
   workspaceRoot: string = getCwd(),
-  resources?: Pick<SessionAgentResources, 'commands' | 'skills'>
+  resources?: Pick<SessionAgentResources, 'commands' | 'skills'>,
+  workspaceKind: SlashCommandContext['workspaceKind'] = 'local'
 ): SlashCommand[] {
-  const builtinCmds = Object.values(slashCommands);
+  const builtinCmds = Object.values(slashCommands).filter(
+    (command) =>
+      workspaceKind !== 'acp-remote' || isRemoteSafeSlashCommandName(command.name)
+  );
+  if (workspaceKind === 'acp-remote') return builtinCmds;
 
   // 获取自定义命令并转换为 SlashCommand
   const customRegistry =

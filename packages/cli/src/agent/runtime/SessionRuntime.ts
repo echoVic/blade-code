@@ -137,6 +137,7 @@ import {
   type SideConversationResult,
 } from '../../services/SideConversationService.js';
 import {
+  createUnavailableUserShellExecutor,
   executeUserShellCommand,
   renderUserShellCommandForModel,
   type UserShellCommandEvent,
@@ -156,6 +157,10 @@ import { BackgroundShellManager } from '../../tools/builtin/shell/BackgroundShel
 import { AutoVerifyRuntime } from '../../tools/execution/AutoVerify.js';
 import { InMemorySessionApprovalStore } from '../../tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
+import {
+  createWorkspaceToolPolicy,
+  filterBuiltinToolsForWorkspace,
+} from '../../tools/execution/WorkspaceToolPolicy.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
 import type { Tool, ToolResult } from '../../tools/types/index.js';
 import { getCwd } from '../../utils/cwd.js';
@@ -440,6 +445,7 @@ export class SessionRuntime {
     projectPath: string;
   }>;
   private readonly workspace: SessionWorkspace;
+  private readonly workspaceToolPolicy: ReturnType<typeof createWorkspaceToolPolicy>;
   private readonly stateStorage: SessionStateStorage;
   private backgroundSubagentCompletionRegistration?: BackgroundSubagentCompletionRegistration;
 
@@ -451,6 +457,7 @@ export class SessionRuntime {
       options.workspace ??
         createLocalSessionWorkspace(options.workspaceRoot ?? getCwd())
     );
+    this.workspaceToolPolicy = createWorkspaceToolPolicy(this.workspace);
     this.stateStorage =
       this.workspace.kind === 'acp-remote'
         ? createRemoteSessionStateStorage(
@@ -2286,7 +2293,12 @@ export class SessionRuntime {
         },
         signal,
         timeoutMs: options.timeoutMs,
-        executor: this.options.userShellExecutor,
+        executor:
+          this.workspace.kind === 'acp-remote'
+            ? this.workspace.terminal
+              ? (this.options.userShellExecutor ?? createUnavailableUserShellExecutor())
+              : createUnavailableUserShellExecutor()
+            : this.options.userShellExecutor,
         onEvent: async (event) => {
           if (event.type !== 'completed') {
             await publish({ ...event, auxiliary });
@@ -2667,6 +2679,7 @@ export class SessionRuntime {
       maxHistorySize: 1000,
       toolWhitelist,
       toolBlacklist,
+      workspaceToolPolicy: this.workspaceToolPolicy,
       contextDefaults: {
         sessionId: this.sessionId,
         workspaceRoot: this.workspaceRoot,
@@ -3095,7 +3108,10 @@ export class SessionRuntime {
       browserRuntime: this.browserRuntime,
     });
 
-    const builtin = builtinTools.filter((tool) => !tool.name.startsWith('mcp__'));
+    const builtin = filterBuiltinToolsForWorkspace(
+      builtinTools.filter((tool) => !tool.name.startsWith('mcp__')),
+      this.workspaceToolPolicy
+    );
 
     this.baseRegistry.registerAll(builtin);
 

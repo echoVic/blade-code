@@ -216,6 +216,17 @@ Before executing commands:
         };
     const signal = context.signal ?? new AbortController().signal;
     const workspaceRoot = context.workspaceRoot ?? getCwd();
+    if (context.workspaceKind === 'acp-remote' && run_in_background) {
+      return {
+        success: false,
+        llmContent: 'Background Bash is unavailable for ACP remote workspaces',
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          code: 'acp_remote_background_shell_unavailable',
+          message: 'Background Bash is unavailable for ACP remote workspaces',
+        },
+      };
+    }
     const effectiveCwd =
       context.workspaceKind === 'acp-remote'
         ? cwd === undefined
@@ -296,8 +307,12 @@ Before executing commands:
           timeout,
           signal,
           context.sessionId,
-          foregroundOwnership,
-          handoffEligible ? foregroundHandoffMs : undefined
+          context.workspaceKind === 'acp-remote' ? undefined : foregroundOwnership,
+          context.workspaceKind === 'acp-remote'
+            ? undefined
+            : handoffEligible
+              ? foregroundHandoffMs
+              : undefined
         );
       } else if (handoffEligible && foregroundOwnership) {
         return await executeWithForegroundHandoff(

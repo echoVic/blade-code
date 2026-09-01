@@ -4559,6 +4559,27 @@ describe('AcpSession', () => {
       ]);
     });
 
+    it('keeps inline resource text in model context without reading its host path', async () => {
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [
+          { type: 'text', text: 'Review the supplied context' },
+          {
+            type: 'resource',
+            resource: {
+              uri: 'file:///host-canary/secret.txt',
+              mimeType: 'text/plain',
+              text: 'INLINE_RESOURCE_MARKER',
+            },
+          },
+        ],
+      });
+
+      expect(getMockAgent().getLastCall()?.message).toContain(
+        '<file path="file:///host-canary/secret.txt">\nINLINE_RESOURCE_MARKER\n</file>'
+      );
+    });
+
     it('应该在进入 Agent 前拒绝超过共享预算的 ACP 图片', async () => {
       await expect(
         session.prompt({
@@ -4692,6 +4713,7 @@ describe('AcpSession', () => {
         '/test command',
         expect.objectContaining({
           cwd: '/tmp/test',
+          workspaceKind: 'local',
           workspaceRoot: '/tmp/test',
           sessionId: 'test-session-id',
           messages: [],
@@ -4740,6 +4762,93 @@ describe('AcpSession', () => {
         'mcp_task_safe',
         undefined
       );
+    });
+
+    it('passes ACP remote ownership to slash execution without host-only callbacks', async () => {
+      const profile = createAcpRemotePathProfile(String.raw`C:\Remote\Slash`);
+      const descriptor = createAcpRemoteWorkspaceDescriptor(profile);
+      const harness = createPairedAcpHarness(new ControlledFileClient());
+      const remoteSession = new AcpSession(
+        'remote-slash-session',
+        {
+          kind: 'acp-remote',
+          hostStateRoot: deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity),
+          executionRoot: profile.workspace.wirePath,
+          hostResourceRoot: '/trusted/host/resource',
+          profile,
+          descriptor,
+        },
+        harness.agentConnection,
+        { fs: { readTextFile: true } }
+      );
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+
+      try {
+        await remoteSession.initialize();
+        vi.mocked(executeSlashCommand).mockClear();
+        await remoteSession.prompt({
+          sessionId: 'remote-slash-session',
+          prompt: [{ type: 'text', text: '/help' }],
+        });
+
+        const context = vi.mocked(executeSlashCommand).mock.calls.at(-1)?.[1];
+        expect(context).toMatchObject({
+          workspaceKind: 'acp-remote',
+          workspaceRoot: deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity),
+        });
+        expect(context).not.toHaveProperty('subagents');
+        expect(context).not.toHaveProperty('codeReview');
+        expect(context).not.toHaveProperty('mcp');
+      } finally {
+        await remoteSession.destroy();
+        await harness.close();
+      }
+    });
+
+    it('keeps inline resource text in an ACP remote model message', async () => {
+      const profile = createAcpRemotePathProfile(String.raw`C:\Remote\Inline`);
+      const descriptor = createAcpRemoteWorkspaceDescriptor(profile);
+      const harness = createPairedAcpHarness(new ControlledFileClient());
+      const remoteSession = new AcpSession(
+        'remote-inline-session',
+        {
+          kind: 'acp-remote',
+          hostStateRoot: deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity),
+          executionRoot: profile.workspace.wirePath,
+          hostResourceRoot: '/trusted/host/resource',
+          profile,
+          descriptor,
+        },
+        harness.agentConnection,
+        { fs: { readTextFile: true } }
+      );
+
+      try {
+        await remoteSession.initialize();
+        await remoteSession.prompt({
+          sessionId: 'remote-inline-session',
+          prompt: [
+            { type: 'text', text: 'Review @/host-canary.txt from supplied context' },
+            {
+              type: 'resource',
+              resource: {
+                uri: 'file:///host-canary.txt',
+                mimeType: 'text/plain',
+                text: 'REMOTE_INLINE_RESOURCE_MARKER',
+              },
+            },
+          ],
+        });
+
+        expect(getMockAgent().getLastCall()?.message).toContain(
+          'REMOTE_INLINE_RESOURCE_MARKER'
+        );
+      } finally {
+        await remoteSession.destroy();
+        await harness.close();
+      }
     });
 
     it('通过 ACP slash boundary 启动原生只读 Code Review', async () => {
@@ -5447,6 +5556,47 @@ describe('AcpSession', () => {
             notification.update.sessionUpdate === 'available_commands_update'
         )
       ).toHaveLength(1);
+      const { getRegisteredCommands } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      expect(getRegisteredCommands).toHaveBeenCalledWith(
+        '/tmp/test',
+        undefined,
+        'local'
+      );
+    });
+
+    it('remote Session 以 acp-remote kind 获取可用命令', async () => {
+      const profile = createAcpRemotePathProfile(String.raw`C:\Remote\Commands`);
+      const descriptor = createAcpRemoteWorkspaceDescriptor(profile);
+      const harness = createPairedAcpHarness(new ControlledFileClient());
+      const remoteSession = new AcpSession(
+        'remote-command-session',
+        {
+          kind: 'acp-remote',
+          hostStateRoot: deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity),
+          executionRoot: profile.workspace.wirePath,
+          hostResourceRoot: '/trusted/host/resource',
+          profile,
+          descriptor,
+        },
+        harness.agentConnection,
+        { fs: { readTextFile: true } }
+      );
+      const { getRegisteredCommands } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+
+      remoteSession.sendAvailableCommandsDelayed();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(getRegisteredCommands).toHaveBeenCalledWith(
+        deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity),
+        undefined,
+        'acp-remote'
+      );
+      await remoteSession.destroy();
+      await harness.close();
     });
 
     it('connection aborted 后不应该发送 available commands update', async () => {

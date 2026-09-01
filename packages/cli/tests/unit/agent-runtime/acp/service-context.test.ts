@@ -283,6 +283,27 @@ describe('AcpServiceContext session isolation', () => {
     expect(isAcpMode('unknown-session')).toBe(false);
   });
 
+  it('fails closed for an explicit unknown session terminal lookup instead of falling back locally', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'blade-acp-unknown-session-'));
+    const marker = join(directory, 'marker');
+    const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+      `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ok')`
+    )}`;
+
+    try {
+      await expect(
+        getTerminalService('unknown-session').execute(command, { cwd: directory })
+      ).resolves.toMatchObject({
+        success: false,
+        failureKind: 'unavailable',
+        transport: 'acp',
+      });
+      await expect(access(marker)).rejects.toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('disposes session-scoped remote ledger state when the session is destroyed', () => {
     const client = new ControlledFileClient();
     const harness = createPairedAcpHarness(client);
@@ -880,7 +901,41 @@ describe('AcpServiceContext session isolation', () => {
     });
   });
 
-  it('uses local fallback only with explicit opt-in and labels its transport', async () => {
+  it('ignores local fallback opt-in for remote filesystem sessions', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    client.failCreate(new Error('offline'));
+    const directory = await mkdtemp(join(tmpdir(), 'blade-acp-no-fallback-'));
+    const marker = join(directory, 'marker');
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      'C:\\workspace'
+    );
+
+    try {
+      const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+        `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unsafe')`
+      )}`;
+      await expect(
+        getTerminalService('session-a').execute(command, {
+          cwd: directory,
+          allowLocalFallback: true,
+        })
+      ).resolves.toMatchObject({
+        success: false,
+        failureKind: 'unavailable',
+        transport: 'acp',
+      });
+      await expect(access(marker)).rejects.toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps local fallback available for ACP-local sessions with explicit opt-in', async () => {
     const client = new ControlledTerminalClient();
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
@@ -888,7 +943,7 @@ describe('AcpServiceContext session isolation', () => {
     AcpServiceContext.initializeSession(
       harness.agentConnection,
       'session-a',
-      capabilities,
+      { terminal: true },
       '/workspace/a'
     );
 

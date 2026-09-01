@@ -19,6 +19,7 @@ import { ProjectRuleCatalog } from '../../../../src/agent/resources/WorkspacePro
 import { DurableSteeringInbox } from '../../../../src/agent/runtime/DurableSteeringInbox.js';
 import { SessionLease } from '../../../../src/agent/runtime/SessionLease.js';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { createLocalSessionWorkspace } from '../../../../src/agent/runtime/SessionWorkspace.js';
 import { getUserPromptArtifactReference } from '../../../../src/agent/runtime/UserPromptArtifactStore.js';
 import {
   type AgentSession,
@@ -42,6 +43,7 @@ import { HookEvent } from '../../../../src/hooks/types/HookTypes.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
 import { McpTaskManager } from '../../../../src/mcp/McpTaskManager.js';
 import { buildSystemPrompt } from '../../../../src/prompts/index.js';
+import { Type } from '../../../../src/schema/index.js';
 import { Bus } from '../../../../src/server/bus.js';
 import {
   createChatServiceAsync,
@@ -53,8 +55,10 @@ import type { UserShellExecutor } from '../../../../src/services/UserShellComman
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
 import { BackgroundShellManager } from '../../../../src/tools/builtin/shell/BackgroundShellManager.js';
 import { TaskListManager } from '../../../../src/tools/builtin/task/TaskListManager.js';
+import { createTool } from '../../../../src/tools/core/createTool.js';
 import { InMemorySessionApprovalStore } from '../../../../src/tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
+import { type Tool, ToolKind } from '../../../../src/tools/types/index.js';
 
 const worktreeMocks = vi.hoisted(() => ({
   cleanupStaleAgentWorktrees: vi.fn(async () => ({
@@ -343,6 +347,162 @@ function createDisposableChatService(dispose: () => Promise<void>) {
     dispose,
   } satisfies IChatService & { dispose: () => Promise<void> };
 }
+
+function createNamedTestTool(
+  name: string,
+  kind: ToolKind,
+  execute: () => Promise<string | object> = async () => ({
+    ok: true,
+    name,
+  })
+): Tool {
+  return createTool({
+    name,
+    displayName: name,
+    kind,
+    isConcurrencySafe: kind === ToolKind.ReadOnly,
+    parallelism: 'shared',
+    schema: Type.Unknown(),
+    description: { short: `${name} test tool` },
+    async execute() {
+      return {
+        success: true,
+        llmContent: await execute(),
+      };
+    },
+  });
+}
+
+const REMOTE_HOST_ONLY_MATRIX_TOOLS: ReadonlyArray<{
+  name: string;
+  kind: ToolKind;
+}> = [
+  { name: 'Glob', kind: ToolKind.ReadOnly },
+  { name: 'Grep', kind: ToolKind.ReadOnly },
+  { name: 'NotebookEdit', kind: ToolKind.Write },
+  { name: 'Task', kind: ToolKind.Execute },
+  { name: 'TaskOutput', kind: ToolKind.ReadOnly },
+  { name: 'MemoryRead', kind: ToolKind.ReadOnly },
+  { name: 'MemoryWrite', kind: ToolKind.Write },
+  { name: 'ConfigTool', kind: ToolKind.Execute },
+  { name: 'Skill', kind: ToolKind.Execute },
+  { name: 'SlashCommand', kind: ToolKind.Execute },
+  { name: 'WriteStdin', kind: ToolKind.Execute },
+  { name: 'KillShell', kind: ToolKind.Execute },
+  { name: 'LSP', kind: ToolKind.ReadOnly },
+  { name: 'EnterWorktree', kind: ToolKind.Execute },
+  { name: 'ExitWorktree', kind: ToolKind.Execute },
+  { name: 'TeamCreate', kind: ToolKind.Execute },
+  { name: 'TeamStatus', kind: ToolKind.ReadOnly },
+  { name: 'TeamTaskClaim', kind: ToolKind.Execute },
+  { name: 'SendMessage', kind: ToolKind.Execute },
+  { name: 'TeamInbox', kind: ToolKind.ReadOnly },
+  { name: 'TeamDelete', kind: ToolKind.Execute },
+];
+
+const REMOTE_ALWAYS_SAFE_MATRIX_TOOLS: ReadonlyArray<{
+  name: string;
+  kind: ToolKind;
+}> = [
+  { name: 'WebFetch', kind: ToolKind.ReadOnly },
+  { name: 'WebSearch', kind: ToolKind.ReadOnly },
+  { name: 'AskUserQuestion', kind: ToolKind.ReadOnly },
+  { name: 'ToolSearch', kind: ToolKind.ReadOnly },
+  { name: 'ReadPromptArtifact', kind: ToolKind.ReadOnly },
+  { name: 'EnterPlanMode', kind: ToolKind.ReadOnly },
+  { name: 'ExitPlanMode', kind: ToolKind.ReadOnly },
+  { name: 'GetGoal', kind: ToolKind.ReadOnly },
+  { name: 'CreateGoal', kind: ToolKind.Write },
+  { name: 'UpdateGoal', kind: ToolKind.Write },
+  { name: 'TaskCreate', kind: ToolKind.Write },
+  { name: 'TaskGet', kind: ToolKind.ReadOnly },
+  { name: 'TaskUpdate', kind: ToolKind.Write },
+  { name: 'TaskList', kind: ToolKind.ReadOnly },
+  { name: 'BrowserSnapshot', kind: ToolKind.ReadOnly },
+];
+
+function createRemoteCapabilityMatrixTools(): Tool[] {
+  return [
+    createNamedTestTool('Read', ToolKind.ReadOnly),
+    createNamedTestTool('Write', ToolKind.Write),
+    createNamedTestTool('Edit', ToolKind.Write),
+    createNamedTestTool('ApplyPatch', ToolKind.Write),
+    createNamedTestTool('Bash', ToolKind.Execute),
+    ...REMOTE_HOST_ONLY_MATRIX_TOOLS.map(({ name, kind }) =>
+      createNamedTestTool(name, kind)
+    ),
+    ...REMOTE_ALWAYS_SAFE_MATRIX_TOOLS.map(({ name, kind }) =>
+      createNamedTestTool(name, kind)
+    ),
+  ];
+}
+
+interface RemoteCapabilityMatrixCase {
+  label: string;
+  readTextFile: boolean;
+  writeTextFile: boolean;
+  terminal: boolean;
+  allowed: string[];
+}
+
+const REMOTE_CAPABILITY_MATRIX_CASES: RemoteCapabilityMatrixCase[] = [
+  {
+    label: 'fs=none terminal=false',
+    readTextFile: false,
+    writeTextFile: false,
+    terminal: false,
+    allowed: [],
+  },
+  {
+    label: 'fs=none terminal=true',
+    readTextFile: false,
+    writeTextFile: false,
+    terminal: true,
+    allowed: ['Bash'],
+  },
+  {
+    label: 'fs=read terminal=false',
+    readTextFile: true,
+    writeTextFile: false,
+    terminal: false,
+    allowed: ['Read'],
+  },
+  {
+    label: 'fs=read terminal=true',
+    readTextFile: true,
+    writeTextFile: false,
+    terminal: true,
+    allowed: ['Read', 'Bash'],
+  },
+  {
+    label: 'fs=write terminal=false',
+    readTextFile: false,
+    writeTextFile: true,
+    terminal: false,
+    allowed: [],
+  },
+  {
+    label: 'fs=write terminal=true',
+    readTextFile: false,
+    writeTextFile: true,
+    terminal: true,
+    allowed: ['Bash'],
+  },
+  {
+    label: 'fs=read+write terminal=false',
+    readTextFile: true,
+    writeTextFile: true,
+    terminal: false,
+    allowed: ['Read', 'Write', 'Edit', 'ApplyPatch'],
+  },
+  {
+    label: 'fs=read+write terminal=true',
+    readTextFile: true,
+    writeTextFile: true,
+    terminal: true,
+    allowed: ['Read', 'Write', 'Edit', 'ApplyPatch', 'Bash'],
+  },
+];
 
 describe('SessionRuntime', () => {
   let storageRoot: string;
@@ -1020,7 +1180,7 @@ describe('SessionRuntime', () => {
         resourceRoot,
         readTextFile: true,
         writeTextFile: true,
-        terminal: false,
+        terminal: true,
         descriptor,
       },
     });
@@ -1118,6 +1278,194 @@ describe('SessionRuntime', () => {
         createRemoteSessionStateStorage(hostStateRoot, descriptor)
       )
     ).resolves.toBe(false);
+    executor.dispose();
+    await runtime.dispose();
+  });
+
+  it.each(REMOTE_CAPABILITY_MATRIX_CASES)(
+    'filters the remote capability matrix consistently for $label',
+    async ({ label, readTextFile, writeTextFile, terminal, allowed }) => {
+      const caseSlug = label
+        .replaceAll('=', '-')
+        .replaceAll(' ', '-')
+        .replaceAll('+', '-plus-');
+      const executionRoot = `C:\\Remote\\Project\\${caseSlug}`;
+      const descriptor = createAcpRemoteWorkspaceDescriptor(
+        createAcpRemotePathProfile(executionRoot)
+      );
+      const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+      const resourceRoot = path.join(storageRoot, `trusted-host-resource-${caseSlug}`);
+      const builtinTools = createRemoteCapabilityMatrixTools();
+      const allowedSet = new Set([
+        ...allowed,
+        ...REMOTE_ALWAYS_SAFE_MATRIX_TOOLS.map((tool) => tool.name),
+      ]);
+      const expectedForbidden = [
+        ...['Read', 'Write', 'Edit', 'ApplyPatch', 'Bash'].filter(
+          (name) => !allowedSet.has(name)
+        ),
+        ...REMOTE_HOST_ONLY_MATRIX_TOOLS.map((tool) => tool.name),
+      ];
+      const { getBuiltinTools } = await import(
+        '../../../../src/tools/builtin/index.js'
+      );
+      vi.mocked(getBuiltinTools).mockImplementationOnce(async () => builtinTools);
+      await ensureAcpRemoteHostStateRoot(hostStateRoot);
+      const sessionId = `remote-capability-matrix-${caseSlug}`;
+      await SessionService.createRemoteSessionMetadata(
+        sessionId,
+        hostStateRoot,
+        descriptor
+      );
+
+      const runtime = await SessionRuntime.create({
+        sessionId,
+        workspaceRoot: hostStateRoot,
+        workspace: {
+          kind: 'acp-remote',
+          executionRoot,
+          resourceRoot,
+          readTextFile,
+          writeTextFile,
+          terminal,
+          descriptor,
+        },
+      });
+
+      const executor = runtime.createToolExecutor({
+        permissionMode: PermissionMode.YOLO,
+      });
+      const executorRegistry = executor.getRegistry();
+      const advertisedNames = new Set(
+        executorRegistry.getBuiltinTools().map((tool) => tool.name)
+      );
+
+      for (const name of allowedSet) {
+        expect(
+          advertisedNames.has(name),
+          `${name} missing from executor declarations`
+        ).toBe(true);
+        expect(
+          executorRegistry.get(name),
+          `${name} missing from executor registry`
+        ).toBeDefined();
+      }
+
+      for (const name of expectedForbidden) {
+        expect(
+          executorRegistry.get(name),
+          `${name} unexpectedly executable`
+        ).toBeUndefined();
+      }
+
+      executor.dispose();
+      await runtime.dispose();
+    }
+  );
+
+  it('fails closed for remote user shell when no executor is supplied', async () => {
+    const executionRoot = String.raw`C:\Remote\NoTerminal`;
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile(executionRoot)
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await SessionService.createRemoteSessionMetadata(
+      'remote-user-shell-unavailable',
+      hostStateRoot,
+      descriptor
+    );
+    const runtime = await SessionRuntime.create({
+      sessionId: 'remote-user-shell-unavailable',
+      workspaceRoot: hostStateRoot,
+      workspace: {
+        kind: 'acp-remote',
+        executionRoot,
+        resourceRoot: path.join(storageRoot, 'trusted-host-resource-no-terminal'),
+        readTextFile: true,
+        writeTextFile: false,
+        terminal: true,
+        descriptor,
+      },
+    });
+
+    await expect(
+      runtime.executeUserShellCommand('echo must-not-spawn')
+    ).resolves.toMatchObject({
+      record: {
+        status: 'spawn_error',
+        exitCode: null,
+        stderr: expect.stringContaining('ACP terminal capability is unavailable'),
+      },
+    });
+
+    await runtime.dispose();
+  });
+
+  it('ignores an injected user shell executor when remote terminal capability is absent', async () => {
+    const executionRoot = String.raw`C:\Remote\NoInjectedTerminal`;
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile(executionRoot)
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const execute = vi.fn(async () => ({ exitCode: 0, stdout: 'unsafe', stderr: '' }));
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await SessionService.createRemoteSessionMetadata(
+      'remote-user-shell-injected',
+      hostStateRoot,
+      descriptor
+    );
+    const runtime = await SessionRuntime.create({
+      sessionId: 'remote-user-shell-injected',
+      workspaceRoot: hostStateRoot,
+      userShellExecutor: { execute },
+      workspace: {
+        kind: 'acp-remote',
+        executionRoot,
+        resourceRoot: path.join(
+          storageRoot,
+          'trusted-host-resource-no-injected-terminal'
+        ),
+        readTextFile: true,
+        writeTextFile: false,
+        terminal: false,
+        descriptor,
+      },
+    });
+
+    await expect(
+      runtime.executeUserShellCommand('echo must-not-spawn')
+    ).resolves.toMatchObject({
+      record: { status: 'spawn_error' },
+    });
+    expect(execute).not.toHaveBeenCalled();
+
+    await runtime.dispose();
+  });
+
+  it('keeps the local builtin registry unchanged', async () => {
+    const workspaceRoot = path.join(storageRoot, 'local-capability-parity');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const builtinTools = createRemoteCapabilityMatrixTools();
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    vi.mocked(getBuiltinTools).mockImplementationOnce(async () => builtinTools);
+
+    const runtime = await SessionRuntime.create({
+      sessionId: 'local-capability-parity',
+      workspaceRoot,
+      workspace: createLocalSessionWorkspace(workspaceRoot),
+    });
+    const executor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.YOLO,
+    });
+
+    expect(
+      executor
+        .getRegistry()
+        .getBuiltinTools()
+        .map((tool) => tool.name)
+    ).toEqual(builtinTools.map((tool) => tool.name));
+
     executor.dispose();
     await runtime.dispose();
   });
