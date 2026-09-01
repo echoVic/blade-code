@@ -7,11 +7,19 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+  withValidatedAcpRemoteStateScope,
+} from '../../../src/acp/AcpRemoteWorkspace.js';
 import {
   getUserPromptArtifactReference,
   UserPromptArtifactStore,
@@ -21,6 +29,7 @@ import { parseCompactionReplacementMessages } from '../../../src/context/compact
 import { JSONLStore } from '../../../src/context/storage/JSONLStore.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import {
+  getAcpRemoteSessionFilePath,
   getSessionFilePath,
   getSessionInboxFilePath,
 } from '../../../src/context/storage/pathUtils.js';
@@ -31,6 +40,7 @@ import {
   __setSessionSnapshotIOForTesting,
   SessionService,
 } from '../../../src/services/SessionService.js';
+import type { JsonObject } from '../../../src/store/types.js';
 
 function makeCreatedEvent(
   sessionId: string,
@@ -132,6 +142,29 @@ async function readTranscript(filePath: string): Promise<SessionEvent[]> {
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as SessionEvent);
+}
+
+async function captureError(operation: () => Promise<unknown>): Promise<Error> {
+  try {
+    await operation();
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw new Error(`Expected Error rejection, received ${String(error)}`);
+  }
+  throw new Error('Expected operation to reject');
+}
+
+async function writeRemoteTranscript(
+  hostStateRoot: string,
+  sessionId: string,
+  entries: SessionEvent[]
+): Promise<string> {
+  await ensureAcpRemoteHostStateRoot(hostStateRoot);
+  return withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+    const filePath = getAcpRemoteSessionFilePath(scope, sessionId);
+    await new JSONLStore(filePath).createExclusive(entries);
+    return filePath;
+  });
 }
 
 type SnapshotBigIntStats = BigIntStats;
@@ -281,6 +314,727 @@ describe('SessionService.forkSession', () => {
       await SessionService.loadSession('child-session', projectPath)
     ).toContainEqual(expect.objectContaining({ content: 'CHILD_ONLY' }));
     expect(await readFile(parentPath, 'utf-8')).toBe(parentBeforeFork);
+  });
+
+  it('forks a remote session inside its protected scope and copies only its validated descriptor', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sourceSessionId = 'remote-parent';
+    const targetSessionId = 'remote-child';
+    const sourceCreated: Extract<SessionEvent, { type: 'session_created' }> = {
+      id: 'remote-parent-created',
+      sessionId: sourceSessionId,
+      projectPath: hostStateRoot,
+      timestamp: '2024-01-01T00:00:00.000Z',
+      type: 'session_created',
+      cwd: hostStateRoot,
+      version: 'test',
+      data: {
+        sessionId: sourceSessionId,
+        rootId: sourceSessionId,
+        title: 'Remote parent',
+        taskStatus: 'completed',
+        taskIsolation: 'local',
+        taskSourceProjectPath: hostStateRoot,
+        remoteWorkspace: descriptor,
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+    };
+    const sourceMessages = makeMessageEvents(
+      sourceSessionId,
+      hostStateRoot,
+      '2024-01-01T00:00:01.000Z',
+      'remote fork history'
+    ).map((event) => ({ ...event, projectPath: hostStateRoot }));
+    const sourceFilePath = await writeRemoteTranscript(hostStateRoot, sourceSessionId, [
+      sourceCreated,
+      ...sourceMessages,
+    ]);
+    const sourceBefore = await readFile(sourceFilePath, 'utf8');
+
+    const fork = await SessionService.forkSession(sourceSessionId, {
+      newSessionId: targetSessionId,
+      sourceProjectPath: hostStateRoot,
+      targetProjectPath: hostStateRoot,
+      remote: { expectedDescriptor: descriptor },
+    });
+
+    expect(fork).toMatchObject({
+      sessionId: targetSessionId,
+      parentSessionId: sourceSessionId,
+      projectPath: hostStateRoot,
+      metadata: {
+        sessionId: targetSessionId,
+        projectPath: hostStateRoot,
+        remoteWorkspace: descriptor,
+        parentId: sourceSessionId,
+        relationType: 'fork',
+        taskStatus: 'completed',
+      },
+      messages: [{ role: 'user', content: 'remote fork history' }],
+    });
+    expect(fork.metadata).not.toHaveProperty('gitBranch');
+    expect(fork.metadata).not.toHaveProperty('taskIsolation');
+    expect(fork.metadata).not.toHaveProperty('taskSourceProjectPath');
+    expect(fork.metadata).not.toHaveProperty('taskWorktreePath');
+
+    const childFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, targetSessionId)
+    );
+    const childEvents = await readTranscript(childFilePath);
+    expect(childEvents[0]).toMatchObject({
+      type: 'session_created',
+      sessionId: targetSessionId,
+      projectPath: hostStateRoot,
+      cwd: hostStateRoot,
+      data: {
+        sessionId: targetSessionId,
+        parentId: sourceSessionId,
+        relationType: 'fork',
+        remoteWorkspace: descriptor,
+      },
+    });
+    expect(
+      childEvents.every(
+        (event) =>
+          event.sessionId === targetSessionId &&
+          event.projectPath === hostStateRoot &&
+          event.cwd === hostStateRoot &&
+          event.gitBranch === undefined
+      )
+    ).toBe(true);
+    expect(
+      childEvents.slice(1).every((event) => !('remoteWorkspace' in event.data))
+    ).toBe(true);
+    for (const event of childEvents) {
+      expect(event.data).not.toHaveProperty('taskIsolation');
+      expect(event.data).not.toHaveProperty('taskSourceProjectPath');
+      expect(event.data).not.toHaveProperty('taskWorktree');
+      expect(event.data).not.toHaveProperty('taskDiffStat');
+    }
+    await expect(
+      access(getSessionFilePath(hostStateRoot, targetSessionId))
+    ).rejects.toThrow();
+    expect(await readFile(sourceFilePath, 'utf8')).toBe(sourceBefore);
+  });
+
+  it('rejects an exact-distinct remote fork before creating the child or mutating the source', async () => {
+    const persistedDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const requestedDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('c:\\repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(
+      persistedDescriptor.collisionIdentity
+    );
+    const sourceSessionId = 'remote-mismatch-parent';
+    const targetSessionId = 'remote-mismatch-child';
+    const sourceFilePath = await writeRemoteTranscript(hostStateRoot, sourceSessionId, [
+      {
+        id: 'remote-mismatch-created',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:00.000Z',
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          sessionId: sourceSessionId,
+          rootId: sourceSessionId,
+          remoteWorkspace: persistedDescriptor,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    ]);
+    const sourceBefore = await readFile(sourceFilePath, 'utf8');
+    const targetFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, targetSessionId)
+    );
+
+    await expect(
+      SessionService.forkSession(sourceSessionId, {
+        newSessionId: targetSessionId,
+        sourceProjectPath: hostStateRoot,
+        targetProjectPath: hostStateRoot,
+        remote: { expectedDescriptor: requestedDescriptor },
+      })
+    ).rejects.toMatchObject({
+      code: 'acp_remote_workspace_mismatch',
+      reason: 'exact-identity-mismatch',
+    });
+    await expect(access(targetFilePath)).rejects.toThrow();
+    expect(await readFile(sourceFilePath, 'utf8')).toBe(sourceBefore);
+  });
+
+  it('rejects a symlinked remote fork source before reading or creating a child', async () => {
+    if (process.platform === 'win32') return;
+
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sourceSessionId = 'remote-symlink-parent';
+    const targetSessionId = 'remote-symlink-child';
+    const outsideFilePath = path.join(storageRoot, 'outside-remote-source.jsonl');
+    const sourceEvent: Extract<SessionEvent, { type: 'session_created' }> = {
+      id: 'remote-symlink-created',
+      sessionId: sourceSessionId,
+      projectPath: hostStateRoot,
+      timestamp: '2024-01-01T00:00:00.000Z',
+      type: 'session_created',
+      cwd: hostStateRoot,
+      version: 'test',
+      data: {
+        sessionId: sourceSessionId,
+        rootId: sourceSessionId,
+        remoteWorkspace: descriptor,
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+    };
+    await writeFile(outsideFilePath, `${JSON.stringify(sourceEvent)}\n`, 'utf8');
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const targetFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => {
+        await symlink(
+          outsideFilePath,
+          getAcpRemoteSessionFilePath(scope, sourceSessionId)
+        );
+        return getAcpRemoteSessionFilePath(scope, targetSessionId);
+      }
+    );
+
+    await expect(
+      SessionService.forkSession(sourceSessionId, {
+        newSessionId: targetSessionId,
+        sourceProjectPath: hostStateRoot,
+        targetProjectPath: hostStateRoot,
+        remote: { expectedDescriptor: descriptor },
+      })
+    ).rejects.toMatchObject({ code: 'acp_remote_workspace_state_invalid' });
+    await expect(access(targetFilePath)).rejects.toThrow();
+    await expect(readFile(outsideFilePath, 'utf8')).resolves.toContain(sourceSessionId);
+  });
+
+  it('validates and copies the remote descriptor from the same stable source snapshot', async () => {
+    const preDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const stableDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('c:\\repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(preDescriptor.collisionIdentity);
+    const sourceSessionId = 'remote-stable-parent';
+    const targetSessionId = 'remote-stable-child';
+    const preEntries: SessionEvent[] = [
+      {
+        id: 'remote-stable-pre-created',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:00.000Z',
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          sessionId: sourceSessionId,
+          rootId: sourceSessionId,
+          remoteWorkspace: preDescriptor,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    ];
+    const stableEntries: SessionEvent[] = [
+      {
+        ...preEntries[0]!,
+        id: 'remote-stable-post-created',
+        data: {
+          ...preEntries[0]!.data,
+          remoteWorkspace: stableDescriptor,
+        },
+      } as Extract<SessionEvent, { type: 'session_created' }>,
+      ...makeMessageEvents(
+        sourceSessionId,
+        hostStateRoot,
+        '2024-01-01T00:00:01.000Z',
+        'stable remote history'
+      ).map((event) => ({ ...event, projectPath: hostStateRoot })),
+    ];
+    const sourceFilePath = await writeRemoteTranscript(
+      hostStateRoot,
+      sourceSessionId,
+      preEntries
+    );
+    const sourceBefore = await readFile(sourceFilePath, 'utf8');
+    const baseStats = await stat(sourceFilePath, { bigint: true });
+    const preContent = `${preEntries.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+    const stableContent = `${stableEntries.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+    const statsSequence: SnapshotBigIntStats[] = [
+      baseStats,
+      { ...baseStats, size: baseStats.size + 1n, mtimeNs: baseStats.mtimeNs + 1n },
+      { ...baseStats, size: baseStats.size + 2n, mtimeNs: baseStats.mtimeNs + 2n },
+      { ...baseStats, size: baseStats.size + 2n, mtimeNs: baseStats.mtimeNs + 2n },
+    ];
+    let statCallCount = 0;
+    let readCallCount = 0;
+    __setSessionSnapshotIOForTesting({
+      async stat(filePath) {
+        expect(filePath).toBe(sourceFilePath);
+        return statsSequence[statCallCount++]!;
+      },
+      async readFile(filePath) {
+        expect(filePath).toBe(sourceFilePath);
+        readCallCount += 1;
+        return readCallCount === 1 ? preContent : stableContent;
+      },
+    });
+
+    try {
+      const fork = await SessionService.forkSession(sourceSessionId, {
+        newSessionId: targetSessionId,
+        sourceProjectPath: hostStateRoot,
+        targetProjectPath: hostStateRoot,
+        remote: { expectedDescriptor: stableDescriptor },
+      });
+
+      expect(fork.metadata.remoteWorkspace).toEqual(stableDescriptor);
+      expect(fork.messages).toEqual([
+        { role: 'user', content: 'stable remote history' },
+      ]);
+      expect(statCallCount).toBe(4);
+      expect(readCallCount).toBe(2);
+      expect(await readFile(sourceFilePath, 'utf8')).toBe(sourceBefore);
+    } finally {
+      __resetSessionSnapshotIOForTesting();
+    }
+  });
+
+  it('fails closed after three unstable remote snapshots without creating a child', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sourceSessionId = 'remote-unstable-parent';
+    const targetSessionId = 'remote-unstable-child';
+    const sourceFilePath = await writeRemoteTranscript(hostStateRoot, sourceSessionId, [
+      {
+        id: 'remote-unstable-created',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:00.000Z',
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          sessionId: sourceSessionId,
+          rootId: sourceSessionId,
+          remoteWorkspace: descriptor,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    ]);
+    const sourceBefore = await readFile(sourceFilePath, 'utf8');
+    const baseStats = await stat(sourceFilePath, { bigint: true });
+    let statCallCount = 0;
+    __setSessionSnapshotIOForTesting({
+      async stat(filePath) {
+        expect(filePath).toBe(sourceFilePath);
+        statCallCount += 1;
+        return {
+          ...baseStats,
+          size: baseStats.size + BigInt(statCallCount),
+          mtimeNs: baseStats.mtimeNs + BigInt(statCallCount),
+        };
+      },
+      async readFile(filePath) {
+        expect(filePath).toBe(sourceFilePath);
+        return sourceBefore;
+      },
+    });
+    const targetFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, targetSessionId)
+    );
+
+    try {
+      await expect(
+        SessionService.forkSession(sourceSessionId, {
+          newSessionId: targetSessionId,
+          sourceProjectPath: hostStateRoot,
+          targetProjectPath: hostStateRoot,
+          remote: { expectedDescriptor: descriptor },
+        })
+      ).rejects.toThrow('Session changed while creating fork; retry the operation');
+      expect(statCallCount).toBe(6);
+      await expect(access(targetFilePath)).rejects.toThrow();
+      expect(await readFile(sourceFilePath, 'utf8')).toBe(sourceBefore);
+    } finally {
+      __resetSessionSnapshotIOForTesting();
+    }
+  });
+
+  it('redacts a remote source that disappears after file validation', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sourceSessionId = 'remote-disappearing-parent';
+    const targetSessionId = 'remote-disappearing-child';
+    const sourceFilePath = await writeRemoteTranscript(hostStateRoot, sourceSessionId, [
+      {
+        id: 'remote-disappearing-created',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:00.000Z',
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          sessionId: sourceSessionId,
+          rootId: sourceSessionId,
+          remoteWorkspace: descriptor,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    ]);
+    __setSessionSnapshotIOForTesting({
+      async stat(filePath) {
+        expect(filePath).toBe(sourceFilePath);
+        await rm(sourceFilePath, { force: true });
+        return stat(filePath, { bigint: true });
+      },
+      readFile(filePath) {
+        return readFile(filePath, 'utf8');
+      },
+    });
+    const targetFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, targetSessionId)
+    );
+
+    try {
+      const error = await captureError(() =>
+        SessionService.forkSession(sourceSessionId, {
+          newSessionId: targetSessionId,
+          sourceProjectPath: hostStateRoot,
+          targetProjectPath: hostStateRoot,
+          remote: { expectedDescriptor: descriptor },
+        })
+      );
+      expect(error).toMatchObject({
+        code: 'acp_remote_workspace_state_invalid',
+        message: 'ACP remote workspace durable state is invalid',
+      });
+      expect(error.message).not.toContain(hostStateRoot);
+      await expect(access(targetFilePath)).rejects.toThrow();
+    } finally {
+      __resetSessionSnapshotIOForTesting();
+    }
+  });
+
+  it('rejects an existing remote child without modifying either transcript', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sourceSessionId = 'remote-existing-parent';
+    const targetSessionId = 'remote-existing-child';
+    const sourceFilePath = await writeRemoteTranscript(hostStateRoot, sourceSessionId, [
+      {
+        id: 'remote-existing-parent-created',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:00.000Z',
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          sessionId: sourceSessionId,
+          rootId: sourceSessionId,
+          remoteWorkspace: descriptor,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    ]);
+    const targetFilePath = await writeRemoteTranscript(hostStateRoot, targetSessionId, [
+      {
+        id: 'remote-existing-child-created',
+        sessionId: targetSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-02T00:00:00.000Z',
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          sessionId: targetSessionId,
+          rootId: targetSessionId,
+          remoteWorkspace: descriptor,
+          createdAt: '2024-01-02T00:00:00.000Z',
+          updatedAt: '2024-01-02T00:00:00.000Z',
+        },
+      },
+    ]);
+    const [sourceBefore, targetBefore] = await Promise.all([
+      readFile(sourceFilePath, 'utf8'),
+      readFile(targetFilePath, 'utf8'),
+    ]);
+
+    await expect(
+      SessionService.forkSession(sourceSessionId, {
+        newSessionId: targetSessionId,
+        sourceProjectPath: hostStateRoot,
+        targetProjectPath: hostStateRoot,
+        remote: { expectedDescriptor: descriptor },
+      })
+    ).rejects.toThrow(/already exists|EEXIST/i);
+    expect(await readFile(sourceFilePath, 'utf8')).toBe(sourceBefore);
+    expect(await readFile(targetFilePath, 'utf8')).toBe(targetBefore);
+  });
+
+  it('rejects a remote fork whose same-exact ancestor is archived', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const parentSessionId = 'remote-archived-parent';
+    const sourceSessionId = 'remote-active-child';
+    const targetSessionId = 'remote-rejected-child';
+
+    await writeRemoteTranscript(hostStateRoot, parentSessionId, [
+      {
+        id: 'remote-archived-parent-created',
+        sessionId: parentSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:00.000Z',
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          sessionId: parentSessionId,
+          rootId: parentSessionId,
+          remoteWorkspace: descriptor,
+          archivedAt: '2024-01-03T00:00:00.000Z',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-03T00:00:00.000Z',
+        },
+      },
+    ]);
+    const sourceFilePath = await writeRemoteTranscript(hostStateRoot, sourceSessionId, [
+      {
+        id: 'remote-active-child-created',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-02T00:00:00.000Z',
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          sessionId: sourceSessionId,
+          rootId: parentSessionId,
+          parentId: parentSessionId,
+          relationType: 'fork',
+          remoteWorkspace: descriptor,
+          createdAt: '2024-01-02T00:00:00.000Z',
+          updatedAt: '2024-01-02T00:00:00.000Z',
+        },
+      },
+    ]);
+    const sourceBefore = await readFile(sourceFilePath, 'utf8');
+    const targetFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, targetSessionId)
+    );
+
+    await expect(
+      SessionService.forkSession(sourceSessionId, {
+        newSessionId: targetSessionId,
+        sourceProjectPath: hostStateRoot,
+        targetProjectPath: hostStateRoot,
+        remote: { expectedDescriptor: descriptor },
+      })
+    ).rejects.toMatchObject({
+      code: 'BLADE_SESSION_ARCHIVED',
+      archivedBySessionId: parentSessionId,
+    });
+    await expect(access(targetFilePath)).rejects.toThrow();
+    expect(await readFile(sourceFilePath, 'utf8')).toBe(sourceBefore);
+  });
+
+  it('copies remote prompt artifacts inside the protected host state root', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sourceSessionId = 'remote-artifact-parent';
+    const targetSessionId = 'remote-artifact-child';
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const fullPrompt = `${'r'.repeat(
+      MAX_INLINE_USER_MESSAGE_TEXT_BYTES
+    )}_REMOTE_FORK_ARTIFACT_TAIL`;
+    const sourceArtifacts = new UserPromptArtifactStore(
+      hostStateRoot,
+      sourceSessionId,
+      { storageRoot: hostStateRoot }
+    );
+    const materialized = await sourceArtifacts.materialize(fullPrompt);
+    const reference = getUserPromptArtifactReference(materialized.metadata)!;
+    const sourceEntries: SessionEvent[] = [
+      {
+        id: 'remote-artifact-created',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:00.000Z',
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          sessionId: sourceSessionId,
+          rootId: sourceSessionId,
+          remoteWorkspace: descriptor,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      },
+      {
+        id: 'remote-artifact-message',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:01.000Z',
+        type: 'message_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          messageId: 'remote-artifact-message',
+          role: 'user',
+          createdAt: '2024-01-01T00:00:01.000Z',
+          metadata: JSON.parse(JSON.stringify(materialized.metadata)) as JsonObject,
+        },
+      },
+      {
+        id: 'remote-artifact-part',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:01.000Z',
+        type: 'part_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          partId: 'remote-artifact-part',
+          messageId: 'remote-artifact-message',
+          partType: 'text',
+          payload: {
+            text:
+              typeof materialized.content === 'string'
+                ? materialized.content
+                : materialized.content
+                    .filter((part) => part.type === 'text')
+                    .map((part) => part.text)
+                    .join(''),
+          },
+          createdAt: '2024-01-01T00:00:01.000Z',
+        },
+      },
+    ];
+    await writeRemoteTranscript(hostStateRoot, sourceSessionId, sourceEntries);
+
+    await SessionService.forkSession(sourceSessionId, {
+      newSessionId: targetSessionId,
+      sourceProjectPath: hostStateRoot,
+      targetProjectPath: hostStateRoot,
+      remote: { expectedDescriptor: descriptor },
+    });
+
+    const targetArtifacts = new UserPromptArtifactStore(
+      hostStateRoot,
+      targetSessionId,
+      { storageRoot: hostStateRoot }
+    );
+    await expect(
+      targetArtifacts.restore(materialized.content, materialized.metadata)
+    ).resolves.toBe(fullPrompt);
+    await expect(sourceArtifacts.read(reference.id)).resolves.toMatchObject({
+      id: reference.id,
+    });
+  });
+
+  it('rolls back only the remote child when prompt artifact copy fails', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const sourceSessionId = 'remote-artifact-failure-parent';
+    const targetSessionId = 'remote-artifact-failure-child';
+    const missingArtifactId = 'a'.repeat(64);
+    const metadata = {
+      userPromptArtifact: {
+        version: 1,
+        id: missingArtifactId,
+        sha256: missingArtifactId,
+        sizeBytes: MAX_INLINE_USER_MESSAGE_TEXT_BYTES + 1,
+        textChars: MAX_INLINE_USER_MESSAGE_TEXT_BYTES + 1,
+        inlineBytes: 1,
+      },
+    } as const;
+    const sourceFilePath = await writeRemoteTranscript(hostStateRoot, sourceSessionId, [
+      {
+        id: 'remote-artifact-failure-created',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:00.000Z',
+        type: 'session_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          sessionId: sourceSessionId,
+          rootId: sourceSessionId,
+          remoteWorkspace: descriptor,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      },
+      {
+        id: 'remote-artifact-failure-message',
+        sessionId: sourceSessionId,
+        projectPath: hostStateRoot,
+        timestamp: '2024-01-01T00:00:01.000Z',
+        type: 'message_created',
+        cwd: hostStateRoot,
+        version: 'test',
+        data: {
+          messageId: 'remote-artifact-failure-message',
+          role: 'user',
+          createdAt: '2024-01-01T00:00:01.000Z',
+          metadata,
+        },
+      },
+    ]);
+    const sourceBefore = await readFile(sourceFilePath, 'utf8');
+    const targetFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => getAcpRemoteSessionFilePath(scope, targetSessionId)
+    );
+
+    await expect(
+      SessionService.forkSession(sourceSessionId, {
+        newSessionId: targetSessionId,
+        sourceProjectPath: hostStateRoot,
+        targetProjectPath: hostStateRoot,
+        remote: { expectedDescriptor: descriptor },
+      })
+    ).rejects.toMatchObject({ code: 'acp_remote_workspace_state_invalid' });
+    await expect(access(targetFilePath)).rejects.toThrow();
+    expect(await readFile(sourceFilePath, 'utf8')).toBe(sourceBefore);
   });
 
   it('copies effective messages and compaction checkpoints without inheriting handoff authority', async () => {

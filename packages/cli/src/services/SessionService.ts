@@ -668,10 +668,20 @@ class RemoteSessionMismatchError extends Error {
   }
 }
 
+class SessionSnapshotChangedError extends Error {
+  constructor() {
+    super('Session changed while creating fork; retry the operation');
+    this.name = 'SessionSnapshotChangedError';
+  }
+}
+
 export interface ForkSessionOptions {
   newSessionId?: string;
   sourceProjectPath: string;
   targetProjectPath: string;
+  remote?: {
+    expectedDescriptor: AcpRemoteWorkspaceDescriptorV1;
+  };
 }
 
 export interface ForkedSession {
@@ -705,6 +715,12 @@ function archiveKey(projectPath: string, sessionId: string): string {
 
 function sanitizeRemoteStateError(_error: unknown): Error {
   return new RemoteSessionStateError();
+}
+
+function sanitizeRemoteSnapshotError(error: unknown): Error {
+  return error instanceof SessionSnapshotChangedError
+    ? error
+    : sanitizeRemoteStateError(error);
 }
 
 function exactRemoteIdentityMatches(
@@ -1554,6 +1570,16 @@ export class SessionService {
     assertValidSessionId(sourceSessionId);
     const targetSessionId = options.newSessionId ?? `fork-${Date.now()}-${nanoid(8)}`;
     assertValidSessionId(targetSessionId);
+    const remote = options.remote;
+    if (remote) {
+      return this.forkRemoteSession(
+        sourceSessionId,
+        targetSessionId,
+        options.sourceProjectPath,
+        options.targetProjectPath,
+        remote.expectedDescriptor
+      );
+    }
     const sourceProjectPath = this.resolveForkWorkspace(options.sourceProjectPath);
     const targetProjectPath = this.resolveForkWorkspace(options.targetProjectPath);
     if (sourceProjectPath !== targetProjectPath) {
@@ -1810,6 +1836,372 @@ export class SessionService {
       messages: this.convertJSONLToMessages(childEntries),
       metadata: this.toPublicMetadata(metadata),
     };
+  }
+
+  private static async forkRemoteSession(
+    sourceSessionId: string,
+    targetSessionId: string,
+    sourceProjectPath: string,
+    targetProjectPath: string,
+    requestedDescriptor: AcpRemoteWorkspaceDescriptorV1
+  ): Promise<ForkedSession> {
+    let expectedDescriptor: AcpRemoteWorkspaceDescriptorV1;
+    try {
+      expectedDescriptor = parseAcpRemoteWorkspaceDescriptor(requestedDescriptor);
+    } catch (error) {
+      throw sanitizeRemoteStateError(error);
+    }
+    const expectedRoot = deriveAcpRemoteHostStateRoot(
+      expectedDescriptor.collisionIdentity
+    );
+    if (sourceProjectPath !== expectedRoot || targetProjectPath !== expectedRoot) {
+      throw new RemoteSessionStateError();
+    }
+
+    return withValidatedAcpRemoteStateScope(expectedRoot, async (scope) => {
+      const sourceFilePath = getAcpRemoteSessionFilePath(scope, sourceSessionId);
+      try {
+        await assertAcpRemoteStateFile(scope, sourceFilePath);
+      } catch (error) {
+        throw sanitizeRemoteStateError(error);
+      }
+      let sourceTranscript: SessionEvent[];
+      try {
+        sourceTranscript = await this.readStableSessionSnapshot(
+          sourceFilePath,
+          sourceSessionId
+        );
+      } catch (error) {
+        throw sanitizeRemoteSnapshotError(error);
+      }
+      const sourceCreated = assertAcpRemoteSessionTranscriptIdentity(
+        sourceTranscript,
+        sourceSessionId,
+        expectedRoot
+      );
+      const sourceMetadata = validateProjectedRemoteMetadata(
+        this.projectMetadataFromEntries(
+          sourceTranscript,
+          sourceSessionId,
+          expectedRoot,
+          sourceFilePath
+        ),
+        expectedDescriptor
+      );
+      if (sourceMetadata.archivedAt) {
+        throw new SessionArchivedError(sourceSessionId, sourceSessionId);
+      }
+      if (sourceMetadata.parentId) {
+        const ancestor = await this.findRemoteArchivedAncestor(
+          sourceMetadata.parentId,
+          scope,
+          sourceMetadata.remoteWorkspace
+        );
+        if (ancestor) {
+          throw new SessionArchivedError(sourceSessionId, ancestor.sessionId);
+        }
+      }
+
+      const sourceEntries = materializeSessionEvents(sourceTranscript);
+      const now = new Date().toISOString();
+      const version = getVersion();
+      const rootId = sourceMetadata.rootId || sourceSessionId;
+      const childEntries = this.buildForkChildEntries({
+        sourceEntries,
+        sourceCreated,
+        sourceSessionId,
+        targetSessionId,
+        targetProjectPath: expectedRoot,
+        rootId,
+        version,
+        now,
+        remoteDescriptor: sourceMetadata.remoteWorkspace,
+      });
+      const targetFilePath = getAcpRemoteSessionFilePath(scope, targetSessionId);
+      let targetCreated = false;
+      try {
+        await new JSONLStore(targetFilePath).createExclusive(childEntries);
+        targetCreated = true;
+        await assertAcpRemoteStateFile(scope, targetFilePath);
+        const artifactIds = collectUserPromptArtifactIds(
+          sourceEntries.flatMap((entry) =>
+            entry.type === 'message_created' ? [entry.data.metadata] : []
+          )
+        );
+        if (artifactIds.length > 0) {
+          const sourceArtifacts = new UserPromptArtifactStore(
+            expectedRoot,
+            sourceSessionId,
+            { storageRoot: expectedRoot }
+          );
+          const targetArtifacts = new UserPromptArtifactStore(
+            expectedRoot,
+            targetSessionId,
+            { storageRoot: expectedRoot }
+          );
+          await sourceArtifacts.copyReferencedTo(artifactIds, targetArtifacts);
+        }
+      } catch (error) {
+        if (targetCreated) {
+          await new JSONLStore(targetFilePath).delete().catch(() => undefined);
+          await new UserPromptArtifactStore(expectedRoot, targetSessionId, {
+            storageRoot: expectedRoot,
+          })
+            .removeAll()
+            .catch(() => undefined);
+        }
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+          throw new Error(`Fork session already exists: ${targetSessionId}`, {
+            cause: error,
+          });
+        }
+        throw sanitizeRemoteStateError(error);
+      }
+
+      const metadata = validateProjectedRemoteMetadata(
+        this.projectMetadataFromEntries(
+          childEntries,
+          targetSessionId,
+          expectedRoot,
+          targetFilePath
+        ),
+        sourceMetadata.remoteWorkspace
+      );
+      const {
+        gitBranch: _gitBranch,
+        taskIsolation: _taskIsolation,
+        taskSourceProjectPath: _taskSourceProjectPath,
+        taskWorktreePath: _taskWorktreePath,
+        taskWorktreeBranch: _taskWorktreeBranch,
+        taskBaseCommit: _taskBaseCommit,
+        taskDiffStat: _taskDiffStat,
+        ...remoteMetadata
+      } = this.toPublicMetadata(metadata);
+      return {
+        sessionId: targetSessionId,
+        parentSessionId: sourceSessionId,
+        projectPath: expectedRoot,
+        messages: this.convertJSONLToMessages(childEntries),
+        metadata: remoteMetadata,
+      };
+    });
+  }
+
+  private static async findRemoteArchivedAncestor(
+    parentSessionId: string,
+    scope: AcpRemoteStateScope,
+    descriptor: AcpRemoteWorkspaceDescriptorV1
+  ): Promise<{ sessionId: string; archivedAt: string } | undefined> {
+    const visited = new Set<string>();
+    let currentSessionId: string | undefined = parentSessionId;
+    while (currentSessionId) {
+      if (visited.has(currentSessionId)) {
+        throw new RemoteSessionStateError();
+      }
+      visited.add(currentSessionId);
+      assertValidSessionId(currentSessionId);
+      const filePath = getAcpRemoteSessionFilePath(scope, currentSessionId);
+      try {
+        await assertAcpRemoteStateFile(scope, filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        throw sanitizeRemoteStateError(error);
+      }
+      let entries: SessionEvent[];
+      try {
+        entries = await this.readStableSessionSnapshot(filePath, currentSessionId);
+      } catch (error) {
+        throw sanitizeRemoteSnapshotError(error);
+      }
+      assertAcpRemoteSessionTranscriptIdentity(
+        entries,
+        currentSessionId,
+        String(scope)
+      );
+      const ancestor = validateProjectedRemoteMetadata(
+        this.projectMetadataFromEntries(
+          entries,
+          currentSessionId,
+          String(scope),
+          filePath
+        )
+      );
+      if (!exactRemoteIdentityMatches(ancestor.remoteWorkspace, descriptor)) {
+        return undefined;
+      }
+      if (ancestor.archivedAt) {
+        return { sessionId: ancestor.sessionId, archivedAt: ancestor.archivedAt };
+      }
+      currentSessionId = ancestor.parentId;
+    }
+    return undefined;
+  }
+
+  private static buildForkChildEntries(options: {
+    sourceEntries: readonly SessionEvent[];
+    sourceCreated: Extract<SessionEvent, { type: 'session_created' }>;
+    sourceSessionId: string;
+    targetSessionId: string;
+    targetProjectPath: string;
+    rootId: string;
+    version: string;
+    now: string;
+    remoteDescriptor: AcpRemoteWorkspaceDescriptorV1;
+  }): SessionEvent[] {
+    const {
+      sourceEntries,
+      sourceCreated,
+      sourceSessionId,
+      targetSessionId,
+      targetProjectPath,
+      rootId,
+      version,
+      now,
+      remoteDescriptor,
+    } = options;
+    const {
+      status: _sourceStatus,
+      taskStatus: _sourceTaskStatus,
+      taskStatusReason: _sourceTaskStatusReason,
+      taskFailure: _sourceTaskFailure,
+      taskStartedAt: _sourceTaskStartedAt,
+      taskCompletedAt: _sourceTaskCompletedAt,
+      taskOwnerPid: _sourceTaskOwnerPid,
+      taskPromptSummary: _sourceTaskPromptSummary,
+      taskPriority: _sourceTaskPriority,
+      taskKind: _sourceTaskKind,
+      taskDueAt: _sourceTaskDueAt,
+      taskDispatch: _sourceTaskDispatch,
+      taskModelId: _sourceTaskModelId,
+      taskRetriedFrom: _sourceTaskRetriedFrom,
+      taskDelivery: _sourceTaskDelivery,
+      taskIsolation: _sourceTaskIsolation,
+      taskSourceProjectPath: _sourceTaskSourceProjectPath,
+      taskWorktree: _sourceTaskWorktree,
+      taskDiffStat: _sourceTaskDiffStat,
+      taskQueuePosition: _sourceTaskQueuePosition,
+      taskQueueDepth: _sourceTaskQueueDepth,
+      taskConcurrencyLimit: _sourceTaskConcurrencyLimit,
+      pendingInteraction: _sourcePendingInteraction,
+      remoteWorkspace: _sourceRemoteWorkspace,
+      ...sourceCreatedData
+    } = sourceCreated.data;
+    const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
+      id: nanoid(),
+      sessionId: targetSessionId,
+      projectPath: targetProjectPath,
+      timestamp: now,
+      type: 'session_created',
+      cwd: targetProjectPath,
+      version,
+      data: {
+        ...sourceCreatedData,
+        sessionId: targetSessionId,
+        rootId,
+        parentId: sourceSessionId,
+        relationType: 'fork',
+        taskStatus: 'completed',
+        taskCompletedAt: now,
+        remoteWorkspace: remoteDescriptor,
+        createdAt: now,
+        updatedAt: now,
+      },
+    };
+    const copiedEntries = sourceEntries
+      .filter(
+        (entry) =>
+          entry.type !== 'session_created' &&
+          entry.type !== 'token_budget_handoff_recorded' &&
+          entry.type !== 'inbox_acknowledged' &&
+          entry.type !== 'interaction_requested' &&
+          entry.type !== 'interaction_responded' &&
+          entry.type !== 'interaction_recovered' &&
+          entry.type !== 'review_started' &&
+          entry.type !== 'review_completed'
+      )
+      .map((entry): SessionEvent => {
+        const { gitBranch: _sourceGitBranch, ...entryWithoutGitBranch } = entry;
+        const base = {
+          ...entryWithoutGitBranch,
+          id: nanoid(),
+          sessionId: targetSessionId,
+          projectPath: targetProjectPath,
+          cwd: targetProjectPath,
+          version,
+        };
+        if (entry.type === 'session_updated') {
+          const {
+            status: _status,
+            taskStatus: _taskStatus,
+            taskStatusReason: _taskStatusReason,
+            taskFailure: _taskFailure,
+            taskStartedAt: _taskStartedAt,
+            taskCompletedAt: _taskCompletedAt,
+            taskOwnerPid: _taskOwnerPid,
+            taskPromptSummary: _taskPromptSummary,
+            taskPriority: _taskPriority,
+            taskKind: _taskKind,
+            taskDueAt: _taskDueAt,
+            taskDispatch: _taskDispatch,
+            taskModelId: _taskModelId,
+            taskRetriedFrom: _taskRetriedFrom,
+            taskDelivery: _taskDelivery,
+            taskIsolation: _taskIsolation,
+            taskSourceProjectPath: _taskSourceProjectPath,
+            taskWorktree: _taskWorktree,
+            taskDiffStat: _taskDiffStat,
+            taskQueuePosition: _taskQueuePosition,
+            taskQueueDepth: _taskQueueDepth,
+            taskConcurrencyLimit: _taskConcurrencyLimit,
+            pendingInteraction: _pendingInteraction,
+            remoteWorkspace: _updatedRemoteWorkspace,
+            ...updatedData
+          } = entry.data;
+          return {
+            ...base,
+            type: 'session_updated',
+            data: {
+              ...updatedData,
+              sessionId: targetSessionId,
+              rootId,
+              parentId: sourceSessionId,
+              relationType: 'fork',
+            },
+          };
+        }
+        if (entry.type === 'message_created') {
+          const { inboxMessageId: _inboxMessageId, ...data } = entry.data;
+          return { ...base, type: 'message_created', data };
+        }
+        return base as SessionEvent;
+      });
+    const forkBoundary: Extract<SessionEvent, { type: 'session_updated' }> = {
+      id: nanoid(),
+      sessionId: targetSessionId,
+      projectPath: targetProjectPath,
+      timestamp: now,
+      type: 'session_updated',
+      cwd: targetProjectPath,
+      version,
+      data: {
+        sessionId: targetSessionId,
+        rootId,
+        parentId: sourceSessionId,
+        relationType: 'fork',
+        taskStatus: 'completed',
+        taskStatusReason: null,
+        taskFailure: null,
+        taskStartedAt: null,
+        taskCompletedAt: now,
+        taskOwnerPid: null,
+        taskDelivery: null,
+        taskQueuePosition: null,
+        taskQueueDepth: null,
+        taskConcurrencyLimit: null,
+        updatedAt: now,
+      },
+    };
+    return [childCreated, ...copiedEntries, forkBoundary];
   }
 
   static async deleteSession(sessionId: string, projectPath?: string): Promise<number> {
@@ -3994,7 +4386,7 @@ export class SessionService {
       sessionId,
       projectPath: resolvedProjectPath,
       remoteWorkspace,
-      gitBranch: created.gitBranch,
+      ...(created.gitBranch !== undefined ? { gitBranch: created.gitBranch } : {}),
       rootId: durable.rootId || sessionId,
       parentId: durable.parentId,
       relationType: durable.relationType,
@@ -4245,7 +4637,7 @@ export class SessionService {
         return entries;
       }
     }
-    throw new Error('Session changed while creating fork; retry the operation');
+    throw new SessionSnapshotChangedError();
   }
 }
 
