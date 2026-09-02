@@ -724,7 +724,7 @@ Reuse the real Ink/stdin/stdout and release-model selection patterns from `tui-s
 ```bash
 cd packages/cli && bun x vitest run --config vitest.config.ts --project=unit tests/unit/integrations/api/session-surface-schemas.test.ts tests/unit/integrations/api/schemas.test.ts tests/unit/agent-runtime/acp/remote-workspace-reference.test.ts tests/unit/agent-runtime/acp/service-context.test.ts tests/unit/services/session-surface-projection.test.ts tests/unit/services/session-surface-cursor-registry.test.ts tests/unit/services/session-surface-service.test.ts tests/unit/context/sqlite/projection.test.ts tests/unit/agent-runtime/server/session-surface-routes.test.ts tests/unit/agent-runtime/server/server-session-surface-shutdown.test.ts tests/unit/agent-runtime/server/session-ref.test.ts tests/unit/agent-runtime/server/session-routes.test.ts tests/unit/agent-runtime/server/session-fork-routes.test.ts tests/unit/agent-runtime/server/suggestions-routes.test.ts tests/unit/agent-runtime/server/terminal-routes.test.ts
 cd packages/cli && bun x vitest run --config vitest.config.ts --project=cli tests/integration/cli/session-history-surface.test.tsx tests/integration/cli/session-selector-fork.test.tsx
-cd packages/cli/web && bun x vitest run --config vitest.config.ts tests/store/session/sessionIdentity.test.ts tests/store/session/sessionNavigation.test.ts tests/store/session/sessionSlice.test.ts tests/store/session/eventHandlers.test.ts tests/components/layout/Sidebar.test.tsx tests/components/layout/Layout.test.tsx tests/components/chat/ChatView.test.tsx tests/components/chat/ChatInput.test.tsx tests/components/preview/FilePreview.test.tsx tests/App.test.tsx
+cd packages/cli/web && bun x vitest run --config vitest.config.ts tests/store/session/sessionIdentity.test.ts tests/store/session/sessionNavigation.test.ts tests/store/session/sessionSlice.test.ts tests/store/session/eventHandlers.test.ts tests/components/layout/Sidebar.test.tsx tests/components/layout/Layout.test.tsx tests/components/chat/ChatView.test.tsx tests/components/chat/ChatInput.test.tsx tests/components/preview/FilePreview.test.tsx tests/components/tasks/TaskArtifactBar.test.tsx tests/App.test.tsx
 ```
 
 - [ ] **Step 5: Run the zero-retry two-model release cell**
@@ -775,9 +775,19 @@ bun run type-check
 bun run build
 bun run test:all
 CI=true bun run --filter blade-code test:coverage
+cd packages/cli/web && CI=true bun x vitest run --config vitest.config.ts --coverage
 ```
 
-If a wrapper reaches a fixed outer budget, run its exact complete Vitest collection to natural completion and keep the wrapper result explicit. The tag-triggered GitHub coverage job must still pass before publication. Describe a verified transient in unchanged code only as `intermittent failure in unchanged sources`.
+The Web command intentionally passes Vitest's `--coverage` flag through the
+existing `blade-web test` script; no package script change is required. It must
+produce coverage for the Web source tree and include the new history slice,
+navigation, event boundary, viewer, and action-gate files. Record CLI and Web
+coverage separately; do not describe CLI-only coverage as complete Web coverage.
+If a wrapper reaches a fixed outer budget, run its exact complete Vitest
+collection to natural completion and keep the wrapper result explicit. The
+tag-triggered GitHub coverage job must still pass before publication. Describe a
+verified transient in unchanged code only as `intermittent failure in unchanged
+sources`.
 
 - [ ] **Step 3: Write bounded bilingual evidence and release notes**
 
