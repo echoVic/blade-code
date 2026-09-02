@@ -92,10 +92,7 @@ export const writeTool = createTool({
         trustedWorkspaceKind
       )
     ) {
-      return createUnavailableAcpSessionFileSystemResult({
-        filePath: file_path,
-        mutation: true,
-      });
+      return createUnavailableAcpSessionFileSystemResult({ mutation: true });
     }
 
     try {

@@ -37,7 +37,6 @@ export function createCancellationResult(abortedBeforeLaunch: boolean): ToolResu
 }
 
 export function createInvalidAcpRemotePathResult(options?: {
-  filePath?: string;
   mutation?: boolean;
 }): ToolResult {
   const message = 'ACP remote file path is invalid';
@@ -52,7 +51,6 @@ export function createInvalidAcpRemotePathResult(options?: {
     ...(options?.mutation
       ? {
           metadata: {
-            ...(options.filePath === undefined ? {} : { file_path: options.filePath }),
             ...(options.mutation ? { sideEffectsUncertain: false } : {}),
           },
         }
@@ -61,7 +59,6 @@ export function createInvalidAcpRemotePathResult(options?: {
 }
 
 export function createUnavailableAcpSessionFileSystemResult(options?: {
-  filePath?: string;
   mutation?: boolean;
 }): ToolResult {
   const message = 'ACP session filesystem is unavailable';
@@ -76,7 +73,6 @@ export function createUnavailableAcpSessionFileSystemResult(options?: {
     ...(options?.mutation
       ? {
           metadata: {
-            ...(options.filePath === undefined ? {} : { file_path: options.filePath }),
             sideEffectsUncertain: false,
           },
         }

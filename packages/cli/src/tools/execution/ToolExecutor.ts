@@ -843,7 +843,6 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
         throw error;
       }
       return createInvalidAcpRemotePathResult({
-        filePath: isRemoteSingleFileTool ? pathValue : undefined,
         mutation: toolName === 'Write' || toolName === 'Edit',
       });
     }

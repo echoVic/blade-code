@@ -1313,28 +1313,35 @@ describe('ACP remote Write/Edit builtin tools', () => {
       { readTextFile: true, writeTextFile: true }
     );
 
-    const writeResult = await writeTool.execute(
-      {
-        file_path: newFile,
-        content: 'must not reach host',
-        encoding: 'utf8',
-        create_directories: true,
-      },
-      undefined,
-      { sessionId: 'explicit-unknown-session', workspaceKind: 'local' }
+    const { result: writeResult, logs: writeLogs } = await captureToolLogsDuring(() =>
+      writeTool.execute(
+        {
+          file_path: newFile,
+          content: 'must not reach host',
+          encoding: 'utf8',
+          create_directories: true,
+        },
+        undefined,
+        { sessionId: 'explicit-unknown-session', workspaceKind: 'local' }
+      )
     );
-    const editResult = await editTool.execute(
-      {
-        file_path: existingFile,
-        old_string: 'original',
-        new_string: 'mutated',
-        replace_all: false,
-      },
-      undefined,
-      { sessionId: 'explicit-unknown-session', workspaceKind: 'local' }
+    const { result: editResult, logs: editLogs } = await captureToolLogsDuring(() =>
+      editTool.execute(
+        {
+          file_path: existingFile,
+          old_string: 'original',
+          new_string: 'mutated',
+          replace_all: false,
+        },
+        undefined,
+        { sessionId: 'explicit-unknown-session', workspaceKind: 'local' }
+      )
     );
 
-    for (const result of [writeResult, editResult]) {
+    for (const [result, filePath, logs] of [
+      [writeResult, newFile, writeLogs],
+      [editResult, existingFile, editLogs],
+    ] as const) {
       expect(result).toMatchObject({
         success: false,
         llmContent: 'ACP session filesystem is unavailable',
@@ -1344,10 +1351,14 @@ describe('ACP remote Write/Edit builtin tools', () => {
           message: 'ACP session filesystem is unavailable',
         },
         metadata: {
-          file_path: result === writeResult ? newFile : existingFile,
           sideEffectsUncertain: false,
         },
       });
+      expect(result.metadata?.file_path).toBeUndefined();
+      expect(String(result.llmContent)).not.toContain(filePath);
+      expect(JSON.stringify(result.error ?? {})).not.toContain(filePath);
+      expect(JSON.stringify(result.metadata ?? {})).not.toContain(filePath);
+      expect(logs).not.toContain(filePath);
     }
     await expect(fs.readFile(existingFile, 'utf8')).resolves.toBe(
       'original host content'
@@ -1363,36 +1374,47 @@ describe('ACP remote Write/Edit builtin tools', () => {
     await fs.writeFile(existingFile, 'original host content');
     expect(AcpServiceContext.getCurrentSessionId()).toBeNull();
 
-    const writeResult = await writeTool.execute(
-      {
-        file_path: newFile,
-        content: 'must not reach host',
-        encoding: 'utf8',
-        create_directories: true,
-      },
-      undefined,
-      { workspaceKind: 'acp-remote' }
+    const { result: writeResult, logs: writeLogs } = await captureToolLogsDuring(() =>
+      writeTool.execute(
+        {
+          file_path: newFile,
+          content: 'must not reach host',
+          encoding: 'utf8',
+          create_directories: true,
+        },
+        undefined,
+        { workspaceKind: 'acp-remote' }
+      )
     );
-    const editResult = await editTool.execute(
-      {
-        file_path: existingFile,
-        old_string: 'original',
-        new_string: 'mutated',
-        replace_all: false,
-      },
-      undefined,
-      { workspaceKind: 'acp-remote' }
+    const { result: editResult, logs: editLogs } = await captureToolLogsDuring(() =>
+      editTool.execute(
+        {
+          file_path: existingFile,
+          old_string: 'original',
+          new_string: 'mutated',
+          replace_all: false,
+        },
+        undefined,
+        { workspaceKind: 'acp-remote' }
+      )
     );
 
-    for (const result of [writeResult, editResult]) {
+    for (const [result, filePath, logs] of [
+      [writeResult, newFile, writeLogs],
+      [editResult, existingFile, editLogs],
+    ] as const) {
       expect(result).toMatchObject({
         success: false,
         error: { code: 'acp_session_unavailable' },
         metadata: {
-          file_path: result === writeResult ? newFile : existingFile,
           sideEffectsUncertain: false,
         },
       });
+      expect(result.metadata?.file_path).toBeUndefined();
+      expect(String(result.llmContent)).not.toContain(filePath);
+      expect(JSON.stringify(result.error ?? {})).not.toContain(filePath);
+      expect(JSON.stringify(result.metadata ?? {})).not.toContain(filePath);
+      expect(logs).not.toContain(filePath);
     }
     await expect(fs.readFile(existingFile, 'utf8')).resolves.toBe(
       'original host content'

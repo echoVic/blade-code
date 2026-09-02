@@ -788,11 +788,11 @@ describe('ToolExecutor — file lock logic', () => {
             message: 'ACP remote file path is invalid',
           },
           metadata: {
-            file_path: rejectedPath,
             sideEffectsUncertain: false,
           },
         });
         expect(result.error?.details).toBeUndefined();
+        expect(result.metadata?.file_path).toBeUndefined();
         expect(String(result.llmContent)).not.toContain(rejectedPath);
         expect(JSON.stringify(result.error)).not.toContain(rejectedPath);
         expect(worktreeSpy).not.toHaveBeenCalled();
@@ -957,10 +957,12 @@ describe('ToolExecutor — file lock logic', () => {
         success: false,
         error: { code: 'acp_remote_path_invalid' },
         metadata: {
-          file_path: rejectedPath,
           sideEffectsUncertain: false,
         },
       });
+      expect(result.metadata?.file_path).toBeUndefined();
+      expect(String(result.llmContent)).not.toContain(rejectedPath);
+      expect(JSON.stringify(result.error ?? {})).not.toContain(rejectedPath);
       expect(scheduleSpy).not.toHaveBeenCalled();
       expect(hostLockSpy).not.toHaveBeenCalled();
       expect(opaqueLockSpy).not.toHaveBeenCalled();
