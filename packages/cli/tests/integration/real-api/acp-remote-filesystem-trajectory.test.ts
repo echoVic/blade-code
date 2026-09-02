@@ -343,6 +343,7 @@ describeReal('paired ACP remote filesystem qualification (real API)', () => {
         const storageRoot = path.join(fixtureRoot, 'storage');
         mkdirSync(workspace, { recursive: true });
         mkdirSync(home, { recursive: true });
+        mkdirSync(storageRoot, { recursive: true, mode: 0o700 });
         process.env.BLADE_STORAGE_ROOT = storageRoot;
 
         const sourcePath = path.join(workspace, 'inputs', 'source.txt');
