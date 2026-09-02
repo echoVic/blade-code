@@ -16,16 +16,24 @@ const mocks = vi.hoisted(() => ({
   recordFileEdit: vi.fn(async () => undefined),
 }));
 
-vi.mock('../../../../../../src/acp/AcpServiceContext.js', () => ({
-  isAcpMode: vi.fn(() => false),
-  isAcpRemoteFileSystem: vi.fn(() => false),
-  getAcpFileSystemService: vi.fn(),
-  AcpServiceContext: {
-    initializeSession: vi.fn(),
-    destroySession: vi.fn(),
-    setCurrentSession: vi.fn(),
-  },
-}));
+vi.mock('../../../../../../src/acp/AcpServiceContext.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../../../../../../src/acp/AcpServiceContext.js')
+    >();
+  return {
+    ...actual,
+    isAcpMode: vi.fn(() => false),
+    isAcpRemoteFileSystem: vi.fn(() => false),
+    isExplicitUnknownAcpSession: vi.fn(() => false),
+    getAcpFileSystemService: vi.fn(),
+    AcpServiceContext: {
+      initializeSession: vi.fn(),
+      destroySession: vi.fn(),
+      setCurrentSession: vi.fn(),
+    },
+  };
+});
 
 vi.mock('../../../../../../src/tools/builtin/file/FileAccessTracker.js', () => ({
   FileAccessTracker: {

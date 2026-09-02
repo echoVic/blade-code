@@ -3,9 +3,15 @@ import { setFileSystemService } from '../../../src/services/FileSystemService.js
 import { writeTool } from '../../../src/tools/builtin/file/write.js';
 import { createMockFileSystem } from '../../support/mocks/mockFileSystem.js';
 
-vi.mock('../../../src/acp/AcpServiceContext.js', () => ({
-  isAcpMode: vi.fn(() => false),
-}));
+vi.mock('../../../src/acp/AcpServiceContext.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../src/acp/AcpServiceContext.js')>();
+  return {
+    ...actual,
+    isAcpMode: vi.fn(() => false),
+    isExplicitUnknownAcpSession: vi.fn(() => false),
+  };
+});
 
 describe('Debug WriteTool', () => {
   let mockFS: ReturnType<typeof createMockFileSystem>;
