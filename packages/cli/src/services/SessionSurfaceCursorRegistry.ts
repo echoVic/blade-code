@@ -165,6 +165,7 @@ type CatalogEntry = EntryBase & {
   epoch: string;
   revision: string;
   boundary: JsonValue;
+  boundaryBytes: number;
   requestHash: string;
   cachedResult?: JsonValue;
   cachedResultBytes: number;
@@ -259,11 +260,14 @@ export class SessionSurfaceCursorRegistry {
   >(input: CatalogCursorIssue<TBoundary, TRequest>): string {
     this.assertAvailable();
     this.cleanup();
-    const boundary = cloneCanonicalJsonValue(input.boundary);
+    const measuredBoundary = measureRetainedJsonValue(input.boundary);
+    if (measuredBoundary.value === undefined) {
+      throw new SessionSurfaceCursorRegistryError('session_surface_cursor_invalid');
+    }
     const requestHash = stableStringify(input.request);
     this.ensureCapacity({
       requestedEntries: 1,
-      requestedRetainedBytes: 0,
+      requestedRetainedBytes: measuredBoundary.bytes,
       chainId: input.chainId,
     });
     const token = this.createToken('catalog');
@@ -278,11 +282,14 @@ export class SessionSurfaceCursorRegistry {
       scopeKey: input.scopeKey,
       epoch: input.epoch,
       revision: input.revision,
-      boundary,
+      boundary: measuredBoundary.value,
+      boundaryBytes: measuredBoundary.bytes,
       requestHash,
       cachedResultBytes: 0,
     };
     this.storeEntry(chain, entry);
+    this.retainedPayloadBytes += measuredBoundary.bytes;
+    chain.retainedPayloadBytes += measuredBoundary.bytes;
     return token;
   }
 
@@ -852,6 +859,12 @@ export class SessionSurfaceCursorRegistry {
         chain.retainedPayloadBytes -= entry.frozenBytes;
       }
       return;
+    }
+    if (entry.kind === 'catalog') {
+      this.retainedPayloadBytes -= entry.boundaryBytes;
+      if (chain) {
+        chain.retainedPayloadBytes -= entry.boundaryBytes;
+      }
     }
     this.releaseCachedResult(entry, chain);
   }

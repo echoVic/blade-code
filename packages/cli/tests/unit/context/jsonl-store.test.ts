@@ -578,3 +578,37 @@ describe('JSONLStore sequence numbers', () => {
     expect(second.seq).toBe(4);
   });
 });
+
+describe('JSONLStore cancellable reads', () => {
+  let tempDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), 'blade-jsonl-abort-'));
+    filePath = path.join(tempDir, 'session.jsonl');
+    await writeFile(
+      filePath,
+      `${JSON.stringify(
+        createSessionCreated('s', '/w', '2024-01-01T00:00:00.000Z')
+      )}\n`,
+      'utf8'
+    );
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('rejects ordinary and validated reads with a pre-aborted signal', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const store = new JSONLStore(filePath);
+
+    await expect(store.readAll({ signal: controller.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    await expect(
+      store.readAllValidated({ signal: controller.signal })
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});

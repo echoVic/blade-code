@@ -55,6 +55,7 @@ type ProjectionSourceKind = 'local' | 'acp-remote';
 const SURFACE_DIGEST_DOMAIN = 'session-surface-projection-v1\0';
 const DEFAULT_SURFACE_HISTORY_BYTE_LIMIT = 512 * 1024;
 const MAX_PROJECTION_SNAPSHOT_ATTEMPTS = 3;
+const NEVER_ABORTED_SIGNAL = new AbortController().signal;
 const SURFACE_WORKSPACE_REFERENCE_PATTERN = /^acp-remote-workspace:[A-Za-z0-9_-]{43}$/;
 const SURFACE_ARCHIVE_CTE = `WITH RECURSIVE archive_members(
   source_kind, project_path, public_workspace_ref, session_id, archive_root_id,
@@ -89,19 +90,21 @@ ranked_archive AS (
 interface ProjectionIO {
   readSession(
     store: JSONLStore,
-    remoteScope?: AcpRemoteStateScope
+    remoteScope: AcpRemoteStateScope | undefined,
+    signal: AbortSignal
   ): Promise<SessionEvent[]>;
 }
 
 const defaultProjectionIO: ProjectionIO = {
-  readSession(store, remoteScope) {
+  readSession(store, remoteScope, signal) {
     return remoteScope
       ? store.readAllValidated({
           noFollow: true,
+          signal,
           validateHandle: (handle) =>
             assertAcpRemoteStateFileHandle(remoteScope, store.getFilePath(), handle),
         })
-      : store.readAll();
+      : store.readAll({ signal });
   },
 };
 let projectionIO = defaultProjectionIO;
@@ -116,31 +119,33 @@ export function __resetProjectionIOForTesting(): void {
 
 export interface ProjectedSession {
   /** 完整元数据（序列化存入 sessions.metadata_json）。 */
-  metadata: Record<string, unknown> & {
-    sessionId: string;
-    projectPath: string;
-    rootId: string;
-    relationType?: string;
-    title?: string;
-    agentType?: string;
-    model?: string;
-    parentId?: string;
-    taskStatus: string;
-    taskPriority?: string;
-    taskKind?: string;
-    taskDueAt?: string;
-    archivedAt?: string;
-    messageCount: number;
-    firstMessageTime: string;
-    lastMessageTime: string;
-    hasErrors: boolean;
-    selectedModelId?: string;
-    remoteWorkspace?: unknown;
-  };
+  metadata: Record<string, unknown> & SessionSurfaceSummaryProjectionInput;
   /** 仅 remote row 存在，来自受保护 sidecar，不从远端 wire path 推导。 */
   publicWorkspaceRef?: string;
   /** 已完成严格字段投影与内容边界处理的可见消息。 */
   surfaceMessages: readonly SessionSurfaceMessage[];
+}
+
+export interface SessionSurfaceSummaryProjectionInput {
+  sessionId: string;
+  projectPath: string;
+  rootId: string;
+  relationType?: string;
+  title?: string;
+  agentType?: string;
+  model?: string;
+  parentId?: string;
+  taskStatus: string;
+  taskPriority?: string;
+  taskKind?: string;
+  taskDueAt?: string;
+  archivedAt?: string;
+  messageCount: number;
+  firstMessageTime: string;
+  lastMessageTime: string;
+  hasErrors: boolean;
+  selectedModelId?: string;
+  remoteWorkspace?: unknown;
 }
 
 export interface ProjectedSurfaceCandidate {
@@ -191,6 +196,10 @@ export interface ProjectedSurfaceHistoryPage {
   nextSequence?: number;
   transcriptFingerprint: string;
   surfaceDigest: string;
+}
+
+export function getSessionSurfaceHistoryByteLimit(): number {
+  return DEFAULT_SURFACE_HISTORY_BYTE_LIMIT;
 }
 
 /**
@@ -457,7 +466,7 @@ function buildSurfaceDigest(projected: ProjectedSession): string {
               workspaceRef: projected.publicWorkspaceRef,
             },
           },
-    ...projectSurfaceSummaryFields(meta, projected.publicWorkspaceRef),
+    ...projectSessionSurfaceSummaryFields(meta, projected.publicWorkspaceRef),
   };
   return createHash('sha256')
     .update(SURFACE_DIGEST_DOMAIN)
@@ -465,8 +474,8 @@ function buildSurfaceDigest(projected: ProjectedSession): string {
     .digest('hex');
 }
 
-function projectSurfaceSummaryFields(
-  metadata: ProjectedSession['metadata'],
+export function projectSessionSurfaceSummaryFields(
+  metadata: SessionSurfaceSummaryProjectionInput,
   publicWorkspaceRef?: string
 ): Omit<SessionSurfaceSummary, 'locator' | 'capabilities'> {
   const remoteDescriptor =
@@ -680,8 +689,10 @@ export async function syncSession(
   projectPath: string,
   derive: MetadataDeriver,
   filePath?: string,
-  sourceKind: ProjectionSourceKind = 'local'
+  sourceKind: ProjectionSourceKind = 'local',
+  signal?: AbortSignal
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   if (sourceKind === 'acp-remote') {
     return withValidatedAcpRemoteStateScope(projectPath, async (validatedScope) => {
       const expectedFilePath = getAcpRemoteSessionFilePath(validatedScope, sessionId);
@@ -696,7 +707,8 @@ export async function syncSession(
         derive,
         actualFilePath,
         sourceKind,
-        validatedScope
+        validatedScope,
+        signal
       );
     });
   }
@@ -707,7 +719,9 @@ export async function syncSession(
     projectPath,
     derive,
     filePath ?? getSessionFilePath(projectPath, sessionId),
-    sourceKind
+    sourceKind,
+    undefined,
+    signal
   );
 }
 
@@ -718,16 +732,21 @@ async function syncSessionValidated(
   derive: MetadataDeriver,
   filePath: string,
   sourceKind: ProjectionSourceKind,
-  validatedRemoteScope?: AcpRemoteStateScope
+  validatedRemoteScope?: AcpRemoteStateScope,
+  signal?: AbortSignal
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   if (sourceKind === 'acp-remote') {
     if (!validatedRemoteScope) {
       throw new AcpRemoteWorkspaceStateError('remote-session-scope');
     }
     try {
       await assertAcpRemoteStateFile(validatedRemoteScope, filePath);
+      signal?.throwIfAborted();
     } catch (error) {
+      if (signal?.aborted) throw error;
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      signal?.throwIfAborted();
       db.transaction(() => {
         if (deleteSessionRows(db, sourceKind, projectPath, sessionId)) {
           incrementCatalogRevision(db);
@@ -739,7 +758,9 @@ async function syncSessionValidated(
   let fileStat: BigIntStats;
   try {
     fileStat = await stat(filePath, { bigint: true });
+    signal?.throwIfAborted();
   } catch (error) {
+    if (signal?.aborted) throw error;
     const code = (error as NodeJS.ErrnoException).code;
     if (sourceKind === 'acp-remote' && code !== 'ENOENT') {
       throw error;
@@ -775,8 +796,15 @@ async function syncSessionValidated(
     let beforeRead = fileStat;
     let stableSnapshot: SessionEvent[] | undefined;
     for (let attempt = 0; attempt < MAX_PROJECTION_SNAPSHOT_ATTEMPTS; attempt += 1) {
-      const candidate = await projectionIO.readSession(store, validatedRemoteScope);
+      signal?.throwIfAborted();
+      const candidate = await projectionIO.readSession(
+        store,
+        validatedRemoteScope,
+        signal ?? NEVER_ABORTED_SIGNAL
+      );
+      signal?.throwIfAborted();
       const afterRead = await stat(filePath, { bigint: true });
+      signal?.throwIfAborted();
       if (statFingerprint(beforeRead) === statFingerprint(afterRead)) {
         raw = candidate;
         fileStat = afterRead;
@@ -788,6 +816,7 @@ async function syncSessionValidated(
     if (!stableSnapshot) throw new SessionSurfaceProjectionError();
     raw = stableSnapshot;
   } catch (error) {
+    if (signal?.aborted) throw error;
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== 'ENOENT') {
       if (sourceKind === 'acp-remote') {
@@ -809,6 +838,7 @@ async function syncSessionValidated(
     try {
       await assertAcpRemoteStateFile(validatedRemoteScope!, filePath);
     } catch (error) {
+      if (signal?.aborted) throw error;
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         db.transaction(() => {
           if (deleteSessionRows(db, sourceKind, projectPath, sessionId)) {
@@ -821,6 +851,7 @@ async function syncSessionValidated(
     }
     throw new AcpRemoteWorkspaceStateError('remote-session-empty');
   }
+  signal?.throwIfAborted();
   const localCreated =
     sourceKind === 'local'
       ? raw.find(
@@ -884,6 +915,7 @@ async function syncSessionValidated(
     !meta ||
     (sourceKind === 'local' && projectedRemoteWorkspace !== undefined)
   ) {
+    signal?.throwIfAborted();
     db.transaction(() => {
       let semanticChanged: boolean;
       if (localSourceContainsRemoteDescriptor) {
@@ -920,6 +952,7 @@ async function syncSessionValidated(
           durableRemoteDescriptor
         )
       : undefined;
+  signal?.throwIfAborted();
   const surfaceMessages = projectSessionSurfaceMessages(raw, {
     privateRoots: sourceKind === 'acp-remote' ? [projectPath] : [],
     bladeStorageRoots: [getBladeStorageRoot()],
@@ -956,6 +989,7 @@ async function syncSessionValidated(
     existing.last_message_time > meta.lastMessageTime
   ) {
     // 已有更新的一条：仅登记同步游标，避免用较旧数据覆盖。
+    signal?.throwIfAborted();
     upsertProjectionState(
       db,
       sourceKind,
@@ -969,6 +1003,7 @@ async function syncSessionValidated(
     return true;
   }
 
+  signal?.throwIfAborted();
   db.transaction(() => {
     const existingSurface = db
       .prepare(
@@ -1057,8 +1092,10 @@ function removeMissingProjectionRows(
 export async function syncAcpRemoteScope(
   db: SqliteDb,
   derive: MetadataDeriver,
-  projectPath: string
+  projectPath: string,
+  signal?: AbortSignal
 ): Promise<void> {
+  signal?.throwIfAborted();
   try {
     await withValidatedAcpRemoteStateScope(projectPath, async (validatedScope) => {
       const candidates = (await readdir(String(validatedScope))).flatMap((file) => {
@@ -1072,6 +1109,7 @@ export async function syncAcpRemoteScope(
           },
         ];
       });
+      signal?.throwIfAborted();
       const seenSessionIds = new Set(
         candidates.map((candidate) => candidate.sessionId)
       );
@@ -1080,6 +1118,7 @@ export async function syncAcpRemoteScope(
       await Promise.all(
         Array.from({ length: concurrency }, async () => {
           while (nextIndex < candidates.length) {
+            signal?.throwIfAborted();
             const candidate = candidates[nextIndex++];
             if (!candidate) continue;
             await syncSessionValidated(
@@ -1089,16 +1128,19 @@ export async function syncAcpRemoteScope(
               derive,
               candidate.filePath,
               'acp-remote',
-              validatedScope
+              validatedScope,
+              signal
             );
           }
         })
       );
+      signal?.throwIfAborted();
       db.transaction(() => {
         removeMissingProjectionRows(db, 'acp-remote', projectPath, seenSessionIds);
       });
     });
   } catch (error) {
+    if (signal?.aborted) throw error;
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     db.transaction(() => {
       removeMissingProjectionRows(db, 'acp-remote', projectPath, new Set());
@@ -1108,11 +1150,15 @@ export async function syncAcpRemoteScope(
 
 export async function syncAllAcpRemoteScopes(
   db: SqliteDb,
-  derive: MetadataDeriver
+  derive: MetadataDeriver,
+  signal?: AbortSignal
 ): Promise<void> {
+  signal?.throwIfAborted();
   const scopes = await listValidatedAcpRemoteStateScopes();
+  signal?.throwIfAborted();
   for (const scope of scopes) {
-    await syncAcpRemoteScope(db, derive, String(scope));
+    signal?.throwIfAborted();
+    await syncAcpRemoteScope(db, derive, String(scope), signal);
   }
 
   const liveRoots = new Set(scopes.map(String));
@@ -1130,6 +1176,7 @@ export async function syncAllAcpRemoteScopes(
     )
     .all<{ project_path: string }>();
   for (const row of projectedRoots) {
+    signal?.throwIfAborted();
     if (!liveRoots.has(row.project_path)) {
       db.transaction(() => {
         removeMissingProjectionRows(db, 'acp-remote', row.project_path, new Set());
@@ -1449,7 +1496,7 @@ function parseSurfaceCandidate(row: SurfaceCandidateRow): ProjectedSurfaceCandid
           archivedBySessionId: row.archive_root_id,
         }
       : metadata;
-    const summary = projectSurfaceSummaryFields(
+    const summary = projectSessionSurfaceSummaryFields(
       effectiveMetadata,
       row.public_workspace_ref ?? undefined
     );
@@ -1508,6 +1555,16 @@ export function readSessionSurfaceCandidates(
   }
 }
 
+export function readSessionSurfaceCatalogRevision(db: SqliteDb): number {
+  const revision = db
+    .prepare('SELECT catalog_revision FROM surface_projection_meta WHERE singleton=1')
+    .get<{ catalog_revision: number }>()?.catalog_revision;
+  if (!Number.isSafeInteger(revision) || revision === undefined || revision < 0) {
+    throw new SessionSurfaceProjectionError();
+  }
+  return revision;
+}
+
 export function readSessionSurfaceCatalogPage(
   db: SqliteDb,
   query: ProjectedSurfaceCatalogQuery
@@ -1546,12 +1603,7 @@ export function readSessionSurfaceCatalogPage(
       );
     }
     parameters.push(query.limit + 1);
-    const revision = db
-      .prepare('SELECT catalog_revision FROM surface_projection_meta WHERE singleton=1')
-      .get<{ catalog_revision: number }>()?.catalog_revision;
-    if (!Number.isSafeInteger(revision) || revision === undefined || revision < 0) {
-      throw new SessionSurfaceProjectionError();
-    }
+    const revision = readSessionSurfaceCatalogRevision(db);
     const rows = db
       .prepare(
         `${SURFACE_ARCHIVE_CTE}

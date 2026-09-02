@@ -18,6 +18,7 @@ import {
   parseAcpRemoteWorkspaceDescriptor,
   withValidatedAcpRemoteStateScope,
 } from '../acp/AcpRemoteWorkspace.js';
+import { getOrCreateAcpRemoteWorkspaceReferenceInScope } from '../acp/AcpRemoteWorkspaceReference.js';
 import { SessionInUseError, SessionLease } from '../agent/runtime/SessionLease.js';
 import {
   collectUserPromptArtifactIds,
@@ -60,6 +61,7 @@ import {
 import {
   getProjectionDb,
   type MetadataDeriver,
+  projectSessionSurfaceSummaryFields,
   removeSessionFromProjection,
   syncAcpRemoteScope,
   syncAll,
@@ -485,16 +487,19 @@ function parseTaskRetryRef(value: unknown): SessionTaskRetryRef | undefined {
 type SessionSnapshotBigIntStats = BigIntStats;
 
 interface SessionSnapshotIO {
-  stat(filePath: string): Promise<SessionSnapshotBigIntStats>;
-  readFile(filePath: string): Promise<string>;
+  stat(filePath: string, signal?: AbortSignal): Promise<SessionSnapshotBigIntStats>;
+  readFile(filePath: string, signal?: AbortSignal): Promise<string>;
 }
 
 const defaultSessionSnapshotIO: SessionSnapshotIO = {
-  stat(filePath) {
-    return stat(filePath, { bigint: true });
+  async stat(filePath, signal) {
+    signal?.throwIfAborted();
+    const value = await stat(filePath, { bigint: true });
+    signal?.throwIfAborted();
+    return value;
   },
-  readFile(filePath) {
-    return readFile(filePath, 'utf-8');
+  readFile(filePath, signal) {
+    return readFile(filePath, { encoding: 'utf-8', signal });
   },
 };
 
@@ -642,6 +647,23 @@ type RemoteCatalogEntry = StoredSessionMetadata & RemoteSessionCatalogItem;
 type ValidatedProjectedRemoteMetadata = StoredSessionMetadata & {
   remoteWorkspace: AcpRemoteWorkspaceDescriptorV1;
 };
+
+interface ValidatedRemoteSurfaceCandidate {
+  readonly descriptor: AcpRemoteWorkspaceDescriptorV1;
+  readonly hostStateRoot: string;
+  readonly sessionId: string;
+  readonly workspaceRef: string;
+}
+
+interface ValidatedLocalSurfaceCandidate {
+  readonly projectPath: string;
+  readonly sessionId: string;
+}
+
+interface ValidatedSessionSurfaceSnapshot {
+  readonly entries: readonly SessionEvent[];
+  readonly summary: ReturnType<typeof projectSessionSurfaceSummaryFields>;
+}
 
 export class SessionMissingCreationError extends Error {
   constructor(sessionId: string) {
@@ -1475,6 +1497,159 @@ export class SessionService {
       expectedDescriptor
     );
     return this.convertJSONLToModelContext(entries);
+  }
+
+  /** @internal Only for SessionSurfaceService. */
+  static async readValidatedLocalSurfaceSnapshot(
+    sessionId: string,
+    projectPath: string,
+    signal?: AbortSignal
+  ): Promise<ValidatedSessionSurfaceSnapshot> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
+    const filePath = getSessionFilePath(resolvedProjectPath, sessionId);
+    const entries = await this.readStableSessionSnapshot(
+      filePath,
+      sessionId,
+      3,
+      signal
+    );
+    this.validateSessionWorkspace(entries, sessionId, resolvedProjectPath);
+    const metadata = this.projectMetadataFromEntries(
+      entries,
+      sessionId,
+      resolvedProjectPath,
+      filePath
+    );
+    if (metadata.remoteWorkspace) throw new RemoteSessionStateError();
+    return { entries, summary: projectSessionSurfaceSummaryFields(metadata) };
+  }
+
+  /** @internal Only for SessionSurfaceService. */
+  static async readValidatedRemoteSurfaceSnapshot(
+    candidate: ValidatedRemoteSurfaceCandidate,
+    signal?: AbortSignal
+  ): Promise<ValidatedSessionSurfaceSnapshot> {
+    const entries = await this.readValidatedRemoteSessionSnapshot(
+      candidate.sessionId,
+      candidate.hostStateRoot,
+      candidate.descriptor,
+      signal
+    );
+    return withValidatedAcpRemoteStateScope(candidate.hostStateRoot, async (scope) => {
+      signal?.throwIfAborted();
+      const filePath = getAcpRemoteSessionFilePath(scope, candidate.sessionId);
+      const metadata = validateProjectedRemoteMetadata(
+        this.projectMetadataFromEntries(
+          entries,
+          candidate.sessionId,
+          candidate.hostStateRoot,
+          filePath
+        ),
+        candidate.descriptor
+      );
+      return {
+        entries,
+        summary: projectSessionSurfaceSummaryFields(metadata, candidate.workspaceRef),
+      };
+    });
+  }
+
+  /** @internal Only for SessionSurfaceService. */
+  static async listValidatedRemoteSurfaceCandidates(
+    signal?: AbortSignal
+  ): Promise<readonly ValidatedRemoteSurfaceCandidate[]> {
+    const candidates: ValidatedRemoteSurfaceCandidate[] = [];
+    for (const scope of await listValidatedAcpRemoteStateScopes()) {
+      signal?.throwIfAborted();
+      await withValidatedAcpRemoteStateScope(String(scope), async (validatedScope) => {
+        for (const name of await readdir(String(validatedScope))) {
+          signal?.throwIfAborted();
+          if (!name.endsWith('.jsonl')) continue;
+          const sessionId = name.slice(0, -'.jsonl'.length);
+          if (!isValidSessionId(sessionId)) continue;
+          const filePath = getAcpRemoteSessionFilePath(validatedScope, sessionId);
+          await assertAcpRemoteStateFile(validatedScope, filePath);
+          const entries = await this.readStableSessionSnapshot(
+            filePath,
+            sessionId,
+            3,
+            signal
+          );
+          const metadata = validateProjectedRemoteMetadata(
+            this.projectMetadataFromEntries(
+              entries,
+              sessionId,
+              String(validatedScope),
+              filePath
+            )
+          );
+          const workspaceRef = await getOrCreateAcpRemoteWorkspaceReferenceInScope(
+            validatedScope,
+            metadata.remoteWorkspace
+          );
+          signal?.throwIfAborted();
+          candidates.push({
+            descriptor: metadata.remoteWorkspace,
+            hostStateRoot: String(validatedScope),
+            sessionId,
+            workspaceRef,
+          });
+        }
+      });
+    }
+    return candidates;
+  }
+
+  /** @internal Only for SessionSurfaceService. */
+  static async listValidatedLocalSurfaceCandidates(
+    signal?: AbortSignal
+  ): Promise<readonly ValidatedLocalSurfaceCandidate[]> {
+    const candidates = new Map<string, ValidatedLocalSurfaceCandidate>();
+    for (const project of await this.listAllProjectStorageDirectories()) {
+      signal?.throwIfAborted();
+      let names: string[];
+      try {
+        names = await readdir(project.storagePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+      for (const name of names) {
+        signal?.throwIfAborted();
+        if (!name.endsWith('.jsonl')) continue;
+        const sessionId = name.slice(0, -'.jsonl'.length);
+        if (!isValidSessionId(sessionId)) continue;
+        const filePath = path.join(project.storagePath, name);
+        try {
+          const entries = await this.readStableSessionSnapshot(
+            filePath,
+            sessionId,
+            3,
+            signal
+          );
+          const created = this.getSessionCreatedEntry(entries, sessionId);
+          if (
+            created.data.sessionId !== sessionId ||
+            !path.isAbsolute(created.cwd) ||
+            Object.hasOwn(created.data, 'remoteWorkspace')
+          ) {
+            continue;
+          }
+          const projectPath = path.resolve(created.cwd);
+          if (getSessionFilePath(projectPath, sessionId) !== filePath) continue;
+          candidates.set(`${projectPath}\0${sessionId}`, {
+            projectPath,
+            sessionId,
+          });
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          if (error instanceof RemoteSessionStateError) throw error;
+        }
+      }
+    }
+    return [...candidates.values()];
   }
 
   static async exportSessionMarkdown(
@@ -4758,8 +4933,10 @@ export class SessionService {
   private static async readValidatedRemoteSessionSnapshot(
     sessionId: string,
     hostStateRoot: string,
-    requestedDescriptor: AcpRemoteWorkspaceDescriptorV1
+    requestedDescriptor: AcpRemoteWorkspaceDescriptorV1,
+    signal?: AbortSignal
   ): Promise<SessionEvent[]> {
+    signal?.throwIfAborted();
     let validatedDescriptor: AcpRemoteWorkspaceDescriptorV1;
     try {
       assertValidSessionId(sessionId);
@@ -4776,9 +4953,15 @@ export class SessionService {
 
     try {
       return await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+        signal?.throwIfAborted();
         const filePath = getAcpRemoteSessionFilePath(scope, sessionId);
         await assertAcpRemoteStateFile(scope, filePath);
-        const entries = await this.readStableSessionSnapshot(filePath, sessionId);
+        const entries = await this.readStableSessionSnapshot(
+          filePath,
+          sessionId,
+          3,
+          signal
+        );
         const stored = this.projectMetadataFromEntries(
           entries,
           sessionId,
@@ -4789,6 +4972,7 @@ export class SessionService {
         return entries;
       });
     } catch (error) {
+      if (signal?.aborted) throw error;
       if (error instanceof RemoteSessionMismatchError) throw error;
       throw sanitizeRemoteStateError(error);
     }
@@ -4894,13 +5078,16 @@ export class SessionService {
   private static async readStableSessionSnapshot(
     filePath: string,
     sessionId: string,
-    maxAttempts = 3
+    maxAttempts = 3,
+    signal?: AbortSignal
   ): Promise<SessionEvent[]> {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const before = await sessionSnapshotIO.stat(filePath);
-      const content = await sessionSnapshotIO.readFile(filePath);
+      signal?.throwIfAborted();
+      const before = await sessionSnapshotIO.stat(filePath, signal);
+      const content = await sessionSnapshotIO.readFile(filePath, signal);
       const entries = this.parseStoredSession(content, sessionId);
-      const after = await sessionSnapshotIO.stat(filePath);
+      const after = await sessionSnapshotIO.stat(filePath, signal);
+      signal?.throwIfAborted();
       if (
         before.size === after.size &&
         before.mtimeNs === after.mtimeNs &&

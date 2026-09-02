@@ -12,6 +12,14 @@ export interface JSONLValidatedAppendOptions {
   validateHandle?: (handle: fs.FileHandle) => Promise<void>;
 }
 
+export interface JSONLReadOptions {
+  signal?: AbortSignal;
+}
+
+export interface JSONLValidatedReadOptions
+  extends JSONLValidatedAppendOptions,
+    JSONLReadOptions {}
+
 function serializeSessionEvent(entry: SessionEvent): string {
   const data = (entry as { data?: unknown }).data;
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
@@ -203,9 +211,13 @@ export class JSONLStore {
    * 读取所有 JSONL 记录
    * @returns JSONL 条目数组
    */
-  async readAll(): Promise<SessionEvent[]> {
+  async readAll(options: JSONLReadOptions = {}): Promise<SessionEvent[]> {
+    options.signal?.throwIfAborted();
     if (!fsSync.existsSync(this.filePath)) return [];
-    const content = await fs.readFile(this.filePath, 'utf-8');
+    const content = await fs.readFile(this.filePath, {
+      encoding: 'utf-8',
+      signal: options.signal,
+    });
     return parseSessionJSONL(content, this.filePath);
   }
 
@@ -464,8 +476,9 @@ export class JSONLStore {
   }
 
   async readAllValidated(
-    options: JSONLValidatedAppendOptions = {}
+    options: JSONLValidatedReadOptions = {}
   ): Promise<SessionEvent[]> {
+    options.signal?.throwIfAborted();
     const flags = options.noFollow
       ? fsSync.constants.O_RDONLY | (fsSync.constants.O_NOFOLLOW ?? 0)
       : 'r';
@@ -473,16 +486,20 @@ export class JSONLStore {
     try {
       handle = await fs.open(this.filePath, flags);
     } catch (error) {
+      options.signal?.throwIfAborted();
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     }
     try {
       await options.validateHandle?.(handle);
+      options.signal?.throwIfAborted();
       const entries = parseSessionJSONL(
-        await handle.readFile('utf8'),
+        await handle.readFile({ encoding: 'utf8', signal: options.signal }),
         'session transcript'
       );
+      options.signal?.throwIfAborted();
       await options.validateHandle?.(handle);
+      options.signal?.throwIfAborted();
       return entries;
     } finally {
       await handle.close();

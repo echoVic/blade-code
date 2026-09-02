@@ -404,8 +404,92 @@ describe('SessionSurfaceCursorRegistry', () => {
     ).resolves.toEqual({ page: ['ok'] });
     expect(registry.stats().frozenSnapshotBytes).toBe(0);
     expect(registry.stats().retainedPayloadBytes).toBe(
-      Buffer.byteLength(JSON.stringify({ page: ['ok'] }), 'utf8')
+      Buffer.byteLength(JSON.stringify({ after: 'message-1' }), 'utf8') +
+        Buffer.byteLength(JSON.stringify({ page: ['ok'] }), 'utf8')
     );
+  });
+
+  it('counts catalog boundaries against the retained payload budget and reclaims completed boundary chains', () => {
+    const boundary = { remaining: ['catalog-snapshot'] };
+    const boundaryBytes = Buffer.byteLength(JSON.stringify(boundary), 'utf8');
+    const registry = new SessionSurfaceCursorRegistry({
+      tokenSource: createTokenSource(['catalog-1', 'catalog-2']),
+      limits: {
+        maxFrozenSnapshotBytes: boundaryBytes,
+      },
+    });
+
+    registry.issueCatalogCursor({
+      chainId: 'chain-a',
+      scopeKey: 'scope-a',
+      epoch: 'epoch-1',
+      revision: 'revision-1',
+      boundary,
+      request: { limit: 1 },
+    });
+
+    expect(registry.stats().retainedPayloadBytes).toBe(boundaryBytes);
+    expect(() =>
+      registry.issueCatalogCursor({
+        chainId: 'chain-b',
+        scopeKey: 'scope-b',
+        epoch: 'epoch-1',
+        revision: 'revision-1',
+        boundary,
+        request: { limit: 1 },
+      })
+    ).toThrowError(SessionSurfaceCursorRegistryError);
+
+    registry.completeChain('chain-a');
+    expect(() =>
+      registry.issueCatalogCursor({
+        chainId: 'chain-b',
+        scopeKey: 'scope-b',
+        epoch: 'epoch-1',
+        revision: 'revision-1',
+        boundary,
+        request: { limit: 1 },
+      })
+    ).not.toThrow();
+    expect(registry.stats()).toMatchObject({
+      chainCount: 1,
+      entryCount: 1,
+      retainedPayloadBytes: boundaryBytes,
+    });
+  });
+
+  it('releases catalog boundary bytes after idle expiry and close', async () => {
+    const clock = createClock();
+    const boundary = { remaining: ['catalog-snapshot'] };
+    const boundaryBytes = Buffer.byteLength(JSON.stringify(boundary), 'utf8');
+    const registry = new SessionSurfaceCursorRegistry({
+      now: clock.now,
+      tokenSource: createTokenSource(['catalog-1']),
+      limits: { idleTtlMs: 10 },
+    });
+
+    registry.issueCatalogCursor({
+      chainId: 'chain-a',
+      scopeKey: 'scope-a',
+      epoch: 'epoch-1',
+      revision: 'revision-1',
+      boundary,
+      request: { limit: 1 },
+    });
+    expect(registry.stats().retainedPayloadBytes).toBe(boundaryBytes);
+
+    clock.advance(11);
+    expect(registry.stats()).toMatchObject({
+      chainCount: 0,
+      entryCount: 0,
+      retainedPayloadBytes: 0,
+    });
+
+    await registry.close();
+    expect(registry.stats()).toMatchObject({
+      closed: true,
+      retainedPayloadBytes: 0,
+    });
   });
 
   it('rejects catalog public binding mismatches and revision drift with fixed errors', async () => {
