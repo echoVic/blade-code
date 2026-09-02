@@ -8,6 +8,9 @@ import {
   MAX_INLINE_ATTACHMENT_COUNT,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from './attachmentLimits.js';
+
+export * from './sessionSurfaceSchemas.js';
+
 import { MAX_SIDE_QUESTION_CHARS } from './sideConversation.js';
 
 export { parseSchema } from '../schema/index.js';
