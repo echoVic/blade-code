@@ -336,19 +336,28 @@ resolution boundary used by both the server and TUI. It owns four operations:
 
 ```ts
 class SessionSurfaceService {
-  static listPage(options: SurfaceListOptions): Promise<SessionSurfacePage>;
-  static open(
+  listPage(options: SurfaceListOptions): Promise<SessionSurfacePage>;
+  open(
     locator: SessionLocatorV2,
     options?: SurfaceHistoryPageOptions
   ): Promise<SessionSurfaceOpenResult>;
-  static historyPage(
+  historyPage(
     locator: SessionLocatorV2,
     options: SurfaceHistoryPageOptions
   ): Promise<SessionSurfaceHistoryPage>;
-  static fork(locator: SessionLocatorV2): Promise<SessionSurfaceOpenResult>;
-  static resolve(locator: SessionLocatorV2): Promise<ResolvedSessionSurface>;
+  fork(locator: SessionLocatorV2): Promise<SessionSurfaceOpenResult>;
+  resolve(locator: SessionLocatorV2): Promise<ResolvedSessionSurface>;
+  close(reason?: string): Promise<void>;
 }
 ```
+
+The service is lifecycle-owned, not a process-global static singleton.
+`createSessionRouteController()` owns one server instance and includes
+`surfaceService.close()` in its idempotent shutdown. The TUI history controller
+owns a separate instance and closes it on application unmount. Closing rejects
+new work, aborts active reads, waits for them to settle, and clears every cursor
+and frozen fallback snapshot. Tests construct fresh instances so registry state
+cannot leak across cases.
 
 `ResolvedSessionSurface` is internal and discriminated:
 
