@@ -578,6 +578,7 @@ The V2 API returns a fixed error envelope with a stable code:
 interface SessionSurfaceError {
   error: {
     code:
+      | 'invalid_session_surface_request'
       | 'invalid_session_locator'
       | 'session_surface_not_found'
       | 'workspace_binding_mismatch'
@@ -586,6 +587,7 @@ interface SessionSurfaceError {
       | 'session_surface_read_only'
       | 'session_surface_capability_unavailable'
       | 'session_surface_capacity'
+      | 'session_surface_unavailable'
       | 'session_surface_state_invalid';
     message: string;
     retryable: boolean;
@@ -595,6 +597,8 @@ interface SessionSurfaceError {
 
 Mappings are:
 
+- malformed non-locator query/body fields, duplicate query keys, or an invalid
+  limit: HTTP `400`, `invalid_session_surface_request`;
 - malformed locator: HTTP `400`, `invalid_session_locator`;
 - no exact Session/workspace match: HTTP `404`,
   `session_surface_not_found`;
@@ -610,6 +614,8 @@ Mappings are:
   `session_surface_capability_unavailable`;
 - bounded cursor/snapshot capacity exhausted: HTTP `429`,
   `session_surface_capacity`, retryable `true`;
+- the lifecycle-owned service is closing or closed: HTTP `503`,
+  `session_surface_unavailable`, retryable `true`;
 - protected remote state corruption: HTTP `500`,
   `session_surface_state_invalid`.
 
@@ -753,6 +759,10 @@ Neither mode may fall back to a Blade-host shell for an ACP remote locator.
 ## Compatibility and migration
 
 - V1 `{ sessionId, projectPath }` remains accepted only for local routes.
+- Every public V1 local-path entry touched by Session history, suggestions, or
+  terminal handling rejects a path matching the protected ACP remote state-root
+  namespace before host filesystem or PTY work. This guard does not infer remote
+  authority or translate V1 input to V2.
 - Local V2 locators wrap the same normalized project root and preserve current
   behavior.
 - Remote rows never contain the V1 `projectPath` field.
