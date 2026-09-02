@@ -7,6 +7,7 @@
  * 正确处理 rewind（seq 截断）与文件重写。多进程安全靠 WAL + 幂等 upsert。
  */
 
+import { createHash } from 'node:crypto';
 import type { BigIntStats } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -15,14 +16,27 @@ import {
   AcpRemoteWorkspaceStateError,
   assertAcpRemoteSessionTranscriptIdentity,
   assertAcpRemoteStateFile,
+  assertAcpRemoteStateFileHandle,
   deriveAcpRemoteHostStateRoot,
   listValidatedAcpRemoteStateScopes,
   parseAcpRemoteWorkspaceDescriptor,
   withValidatedAcpRemoteStateScope,
 } from '../../../acp/AcpRemoteWorkspace.js';
+import { getOrCreateAcpRemoteWorkspaceReferenceInScope } from '../../../acp/AcpRemoteWorkspaceReference.js';
+import {
+  type SessionSurfaceMessage,
+  SessionSurfaceMessageSchema,
+  type SessionSurfaceSummary,
+} from '../../../api/sessionSurfaceSchemas.js';
 import { createLogger, LogCategory } from '../../../logging/Logger.js';
 import { sessionCatalogSortKey } from '../../../services/sessionCatalog.js';
 import { materializeSessionEvents } from '../../../services/sessionRewind.js';
+import {
+  createSessionSurfaceMessageId,
+  projectSessionSurfaceMessages,
+  redactSessionSurfaceText,
+  SessionSurfaceProjectionError,
+} from '../../../services/sessionSurfaceProjection.js';
 import type { SessionEvent } from '../../types.js';
 import { JSONLStore } from '../JSONLStore.js';
 import {
@@ -38,14 +52,56 @@ import { migrate } from './schema.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 type ProjectionSourceKind = 'local' | 'acp-remote';
+const SURFACE_DIGEST_DOMAIN = 'session-surface-projection-v1\0';
+const DEFAULT_SURFACE_HISTORY_BYTE_LIMIT = 512 * 1024;
+const MAX_PROJECTION_SNAPSHOT_ATTEMPTS = 3;
+const SURFACE_WORKSPACE_REFERENCE_PATTERN = /^acp-remote-workspace:[A-Za-z0-9_-]{43}$/;
+const SURFACE_ARCHIVE_CTE = `WITH RECURSIVE archive_members(
+  source_kind, project_path, public_workspace_ref, session_id, archive_root_id,
+  effective_archived_at, depth
+) AS (
+  SELECT source_kind, project_path, public_workspace_ref, session_id, session_id,
+         archived_at, 0
+  FROM sessions
+  WHERE archived_at IS NOT NULL
+  UNION ALL
+  SELECT child.source_kind, child.project_path, child.public_workspace_ref,
+         child.session_id, parent.archive_root_id, parent.effective_archived_at,
+         parent.depth + 1
+  FROM sessions child
+  JOIN archive_members parent
+    ON child.source_kind = parent.source_kind
+   AND child.project_path = parent.project_path
+   AND child.public_workspace_ref IS parent.public_workspace_ref
+   AND child.parent_id = parent.session_id
+  WHERE parent.depth < 128
+),
+ranked_archive AS (
+  SELECT source_kind, project_path, public_workspace_ref, session_id,
+         archive_root_id, effective_archived_at,
+         ROW_NUMBER() OVER (
+           PARTITION BY source_kind, project_path, public_workspace_ref, session_id
+           ORDER BY depth ASC, archive_root_id ASC
+         ) AS rank
+  FROM archive_members
+)`;
 
 interface ProjectionIO {
-  readSession(store: JSONLStore): Promise<SessionEvent[]>;
+  readSession(
+    store: JSONLStore,
+    remoteScope?: AcpRemoteStateScope
+  ): Promise<SessionEvent[]>;
 }
 
 const defaultProjectionIO: ProjectionIO = {
-  readSession(store) {
-    return store.readAll();
+  readSession(store, remoteScope) {
+    return remoteScope
+      ? store.readAllValidated({
+          noFollow: true,
+          validateHandle: (handle) =>
+            assertAcpRemoteStateFileHandle(remoteScope, store.getFilePath(), handle),
+        })
+      : store.readAll();
   },
 };
 let projectionIO = defaultProjectionIO;
@@ -78,7 +134,63 @@ export interface ProjectedSession {
     firstMessageTime: string;
     lastMessageTime: string;
     hasErrors: boolean;
+    selectedModelId?: string;
+    remoteWorkspace?: unknown;
   };
+  /** 仅 remote row 存在，来自受保护 sidecar，不从远端 wire path 推导。 */
+  publicWorkspaceRef?: string;
+  /** 已完成严格字段投影与内容边界处理的可见消息。 */
+  surfaceMessages: readonly SessionSurfaceMessage[];
+}
+
+export interface ProjectedSurfaceCandidate {
+  sourceKind: ProjectionSourceKind;
+  projectPath: string;
+  sessionId: string;
+  publicWorkspaceRef?: string;
+  publicWorkspaceSortKey: string;
+  surfaceDigest: string;
+  transcriptFingerprint: string;
+  lastMessageTime: string;
+  sessionSortKey: string;
+  summary: Omit<SessionSurfaceSummary, 'locator' | 'capabilities'>;
+}
+
+export interface ProjectedSurfaceCatalogBoundary {
+  lastMessageTime: string;
+  sourceKind: ProjectionSourceKind;
+  publicWorkspaceSortKey: string;
+  sessionSortKey: string;
+}
+
+export interface ProjectedSurfaceCatalogQuery {
+  archived: boolean;
+  workspaceKind?: ProjectionSourceKind;
+  limit: number;
+  boundary?: ProjectedSurfaceCatalogBoundary;
+}
+
+export interface ProjectedSurfaceCatalogPage {
+  revision: number;
+  sessions: readonly ProjectedSurfaceCandidate[];
+  nextBoundary?: ProjectedSurfaceCatalogBoundary;
+}
+
+export interface ProjectedSurfaceHistoryQuery {
+  sourceKind: ProjectionSourceKind;
+  projectPath: string;
+  sessionId: string;
+  beforeSequence?: number;
+  limit: number;
+  maxBytes?: number;
+}
+
+export interface ProjectedSurfaceHistoryPage {
+  messages: readonly SessionSurfaceMessage[];
+  hasOlder: boolean;
+  nextSequence?: number;
+  transcriptFingerprint: string;
+  surfaceDigest: string;
 }
 
 /**
@@ -208,16 +320,22 @@ function writeParts(
 function upsertSession(
   db: SqliteDb,
   sourceKind: ProjectionSourceKind,
-  meta: ProjectedSession['metadata']
+  projected: ProjectedSession,
+  surfaceDigest: string
 ): void {
+  const { metadata: meta, publicWorkspaceRef } = projected;
+  const publicWorkspaceSortKey = sessionCatalogSortKey(
+    publicWorkspaceRef ?? meta.projectPath
+  );
   db.prepare(
     `INSERT INTO sessions
        (source_kind, project_path, session_id, root_id, parent_id, relation_type, title,
         agent_type, model, task_status, task_priority, task_kind, task_due_at,
         archived_at, last_message_time, project_sort_key,
-        session_sort_key, first_message_time, message_count, has_errors,
-        is_subagent, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        public_workspace_ref, public_workspace_sort_key, session_sort_key,
+        first_message_time, message_count, has_errors, is_subagent, metadata_json,
+        surface_digest)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(source_kind, project_path, session_id) DO UPDATE SET
        root_id=excluded.root_id, parent_id=excluded.parent_id,
        relation_type=excluded.relation_type, title=excluded.title,
@@ -227,10 +345,12 @@ function upsertSession(
        archived_at=excluded.archived_at,
        last_message_time=excluded.last_message_time,
        project_sort_key=excluded.project_sort_key,
+       public_workspace_ref=excluded.public_workspace_ref,
+       public_workspace_sort_key=excluded.public_workspace_sort_key,
        session_sort_key=excluded.session_sort_key,
        first_message_time=excluded.first_message_time, message_count=excluded.message_count,
        has_errors=excluded.has_errors, is_subagent=excluded.is_subagent,
-       metadata_json=excluded.metadata_json`
+       metadata_json=excluded.metadata_json, surface_digest=excluded.surface_digest`
   ).run(
     sourceKind,
     meta.projectPath,
@@ -248,13 +368,192 @@ function upsertSession(
     meta.archivedAt ?? null,
     meta.lastMessageTime,
     sessionCatalogSortKey(meta.projectPath),
+    publicWorkspaceRef ?? null,
+    publicWorkspaceSortKey,
     sessionCatalogSortKey(meta.sessionId),
     meta.firstMessageTime,
     meta.messageCount,
     meta.hasErrors ? 1 : 0,
     meta.relationType === 'subagent' ? 1 : 0,
-    JSON.stringify(meta)
+    JSON.stringify(meta),
+    surfaceDigest
   );
+}
+
+function incrementCatalogRevision(db: SqliteDb): void {
+  db.prepare(
+    `UPDATE surface_projection_meta
+     SET catalog_revision=catalog_revision + 1 WHERE singleton=1`
+  ).run();
+}
+
+function writeSurfaceMessages(
+  db: SqliteDb,
+  sourceKind: ProjectionSourceKind,
+  projectPath: string,
+  sessionId: string,
+  events: readonly SessionEvent[],
+  messages: readonly SessionSurfaceMessage[]
+): void {
+  db.prepare(
+    `DELETE FROM surface_messages
+     WHERE source_kind=? AND project_path=? AND session_id=?`
+  ).run(sourceKind, projectPath, sessionId);
+
+  const rawMessageIdBySequence = new Map<number, string>();
+  for (const event of events) {
+    if (event.type === 'message_created' && typeof event.seq === 'number') {
+      rawMessageIdBySequence.set(event.seq, event.data.messageId);
+    }
+  }
+  const insert = db.prepare(
+    `INSERT INTO surface_messages
+       (source_kind, project_path, session_id, message_seq, message_id,
+        message_json, byte_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  );
+  for (const message of messages) {
+    const validated = SessionSurfaceMessageSchema.parse(message);
+    const sequence = parseSurfaceMessageSequence(validated.id);
+    const rawMessageId = rawMessageIdBySequence.get(sequence);
+    if (!rawMessageId) throw new SessionSurfaceProjectionError();
+    const messageJson = JSON.stringify(validated);
+    insert.run(
+      sourceKind,
+      projectPath,
+      sessionId,
+      sequence,
+      rawMessageId,
+      messageJson,
+      Buffer.byteLength(messageJson)
+    );
+  }
+}
+
+function parseSurfaceMessageSequence(id: string): number {
+  const match = /^surface-message:([0-9]+):/.exec(id);
+  const sequence = match ? Number(match[1]) : Number.NaN;
+  if (!Number.isSafeInteger(sequence) || sequence < 0) {
+    throw new SessionSurfaceProjectionError();
+  }
+  return sequence;
+}
+
+function buildSurfaceDigest(projected: ProjectedSession): string {
+  const { metadata: meta } = projected;
+  const catalogSummary = {
+    locator:
+      projected.publicWorkspaceRef === undefined
+        ? {
+            version: 2,
+            sessionId: meta.sessionId,
+            workspace: { kind: 'local', projectPath: meta.projectPath },
+          }
+        : {
+            version: 2,
+            sessionId: meta.sessionId,
+            workspace: {
+              kind: 'acp-remote',
+              workspaceRef: projected.publicWorkspaceRef,
+            },
+          },
+    ...projectSurfaceSummaryFields(meta, projected.publicWorkspaceRef),
+  };
+  return createHash('sha256')
+    .update(SURFACE_DIGEST_DOMAIN)
+    .update(JSON.stringify({ catalogSummary, messages: projected.surfaceMessages }))
+    .digest('hex');
+}
+
+function projectSurfaceSummaryFields(
+  metadata: ProjectedSession['metadata'],
+  publicWorkspaceRef?: string
+): Omit<SessionSurfaceSummary, 'locator' | 'capabilities'> {
+  const remoteDescriptor =
+    metadata.remoteWorkspace === undefined
+      ? undefined
+      : parseAcpRemoteWorkspaceDescriptor(metadata.remoteWorkspace);
+  if (
+    (remoteDescriptor === undefined) !== (publicWorkspaceRef === undefined) ||
+    (remoteDescriptor &&
+      deriveAcpRemoteHostStateRoot(remoteDescriptor.collisionIdentity) !==
+        metadata.projectPath) ||
+    typeof metadata.rootId !== 'string' ||
+    !metadata.rootId ||
+    (metadata.parentId !== undefined &&
+      (typeof metadata.parentId !== 'string' || !metadata.parentId)) ||
+    (metadata.relationType !== undefined &&
+      metadata.relationType !== 'subagent' &&
+      metadata.relationType !== 'fork') ||
+    !['queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'].includes(
+      metadata.taskStatus
+    ) ||
+    !Number.isSafeInteger(metadata.messageCount) ||
+    metadata.messageCount < 0 ||
+    !metadata.firstMessageTime ||
+    !metadata.lastMessageTime ||
+    (metadata.archivedAt !== undefined && !metadata.archivedAt) ||
+    (metadata.selectedModelId !== undefined && !metadata.selectedModelId)
+  ) {
+    throw new SessionSurfaceProjectionError();
+  }
+  const redactionOptions = {
+    privateRoots: remoteDescriptor ? [metadata.projectPath] : [],
+    bladeStorageRoots: [getBladeStorageRoot()],
+  };
+  const relationType = metadata.relationType as 'subagent' | 'fork' | undefined;
+  const taskStatus = metadata.taskStatus as SessionSurfaceSummary['taskStatus'];
+  return {
+    displayCwd: remoteDescriptor?.wirePath ?? metadata.projectPath,
+    ...(remoteDescriptor ? { pathStyle: remoteDescriptor.style } : {}),
+    ...(metadata.title !== undefined
+      ? { title: redactSessionSurfaceText(metadata.title, redactionOptions) }
+      : {}),
+    rootId: metadata.rootId,
+    ...(metadata.parentId !== undefined ? { parentId: metadata.parentId } : {}),
+    ...(relationType !== undefined ? { relationType } : {}),
+    taskStatus,
+    messageCount: metadata.messageCount,
+    firstMessageTime: metadata.firstMessageTime,
+    lastMessageTime: metadata.lastMessageTime,
+    hasErrors: metadata.hasErrors,
+    ...(metadata.archivedAt !== undefined ? { archivedAt: metadata.archivedAt } : {}),
+    ...(metadata.selectedModelId !== undefined
+      ? {
+          selectedModelId: redactSessionSurfaceText(
+            metadata.selectedModelId,
+            redactionOptions
+          ),
+        }
+      : {}),
+  };
+}
+
+function hasSessionSurfaceRows(
+  db: SqliteDb,
+  sourceKind: ProjectionSourceKind,
+  projectPath: string,
+  sessionId: string
+): boolean {
+  const row = db
+    .prepare(
+      `SELECT EXISTS(
+         SELECT 1 FROM sessions
+         WHERE source_kind=? AND project_path=? AND session_id=?
+         UNION ALL
+         SELECT 1 FROM surface_messages
+         WHERE source_kind=? AND project_path=? AND session_id=?
+       ) AS present`
+    )
+    .get<{ present: number }>(
+      sourceKind,
+      projectPath,
+      sessionId,
+      sourceKind,
+      projectPath,
+      sessionId
+    );
+  return row?.present === 1;
 }
 
 function deleteSessionContentRows(
@@ -262,12 +561,14 @@ function deleteSessionContentRows(
   sourceKind: ProjectionSourceKind,
   projectPath: string,
   sessionId: string
-): void {
-  for (const table of ['sessions', 'parts', 'parts_fts']) {
+): boolean {
+  const semanticChanged = hasSessionSurfaceRows(db, sourceKind, projectPath, sessionId);
+  for (const table of ['surface_messages', 'sessions', 'parts', 'parts_fts']) {
     db.prepare(
       `DELETE FROM ${table} WHERE source_kind=? AND project_path=? AND session_id=?`
     ).run(sourceKind, projectPath, sessionId);
   }
+  return semanticChanged;
 }
 
 function deleteSessionRows(
@@ -275,27 +576,37 @@ function deleteSessionRows(
   sourceKind: ProjectionSourceKind,
   projectPath: string,
   sessionId: string
-): void {
-  deleteSessionContentRows(db, sourceKind, projectPath, sessionId);
+): boolean {
+  const semanticChanged = deleteSessionContentRows(
+    db,
+    sourceKind,
+    projectPath,
+    sessionId
+  );
   db.prepare(
     'DELETE FROM projection_state WHERE source_kind=? AND project_path=? AND session_id=?'
   ).run(sourceKind, projectPath, sessionId);
+  return semanticChanged;
 }
 
 function deleteSessionContentForSourceFile(
   db: SqliteDb,
   sourceKind: ProjectionSourceKind,
   filePath: string
-): void {
+): boolean {
   const rows = db
     .prepare(
       `SELECT project_path, session_id FROM sessions
        WHERE source_kind=? AND json_extract(metadata_json, '$.filePath')=?`
     )
     .all<{ project_path: string; session_id: string }>(sourceKind, filePath);
+  let semanticChanged = false;
   for (const row of rows) {
-    deleteSessionContentRows(db, sourceKind, row.project_path, row.session_id);
+    semanticChanged =
+      deleteSessionContentRows(db, sourceKind, row.project_path, row.session_id) ||
+      semanticChanged;
   }
+  return semanticChanged;
 }
 
 function upsertProjectionState(
@@ -417,7 +728,11 @@ async function syncSessionValidated(
       await assertAcpRemoteStateFile(validatedRemoteScope, filePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      db.transaction(() => deleteSessionRows(db, sourceKind, projectPath, sessionId));
+      db.transaction(() => {
+        if (deleteSessionRows(db, sourceKind, projectPath, sessionId)) {
+          incrementCatalogRevision(db);
+        }
+      });
       return true;
     }
   }
@@ -430,7 +745,11 @@ async function syncSessionValidated(
       throw error;
     }
     // 文件不存在 → GC 掉可能残留的行。
-    db.transaction(() => deleteSessionRows(db, sourceKind, projectPath, sessionId));
+    db.transaction(() => {
+      if (deleteSessionRows(db, sourceKind, projectPath, sessionId)) {
+        incrementCatalogRevision(db);
+      }
+    });
     return true;
   }
 
@@ -453,15 +772,37 @@ async function syncSessionValidated(
   const store = new JSONLStore(filePath);
   let raw: SessionEvent[];
   try {
-    raw = await projectionIO.readSession(store);
+    let beforeRead = fileStat;
+    let stableSnapshot: SessionEvent[] | undefined;
+    for (let attempt = 0; attempt < MAX_PROJECTION_SNAPSHOT_ATTEMPTS; attempt += 1) {
+      const candidate = await projectionIO.readSession(store, validatedRemoteScope);
+      const afterRead = await stat(filePath, { bigint: true });
+      if (statFingerprint(beforeRead) === statFingerprint(afterRead)) {
+        raw = candidate;
+        fileStat = afterRead;
+        stableSnapshot = candidate;
+        break;
+      }
+      beforeRead = afterRead;
+    }
+    if (!stableSnapshot) throw new SessionSurfaceProjectionError();
+    raw = stableSnapshot;
   } catch (error) {
-    if (
-      sourceKind !== 'acp-remote' ||
-      (error as NodeJS.ErrnoException).code !== 'ENOENT'
-    ) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      if (sourceKind === 'acp-remote') {
+        if (error instanceof AcpRemoteWorkspaceStateError) throw error;
+        if (code !== undefined) {
+          throw new AcpRemoteWorkspaceStateError('remote-session-read');
+        }
+      }
       throw error;
     }
-    db.transaction(() => deleteSessionRows(db, sourceKind, projectPath, sessionId));
+    db.transaction(() => {
+      if (deleteSessionRows(db, sourceKind, projectPath, sessionId)) {
+        incrementCatalogRevision(db);
+      }
+    });
     return true;
   }
   if (sourceKind === 'acp-remote' && raw.length === 0) {
@@ -469,7 +810,11 @@ async function syncSessionValidated(
       await assertAcpRemoteStateFile(validatedRemoteScope!, filePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        db.transaction(() => deleteSessionRows(db, sourceKind, projectPath, sessionId));
+        db.transaction(() => {
+          if (deleteSessionRows(db, sourceKind, projectPath, sessionId)) {
+            incrementCatalogRevision(db);
+          }
+        });
         return true;
       }
       throw error;
@@ -540,11 +885,18 @@ async function syncSessionValidated(
     (sourceKind === 'local' && projectedRemoteWorkspace !== undefined)
   ) {
     db.transaction(() => {
+      let semanticChanged: boolean;
       if (localSourceContainsRemoteDescriptor) {
-        deleteSessionContentForSourceFile(db, sourceKind, filePath);
-        deleteSessionRows(db, sourceKind, projectPath, sessionId);
+        semanticChanged = deleteSessionContentForSourceFile(db, sourceKind, filePath);
+        semanticChanged =
+          deleteSessionRows(db, sourceKind, projectPath, sessionId) || semanticChanged;
       } else {
-        deleteSessionContentRows(db, sourceKind, projectPath, sessionId);
+        semanticChanged = deleteSessionContentRows(
+          db,
+          sourceKind,
+          projectPath,
+          sessionId
+        );
         upsertProjectionState(
           db,
           sourceKind,
@@ -556,9 +908,28 @@ async function syncSessionValidated(
           statFingerprint(fileStat)
         );
       }
+      if (semanticChanged) incrementCatalogRevision(db);
     });
     return true;
   }
+
+  const publicWorkspaceRef =
+    durableRemoteDescriptor && validatedRemoteScope
+      ? await getOrCreateAcpRemoteWorkspaceReferenceInScope(
+          validatedRemoteScope,
+          durableRemoteDescriptor
+        )
+      : undefined;
+  const surfaceMessages = projectSessionSurfaceMessages(raw, {
+    privateRoots: sourceKind === 'acp-remote' ? [projectPath] : [],
+    bladeStorageRoots: [getBladeStorageRoot()],
+  });
+  const projected: ProjectedSession = {
+    metadata: meta,
+    ...(publicWorkspaceRef !== undefined ? { publicWorkspaceRef } : {}),
+    surfaceMessages,
+  };
+  const surfaceDigest = buildSurfaceDigest(projected);
 
   // 去重：同一 (projectPath, sessionId) 可能来自多个存储目录，保留 lastMessageTime
   // 更新的一条（与 JSONL 扫描 + compareSessionCatalogItems 的择新语义一致）。
@@ -599,8 +970,23 @@ async function syncSessionValidated(
   }
 
   db.transaction(() => {
-    upsertSession(db, sourceKind, meta);
+    const existingSurface = db
+      .prepare(
+        `SELECT surface_digest FROM sessions
+         WHERE source_kind=? AND project_path=? AND session_id=?`
+      )
+      .get<{ surface_digest: string }>(sourceKind, meta.projectPath, meta.sessionId);
+    const semanticChanged = existingSurface?.surface_digest !== surfaceDigest;
+    upsertSession(db, sourceKind, projected, surfaceDigest);
     writeParts(db, sourceKind, meta.projectPath, meta.sessionId, events);
+    writeSurfaceMessages(
+      db,
+      sourceKind,
+      meta.projectPath,
+      meta.sessionId,
+      events,
+      surfaceMessages
+    );
     upsertProjectionState(
       db,
       sourceKind,
@@ -611,6 +997,7 @@ async function syncSessionValidated(
       Number(fileStat.mtimeMs),
       statFingerprint(fileStat)
     );
+    if (semanticChanged) incrementCatalogRevision(db);
   });
   return true;
 }
@@ -641,9 +1028,14 @@ function removeMissingProjectionRows(
        WHERE source_kind=? AND project_path=?
        UNION
        SELECT session_id FROM parts_fts
+       WHERE source_kind=? AND project_path=?
+       UNION
+       SELECT session_id FROM surface_messages
        WHERE source_kind=? AND project_path=?`
     )
     .all<{ session_id: string }>(
+      sourceKind,
+      projectPath,
       sourceKind,
       projectPath,
       sourceKind,
@@ -655,7 +1047,9 @@ function removeMissingProjectionRows(
     );
   for (const row of known) {
     if (!seenSessionIds.has(row.session_id)) {
-      deleteSessionRows(db, sourceKind, projectPath, row.session_id);
+      if (deleteSessionRows(db, sourceKind, projectPath, row.session_id)) {
+        incrementCatalogRevision(db);
+      }
     }
   }
 }
@@ -730,7 +1124,9 @@ export async function syncAllAcpRemoteScopes(
        UNION
        SELECT project_path FROM parts WHERE source_kind='acp-remote'
        UNION
-       SELECT project_path FROM parts_fts WHERE source_kind='acp-remote'`
+       SELECT project_path FROM parts_fts WHERE source_kind='acp-remote'
+       UNION
+       SELECT project_path FROM surface_messages WHERE source_kind='acp-remote'`
     )
     .all<{ project_path: string }>();
   for (const row of projectedRoots) {
@@ -923,6 +1319,9 @@ async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<v
        WHERE source_kind='acp-remote'
        UNION
        SELECT source_kind, project_path, session_id FROM parts_fts
+       WHERE source_kind='acp-remote'
+       UNION
+       SELECT source_kind, project_path, session_id FROM surface_messages
        WHERE source_kind='acp-remote'`
     )
     .all<ProjectionIdentityRow>();
@@ -930,9 +1329,11 @@ async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<v
     if (
       !seen.has(`${row.source_kind}\u0000${row.project_path}\u0000${row.session_id}`)
     ) {
-      db.transaction(() =>
-        deleteSessionRows(db, row.source_kind, row.project_path, row.session_id)
-      );
+      db.transaction(() => {
+        if (deleteSessionRows(db, row.source_kind, row.project_path, row.session_id)) {
+          incrementCatalogRevision(db);
+        }
+      });
     }
   }
 }
@@ -944,7 +1345,11 @@ export function removeSessionFromProjection(
   projectPath: string,
   sourceKind: ProjectionSourceKind = 'local'
 ): void {
-  db.transaction(() => deleteSessionRows(db, sourceKind, projectPath, sessionId));
+  db.transaction(() => {
+    if (deleteSessionRows(db, sourceKind, projectPath, sessionId)) {
+      incrementCatalogRevision(db);
+    }
+  });
 }
 
 /**
@@ -965,6 +1370,340 @@ export async function rebuildProjectionIndex(
   await syncAll(db, derive);
   const row = db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>();
   return row?.c ?? 0;
+}
+
+interface SurfaceCandidateRow {
+  source_kind: ProjectionSourceKind;
+  project_path: string;
+  session_id: string;
+  root_id: string | null;
+  parent_id: string | null;
+  relation_type: string | null;
+  task_status: string;
+  first_message_time: string | null;
+  last_message_time: string;
+  title: string | null;
+  archived_at: string | null;
+  archive_root_id: string | null;
+  effective_archived_at: string | null;
+  message_count: number;
+  has_errors: number;
+  is_subagent: number;
+  public_workspace_ref: string | null;
+  public_workspace_sort_key: string;
+  session_sort_key: string;
+  surface_digest: string;
+  stat_fingerprint: string;
+  metadata_json: string;
+}
+
+function parseSurfaceCandidate(row: SurfaceCandidateRow): ProjectedSurfaceCandidate {
+  try {
+    const parsed: unknown = JSON.parse(row.metadata_json);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new SessionSurfaceProjectionError();
+    }
+    const metadata = parsed as ProjectedSession['metadata'];
+    const expectedWorkspaceKey = sessionCatalogSortKey(
+      row.public_workspace_ref ?? row.project_path
+    );
+    if (
+      metadata.sessionId !== row.session_id ||
+      metadata.projectPath !== row.project_path ||
+      metadata.rootId !== row.root_id ||
+      (metadata.parentId ?? null) !== row.parent_id ||
+      (metadata.relationType ?? null) !== row.relation_type ||
+      metadata.taskStatus !== row.task_status ||
+      (row.relation_type !== null &&
+        row.relation_type !== 'subagent' &&
+        row.relation_type !== 'fork') ||
+      !Number.isSafeInteger(row.message_count) ||
+      row.message_count < 0 ||
+      (row.has_errors !== 0 && row.has_errors !== 1) ||
+      (row.is_subagent !== 0 && row.is_subagent !== 1) ||
+      metadata.firstMessageTime !== row.first_message_time ||
+      metadata.lastMessageTime !== row.last_message_time ||
+      (metadata.title ?? null) !== row.title ||
+      (metadata.archivedAt ?? null) !== row.archived_at ||
+      metadata.messageCount !== row.message_count ||
+      Number(metadata.hasErrors) !== row.has_errors ||
+      Number(metadata.relationType === 'subagent') !== row.is_subagent ||
+      row.public_workspace_sort_key !== expectedWorkspaceKey ||
+      row.session_sort_key !== sessionCatalogSortKey(row.session_id) ||
+      !/^[a-f0-9]{64}$/.test(row.surface_digest) ||
+      !row.stat_fingerprint ||
+      (row.source_kind === 'local' &&
+        (row.public_workspace_ref !== null ||
+          metadata.remoteWorkspace !== undefined)) ||
+      (row.source_kind === 'acp-remote' &&
+        (row.public_workspace_ref === null ||
+          !SURFACE_WORKSPACE_REFERENCE_PATTERN.test(row.public_workspace_ref) ||
+          metadata.remoteWorkspace === undefined))
+    ) {
+      throw new SessionSurfaceProjectionError();
+    }
+    const effectiveMetadata: ProjectedSession['metadata'] = row.effective_archived_at
+      ? {
+          ...metadata,
+          archivedAt: row.effective_archived_at,
+          archivedBySessionId: row.archive_root_id,
+        }
+      : metadata;
+    const summary = projectSurfaceSummaryFields(
+      effectiveMetadata,
+      row.public_workspace_ref ?? undefined
+    );
+    return {
+      sourceKind: row.source_kind,
+      projectPath: row.project_path,
+      sessionId: row.session_id,
+      ...(row.public_workspace_ref === null
+        ? {}
+        : { publicWorkspaceRef: row.public_workspace_ref }),
+      publicWorkspaceSortKey: row.public_workspace_sort_key,
+      surfaceDigest: row.surface_digest,
+      transcriptFingerprint: row.stat_fingerprint,
+      lastMessageTime: row.last_message_time,
+      sessionSortKey: row.session_sort_key,
+      summary,
+    };
+  } catch {
+    throw new SessionSurfaceProjectionError();
+  }
+}
+
+export function readSessionSurfaceCandidates(
+  db: SqliteDb,
+  sessionId: string
+): readonly ProjectedSurfaceCandidate[] {
+  if (!isValidSessionId(sessionId)) {
+    throw new SessionSurfaceProjectionError();
+  }
+  try {
+    return db
+      .prepare(
+        `${SURFACE_ARCHIVE_CTE}
+         SELECT s.source_kind, s.project_path, s.session_id, s.root_id, s.parent_id,
+                s.relation_type, s.task_status, s.first_message_time,
+                s.last_message_time, s.title, s.archived_at, s.message_count,
+                s.has_errors,
+                s.is_subagent, a.archive_root_id, a.effective_archived_at,
+                s.public_workspace_ref, s.public_workspace_sort_key,
+                s.session_sort_key, s.surface_digest, p.stat_fingerprint,
+                s.metadata_json
+         FROM sessions s
+         JOIN projection_state p USING (source_kind, project_path, session_id)
+         LEFT JOIN ranked_archive a
+           ON a.source_kind=s.source_kind AND a.project_path=s.project_path
+          AND a.public_workspace_ref IS s.public_workspace_ref
+          AND a.session_id=s.session_id AND a.rank=1
+         WHERE s.session_id=?
+         ORDER BY s.source_kind DESC, s.public_workspace_sort_key ASC,
+                  s.session_sort_key ASC`
+      )
+      .all<SurfaceCandidateRow>(sessionId)
+      .map(parseSurfaceCandidate);
+  } catch {
+    throw new SessionSurfaceProjectionError();
+  }
+}
+
+export function readSessionSurfaceCatalogPage(
+  db: SqliteDb,
+  query: ProjectedSurfaceCatalogQuery
+): ProjectedSurfaceCatalogPage {
+  assertSurfaceLimit(query.limit);
+  return db.transaction(() => {
+    const parameters: unknown[] = [];
+    const conditions = [
+      's.is_subagent=0',
+      query.archived ? 'a.session_id IS NOT NULL' : 'a.session_id IS NULL',
+    ];
+    if (query.workspaceKind !== undefined) {
+      conditions.push('s.source_kind=?');
+      parameters.push(query.workspaceKind);
+    }
+    if (query.boundary !== undefined) {
+      conditions.push(
+        `(s.last_message_time < ?
+          OR (s.last_message_time = ? AND s.source_kind < ?)
+          OR (s.last_message_time = ? AND s.source_kind = ?
+              AND s.public_workspace_sort_key > ?)
+          OR (s.last_message_time = ? AND s.source_kind = ?
+              AND s.public_workspace_sort_key = ? AND s.session_sort_key > ?))`
+      );
+      parameters.push(
+        query.boundary.lastMessageTime,
+        query.boundary.lastMessageTime,
+        query.boundary.sourceKind,
+        query.boundary.lastMessageTime,
+        query.boundary.sourceKind,
+        query.boundary.publicWorkspaceSortKey,
+        query.boundary.lastMessageTime,
+        query.boundary.sourceKind,
+        query.boundary.publicWorkspaceSortKey,
+        query.boundary.sessionSortKey
+      );
+    }
+    parameters.push(query.limit + 1);
+    const revision = db
+      .prepare('SELECT catalog_revision FROM surface_projection_meta WHERE singleton=1')
+      .get<{ catalog_revision: number }>()?.catalog_revision;
+    if (!Number.isSafeInteger(revision) || revision === undefined || revision < 0) {
+      throw new SessionSurfaceProjectionError();
+    }
+    const rows = db
+      .prepare(
+        `${SURFACE_ARCHIVE_CTE}
+         SELECT s.source_kind, s.project_path, s.session_id, s.root_id, s.parent_id,
+                s.relation_type, s.task_status, s.first_message_time,
+                s.last_message_time, s.title, s.archived_at, s.message_count,
+                s.has_errors,
+                s.is_subagent, a.archive_root_id, a.effective_archived_at,
+                s.public_workspace_ref, s.public_workspace_sort_key,
+                s.session_sort_key, s.surface_digest, p.stat_fingerprint,
+                s.metadata_json
+         FROM sessions s
+         JOIN projection_state p USING (source_kind, project_path, session_id)
+         LEFT JOIN ranked_archive a
+           ON a.source_kind=s.source_kind AND a.project_path=s.project_path
+          AND a.public_workspace_ref IS s.public_workspace_ref
+          AND a.session_id=s.session_id AND a.rank=1
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY s.last_message_time DESC, s.source_kind DESC,
+                  s.public_workspace_sort_key ASC, s.session_sort_key ASC
+         LIMIT ?`
+      )
+      .all<SurfaceCandidateRow>(...parameters);
+    const pageRows = rows.slice(0, query.limit);
+    const sessions = pageRows.map(parseSurfaceCandidate);
+    const last = rows.length > query.limit ? pageRows.at(-1) : undefined;
+    return {
+      revision,
+      sessions,
+      ...(last
+        ? {
+            nextBoundary: {
+              lastMessageTime: last.last_message_time,
+              sourceKind: last.source_kind,
+              publicWorkspaceSortKey: last.public_workspace_sort_key,
+              sessionSortKey: last.session_sort_key,
+            },
+          }
+        : {}),
+    };
+  });
+}
+
+interface SurfaceMessageRow {
+  message_seq: number;
+  message_id: string;
+  message_json: string;
+  byte_count: number;
+}
+
+export function readSessionSurfaceHistoryPage(
+  db: SqliteDb,
+  query: ProjectedSurfaceHistoryQuery
+): ProjectedSurfaceHistoryPage {
+  assertSurfaceLimit(query.limit);
+  if (
+    query.beforeSequence !== undefined &&
+    (!Number.isSafeInteger(query.beforeSequence) || query.beforeSequence < 0)
+  ) {
+    throw new SessionSurfaceProjectionError();
+  }
+  const requestedMaxBytes = query.maxBytes ?? DEFAULT_SURFACE_HISTORY_BYTE_LIMIT;
+  if (!Number.isSafeInteger(requestedMaxBytes) || requestedMaxBytes < 1) {
+    throw new SessionSurfaceProjectionError();
+  }
+  const maxBytes = Math.min(requestedMaxBytes, DEFAULT_SURFACE_HISTORY_BYTE_LIMIT);
+  return db.transaction(() => {
+    const candidate = db
+      .prepare(
+        `SELECT surface_digest, stat_fingerprint FROM sessions
+         JOIN projection_state USING (source_kind, project_path, session_id)
+         WHERE source_kind=? AND project_path=? AND session_id=?`
+      )
+      .get<{ surface_digest: string; stat_fingerprint: string }>(
+        query.sourceKind,
+        query.projectPath,
+        query.sessionId
+      );
+    if (!candidate) throw new SessionSurfaceProjectionError();
+    if (
+      !/^[a-f0-9]{64}$/.test(candidate.surface_digest) ||
+      !candidate.stat_fingerprint
+    ) {
+      throw new SessionSurfaceProjectionError();
+    }
+
+    const sequenceClause =
+      query.beforeSequence === undefined ? '' : 'AND message_seq < ?';
+    const parameters: unknown[] = [
+      query.sourceKind,
+      query.projectPath,
+      query.sessionId,
+      ...(query.beforeSequence === undefined ? [] : [query.beforeSequence]),
+      query.limit + 1,
+    ];
+    const rows = db
+      .prepare(
+        `SELECT message_seq, message_id, message_json, byte_count
+         FROM surface_messages
+         WHERE source_kind=? AND project_path=? AND session_id=? ${sequenceClause}
+         ORDER BY message_seq DESC, message_id DESC LIMIT ?`
+      )
+      .all<SurfaceMessageRow>(...parameters);
+    const selected: SurfaceMessageRow[] = [];
+    let selectedBytes = 2;
+    for (const row of rows.slice(0, query.limit)) {
+      const separatorBytes = selected.length === 0 ? 0 : 1;
+      if (
+        selected.length > 0 &&
+        selectedBytes + separatorBytes + row.byte_count > maxBytes
+      ) {
+        break;
+      }
+      selected.push(row);
+      selectedBytes += separatorBytes + row.byte_count;
+    }
+    const messages = selected.map((row) => parseStoredSurfaceMessage(row)).reverse();
+    const hasOlder = rows.length > selected.length;
+    return {
+      messages,
+      hasOlder,
+      ...(hasOlder && selected.length > 0
+        ? { nextSequence: selected.at(-1)!.message_seq }
+        : {}),
+      transcriptFingerprint: candidate.stat_fingerprint,
+      surfaceDigest: candidate.surface_digest,
+    };
+  });
+}
+
+function parseStoredSurfaceMessage(row: SurfaceMessageRow): SessionSurfaceMessage {
+  try {
+    if (Buffer.byteLength(row.message_json) !== row.byte_count) {
+      throw new SessionSurfaceProjectionError();
+    }
+    const message = SessionSurfaceMessageSchema.parse(JSON.parse(row.message_json));
+    if (
+      message.id !== createSessionSurfaceMessageId(row.message_seq, row.message_id) ||
+      parseSurfaceMessageSequence(message.id) !== row.message_seq
+    ) {
+      throw new SessionSurfaceProjectionError();
+    }
+    return message;
+  } catch {
+    throw new SessionSurfaceProjectionError();
+  }
+}
+
+function assertSurfaceLimit(limit: number): void {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    throw new SessionSurfaceProjectionError();
+  }
 }
 
 export interface ProjectionTextRow {

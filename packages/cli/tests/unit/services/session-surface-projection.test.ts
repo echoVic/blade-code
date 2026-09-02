@@ -6,7 +6,9 @@ import {
 } from '../../../src/api/sessionSurfaceSchemas.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import {
+  createSessionSurfaceMessageId,
   projectSessionSurfaceMessages,
+  redactSessionSurfaceText,
   SessionSurfaceProjectionError,
 } from '../../../src/services/sessionSurfaceProjection.js';
 
@@ -266,6 +268,20 @@ function assertStrictMessage(
 }
 
 describe('projectSessionSurfaceMessages', () => {
+  it('shares stable ID and private-text projection primitives with storage readers', () => {
+    expect(createSessionSurfaceMessageId(7, 'durable-message')).toBe(
+      expectedSurfaceId(7, 'durable-message')
+    );
+    expect(
+      redactSessionSurfaceText(`${POSIX_ROOT}/nested/file`, {
+        privateRoots: [POSIX_ROOT],
+      })
+    ).toBe('[private state path]');
+    expect(() => createSessionSurfaceMessageId(0, 'durable-message')).toThrow(
+      SessionSurfaceProjectionError
+    );
+  });
+
   it('projects strict visible messages with shell rendering, final parts, redaction, control stripping, and duplicate preservation', () => {
     resetSequence();
 

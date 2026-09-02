@@ -36,11 +36,16 @@ type PartEvent = Extract<
   { type: 'part_created' } | { type: 'part_updated' }
 >;
 
-interface SessionSurfaceProjectionOptions {
+export interface SessionSurfaceProjectionOptions {
   privateRoots: readonly string[];
   bladeStorageRoots?: readonly string[];
   maxContentBytes?: number;
 }
+
+export type SessionSurfaceRedactionOptions = Pick<
+  SessionSurfaceProjectionOptions,
+  'privateRoots' | 'bladeStorageRoots'
+>;
 
 interface ProjectedPart {
   partId: string;
@@ -159,6 +164,16 @@ function projectMessageState(
   return { id, role, content: truncated.content, timestamp };
 }
 
+export function redactSessionSurfaceText(
+  value: string,
+  options: SessionSurfaceRedactionOptions
+): string {
+  return redactPrivateRoots(
+    stripUnsafeTerminalContent(value),
+    resolvePrivateRoots(options.privateRoots, options.bladeStorageRoots ?? [])
+  );
+}
+
 function projectRawContent(state: ProjectedMessageState): string {
   const shellRecord = userShellCommandRecordFromMetadata(state.event.data.metadata);
   if (shellRecord) {
@@ -205,9 +220,17 @@ function readTextPayload(payload: unknown): string {
 
 function buildSurfaceMessageId(event: MessageCreatedEvent): string {
   const seq = assertCommittedSequence(event.seq);
+  return createSessionSurfaceMessageId(seq, event.data.messageId);
+}
+
+export function createSessionSurfaceMessageId(
+  sequence: number,
+  messageId: string
+): string {
+  const seq = assertCommittedSequence(sequence);
   const digest = createHash('sha256')
     .update(DIGEST_DOMAIN)
-    .update(event.data.messageId)
+    .update(messageId)
     .digest('hex')
     .slice(0, 16);
   return `surface-message:${seq}:${digest}`;

@@ -8,9 +8,16 @@
  */
 
 /** schema 版本；不兼容变更时递增，落后版本直接 drop 重建（缓存可弃）。 */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 const DDL = `
+CREATE TABLE IF NOT EXISTS surface_projection_meta (
+  singleton        INTEGER PRIMARY KEY CHECK(singleton = 1),
+  catalog_revision INTEGER NOT NULL DEFAULT 0 CHECK(catalog_revision >= 0)
+);
+INSERT OR IGNORE INTO surface_projection_meta (singleton, catalog_revision)
+VALUES (1, 0);
+
 CREATE TABLE IF NOT EXISTS projection_state (
   source_kind  TEXT NOT NULL CHECK(source_kind IN ('local', 'acp-remote')),
   project_path TEXT NOT NULL,
@@ -39,6 +46,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   archived_at        TEXT,
   last_message_time  TEXT,
   project_sort_key   TEXT NOT NULL,
+  public_workspace_ref TEXT,
+  public_workspace_sort_key TEXT NOT NULL,
   session_sort_key   TEXT NOT NULL,
   first_message_time TEXT,
   message_count      INTEGER NOT NULL DEFAULT 0,
@@ -46,12 +55,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   is_subagent        INTEGER NOT NULL DEFAULT 0,
   -- 完整 StoredSessionMetadata JSON，读回时直接反序列化，保证与 JSONL 路径一致。
   metadata_json      TEXT NOT NULL,
+  surface_digest     TEXT NOT NULL,
   PRIMARY KEY (source_kind, project_path, session_id)
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_catalog ON sessions(
-  source_kind,
   last_message_time DESC,
-  project_sort_key ASC,
+  source_kind DESC,
+  public_workspace_sort_key ASC,
   session_sort_key ASC
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_archived ON sessions(
@@ -100,6 +110,22 @@ CREATE INDEX IF NOT EXISTS idx_parts_session ON parts(
   source_kind, project_path, session_id
 );
 
+CREATE TABLE IF NOT EXISTS surface_messages (
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('local', 'acp-remote')),
+  project_path TEXT NOT NULL,
+  session_id   TEXT NOT NULL,
+  message_seq  INTEGER NOT NULL CHECK(message_seq >= 0),
+  message_id   TEXT NOT NULL,
+  message_json TEXT NOT NULL,
+  byte_count   INTEGER NOT NULL CHECK(byte_count >= 0),
+  PRIMARY KEY (
+    source_kind, project_path, session_id, message_seq, message_id
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_surface_messages_history ON surface_messages(
+  source_kind, project_path, session_id, message_seq DESC, message_id DESC
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS parts_fts USING fts5(
   text,
   source_kind UNINDEXED,
@@ -115,9 +141,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS parts_fts USING fts5(
 
 const DROP_ALL = `
 DROP TABLE IF EXISTS parts_fts;
+DROP TABLE IF EXISTS surface_messages;
 DROP TABLE IF EXISTS parts;
 DROP TABLE IF EXISTS sessions;
 DROP TABLE IF EXISTS projection_state;
+DROP TABLE IF EXISTS surface_projection_meta;
 `;
 
 import type { SqliteDb } from './driver.js';

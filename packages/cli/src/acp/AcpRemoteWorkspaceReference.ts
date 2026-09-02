@@ -93,6 +93,7 @@ class AcpRemoteWorkspaceReferenceError extends Error {
 }
 
 let referenceHooksForTesting: WorkspaceReferenceHooksForTesting | undefined;
+const referenceDirectoryLocks = new Map<string, Promise<void>>();
 
 export function getAcpRemoteWorkspaceReferenceDirectoryPath(
   scope: AcpRemoteStateScope
@@ -134,10 +135,30 @@ export async function getOrCreateAcpRemoteWorkspaceReference(
   hostStateRoot: string,
   descriptor: AcpRemoteWorkspaceDescriptorV1
 ): Promise<string> {
-  return withReferenceScope(hostStateRoot, descriptor, async (scope, exactDigest) => {
-    const referenceDirectoryPath = getAcpRemoteWorkspaceReferenceDirectoryPath(scope);
-    await ensureReferenceDirectory(scope, referenceDirectoryPath);
-    return withReferenceCapacityLock(referenceDirectoryPath, async () => {
+  return withReferenceScope(hostStateRoot, descriptor, (scope) =>
+    getOrCreateAcpRemoteWorkspaceReferenceInScope(scope, descriptor)
+  );
+}
+
+/**
+ * 已持有并验证 remote durable-state scope 时使用，避免同一 root 的嵌套进入。
+ * branded scope 仍会与 descriptor 派生出的 host root 做精确绑定校验。
+ */
+export async function getOrCreateAcpRemoteWorkspaceReferenceInScope(
+  scope: AcpRemoteStateScope,
+  descriptor: AcpRemoteWorkspaceDescriptorV1
+): Promise<string> {
+  const parsedDescriptor = parseAcpRemoteWorkspaceDescriptor(descriptor);
+  if (
+    deriveAcpRemoteHostStateRoot(parsedDescriptor.collisionIdentity) !== String(scope)
+  ) {
+    throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+  }
+  const exactDigest = exactIdentityDigest(parsedDescriptor.exactIdentity);
+  const referenceDirectoryPath = getAcpRemoteWorkspaceReferenceDirectoryPath(scope);
+  await ensureReferenceDirectory(scope, referenceDirectoryPath);
+  return withSerializedReferenceDirectory(referenceDirectoryPath, () =>
+    withReferenceCapacityLock(referenceDirectoryPath, async () => {
       await cleanupAbandonedReferenceTemps(referenceDirectoryPath);
       const state = await readReferenceDirectoryState(
         scope,
@@ -161,13 +182,36 @@ export async function getOrCreateAcpRemoteWorkspaceReference(
           scope,
           referenceDirectoryPath,
           referenceFilePath,
-          descriptor,
+          parsedDescriptor,
           { version: 1, exactIdentityDigest: exactDigest, workspaceRef }
         );
       }
       throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
-    });
+    })
+  );
+}
+
+async function withSerializedReferenceDirectory<T>(
+  referenceDirectoryPath: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const previous =
+    referenceDirectoryLocks.get(referenceDirectoryPath) ?? Promise.resolve();
+  let releaseCurrent = (): void => undefined;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
   });
+  const tail = previous.catch(() => undefined).then(() => current);
+  referenceDirectoryLocks.set(referenceDirectoryPath, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    releaseCurrent();
+    if (referenceDirectoryLocks.get(referenceDirectoryPath) === tail) {
+      referenceDirectoryLocks.delete(referenceDirectoryPath);
+    }
+  }
 }
 
 /** @internal */

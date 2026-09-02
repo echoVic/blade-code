@@ -20,6 +20,8 @@ import {
   ensureAcpRemoteHostStateRoot,
   withValidatedAcpRemoteStateScope,
 } from '../../../../src/acp/AcpRemoteWorkspace.js';
+import { __setAcpRemoteWorkspaceReferenceHooksForTesting } from '../../../../src/acp/AcpRemoteWorkspaceReference.js';
+import { SessionSurfaceMessageSchema } from '../../../../src/api/sessionSurfaceSchemas.js';
 import { JSONLStore } from '../../../../src/context/storage/JSONLStore.js';
 import {
   getAcpRemoteSessionFilePath,
@@ -31,13 +33,21 @@ import {
   __resetProjectionIOForTesting,
   __setProjectionIOForTesting,
   type MetadataDeriver,
+  readSessionSurfaceCandidates,
+  readSessionSurfaceCatalogPage,
+  readSessionSurfaceHistoryPage,
   searchProjectionText,
   syncAcpRemoteScope,
   syncAll,
   syncSession,
 } from '../../../../src/context/storage/sqlite/projection.js';
-import { migrate } from '../../../../src/context/storage/sqlite/schema.js';
+import {
+  migrate,
+  SCHEMA_VERSION,
+} from '../../../../src/context/storage/sqlite/schema.js';
 import type { SessionEvent } from '../../../../src/context/types.js';
+import { sessionCatalogSortKey } from '../../../../src/services/sessionCatalog.js';
+import { SessionSurfaceProjectionError } from '../../../../src/services/sessionSurfaceProjection.js';
 
 const ts = '2024-01-01T00:00:00.000Z';
 
@@ -122,6 +132,44 @@ function writeTranscript(file: string, events: SessionEvent[]): Promise<void> {
   });
 }
 
+function catalogRevision(db: SqliteDb): number {
+  return (
+    db
+      .prepare('SELECT catalog_revision FROM surface_projection_meta WHERE singleton=1')
+      .get<{ catalog_revision: number }>()?.catalog_revision ?? -1
+  );
+}
+
+function visibleMessageEvents(
+  messageSeq: number,
+  messageId: string,
+  role: 'user' | 'assistant',
+  text: string,
+  timestamp = ts
+): SessionEvent[] {
+  return [
+    {
+      ...ev(messageSeq, 'message_created', {
+        messageId,
+        role,
+        createdAt: timestamp,
+        metadata: { privateCanary: 'must-not-be-serialized' },
+      }),
+      timestamp,
+    },
+    {
+      ...ev(messageSeq + 1, 'part_created', {
+        partId: `part-${messageId}`,
+        messageId,
+        partType: 'text',
+        payload: { text, privateCanary: 'must-not-be-serialized' },
+        createdAt: timestamp,
+      }),
+      timestamp,
+    },
+  ];
+}
+
 describe('SQLite projection sync', () => {
   let root: string;
   let db: SqliteDb;
@@ -148,9 +196,944 @@ describe('SQLite projection sync', () => {
 
   afterEach(async () => {
     __resetProjectionIOForTesting();
+    __setAcpRemoteWorkspaceReferenceHooksForTesting(undefined);
     db.close();
     delete process.env.BLADE_STORAGE_ROOT;
     await rm(root, { recursive: true, force: true });
+  });
+
+  it('rebuilds a v6 cache with the v7 session surface schema', () => {
+    db.exec(`
+      DROP TABLE surface_messages;
+      CREATE TABLE surface_messages (legacy TEXT);
+      INSERT INTO surface_messages (legacy) VALUES ('stale');
+      PRAGMA user_version=6;
+    `);
+
+    migrate(db);
+
+    expect(SCHEMA_VERSION).toBe(7);
+    expect(Number(db.pragma('user_version'))).toBe(7);
+    const tables = db
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type='table' AND name IN ('surface_projection_meta', 'surface_messages')
+         ORDER BY name`
+      )
+      .all<{ name: string }>();
+    expect(tables.map((row) => row.name)).toEqual([
+      'surface_messages',
+      'surface_projection_meta',
+    ]);
+
+    const sessionColumns = db
+      .prepare('PRAGMA table_info(sessions)')
+      .all<{ name: string }>();
+    expect(sessionColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'public_workspace_ref',
+        'public_workspace_sort_key',
+        'surface_digest',
+      ])
+    );
+    const messageColumns = db
+      .prepare('PRAGMA table_info(surface_messages)')
+      .all<{ name: string }>();
+    expect(messageColumns.map((column) => column.name)).not.toContain('legacy');
+    expect(messageColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'source_kind',
+        'project_path',
+        'session_id',
+        'message_seq',
+        'message_id',
+        'message_json',
+        'byte_count',
+      ])
+    );
+    expect(
+      db
+        .prepare(
+          'SELECT catalog_revision FROM surface_projection_meta WHERE singleton=1'
+        )
+        .get<{ catalog_revision: number }>()?.catalog_revision
+    ).toBe(0);
+  });
+
+  it('projects strict local surface messages and revisions only on semantic changes', async () => {
+    const events = [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+      ...visibleMessageEvents(2, 'user-message', 'user', 'first question'),
+      ...visibleMessageEvents(4, 'assistant-message', 'assistant', 'first answer'),
+    ];
+    await writeTranscript(sessionFile(), events);
+
+    expect(await syncSession(db, sessionId, projectPath, derive)).toBe(true);
+    expect(catalogRevision(db)).toBe(1);
+
+    const sessionRow = db
+      .prepare(
+        `SELECT public_workspace_ref, public_workspace_sort_key, surface_digest
+         FROM sessions WHERE source_kind='local' AND project_path=? AND session_id=?`
+      )
+      .get<{
+        public_workspace_ref: string | null;
+        public_workspace_sort_key: string;
+        surface_digest: string;
+      }>(projectPath, sessionId);
+    expect(sessionRow).toEqual({
+      public_workspace_ref: null,
+      public_workspace_sort_key: sessionCatalogSortKey(projectPath),
+      surface_digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+
+    const rows = db
+      .prepare(
+        `SELECT message_seq, message_id, message_json, byte_count
+         FROM surface_messages WHERE source_kind='local'
+           AND project_path=? AND session_id=? ORDER BY message_seq`
+      )
+      .all<{
+        message_seq: number;
+        message_id: string;
+        message_json: string;
+        byte_count: number;
+      }>(projectPath, sessionId);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.message_id)).toEqual([
+      'user-message',
+      'assistant-message',
+    ]);
+    for (const row of rows) {
+      const parsed = SessionSurfaceMessageSchema.parse(JSON.parse(row.message_json));
+      expect(Object.keys(parsed).sort()).toEqual(
+        ['content', 'id', 'role', 'timestamp'].sort()
+      );
+      expect(row.message_json).not.toContain('user-message');
+      expect(row.message_json).not.toContain('assistant-message');
+      expect(row.byte_count).toBe(Buffer.byteLength(row.message_json));
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await writeTranscript(sessionFile(), events);
+    expect(await syncSession(db, sessionId, projectPath, derive)).toBe(true);
+    expect(catalogRevision(db)).toBe(1);
+
+    db.prepare(
+      `UPDATE surface_messages SET message_json='{}', byte_count=2
+       WHERE source_kind='local' AND project_path=? AND session_id=?`
+    ).run(projectPath, sessionId);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await writeTranscript(sessionFile(), events);
+    expect(await syncSession(db, sessionId, projectPath, derive)).toBe(true);
+    expect(catalogRevision(db)).toBe(1);
+    const repairedRows = db
+      .prepare(
+        `SELECT message_json FROM surface_messages
+         WHERE source_kind='local' AND project_path=? AND session_id=?`
+      )
+      .all<{ message_json: string }>(projectPath, sessionId);
+    expect(repairedRows).toHaveLength(2);
+    for (const row of repairedRows) {
+      expect(() =>
+        SessionSurfaceMessageSchema.parse(JSON.parse(row.message_json))
+      ).not.toThrow();
+    }
+
+    const changedEvents = events.map((event) =>
+      event.type === 'part_created' && event.data.messageId === 'assistant-message'
+        ? {
+            ...event,
+            data: { ...event.data, payload: { text: 'changed answer' } },
+          }
+        : event
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await writeTranscript(sessionFile(), changedEvents);
+    expect(await syncSession(db, sessionId, projectPath, derive)).toBe(true);
+    expect(catalogRevision(db)).toBe(2);
+
+    await rm(sessionFile());
+    expect(await syncSession(db, sessionId, projectPath, derive)).toBe(true);
+    expect(catalogRevision(db)).toBe(3);
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) count FROM surface_messages
+           WHERE source_kind='local' AND project_path=? AND session_id=?`
+        )
+        .get<{ count: number }>(projectPath, sessionId)?.count
+    ).toBe(0);
+  });
+
+  it('keeps the revision stable for summary changes hidden by private-path redaction', async () => {
+    const buildEvents = (privateSuffix: string): SessionEvent[] => [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+      ev(2, 'session_updated', {
+        title: `${root}/${privateSuffix}`,
+        updatedAt: ts,
+      }),
+    ];
+    await writeTranscript(sessionFile(), buildEvents('private-a'));
+    expect(await syncSession(db, sessionId, projectPath, derive)).toBe(true);
+    expect(catalogRevision(db)).toBe(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await writeTranscript(sessionFile(), buildEvents('private-b'));
+    expect(await syncSession(db, sessionId, projectPath, derive)).toBe(true);
+
+    expect(catalogRevision(db)).toBe(1);
+  });
+
+  it('redacts private paths from metadata returned by surface read helpers', async () => {
+    const privateModel = `${root}/models/private`;
+    const privateTitle = `${root}/titles/private`;
+    const privateMetadataDeriver: MetadataDeriver = (
+      entries,
+      currentSessionId,
+      currentProjectPath
+    ) => {
+      const metadata = derive(entries, currentSessionId, currentProjectPath, 'local');
+      return metadata
+        ? { ...metadata, title: privateTitle, selectedModelId: privateModel }
+        : null;
+    };
+    await writeTranscript(sessionFile(), [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+    ]);
+    await syncSession(db, sessionId, projectPath, privateMetadataDeriver);
+
+    const candidate = readSessionSurfaceCandidates(db, sessionId)[0];
+    expect(candidate?.summary.title).toBe('[private state path]');
+    expect(candidate?.summary.selectedModelId).toBe('[private state path]');
+    expect(JSON.stringify(candidate)).not.toContain(privateTitle);
+    expect(JSON.stringify(candidate)).not.toContain(privateModel);
+  });
+
+  it('derives a protected public workspace reference for remote surface rows', async () => {
+    const remoteSessionId = 'remote-surface-reference';
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Remote\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      await writeTranscript(getAcpRemoteSessionFilePath(scope, remoteSessionId), [
+        {
+          ...ev(1, 'session_created', {
+            sessionId: remoteSessionId,
+            rootId: remoteSessionId,
+            createdAt: ts,
+            updatedAt: ts,
+            remoteWorkspace: descriptor,
+          }),
+          sessionId: remoteSessionId,
+          projectPath: hostStateRoot,
+          cwd: hostStateRoot,
+        },
+        ...visibleMessageEvents(2, 'remote-message', 'assistant', hostStateRoot).map(
+          (event) => ({
+            ...event,
+            sessionId: remoteSessionId,
+            projectPath: hostStateRoot,
+            cwd: hostStateRoot,
+          })
+        ),
+      ]);
+    });
+
+    await syncAcpRemoteScope(db, deriveWithActualFilePath, hostStateRoot);
+
+    const row = db
+      .prepare(
+        `SELECT public_workspace_ref, public_workspace_sort_key
+         FROM sessions WHERE source_kind='acp-remote'
+           AND project_path=? AND session_id=?`
+      )
+      .get<{
+        public_workspace_ref: string;
+        public_workspace_sort_key: string;
+      }>(hostStateRoot, remoteSessionId);
+    expect(row?.public_workspace_ref).toMatch(
+      /^acp-remote-workspace:[A-Za-z0-9_-]{43}$/
+    );
+    expect(row?.public_workspace_sort_key).toBe(
+      sessionCatalogSortKey(row!.public_workspace_ref)
+    );
+
+    const messageRow = db
+      .prepare(
+        `SELECT message_json FROM surface_messages WHERE source_kind='acp-remote'
+           AND project_path=? AND session_id=?`
+      )
+      .get<{ message_json: string }>(hostStateRoot, remoteSessionId);
+    const message = SessionSurfaceMessageSchema.parse(
+      JSON.parse(messageRow!.message_json)
+    );
+    expect(message.content).toBe('[private state path]');
+    expect(messageRow?.message_json).not.toContain(hostStateRoot);
+  });
+
+  it('keeps remote sidecar publication outside the SQLite write transaction', async () => {
+    const remoteSessionId = 'remote-sidecar-transaction';
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Transaction\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      await writeTranscript(getAcpRemoteSessionFilePath(scope, remoteSessionId), [
+        {
+          ...ev(1, 'session_created', {
+            sessionId: remoteSessionId,
+            rootId: remoteSessionId,
+            createdAt: ts,
+            updatedAt: ts,
+            remoteWorkspace: descriptor,
+          }),
+          sessionId: remoteSessionId,
+          projectPath: hostStateRoot,
+          cwd: hostStateRoot,
+        },
+      ]);
+    });
+    let transactionDepth = 0;
+    const tracingDb: SqliteDb = {
+      ...db,
+      transaction<T>(operation: () => T): T {
+        return db.transaction(() => {
+          transactionDepth += 1;
+          try {
+            return operation();
+          } finally {
+            transactionDepth -= 1;
+          }
+        });
+      },
+    };
+    __setAcpRemoteWorkspaceReferenceHooksForTesting({
+      async beforePublish() {
+        expect(transactionDepth).toBe(0);
+      },
+    });
+
+    await syncAcpRemoteScope(tracingDb, deriveWithActualFilePath, hostStateRoot);
+    expect(catalogRevision(db)).toBe(1);
+  });
+
+  it('serializes concurrent public references inside an already validated scope', async () => {
+    const firstSessionId = 'remote-reference-first';
+    const secondSessionId = 'remote-reference-second';
+    const firstDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Concurrent\\Repo')
+    );
+    const secondDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('c:\\concurrent\\repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(
+      firstDescriptor.collisionIdentity
+    );
+    expect(secondDescriptor.collisionIdentity).toBe(firstDescriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      await Promise.all(
+        [
+          [firstSessionId, firstDescriptor] as const,
+          [secondSessionId, secondDescriptor] as const,
+        ].map(async ([currentSessionId, descriptor]) => {
+          await writeTranscript(getAcpRemoteSessionFilePath(scope, currentSessionId), [
+            {
+              ...ev(1, 'session_created', {
+                sessionId: currentSessionId,
+                rootId: currentSessionId,
+                createdAt: ts,
+                updatedAt: ts,
+                remoteWorkspace: descriptor,
+              }),
+              sessionId: currentSessionId,
+              projectPath: hostStateRoot,
+              cwd: hostStateRoot,
+            },
+          ]);
+        })
+      );
+    });
+
+    await expect(
+      syncAcpRemoteScope(db, deriveWithActualFilePath, hostStateRoot)
+    ).resolves.toBeUndefined();
+    const refs = db
+      .prepare(
+        `SELECT public_workspace_ref FROM sessions
+         WHERE source_kind='acp-remote' AND project_path=?
+         ORDER BY session_id`
+      )
+      .all<{ public_workspace_ref: string }>(hostStateRoot);
+    expect(refs).toHaveLength(2);
+    expect(new Set(refs.map((row) => row.public_workspace_ref)).size).toBe(2);
+  });
+
+  it('reads stable catalog boundaries and exact locator candidates', async () => {
+    await writeTranscript(sessionFile(), [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+      ...visibleMessageEvents(2, 'catalog-message', 'user', 'catalog entry'),
+    ]);
+    await syncSession(db, sessionId, projectPath, derive);
+
+    const first = readSessionSurfaceCatalogPage(db, {
+      archived: false,
+      limit: 1,
+    });
+    expect(first.revision).toBe(1);
+    expect(first.sessions).toHaveLength(1);
+    expect(first.sessions[0]).toMatchObject({
+      sourceKind: 'local',
+      projectPath,
+      sessionId,
+    });
+    expect(first.sessions[0]).not.toHaveProperty('publicWorkspaceRef');
+    expect(first.nextBoundary).toBeUndefined();
+
+    const candidates = readSessionSurfaceCandidates(db, sessionId);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toEqual(first.sessions[0]);
+
+    db.prepare(
+      `UPDATE sessions SET metadata_json=?
+       WHERE source_kind='local' AND project_path=? AND session_id=?`
+    ).run('{"sessionId":"forged"}', projectPath, sessionId);
+    expect(() => readSessionSurfaceCandidates(db, sessionId)).toThrow(
+      SessionSurfaceProjectionError
+    );
+  });
+
+  it('orders local before remote on exact catalog ties and paginates without gaps', async () => {
+    const remoteDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Tie\\Repo')
+    );
+    const baseMetadata = {
+      rootId: 'root',
+      taskStatus: 'completed',
+      messageCount: 0,
+      firstMessageTime: ts,
+      lastMessageTime: ts,
+      hasErrors: false,
+    };
+    const rows = [
+      {
+        sourceKind: 'acp-remote',
+        projectPath: deriveAcpRemoteHostStateRoot(remoteDescriptor.collisionIdentity),
+        sessionId: 'remote-session',
+        publicWorkspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+      {
+        sourceKind: 'local',
+        projectPath: '/workspace/local',
+        sessionId: 'local-session',
+        publicWorkspaceRef: null,
+      },
+      {
+        sourceKind: 'local',
+        projectPath: '/workspace/second',
+        sessionId: 'second-local-session',
+        publicWorkspaceRef: null,
+      },
+    ] as const;
+    for (const row of rows) {
+      const workspaceKey = row.publicWorkspaceRef ?? row.projectPath;
+      db.prepare(
+        `INSERT INTO sessions
+           (source_kind, project_path, session_id, root_id, task_status,
+            last_message_time, project_sort_key, public_workspace_ref,
+            public_workspace_sort_key, session_sort_key, first_message_time,
+            metadata_json, surface_digest)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        row.sourceKind,
+        row.projectPath,
+        row.sessionId,
+        baseMetadata.rootId,
+        baseMetadata.taskStatus,
+        baseMetadata.lastMessageTime,
+        sessionCatalogSortKey(row.projectPath),
+        row.publicWorkspaceRef,
+        sessionCatalogSortKey(workspaceKey),
+        sessionCatalogSortKey(row.sessionId),
+        baseMetadata.firstMessageTime,
+        JSON.stringify({
+          ...baseMetadata,
+          sessionId: row.sessionId,
+          projectPath: row.projectPath,
+          ...(row.sourceKind === 'acp-remote'
+            ? {
+                remoteWorkspace: remoteDescriptor,
+              }
+            : {}),
+        }),
+        'a'.repeat(64)
+      );
+      db.prepare(
+        `INSERT INTO projection_state
+           (source_kind, project_path, session_id, stat_fingerprint)
+         VALUES (?, ?, ?, ?)`
+      ).run(
+        row.sourceKind,
+        row.projectPath,
+        row.sessionId,
+        `fingerprint-${row.sessionId}`
+      );
+    }
+
+    const first = readSessionSurfaceCatalogPage(db, { archived: false, limit: 1 });
+    expect(first.sessions.map((row) => row.sessionId)).toEqual(['local-session']);
+    expect(first.nextBoundary).toBeDefined();
+    const second = readSessionSurfaceCatalogPage(db, {
+      archived: false,
+      limit: 1,
+      boundary: first.nextBoundary,
+    });
+    expect(second.sessions.map((row) => row.sessionId)).toEqual([
+      'second-local-session',
+    ]);
+    const third = readSessionSurfaceCatalogPage(db, {
+      archived: false,
+      limit: 1,
+      boundary: second.nextBoundary,
+    });
+    expect(third.sessions.map((row) => row.sessionId)).toEqual(['remote-session']);
+    expect(third.nextBoundary).toBeUndefined();
+  });
+
+  it('inherits archive state within one projected workspace', async () => {
+    const parentId = 'surface-archive-parent';
+    const childId = 'surface-archive-child';
+    const archivedAt = '2024-01-02T00:00:00.000Z';
+    const archiveDeriver: MetadataDeriver = (entries, currentId, currentPath) => {
+      const metadata = derive(entries, currentId, currentPath, 'local');
+      if (!metadata) return null;
+      const created = entries.find((event) => event.type === 'session_created');
+      const updated = entries.findLast((event) => event.type === 'session_updated');
+      const createdData = created?.data as {
+        parentId?: string;
+        relationType?: string;
+      };
+      const updatedData = updated?.data as { archivedAt?: string } | undefined;
+      return {
+        ...metadata,
+        rootId: parentId,
+        ...(createdData.parentId ? { parentId: createdData.parentId } : {}),
+        ...(createdData.relationType ? { relationType: createdData.relationType } : {}),
+        ...(updatedData?.archivedAt ? { archivedAt: updatedData.archivedAt } : {}),
+      };
+    };
+    const parentFile = getSessionFilePath(projectPath, parentId);
+    const childFile = getSessionFilePath(projectPath, childId);
+    await writeTranscript(parentFile, [
+      {
+        ...ev(1, 'session_created', {
+          sessionId: parentId,
+          rootId: parentId,
+          createdAt: ts,
+          updatedAt: ts,
+        }),
+        sessionId: parentId,
+      },
+      {
+        ...ev(2, 'session_updated', { archivedAt, updatedAt: archivedAt }),
+        sessionId: parentId,
+        timestamp: archivedAt,
+      },
+    ]);
+    await writeTranscript(childFile, [
+      {
+        ...ev(1, 'session_created', {
+          sessionId: childId,
+          rootId: parentId,
+          parentId,
+          relationType: 'fork',
+          createdAt: ts,
+          updatedAt: ts,
+        }),
+        sessionId: childId,
+      },
+    ]);
+    await syncSession(db, parentId, projectPath, archiveDeriver, parentFile);
+    await syncSession(db, childId, projectPath, archiveDeriver, childFile);
+
+    expect(
+      readSessionSurfaceCatalogPage(db, { archived: false, limit: 10 }).sessions
+    ).toHaveLength(0);
+    const archived = readSessionSurfaceCatalogPage(db, {
+      archived: true,
+      limit: 10,
+    }).sessions;
+    expect(archived.map((session) => session.sessionId).sort()).toEqual([
+      childId,
+      parentId,
+    ]);
+    expect(
+      archived.find((session) => session.sessionId === childId)?.summary
+    ).toMatchObject({ archivedAt });
+  });
+
+  it('reads only limit plus one complete history rows and validates stored JSON', async () => {
+    await writeTranscript(sessionFile(), [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+      ...visibleMessageEvents(2, 'message-one', 'user', 'one'),
+      ...visibleMessageEvents(4, 'message-two', 'assistant', 'two'),
+      ...visibleMessageEvents(6, 'message-three', 'user', 'three'),
+    ]);
+    await syncSession(db, sessionId, projectPath, derive);
+
+    let surfaceQueryParameters: readonly unknown[] | undefined;
+    const tracingDb: SqliteDb = {
+      ...db,
+      prepare(sql) {
+        const statement = db.prepare(sql);
+        if (!sql.includes('FROM surface_messages')) return statement;
+        return {
+          run: (...parameters) => statement.run(...parameters),
+          get: <T>(...parameters: unknown[]) => statement.get<T>(...parameters),
+          all: <T>(...parameters: unknown[]) => {
+            surfaceQueryParameters = parameters;
+            return statement.all<T>(...parameters);
+          },
+        };
+      },
+    };
+    const newest = readSessionSurfaceHistoryPage(tracingDb, {
+      sourceKind: 'local',
+      projectPath,
+      sessionId,
+      limit: 2,
+    });
+    expect(surfaceQueryParameters?.at(-1)).toBe(3);
+    expect(newest.messages.map((message) => message.content)).toEqual(['two', 'three']);
+    expect(newest.hasOlder).toBe(true);
+    expect(newest.nextSequence).toBe(4);
+    expect(newest.transcriptFingerprint).toMatch(/^\d+:\d+:\d+:/);
+    expect(newest.surfaceDigest).toMatch(/^[a-f0-9]{64}$/);
+
+    const newestRows = db
+      .prepare(
+        `SELECT byte_count FROM surface_messages
+         WHERE source_kind='local' AND project_path=? AND session_id=?
+         ORDER BY message_seq DESC LIMIT 2`
+      )
+      .all<{ byte_count: number }>(projectPath, sessionId);
+    const exactIndividualBytes = newestRows.reduce(
+      (total, row) => total + row.byte_count,
+      0
+    );
+    const byteBounded = readSessionSurfaceHistoryPage(db, {
+      sourceKind: 'local',
+      projectPath,
+      sessionId,
+      limit: 2,
+      maxBytes: exactIndividualBytes,
+    });
+    expect(Buffer.byteLength(JSON.stringify(byteBounded.messages))).toBeLessThanOrEqual(
+      exactIndividualBytes
+    );
+    expect(byteBounded.hasOlder).toBe(true);
+
+    const older = readSessionSurfaceHistoryPage(db, {
+      sourceKind: 'local',
+      projectPath,
+      sessionId,
+      beforeSequence: newest.nextSequence,
+      limit: 2,
+    });
+    expect(older.messages.map((message) => message.content)).toEqual(['one']);
+    expect(older.hasOlder).toBe(false);
+    expect(older.nextSequence).toBeUndefined();
+
+    const corrupt = JSON.stringify({
+      ...newest.messages[0],
+      privateCanary: 'must-not-pass',
+    });
+    db.prepare(
+      `UPDATE surface_messages SET message_json=?, byte_count=?
+       WHERE source_kind='local' AND project_path=? AND session_id=?
+         AND message_seq=?`
+    ).run(
+      corrupt,
+      Buffer.byteLength(corrupt),
+      projectPath,
+      sessionId,
+      newest.nextSequence
+    );
+    expect(() =>
+      readSessionSurfaceHistoryPage(db, {
+        sourceKind: 'local',
+        projectPath,
+        sessionId,
+        limit: 2,
+      })
+    ).toThrow(SessionSurfaceProjectionError);
+
+    const validJson = JSON.stringify(newest.messages[0]);
+    db.prepare(
+      `UPDATE surface_messages SET message_json=?, byte_count=?
+       WHERE source_kind='local' AND project_path=? AND session_id=?
+         AND message_seq=?`
+    ).run(
+      validJson,
+      Buffer.byteLength(validJson),
+      projectPath,
+      sessionId,
+      newest.nextSequence
+    );
+    db.prepare(
+      `UPDATE surface_messages SET message_id='forged-raw-message-id'
+       WHERE source_kind='local' AND project_path=? AND session_id=?
+         AND message_seq=?`
+    ).run(projectPath, sessionId, newest.nextSequence);
+    expect(() =>
+      readSessionSurfaceHistoryPage(db, {
+        sourceKind: 'local',
+        projectPath,
+        sessionId,
+        limit: 2,
+      })
+    ).toThrow(SessionSurfaceProjectionError);
+
+    db.prepare(
+      `UPDATE sessions SET surface_digest='invalid'
+       WHERE source_kind='local' AND project_path=? AND session_id=?`
+    ).run(projectPath, sessionId);
+    expect(() =>
+      readSessionSurfaceHistoryPage(db, {
+        sourceKind: 'local',
+        projectPath,
+        sessionId,
+        limit: 2,
+      })
+    ).toThrow(SessionSurfaceProjectionError);
+  });
+
+  it('reads history metadata and rows in one SQLite snapshot transaction', async () => {
+    await writeTranscript(sessionFile(), [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+      ...visibleMessageEvents(2, 'snapshot-message', 'user', 'snapshot'),
+    ]);
+    await syncSession(db, sessionId, projectPath, derive);
+
+    let transactionCalls = 0;
+    const tracingDb: SqliteDb = {
+      ...db,
+      transaction<T>(operation: () => T): T {
+        transactionCalls += 1;
+        return db.transaction(operation);
+      },
+    };
+    expect(
+      readSessionSurfaceHistoryPage(tracingDb, {
+        sourceKind: 'local',
+        projectPath,
+        sessionId,
+        limit: 1,
+      }).messages
+    ).toHaveLength(1);
+    expect(transactionCalls).toBe(1);
+  });
+
+  it('fails closed when remote transcript identity changes during the validated read', async () => {
+    const remoteSessionId = 'remote-read-replacement';
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Replacement\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const remoteFilePath = await withValidatedAcpRemoteStateScope(
+      hostStateRoot,
+      async (scope) => {
+        const filePath = getAcpRemoteSessionFilePath(scope, remoteSessionId);
+        await writeTranscript(filePath, [
+          {
+            ...ev(1, 'session_created', {
+              sessionId: remoteSessionId,
+              rootId: remoteSessionId,
+              createdAt: ts,
+              updatedAt: ts,
+              remoteWorkspace: descriptor,
+            }),
+            sessionId: remoteSessionId,
+            projectPath: hostStateRoot,
+            cwd: hostStateRoot,
+          },
+        ]);
+        return filePath;
+      }
+    );
+    const outsideFilePath = path.join(root, 'replacement.jsonl');
+    await writeTranscript(outsideFilePath, [
+      {
+        ...ev(1, 'session_created', {
+          sessionId: remoteSessionId,
+          rootId: remoteSessionId,
+          createdAt: ts,
+          updatedAt: ts,
+          remoteWorkspace: descriptor,
+        }),
+        sessionId: remoteSessionId,
+        projectPath: hostStateRoot,
+        cwd: hostStateRoot,
+      },
+    ]);
+    __setProjectionIOForTesting({
+      async readSession(store, remoteScope) {
+        if (!remoteScope) return store.readAll();
+        await rm(remoteFilePath);
+        await symlink(outsideFilePath, remoteFilePath);
+        return store.readAllValidated({
+          noFollow: true,
+          validateHandle: (handle) =>
+            acpRemoteWorkspaceModule.assertAcpRemoteStateFileHandle(
+              remoteScope,
+              remoteFilePath,
+              handle
+            ),
+        });
+      },
+    });
+
+    await expect(
+      syncSession(
+        db,
+        remoteSessionId,
+        hostStateRoot,
+        deriveWithActualFilePath,
+        remoteFilePath,
+        'acp-remote'
+      )
+    ).rejects.toMatchObject({ code: 'acp_remote_workspace_state_invalid' });
+    expect(
+      db
+        .prepare('SELECT COUNT(*) count FROM sessions WHERE session_id=?')
+        .get<{ count: number }>(remoteSessionId)?.count
+    ).toBe(0);
+  });
+
+  it('rejects surface lookup inputs outside the internal identity contract', () => {
+    expect(() => readSessionSurfaceCandidates(db, '../escape')).toThrow(
+      SessionSurfaceProjectionError
+    );
+    expect(() =>
+      readSessionSurfaceCatalogPage(db, { archived: false, limit: 0 })
+    ).toThrow(SessionSurfaceProjectionError);
+    expect(() =>
+      readSessionSurfaceHistoryPage(db, {
+        sourceKind: 'local',
+        projectPath,
+        sessionId,
+        limit: 101,
+      })
+    ).toThrow(SessionSurfaceProjectionError);
+  });
+
+  it('retries when a local transcript changes while its projection snapshot is read', async () => {
+    const original = [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+      ...visibleMessageEvents(2, 'old-message', 'user', 'old'),
+    ];
+    const replacement = [
+      original[0]!,
+      ...visibleMessageEvents(2, 'new-message', 'user', 'replacement content'),
+    ];
+    await writeTranscript(sessionFile(), original);
+    let reads = 0;
+    __setProjectionIOForTesting({
+      async readSession(store) {
+        reads += 1;
+        const snapshot = await store.readAll();
+        if (reads === 1) await writeTranscript(sessionFile(), replacement);
+        return snapshot;
+      },
+    });
+
+    await syncSession(db, sessionId, projectPath, derive);
+
+    expect(reads).toBe(2);
+    expect(
+      readSessionSurfaceHistoryPage(db, {
+        sourceKind: 'local',
+        projectPath,
+        sessionId,
+        limit: 10,
+      }).messages.map((message) => message.content)
+    ).toEqual(['replacement content']);
+  });
+
+  it('garbage-collects a local projection when the transcript disappears during read', async () => {
+    await writeTranscript(sessionFile(), [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+    ]);
+    await syncSession(db, sessionId, projectPath, derive);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await writeTranscript(sessionFile(), [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+    ]);
+    __setProjectionIOForTesting({
+      async readSession(store) {
+        const snapshot = await store.readAll();
+        await rm(sessionFile());
+        return snapshot;
+      },
+    });
+
+    await expect(syncSession(db, sessionId, projectPath, derive)).resolves.toBe(true);
+    expect(
+      db
+        .prepare('SELECT COUNT(*) count FROM sessions WHERE session_id=?')
+        .get<{ count: number }>(sessionId)?.count
+    ).toBe(0);
+    expect(catalogRevision(db)).toBe(2);
   });
 
   it('projects a session and its searchable text', async () => {
@@ -730,6 +1713,14 @@ describe('SQLite projection sync', () => {
       .all<{ part_id: string }>(sessionId);
     // u2/a2 turn truncated; only u1 + a1 parts remain. No duplicates.
     expect(parts.map((p) => p.part_id)).toEqual(['pa1', 'pu1']);
+    expect(
+      readSessionSurfaceHistoryPage(db, {
+        sourceKind: 'local',
+        projectPath,
+        sessionId,
+        limit: 10,
+      }).messages.map((message) => message.content)
+    ).toEqual(['question one', 'first answer']);
   });
 
   it('syncAll GCs rows whose JSONL no longer exists', async () => {
