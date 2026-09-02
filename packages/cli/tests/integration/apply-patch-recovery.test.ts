@@ -194,6 +194,9 @@ describe('ApplyPatch crash recovery and cross-process lock', () => {
       '/remote',
       service
     );
+    expect(prepared.plan.changes.map((change) => change.remotePath)).toEqual(
+      prepared.preflight.entries.map((entry) => entry.source)
+    );
 
     const fillerPaths = Array.from(
       { length: MAX_ACP_NORMAL_FILE_REQUESTS },

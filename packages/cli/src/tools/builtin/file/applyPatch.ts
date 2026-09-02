@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import * as Diff from 'diff';
@@ -9,31 +8,42 @@ import {
 import {
   AcpFileSystemCapabilityError,
   AcpFileSystemService,
-  normalizeAcpRemotePath,
 } from '../../../acp/AcpFileSystemService.js';
+import { AcpRemotePathError } from '../../../acp/AcpRemotePath.js';
 import {
+  AcpServiceContext,
   getAcpFileSystemService,
   isAcpMode,
   isAcpRemoteFileSystem,
+  isExplicitUnknownAcpSession,
 } from '../../../acp/AcpServiceContext.js';
 import { Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
 import { FileLockManager } from '../../execution/FileLockManager.js';
+import { createUnavailableAcpSessionFileSystemResult } from '../../execution/ToolExecutionResults.js';
+import { getExecutionWorkspaceToolPolicy } from '../../execution/WorkspaceToolPolicy.js';
 import type {
   ApplyPatchMetadata,
   ExecutionContext,
   ToolResult,
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-import { extractApplyPatchPaths, parseApplyPatch } from './applyPatchParser.js';
 import {
+  ApplyPatchParseError,
+  extractApplyPatchPaths,
+  parseApplyPatch,
+} from './applyPatchParser.js';
+import {
+  type AcpRemotePatchPreflight,
   AcpRemotePatchTransactionError,
+  AcpRemotePatchValidationError,
   commitLocalPatchTransaction,
   commitRemotePatchTransaction,
   type PatchTransactionPlan,
   planLocalPatchTransaction,
   planRemotePatchTransaction,
+  preflightRemotePatchTransaction,
 } from './applyPatchTransaction.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 import {
@@ -109,24 +119,41 @@ export const applyPatchTool = createTool({
     params: { patch: string },
     context: ExecutionContext
   ): Promise<ToolResult> {
-    const workspaceRoot =
-      context.workspaceKind === 'acp-remote'
-        ? context.executionRoot
-        : context.workspaceRoot;
     let remoteOwnership = false;
+    const trustedWorkspaceKind = getExecutionWorkspaceToolPolicy(context)?.kind;
+    if (
+      isExplicitUnknownAcpSession(
+        context.sessionId,
+        context.workspaceKind,
+        trustedWorkspaceKind
+      )
+    ) {
+      return createUnavailableAcpSessionFileSystemResult({ mutation: true });
+    }
+    const remote =
+      trustedWorkspaceKind === 'acp-remote' ||
+      (trustedWorkspaceKind !== 'local' && isAcpRemoteFileSystem(context.sessionId));
+    remoteOwnership = remote;
+    const remoteSessionId = remote
+      ? (context.sessionId ?? AcpServiceContext.getCurrentSessionId())
+      : undefined;
+    const workspaceRoot = remote
+      ? (context.executionRoot ?? context.workspaceRoot)
+      : context.workspaceRoot;
     if (!workspaceRoot) {
       return failure('ApplyPatch requires a Session workspace root');
     }
     const signal = context.signal ?? new AbortController().signal;
     try {
       const operations = parseApplyPatch(params.patch);
-      const acpMode = isAcpMode(context.sessionId);
-      const remote = isAcpRemoteFileSystem(context.sessionId);
+      const acpMode =
+        trustedWorkspaceKind === 'acp-remote' ||
+        (trustedWorkspaceKind !== 'local' && isAcpMode(context.sessionId));
       const fileSystem = acpMode
         ? getAcpFileSystemService(context.sessionId)
         : getFileSystemService();
       let remoteFileSystem: AcpFileSystemService | null = null;
-      remoteOwnership = remote;
+      let remotePreflight: AcpRemotePatchPreflight | undefined;
       if (remote) {
         if (
           !(fileSystem instanceof AcpFileSystemService) ||
@@ -157,25 +184,38 @@ export const applyPatchTool = createTool({
           }
           throw error;
         }
+        remotePreflight = preflightRemotePatchTransaction(
+          operations,
+          remoteFileSystem.getPathProfile()
+        );
       }
       const workspaceIdentity =
-        remote && context.sessionId
-          ? createRemotePatchWorkspaceIdentity(context.sessionId, workspaceRoot)
+        remote && remoteSessionId
+          ? createRemotePatchWorkspaceIdentity(
+              remoteSessionId,
+              remotePreflight!.workspace
+            )
           : await fs.realpath(workspaceRoot);
-      const patchPaths = safePatchPaths(params.patch);
+      const patchPaths = remote ? [] : uniqueOperationPaths(operations);
       const remoteTargetPaths = remote
-        ? patchPaths
-            .map((filePath) => resolveLockPath(workspaceRoot, filePath))
-            .sort((left, right) => left.localeCompare(right))
+        ? remotePreflight!.entries
+            .flatMap((entry) =>
+              entry.destination ? [entry.source, entry.destination] : [entry.source]
+            )
+            .sort((left, right) =>
+              left.collisionIdentity.localeCompare(right.collisionIdentity)
+            )
         : [];
       if (remote) {
-        remoteFileSystem!.precheckMutationPaths(remoteTargetPaths);
+        remoteFileSystem!.precheckMutationPathsForParsedPaths(remoteTargetPaths);
       }
       const lockPaths = remote
-        ? remoteTargetPaths.map((filePath) =>
-            remoteFileSystem!.createOpaqueLockKey(filePath)
+        ? remoteTargetPaths.map((remotePath) =>
+            remoteFileSystem!.createOpaqueLockKeyForParsedPath(remotePath)
           )
-        : patchPaths.map((filePath) => resolveLockPath(workspaceIdentity, filePath));
+        : patchPaths.map((filePath) =>
+            resolveLocalPatchLockPath(workspaceIdentity, filePath)
+          );
       return await withPatchWorkspaceLock(workspaceIdentity, async () => {
         signal.throwIfAborted();
         if (!remote) {
@@ -192,10 +232,13 @@ export const applyPatchTool = createTool({
           let plan: PatchTransactionPlan;
           if (remote) {
             context.updateOutput?.('Preflighting remote patch...');
-            const lease = remoteFileSystem!.tryAcquireMutationLease(remoteTargetPaths);
+            const lease =
+              remoteFileSystem!.tryAcquireMutationLeaseForParsedPaths(
+                remoteTargetPaths
+              );
             const forwardDeadlineAt = Date.now() + ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS;
             try {
-              plan = await planRemotePatchTransaction(
+              const remotePlan = await planRemotePatchTransaction(
                 operations,
                 workspaceRoot,
                 remoteFileSystem!,
@@ -203,14 +246,16 @@ export const applyPatchTool = createTool({
                   signal,
                   deadlineAt: forwardDeadlineAt,
                   lease,
+                  preflight: remotePreflight,
                 }
               );
+              plan = remotePlan;
               context.updateOutput?.(
                 `Applying ${plan.changes.length} atomic file change${
                   plan.changes.length === 1 ? '' : 's'
                 }...`
               );
-              await commitRemotePatchTransaction(plan, remoteFileSystem!, {
+              await commitRemotePatchTransaction(remotePlan, remoteFileSystem!, {
                 signal,
                 forwardDeadlineAt,
                 lease,
@@ -285,18 +330,42 @@ export const applyPatchTool = createTool({
             snapshot_created: snapshotCreated,
             session_id: context.sessionId,
             message_id: context.messageId,
-            summary: summarizePlan(plan, workspaceIdentity),
+            summary: summarizePlan(
+              plan,
+              remote
+                ? remotePreflight!.workspace.wirePath
+                : path.basename(workspaceIdentity)
+            ),
             write_verified: remote ? true : undefined,
             sideEffectsUncertain: remote ? false : undefined,
           };
           return {
             success: true,
-            llmContent: renderPlan(plan, remote ? workspaceRoot : workspaceIdentity),
+            llmContent: renderPlan(
+              plan,
+              remote ? undefined : workspaceIdentity,
+              remote
+                ? remotePreflight!.workspace.wirePath
+                : path.basename(workspaceIdentity)
+            ),
             metadata,
           };
         });
       });
     } catch (error) {
+      if (remoteOwnership && error instanceof AcpRemotePatchValidationError) {
+        return remotePatchValidationFailure(error.reason);
+      }
+      if (remoteOwnership && error instanceof AcpRemotePathError) {
+        return remotePatchValidationFailure(error.reason);
+      }
+      if (remoteOwnership && error instanceof ApplyPatchParseError) {
+        return remotePatchValidationFailure(
+          isRemotePatchTraversalError(error, params.patch)
+            ? 'workspace-escape'
+            : undefined
+        );
+      }
       if (error instanceof AcpRemotePatchTransactionError) {
         const requiresRead = error.errors.some(
           (entry) =>
@@ -353,7 +422,37 @@ function safePatchPaths(patchText: string): string[] {
   }
 }
 
-function resolveLockPath(workspaceRoot: string, filePath: string): string {
+function uniqueOperationPaths(
+  operations: ReturnType<typeof parseApplyPatch>
+): string[] {
+  return [
+    ...new Set(
+      operations.flatMap((operation) =>
+        operation.kind === 'update' && operation.movePath
+          ? [operation.path, operation.movePath]
+          : [operation.path]
+      )
+    ),
+  ];
+}
+
+function isRemotePatchTraversalError(
+  error: ApplyPatchParseError,
+  patchText: string
+): boolean {
+  if (error.line === undefined) return false;
+  const line = patchText.replace(/\r\n/g, '\n').split('\n')[error.line - 1];
+  if (!line) return false;
+  const marker = [
+    '*** Add File: ',
+    '*** Delete File: ',
+    '*** Update File: ',
+    '*** Move to: ',
+  ].find((candidate) => line.startsWith(candidate));
+  return marker !== undefined && line.slice(marker.length).split('/').includes('..');
+}
+
+function resolveLocalPatchLockPath(workspaceRoot: string, filePath: string): string {
   const pathApi = /^[A-Za-z]:[\\/]/.test(workspaceRoot) ? path.win32 : path.posix;
   return pathApi.resolve(workspaceRoot, ...filePath.split('/'));
 }
@@ -471,21 +570,30 @@ async function updateFileAccess(
   }
 }
 
-function summarizePlan(plan: PatchTransactionPlan, workspaceRoot: string): string {
+function summarizePlan(plan: PatchTransactionPlan, workspaceLabel: string): string {
   const counts = {
     add: plan.changes.filter((change) => change.kind === 'add').length,
     update: plan.changes.filter((change) => change.kind === 'update').length,
     delete: plan.changes.filter((change) => change.kind === 'delete').length,
   };
-  return `Applied ${plan.changes.length} file changes atomically (${counts.add} added, ${counts.update} updated, ${counts.delete} deleted) in ${path.basename(workspaceRoot)}`;
+  return `Applied ${plan.changes.length} file changes atomically (${counts.add} added, ${counts.update} updated, ${counts.delete} deleted) in ${workspaceLabel}`;
 }
 
-function renderPlan(plan: PatchTransactionPlan, workspaceRoot: string): string {
+function renderPlan(
+  plan: PatchTransactionPlan,
+  localWorkspaceRoot: string | undefined,
+  workspaceLabel: string
+): string {
   const markers = { add: 'A', update: 'M', delete: 'D' } as const;
   return [
-    summarizePlan(plan, workspaceRoot),
+    summarizePlan(plan, workspaceLabel),
     ...plan.changes.map(
-      (change) => `${markers[change.kind]} ${path.relative(workspaceRoot, change.path)}`
+      (change) =>
+        `${markers[change.kind]} ${
+          localWorkspaceRoot
+            ? path.relative(localWorkspaceRoot, change.path)
+            : change.path
+        }`
     ),
   ].join('\n');
 }
@@ -510,6 +618,28 @@ function failure(
     metadata: {
       summary,
       ...metadata,
+    },
+  };
+}
+
+function remotePatchValidationFailure(
+  reason?: AcpRemotePatchValidationError['reason'] | AcpRemotePathError['reason']
+): ToolResult {
+  const message = 'ACP remote patch is invalid';
+  return {
+    success: false,
+    llmContent: message,
+    error: {
+      type: ToolErrorType.VALIDATION_ERROR,
+      code: 'acp_remote_patch_invalid',
+      message,
+      ...(reason === undefined ? {} : { details: { reason } }),
+    },
+    metadata: {
+      summary: 'ApplyPatch failed; no partial patch was accepted',
+      sideEffectsUncertain: false,
+      write_acknowledged: false,
+      write_verified: false,
     },
   };
 }

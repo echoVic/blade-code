@@ -385,6 +385,11 @@ export class AcpFileSystemService implements FileSystemService {
 
   createOpaqueLockKey(filePath: string): string {
     const remotePath = this.parsePath(filePath);
+    return this.createOpaqueLockKeyForParsedPath(remotePath);
+  }
+
+  createOpaqueLockKeyForParsedPath(remotePath: AcpRemotePath): string {
+    this.assertParsedPathStyle(remotePath);
     return `acp-remote:${createHash('sha256')
       .update(this.sessionId)
       .update('\0')
@@ -524,8 +529,15 @@ export class AcpFileSystemService implements FileSystemService {
 
   precheckMutationPaths(filePaths: readonly string[]): void {
     const normalizedPaths = filePaths.map((filePath) => this.parsePath(filePath));
+    this.precheckMutationPathsForParsedPaths(normalizedPaths);
+  }
+
+  precheckMutationPathsForParsedPaths(remotePaths: readonly AcpRemotePath[]): void {
+    for (const remotePath of remotePaths) {
+      this.assertParsedPathStyle(remotePath);
+    }
     const coordinator = getAcpFileRequestCoordinator(this.connection);
-    coordinator.precheckMutationPaths(normalizedPaths, this.sessionId);
+    coordinator.precheckMutationPaths(remotePaths, this.sessionId);
   }
 
   tryAcquireMutationLease(filePaths: readonly string[]): AcpRemoteMutationLease {

@@ -1,11 +1,12 @@
-import path from 'node:path';
 import { ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS } from '../../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../../src/acp/AcpFileSystemService.js';
 import { createAcpRemotePathProfile } from '../../../src/acp/AcpRemotePath.js';
 import { parseApplyPatch } from '../../../src/tools/builtin/file/applyPatchParser.js';
 import {
+  type AcpRemotePatchPreflight,
   commitRemotePatchTransaction,
   planRemotePatchTransaction,
+  preflightRemotePatchTransaction,
 } from '../../../src/tools/builtin/file/applyPatchTransaction.js';
 import { ControlledFileClient } from './ControlledFileClient.js';
 import {
@@ -15,8 +16,9 @@ import {
 
 export interface PreparedRemotePatchTransactionForTest {
   plan: Awaited<ReturnType<typeof planRemotePatchTransaction>>;
+  preflight: AcpRemotePatchPreflight;
   forwardDeadlineAt: number;
-  lease: ReturnType<AcpFileSystemService['tryAcquireMutationLease']>;
+  lease: ReturnType<AcpFileSystemService['tryAcquireMutationLeaseForParsedPaths']>;
 }
 
 export function createAcpRemoteFileSystemForPatchTest(
@@ -58,19 +60,28 @@ export async function prepareRemotePatchTransactionForTest(
 ): Promise<PreparedRemotePatchTransactionForTest> {
   const forwardDeadlineAt =
     options?.forwardDeadlineAt ?? Date.now() + ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS;
-  const targetPaths = operations
-    .filter((operation) => operation.kind === 'update')
-    .map((operation) => path.posix.resolve(workspaceRoot, ...operation.path.split('/')))
-    .sort((left, right) => left.localeCompare(right));
-  const lease = service.tryAcquireMutationLease(targetPaths);
+  const preflight = preflightRemotePatchTransaction(
+    operations,
+    service.getPathProfile()
+  );
+  const targetPaths = preflight.entries
+    .flatMap((entry) =>
+      entry.destination ? [entry.source, entry.destination] : [entry.source]
+    )
+    .sort((left, right) =>
+      left.collisionIdentity.localeCompare(right.collisionIdentity)
+    );
+  const lease = service.tryAcquireMutationLeaseForParsedPaths(targetPaths);
   try {
     const plan = await planRemotePatchTransaction(operations, workspaceRoot, service, {
       signal: options?.signal,
       deadlineAt: forwardDeadlineAt,
       lease,
+      preflight,
     });
     return {
       plan,
+      preflight,
       forwardDeadlineAt,
       lease,
     };

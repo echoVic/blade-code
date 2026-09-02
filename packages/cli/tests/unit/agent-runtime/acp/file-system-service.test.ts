@@ -649,7 +649,22 @@ describe('AcpFileSystemService remote ownership', () => {
       message: 'ACP remote path identity is invalid',
     });
     assertIdentityError(() => service.checkRemoteAccessForParsedPath(forged, 'forged'));
+    assertIdentityError(() => service.createOpaqueLockKeyForParsedPath(forged));
+    assertIdentityError(() => service.precheckMutationPathsForParsedPaths([forged]));
     assertIdentityError(() => service.tryAcquireMutationLeaseForParsedPaths([forged]));
+    for (const operation of [
+      () => service.createOpaqueLockKeyForParsedPath(parseAcpRemotePath('/source.ts')),
+      () =>
+        service.precheckMutationPathsForParsedPaths([parseAcpRemotePath('/source.ts')]),
+    ]) {
+      expect(operation).toThrowError(
+        expect.objectContaining({
+          name: 'AcpRemotePathError',
+          code: 'acp_remote_path_invalid',
+          reason: 'style-mismatch',
+        })
+      );
+    }
     await expect(
       service.writeTextFileForParsedPath(forged, 'forged')
     ).rejects.toMatchObject({

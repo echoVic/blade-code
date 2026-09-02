@@ -11,17 +11,25 @@ import {
 } from '../../src/acp/AcpFileRequestCoordinator.js';
 import { AcpFileSystemService } from '../../src/acp/AcpFileSystemService.js';
 import {
+  AcpRemotePathError,
   createAcpRemotePathProfile,
   parseAcpRemotePath,
 } from '../../src/acp/AcpRemotePath.js';
 import { commitVerifiedRemoteTextMutation } from '../../src/acp/RemoteTextMutation.js';
-import { parseApplyPatch } from '../../src/tools/builtin/file/applyPatchParser.js';
+import {
+  type ApplyPatchOperation,
+  parseApplyPatch,
+} from '../../src/tools/builtin/file/applyPatchParser.js';
 import {
   AcpRemotePatchTransactionError,
+  AcpRemotePatchValidationError,
   commitLocalPatchTransaction,
+  commitRemotePatchTransaction,
   type LocalPatchFileSystem,
   planLocalPatchTransaction,
   planRemotePatchTransaction,
+  preflightRemotePatchTransaction,
+  type RemotePatchTransactionPlan,
 } from '../../src/tools/builtin/file/applyPatchTransaction.js';
 import { ControlledFileClient } from '../support/acp/ControlledFileClient.js';
 import {
@@ -39,6 +47,27 @@ const roots: string[] = [];
 const harnesses: PairedAcpHarness[] = [];
 let previousStorageRoot: string | undefined;
 const remoteProfile = createAcpRemotePathProfile('/remote');
+const windowsRemoteProfile = createAcpRemotePathProfile('C:\\workspace');
+
+function remoteUpdate(
+  filePath: string,
+  line = 2
+): Extract<ApplyPatchOperation, { kind: 'update' }> {
+  return {
+    kind: 'update',
+    path: filePath,
+    chunks: [
+      {
+        oldLines: ['before'],
+        newLines: ['after'],
+        isEndOfFile: false,
+        hasChange: true,
+        line: line + 1,
+      },
+    ],
+    line,
+  };
+}
 
 async function workspace(name: string): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), `blade-patch-${name}-`));
@@ -231,6 +260,260 @@ describe('ApplyPatch local transaction', () => {
 });
 
 describe('ApplyPatch ACP remote transaction', () => {
+  function expectRemotePathFailure(
+    operations: readonly ApplyPatchOperation[],
+    expectedReason: AcpRemotePathError['reason']
+  ): void {
+    try {
+      preflightRemotePatchTransaction(operations, windowsRemoteProfile);
+    } catch (error) {
+      if (!(error instanceof AcpRemotePathError)) throw error;
+      expect(error.reason).toBe(expectedReason);
+      expect(JSON.stringify(error)).not.toContain(operations[0]?.path);
+      return;
+    }
+    throw new Error(`expected remote path failure: ${expectedReason}`);
+  }
+
+  function expectRemotePatchFailure(
+    operations: readonly ApplyPatchOperation[],
+    expectedReason: AcpRemotePatchValidationError['reason'],
+    profile = windowsRemoteProfile
+  ): void {
+    try {
+      preflightRemotePatchTransaction(operations, profile);
+    } catch (error) {
+      if (!(error instanceof AcpRemotePatchValidationError)) throw error;
+      expect(error.reason).toBe(expectedReason);
+      expect(JSON.stringify(error)).not.toContain(operations[0]?.path);
+      return;
+    }
+    throw new Error(`expected remote patch failure: ${expectedReason}`);
+  }
+
+  it.each([
+    {
+      label: 'add',
+      operation: {
+        kind: 'add',
+        path: 'bad?:stream',
+        content: 'content\n',
+        line: 2,
+      } satisfies ApplyPatchOperation,
+    },
+    {
+      label: 'delete',
+      operation: {
+        kind: 'delete',
+        path: 'bad?:stream',
+        line: 2,
+      } satisfies ApplyPatchOperation,
+    },
+    {
+      label: 'move',
+      operation: {
+        ...remoteUpdate('source.ts'),
+        movePath: 'bad?:stream',
+      } satisfies ApplyPatchOperation,
+    },
+    {
+      label: 'empty move destination',
+      operation: {
+        ...remoteUpdate('source.ts'),
+        movePath: '',
+      } satisfies ApplyPatchOperation,
+    },
+  ])(
+    'rejects unsupported remote $label before path classification',
+    ({ operation }) => {
+      expectRemotePatchFailure([operation], 'unsupported-operation');
+    }
+  );
+
+  it.each([
+    ['alternate-data-stream', 'a:b'],
+    ['alternate-data-stream', 'file.ts:stream?'],
+    ['trailing-dot-or-space', 'nested. /file.ts'],
+    ['reserved-device-name', 'CON.'],
+    ['reserved-device-name', 'nested/LPT².log'],
+    ['short-name-alias', 'PROGRA~1/file.ts'],
+    ['invalid-character', 'bad?.ts'],
+  ] as const)('rejects Windows %s components in patch order', (reason, filePath) => {
+    expectRemotePathFailure([remoteUpdate(filePath)], reason);
+  });
+
+  it('returns the first invalid occurrence and validates all occurrences before duplicates', () => {
+    expectRemotePathFailure(
+      [remoteUpdate('bad?.ts'), remoteUpdate('file.ts:stream')],
+      'invalid-character'
+    );
+    expectRemotePathFailure(
+      [remoteUpdate('same.ts'), remoteUpdate('same.ts'), remoteUpdate('CON.')],
+      'reserved-device-name'
+    );
+  });
+
+  it('rejects workspace escapes and restricted paths before duplicate comparison', () => {
+    expectRemotePatchFailure([remoteUpdate('../outside.ts')], 'workspace-escape');
+    expectRemotePatchFailure([remoteUpdate('.GIT/config')], 'restricted-path');
+    expectRemotePathFailure(
+      [remoteUpdate('../outside.ts'), remoteUpdate('bad?.ts')],
+      'invalid-character'
+    );
+    expectRemotePatchFailure(
+      [remoteUpdate('.GiT/config'), remoteUpdate('../outside.ts')],
+      'workspace-escape'
+    );
+    expectRemotePatchFailure(
+      [remoteUpdate('same.ts'), remoteUpdate('same.ts'), remoteUpdate('.GiT/config')],
+      'restricted-path'
+    );
+  });
+
+  it('rejects exact and Windows case-collision duplicate targets only after validation', () => {
+    expectRemotePatchFailure(
+      [remoteUpdate('same.ts'), remoteUpdate('same.ts')],
+      'duplicate-target'
+    );
+    expectRemotePatchFailure(
+      [remoteUpdate('Folder/File.ts'), remoteUpdate('folder/file.ts')],
+      'duplicate-target'
+    );
+  });
+
+  it('preserves POSIX names and case-distinct targets in ordered canonical entries', () => {
+    const operations = [
+      remoteUpdate('CON'),
+      remoteUpdate('a:b'),
+      remoteUpdate('.GIT/config'),
+      remoteUpdate('Folder/File.ts'),
+      remoteUpdate('folder/file.ts'),
+    ];
+
+    const preflight = preflightRemotePatchTransaction(operations, remoteProfile);
+
+    expect(preflight.workspace).toBe(remoteProfile.workspace);
+    expect(preflight.entries.map((entry) => entry.operation)).toEqual(operations);
+    expect(preflight.entries.map((entry) => entry.source.wirePath)).toEqual([
+      '/remote/CON',
+      '/remote/a:b',
+      '/remote/.GIT/config',
+      '/remote/Folder/File.ts',
+      '/remote/folder/file.ts',
+    ]);
+    expect(
+      new Set(preflight.entries.map((entry) => entry.source.collisionIdentity)).size
+    ).toBe(5);
+  });
+
+  it('rejects a preflight paired with a different operation snapshot before ACP I/O', async () => {
+    const { client, service } = createAcpRemoteFileSystem(
+      new Map([['/remote/file.ts', 'before\n']]),
+      'preflight-operation-mismatch'
+    );
+    const firstOperations = [remoteUpdate('file.ts')];
+    const secondOperations = [remoteUpdate('file.ts')];
+    const preflight = preflightRemotePatchTransaction(firstOperations, remoteProfile);
+    const lease = service.tryAcquireMutationLeaseForParsedPaths([
+      preflight.entries[0]!.source,
+    ]);
+
+    try {
+      await expect(
+        planRemotePatchTransaction(secondOperations, '/remote', service, {
+          deadlineAt: Date.now() + ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS,
+          lease,
+          preflight,
+        })
+      ).rejects.toThrow('ACP remote patch preflight is invalid');
+      expect(client.requests).toEqual([]);
+    } finally {
+      lease.release();
+    }
+  });
+
+  it('creates a defensive preflight for a direct planner call without one', async () => {
+    const { client, service } = createAcpRemoteFileSystem(
+      new Map([['/remote/file.ts', 'before\n']]),
+      'direct-planner-preflight'
+    );
+    const operations = [remoteUpdate('file.ts')];
+    const remotePath = parseAcpRemotePath('/remote/file.ts');
+    const lease = service.tryAcquireMutationLeaseForParsedPaths([remotePath]);
+
+    try {
+      const plan = await planRemotePatchTransaction(operations, '/remote', service, {
+        deadlineAt: Date.now() + ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS,
+        lease,
+      });
+      expect(plan.changes).toHaveLength(1);
+      expect(plan.changes[0]?.remotePath.wirePath).toBe('/remote/file.ts');
+      expect(client.requests).toHaveLength(1);
+    } finally {
+      lease.release();
+    }
+  });
+
+  it('rejects an unbranded copied preflight before ACP I/O', async () => {
+    const { client, service } = createAcpRemoteFileSystem(
+      new Map([['/remote/file.ts', 'before\n']]),
+      'copied-preflight-rejection'
+    );
+    const operations = [remoteUpdate('file.ts')];
+    const preflight = preflightRemotePatchTransaction(operations, remoteProfile);
+    const copiedPreflight = Object.freeze({ ...preflight });
+    const lease = service.tryAcquireMutationLeaseForParsedPaths([
+      preflight.entries[0]!.source,
+    ]);
+
+    try {
+      await expect(
+        planRemotePatchTransaction(operations, '/remote', service, {
+          deadlineAt: Date.now() + ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS,
+          lease,
+          preflight: copiedPreflight,
+        })
+      ).rejects.toThrow('ACP remote patch preflight is invalid');
+      expect(client.requests).toEqual([]);
+    } finally {
+      lease.release();
+    }
+  });
+
+  it('rejects an unbranded remote plan before commit I/O', async () => {
+    const { client, service } = createAcpRemoteFileSystem(
+      new Map([['/remote/file.ts', 'before\n']]),
+      'unbranded-remote-plan'
+    );
+    const remotePath = parseAcpRemotePath('/remote/file.ts');
+    const lease = service.tryAcquireMutationLeaseForParsedPaths([remotePath]);
+    const plan: RemotePatchTransactionPlan = {
+      workspaceRoot: '/remote',
+      affectedPaths: ['/remote/file.ts'],
+      changes: [
+        {
+          kind: 'update',
+          path: '/remote/file.ts',
+          oldContent: 'before\n',
+          newContent: 'after\n',
+          remotePath,
+        },
+      ],
+    };
+
+    try {
+      await expect(
+        commitRemotePatchTransaction(plan, service, {
+          forwardDeadlineAt: Date.now() + ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS,
+          lease,
+        })
+      ).rejects.toThrow('ACP remote patch plan is invalid');
+      expect(client.requests).toEqual([]);
+    } finally {
+      lease.release();
+    }
+  });
+
   it('parses a self-owned mutation path once and reuses that identity through lease transitions', async () => {
     const client = new ControlledFileClient();
     client.files.set('/remote/file.ts', 'before\n');
@@ -390,17 +673,21 @@ describe('ApplyPatch ACP remote transaction', () => {
       '/remote',
       service
     );
-    await expect(
-      commitPreparedRemotePatchTransactionForTest(prepared, service)
-    ).rejects.toMatchObject({
-      name: 'AcpRemotePatchTransactionError',
-      sideEffectsUncertain: false,
-      errors: [
-        expect.objectContaining({
-          message: 'Remote file changed after patch preflight: /remote/first.ts',
-        }),
-      ],
+    let thrown: unknown;
+    try {
+      await commitPreparedRemotePatchTransactionForTest(prepared, service);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(AcpRemotePatchTransactionError);
+    if (!(thrown instanceof AcpRemotePatchTransactionError)) {
+      throw new Error('expected AcpRemotePatchTransactionError');
+    }
+    expect(thrown.sideEffectsUncertain).toBe(false);
+    expect(thrown.errors[0]).toMatchObject({
+      message: 'Remote file changed after patch preflight',
     });
+    expect(String(thrown.errors[0])).not.toContain('/remote/first.ts');
     expect(requests).toEqual([
       { kind: 'read', path: '/remote/first.ts' },
       { kind: 'read', path: '/remote/second.ts' },
@@ -570,7 +857,7 @@ describe('ApplyPatch ACP remote transaction', () => {
     expect(client.files.get('/remote/second.ts')).toBe('const second = false;\n');
   });
 
-  it('parses each attempted change once and reuses it for forward and rollback lease transitions', async () => {
+  it('reuses preflight identities without reparsing during forward and rollback lease transitions', async () => {
     const { client, service } = createAcpRemoteFileSystem(
       new Map([
         ['/remote/first.ts', 'const first = false;\n'],
@@ -598,6 +885,9 @@ describe('ApplyPatch ACP remote transaction', () => {
       '/remote',
       service
     );
+    expect(prepared.plan.changes.map((change) => change.remotePath)).toEqual(
+      prepared.preflight.entries.map((entry) => entry.source)
+    );
     const parseSpy = vi.spyOn(service, 'parsePath');
 
     await expect(
@@ -607,7 +897,7 @@ describe('ApplyPatch ACP remote transaction', () => {
       sideEffectsUncertain: false,
     });
 
-    expect(parseSpy.mock.calls).toEqual([['/remote/first.ts'], ['/remote/second.ts']]);
+    expect(parseSpy).not.toHaveBeenCalled();
     parseSpy.mockRestore();
   });
 
@@ -948,7 +1238,11 @@ describe('ApplyPatch ACP remote transaction', () => {
           deadlineAt: Date.now() + ACP_REMOTE_PATCH_FORWARD_TIMEOUT_MS,
           lease: inertLease,
         })
-      ).rejects.toThrow('Update File operations only');
+      ).rejects.toMatchObject({
+        name: 'AcpRemotePatchValidationError',
+        code: 'acp_remote_patch_invalid',
+        reason: 'unsupported-operation',
+      });
     }
     inertLease.release();
   });

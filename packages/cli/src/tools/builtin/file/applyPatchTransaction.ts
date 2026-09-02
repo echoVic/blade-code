@@ -12,7 +12,14 @@ import {
   AcpFileSystemService,
   isAcpResourceNotFoundError,
 } from '../../../acp/AcpFileSystemService.js';
-import type { AcpRemotePath } from '../../../acp/AcpRemotePath.js';
+import {
+  type AcpRemotePath,
+  type AcpRemotePathProfile,
+  assertCanonicalAcpRemotePath,
+  assertCanonicalAcpRemotePathProfile,
+  createAcpRemotePathProfile,
+  parseAcpRemotePath,
+} from '../../../acp/AcpRemotePath.js';
 import {
   AcpRemoteMutationError,
   commitVerifiedRemoteTextMutation,
@@ -40,6 +47,70 @@ const REMOTE_RESTRICTED_SEGMENTS = new Set([
   '.env.test',
 ]);
 
+const remotePatchPreflights = new WeakMap<
+  object,
+  {
+    readonly operations: readonly ApplyPatchOperation[];
+    readonly profile: AcpRemotePathProfile;
+  }
+>();
+const remotePatchPlans = new WeakMap<
+  object,
+  {
+    readonly fileSystem: AcpFileSystemService;
+    readonly lease: AcpRemoteMutationLease;
+  }
+>();
+
+export type AcpRemotePatchValidationReason =
+  | 'unsupported-operation'
+  | 'workspace-escape'
+  | 'restricted-path'
+  | 'duplicate-target';
+
+const REMOTE_PATCH_VALIDATION_MESSAGES: Record<AcpRemotePatchValidationReason, string> =
+  {
+    'unsupported-operation': 'ACP remote patch contains an unsupported operation',
+    'workspace-escape': 'ACP remote patch path escapes the workspace',
+    'restricted-path': 'ACP remote patch path is restricted',
+    'duplicate-target': 'ACP remote patch contains a duplicate target',
+  };
+
+export class AcpRemotePatchValidationError extends Error {
+  readonly name = 'AcpRemotePatchValidationError';
+  readonly code = 'acp_remote_patch_invalid';
+
+  constructor(readonly reason: AcpRemotePatchValidationReason) {
+    super(REMOTE_PATCH_VALIDATION_MESSAGES[reason]);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+
+  toJSON(): {
+    readonly name: 'AcpRemotePatchValidationError';
+    readonly code: 'acp_remote_patch_invalid';
+    readonly reason: AcpRemotePatchValidationReason;
+    readonly message: string;
+  } {
+    return {
+      name: this.name,
+      code: this.code,
+      reason: this.reason,
+      message: this.message,
+    };
+  }
+}
+
+export interface AcpRemotePatchEntry {
+  readonly operation: Extract<ApplyPatchOperation, { kind: 'update' }>;
+  readonly source: AcpRemotePath;
+  readonly destination?: AcpRemotePath;
+}
+
+export interface AcpRemotePatchPreflight {
+  readonly workspace: AcpRemotePath;
+  readonly entries: readonly AcpRemotePatchEntry[];
+}
+
 export interface PatchFileChange {
   kind: 'add' | 'update' | 'delete';
   path: string;
@@ -52,6 +123,17 @@ export interface PatchTransactionPlan {
   workspaceRoot: string;
   changes: PatchFileChange[];
   affectedPaths: string[];
+}
+
+export interface RemotePatchFileChange extends PatchFileChange {
+  kind: 'update';
+  oldContent: string;
+  newContent: string;
+  remotePath: AcpRemotePath;
+}
+
+export interface RemotePatchTransactionPlan extends PatchTransactionPlan {
+  changes: RemotePatchFileChange[];
 }
 
 export interface LocalPatchFileSystem {
@@ -74,6 +156,7 @@ export interface RemotePatchPlanOptions {
   signal?: AbortSignal;
   deadlineAt: number;
   lease: AcpRemoteMutationLease;
+  preflight?: AcpRemotePatchPreflight;
 }
 
 export interface RemotePatchCommitOptions {
@@ -95,6 +178,15 @@ export class AcpRemotePatchTransactionError extends AggregateError {
         ? 'ApplyPatch failed and the ACP remote transaction outcome is uncertain'
         : 'ApplyPatch failed but the ACP remote transaction was rolled back'
     );
+  }
+}
+
+class AcpRemotePatchPreflightError extends Error {
+  readonly name = 'AcpRemotePatchPreflightError';
+
+  constructor() {
+    super('ACP remote patch preflight failed');
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
@@ -123,6 +215,111 @@ const localFileSystem: LocalPatchFileSystem = {
     }
   },
 };
+
+export function preflightRemotePatchTransaction(
+  operations: readonly ApplyPatchOperation[],
+  profile: AcpRemotePathProfile
+): AcpRemotePatchPreflight {
+  assertCanonicalAcpRemotePathProfile(profile);
+  if (
+    operations.some(
+      (operation) => operation.kind !== 'update' || operation.movePath !== undefined
+    )
+  ) {
+    throw new AcpRemotePatchValidationError('unsupported-operation');
+  }
+
+  const classified: Array<{
+    readonly operation: Extract<ApplyPatchOperation, { kind: 'update' }>;
+    readonly source: AcpRemotePath;
+    readonly escapesWorkspace: boolean;
+  }> = [];
+  for (const candidate of operations) {
+    if (candidate.kind !== 'update' || candidate.movePath !== undefined) {
+      throw new AcpRemotePatchValidationError('unsupported-operation');
+    }
+    const operation = freezeRemoteUpdateOperation(candidate);
+    classified.push(
+      Object.freeze({
+        operation,
+        ...classifyRemotePatchSource(operation.path, profile),
+      })
+    );
+  }
+
+  if (classified.some((entry) => entry.escapesWorkspace)) {
+    throw new AcpRemotePatchValidationError('workspace-escape');
+  }
+  const entries: AcpRemotePatchEntry[] = classified.map((entry) =>
+    Object.freeze({ operation: entry.operation, source: entry.source })
+  );
+
+  for (const entry of entries) {
+    const restricted = entry.operation.path
+      .split('/')
+      .some((segment) =>
+        REMOTE_RESTRICTED_SEGMENTS.has(
+          profile.style === 'win32' ? segment.toLowerCase() : segment
+        )
+      );
+    if (restricted) {
+      throw new AcpRemotePatchValidationError('restricted-path');
+    }
+  }
+
+  const collisionIdentities = new Set<AcpRemotePath['collisionIdentity']>();
+  for (const entry of entries) {
+    const targets = entry.destination
+      ? [entry.source, entry.destination]
+      : [entry.source];
+    for (const target of targets) {
+      if (collisionIdentities.has(target.collisionIdentity)) {
+        throw new AcpRemotePatchValidationError('duplicate-target');
+      }
+      collisionIdentities.add(target.collisionIdentity);
+    }
+  }
+
+  const preflight: AcpRemotePatchPreflight = Object.freeze({
+    workspace: profile.workspace,
+    entries: Object.freeze(entries),
+  });
+  remotePatchPreflights.set(preflight, { operations, profile });
+  return preflight;
+}
+
+function classifyRemotePatchSource(
+  relativePath: string,
+  profile: AcpRemotePathProfile
+): { readonly source: AcpRemotePath; readonly escapesWorkspace: boolean } {
+  if (
+    relativePath.startsWith('/') ||
+    relativePath.startsWith('\\') ||
+    (profile.style === 'win32' && /^[A-Za-z]:[\\/]/u.test(relativePath))
+  ) {
+    return {
+      source: parseAcpRemotePath(relativePath, profile.style),
+      escapesWorkspace: true,
+    };
+  }
+  const pathApi = profile.style === 'win32' ? path.win32 : path.posix;
+  const separator = pathApi.sep;
+  const source = parseAcpRemotePath(
+    `${profile.workspace.wirePath}${
+      profile.workspace.wirePath.endsWith(separator) ? '' : separator
+    }${relativePath}`,
+    profile.style
+  );
+  const relative = pathApi.relative(profile.workspace.wirePath, source.wirePath);
+  return {
+    source,
+    escapesWorkspace:
+      relative === '' ||
+      relative === '..' ||
+      relative.startsWith(`..${separator}`) ||
+      pathApi.isAbsolute(relative),
+  };
+}
 
 export async function planLocalPatchTransaction(
   operations: readonly ApplyPatchOperation[],
@@ -227,34 +424,28 @@ export async function planRemotePatchTransaction(
   workspaceRoot: string,
   fileSystem: AcpFileSystemService,
   options: RemotePatchPlanOptions
-): Promise<PatchTransactionPlan> {
+): Promise<RemotePatchTransactionPlan> {
   const { signal, deadlineAt, lease } = options;
-  if (
-    operations.some((operation) => operation.kind !== 'update' || operation.movePath)
-  ) {
-    throw new Error(
-      'ACP remote ApplyPatch supports Update File operations only because the ACP filesystem protocol does not provide atomic add, delete, or rename primitives'
+  const preflight =
+    options.preflight ??
+    preflightRemotePatchTransaction(
+      operations,
+      createAcpRemotePathProfile(workspaceRoot)
     );
-  }
-  const paths = operations.map((operation) =>
-    resolveRemotePatchPath(operation.path, workspaceRoot)
-  );
-  assertUniquePaths(paths);
+  assertRemotePatchPreflight(preflight, operations, fileSystem.getPathProfile());
 
-  const changes: PatchFileChange[] = [];
+  const changes: RemotePatchFileChange[] = [];
   let totalBytes = 0;
-  for (let index = 0; index < operations.length; index++) {
+  for (const entry of preflight.entries) {
     signal?.throwIfAborted();
-    const operation = operations[index];
-    if (operation.kind !== 'update') continue;
-    const filePath = paths[index];
+    const { operation, source } = entry;
     const readDeadlineAt = Math.min(
       deadlineAt,
       Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS
     );
     let oldContent: string;
     try {
-      oldContent = await fileSystem.readTextFile(filePath, {
+      oldContent = await fileSystem.readTextFileForParsedPath(source, {
         signal,
         deadlineAt: readDeadlineAt,
         purpose: 'preflight',
@@ -262,30 +453,43 @@ export async function planRemotePatchTransaction(
       });
     } catch (error) {
       if (isAcpResourceNotFoundError(error)) {
-        throw new Error(`Remote file not found: ${filePath}`);
+        throw new Error('Remote patch target was not found');
       }
       throw error;
     }
-    assertTextSize(oldContent, operation.path);
-    const newContent = applyUpdateChunks(oldContent, operation.chunks, operation.path);
+    let newContent: string;
+    try {
+      assertTextSize(oldContent, operation.path);
+      newContent = applyUpdateChunks(oldContent, operation.chunks, operation.path);
+    } catch {
+      throw new AcpRemotePatchPreflightError();
+    }
     if (newContent === oldContent) {
-      throw new Error(`Patch does not change ${operation.path}`);
+      throw new AcpRemotePatchPreflightError();
     }
     totalBytes +=
       Buffer.byteLength(oldContent, 'utf8') + Buffer.byteLength(newContent, 'utf8');
-    changes.push({
-      kind: 'update',
-      path: filePath,
-      oldContent,
-      newContent,
-    });
+    changes.push(
+      Object.freeze({
+        kind: 'update',
+        path: source.wirePath,
+        oldContent,
+        newContent,
+        remotePath: source,
+      })
+    );
   }
   assertTransactionSize(totalBytes);
-  return {
-    workspaceRoot,
+  const affectedPaths = changes.map((change) => change.path).sort();
+  Object.freeze(changes);
+  Object.freeze(affectedPaths);
+  const plan: RemotePatchTransactionPlan = Object.freeze({
+    workspaceRoot: preflight.workspace.wirePath,
     changes,
-    affectedPaths: changes.map((change) => change.path).sort(),
-  };
+    affectedPaths,
+  });
+  remotePatchPlans.set(plan, { fileSystem, lease });
+  return plan;
 }
 
 export async function commitLocalPatchTransaction(
@@ -389,16 +593,23 @@ export async function commitLocalPatchTransaction(
 }
 
 export async function commitRemotePatchTransaction(
-  plan: PatchTransactionPlan,
+  plan: RemotePatchTransactionPlan,
   fileSystem: AcpFileSystemService,
   options: RemotePatchCommitOptions
 ): Promise<void> {
+  const planAuthority = remotePatchPlans.get(plan);
+  if (
+    !planAuthority ||
+    planAuthority.fileSystem !== fileSystem ||
+    planAuthority.lease !== options.lease
+  ) {
+    throw new Error('ACP remote patch plan is invalid');
+  }
   const { signal, forwardDeadlineAt, lease: transactionLease } = options;
   const remoteService = fileSystem;
   const effectiveForwardDeadlineAt = forwardDeadlineAt;
   const attempted: Array<
-    PatchFileChange & {
-      remotePath: AcpRemotePath;
+    RemotePatchFileChange & {
       forwardVerified: boolean;
       pendingForwardWrite: boolean;
       rollbackEligible: boolean;
@@ -410,10 +621,7 @@ export async function commitRemotePatchTransaction(
       if (Date.now() >= effectiveForwardDeadlineAt) {
         throw new Error('ACP remote patch forward request budget expired');
       }
-      if (change.oldContent === null || change.newContent === null) {
-        throw new Error('ACP remote transaction received an unsupported change');
-      }
-      const remotePath = remoteService.parsePath(change.path);
+      const remotePath = change.remotePath;
       const compareDeadlineAt = Math.min(
         effectiveForwardDeadlineAt,
         Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS
@@ -425,7 +633,7 @@ export async function commitRemotePatchTransaction(
         lease: transactionLease,
       });
       if (current !== change.oldContent) {
-        throw new Error(`Remote file changed after patch preflight: ${change.path}`);
+        throw new Error('Remote file changed after patch preflight');
       }
       const attemptedChange = {
         ...change,
@@ -494,9 +702,7 @@ export async function commitRemotePatchTransaction(
       }
       if (Date.now() >= compensationDeadlineAt) {
         rollbackErrors.push(
-          new Error(
-            `ACP remote patch compensation budget expired before rollback: ${change.path}`
-          )
+          new Error('ACP remote patch compensation budget expired before rollback')
         );
         markRemainingRollbackPathsUncertain(
           rollbackQueue.slice(index),
@@ -507,11 +713,6 @@ export async function commitRemotePatchTransaction(
       try {
         const rollbackNewContent = change.newContent;
         const rollbackOldContent = change.oldContent;
-        if (rollbackNewContent === null || rollbackOldContent === null) {
-          throw new Error(
-            `ACP remote rollback received an incomplete change: ${change.path}`
-          );
-        }
         {
           const recoveryLease = transactionLease.beginRecovery(change.remotePath);
           try {
@@ -556,6 +757,47 @@ export async function commitRemotePatchTransaction(
   }
 }
 
+function freezeRemoteUpdateOperation(
+  operation: Extract<ApplyPatchOperation, { kind: 'update' }>
+): Extract<ApplyPatchOperation, { kind: 'update' }> {
+  const chunks = operation.chunks.map((chunk) => {
+    const oldLines = [...chunk.oldLines];
+    const newLines = [...chunk.newLines];
+    Object.freeze(oldLines);
+    Object.freeze(newLines);
+    return Object.freeze({ ...chunk, oldLines, newLines });
+  });
+  Object.freeze(chunks);
+  return Object.freeze({ ...operation, chunks });
+}
+
+function assertRemotePatchPreflight(
+  preflight: AcpRemotePatchPreflight,
+  operations: readonly ApplyPatchOperation[],
+  expectedProfile: AcpRemotePathProfile
+): void {
+  assertCanonicalAcpRemotePathProfile(expectedProfile);
+  const branded = remotePatchPreflights.get(preflight);
+  if (!branded) {
+    throw new Error('ACP remote patch preflight is invalid');
+  }
+  assertCanonicalAcpRemotePathProfile(branded.profile);
+  assertCanonicalAcpRemotePath(preflight.workspace);
+  if (
+    branded.operations !== operations ||
+    branded.profile.style !== expectedProfile.style ||
+    preflight.workspace.exactIdentity !== expectedProfile.workspace.exactIdentity
+  ) {
+    throw new Error('ACP remote patch preflight is invalid');
+  }
+  for (const entry of preflight.entries) {
+    assertCanonicalAcpRemotePath(entry.source);
+    if (entry.destination) {
+      assertCanonicalAcpRemotePath(entry.destination);
+    }
+  }
+}
+
 function normalizeForwardTransactionError(
   signal: AbortSignal | undefined,
   error: unknown
@@ -571,8 +813,7 @@ function normalizeForwardTransactionError(
 
 function markRemainingRollbackPathsUncertain(
   remaining: ReadonlyArray<
-    PatchFileChange & {
-      remotePath: AcpRemotePath;
+    RemotePatchFileChange & {
       forwardVerified: boolean;
       pendingForwardWrite: boolean;
       rollbackEligible: boolean;
@@ -629,29 +870,6 @@ async function resolveLocalPatchPath(
     missing.push(path.basename(current));
     current = parent;
   }
-}
-
-function resolveRemotePatchPath(relativePath: string, workspaceRoot: string): string {
-  if (
-    relativePath.split('/').some((segment) => REMOTE_RESTRICTED_SEGMENTS.has(segment))
-  ) {
-    throw new Error(`Patch path is restricted: ${relativePath}`);
-  }
-  const pathApi = /^[A-Za-z]:[\\/]/.test(workspaceRoot) ? path.win32 : path.posix;
-  if (!pathApi.isAbsolute(workspaceRoot)) {
-    throw new Error('ACP workspace root must be absolute');
-  }
-  const root = pathApi.resolve(workspaceRoot);
-  const target = pathApi.resolve(root, ...relativePath.split('/'));
-  const relative = pathApi.relative(root, target);
-  if (
-    relative === '..' ||
-    relative.startsWith(`..${pathApi.sep}`) ||
-    pathApi.isAbsolute(relative)
-  ) {
-    throw new Error(`Patch path escapes the ACP workspace: ${relativePath}`);
-  }
-  return target;
 }
 
 async function readLocalTextFile(

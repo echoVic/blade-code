@@ -13,6 +13,7 @@ import {
   AcpServiceContext,
   getAcpFileSystemService,
 } from '../../src/acp/AcpServiceContext.js';
+import { createLocalSessionWorkspace } from '../../src/agent/runtime/SessionWorkspace.js';
 import { LocalFileSystemService } from '../../src/services/FileSystemService.js';
 import { applyPatchTool } from '../../src/tools/builtin/file/applyPatch.js';
 import * as applyPatchTransaction from '../../src/tools/builtin/file/applyPatchTransaction.js';
@@ -24,6 +25,11 @@ import {
 } from '../../src/tools/builtin/file/PatchTransactionCoordinator.js';
 import { SnapshotManager } from '../../src/tools/builtin/file/SnapshotManager.js';
 import { FileLockManager } from '../../src/tools/execution/FileLockManager.js';
+import {
+  bindExecutionWorkspaceToolPolicy,
+  createWorkspaceToolPolicy,
+} from '../../src/tools/execution/WorkspaceToolPolicy.js';
+import type { ExecutionContext } from '../../src/tools/types/index.js';
 import {
   ControlledFileClient,
   type ControlledWriteBehavior,
@@ -181,6 +187,36 @@ describe('ApplyPatch builtin tool', () => {
     }
   }
 
+  function localExecutionContext(context: ExecutionContext): ExecutionContext {
+    const workspaceRoot = context.workspaceRoot ?? workspace;
+    return bindExecutionWorkspaceToolPolicy(
+      context,
+      createWorkspaceToolPolicy(createLocalSessionWorkspace(workspaceRoot))
+    );
+  }
+
+  it('derives remote workspace locks from collision identity without exposing roots', () => {
+    const first = createRemotePatchWorkspaceIdentity(
+      'workspace-collision-session',
+      'C:\\Workspace'
+    );
+    const alias = createRemotePatchWorkspaceIdentity(
+      'workspace-collision-session',
+      'c:/workspace'
+    );
+    const posixCaseVariant = createRemotePatchWorkspaceIdentity(
+      'workspace-collision-session',
+      '/Workspace'
+    );
+
+    expect(first).toBe(alias);
+    expect(posixCaseVariant).not.toBe(
+      createRemotePatchWorkspaceIdentity('workspace-collision-session', '/workspace')
+    );
+    expect(first).toMatch(/^acp-remote-workspace:[a-f0-9]{64}$/);
+    expect(first).not.toContain('Workspace');
+  });
+
   it('publishes multi-file metadata and rewinds one patch as a unit', async () => {
     const updatePath = path.join(workspace, 'update.ts');
     const deletePath = path.join(workspace, 'delete.ts');
@@ -204,11 +240,11 @@ describe('ApplyPatch builtin tool', () => {
 *** End Patch`,
       },
       undefined,
-      {
+      localExecutionContext({
         sessionId: 'patch-session',
         messageId: 'patch-message',
         workspaceRoot: workspace,
-      }
+      })
     );
 
     expect(result.success).toBe(true);
@@ -287,11 +323,11 @@ describe('ApplyPatch builtin tool', () => {
 *** End Patch`,
       },
       undefined,
-      {
+      localExecutionContext({
         sessionId: 'unread-session',
         messageId: 'unread-message',
         workspaceRoot: workspace,
-      }
+      })
     );
 
     expect(result.success).toBe(false);
@@ -380,6 +416,83 @@ describe('ApplyPatch builtin tool', () => {
       write_verified: false,
     });
     expect(remoteFiles.get('C:\\workspace\\source.ts')).toBe('const value = false;\n');
+  });
+
+  it.each([
+    {
+      label: 'explicit unknown session',
+      sessionId: 'missing-remote-patch-session',
+      workspaceKind: undefined,
+    },
+    {
+      label: 'remote kind without a current session',
+      sessionId: undefined,
+      workspaceKind: 'acp-remote' as const,
+    },
+  ])(
+    'does not fall back to host ApplyPatch for $label',
+    async ({ sessionId, workspaceKind }) => {
+      const localCanaryPath = path.join(workspace, 'source.ts');
+      await fs.writeFile(localCanaryPath, 'const value = false;\n');
+
+      const result = await applyPatchTool.execute(
+        {
+          patch: `*** Begin Patch
+*** Update File: source.ts
+@@
+-const value = false;
++const value = true;
+*** End Patch`,
+        },
+        undefined,
+        {
+          sessionId,
+          messageId: 'missing-remote-patch-message',
+          workspaceKind,
+          workspaceRoot: workspace,
+          executionRoot: 'C:\\workspace',
+        }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result).toMatchObject({
+        error: { code: 'acp_session_unavailable' },
+        metadata: { sideEffectsUncertain: false },
+      });
+      await expect(fs.readFile(localCanaryPath, 'utf8')).resolves.toBe(
+        'const value = false;\n'
+      );
+    }
+  );
+
+  it('uses the current remote session when direct ApplyPatch omits sessionId', async () => {
+    const remoteFiles = new Map([
+      ['C:\\workspace\\source.ts', 'const value = false;\n'],
+    ]);
+    createRemotePatchSession({
+      sessionId: 'current-remote-patch-session',
+      workspaceRoot: 'C:\\workspace',
+      files: remoteFiles,
+    });
+
+    const result = await applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: source.ts
+@@
+-const value = false;
++const value = true;
+*** End Patch`,
+      },
+      undefined,
+      {
+        messageId: 'current-remote-patch-message',
+        workspaceRoot: 'C:\\workspace',
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(remoteFiles.get('C:\\workspace\\source.ts')).toBe('const value = true;\n');
   });
 
   it('updates ACP-owned files without touching a same-named local path or local recovery state', async () => {
@@ -516,14 +629,199 @@ describe('ApplyPatch builtin tool', () => {
     }
   );
 
+  it.each([
+    {
+      label: 'unsupported operation',
+      expectedReason: 'unsupported-operation',
+      rejectedPath: 'unsupported.ts',
+      patch: `*** Begin Patch
+*** Add File: unsupported.ts
++export const value = true;
+*** End Patch`,
+    },
+    {
+      label: 'Windows ADS before invalid character',
+      expectedReason: 'alternate-data-stream',
+      rejectedPath: 'secret.ts:stream?',
+      patch: `*** Begin Patch
+*** Update File: secret.ts:stream?
+@@
+-before
++after
+*** End Patch`,
+    },
+    {
+      label: 'Windows reserved device before trailing component',
+      expectedReason: 'reserved-device-name',
+      rejectedPath: 'CON.',
+      patch: `*** Begin Patch
+*** Update File: CON.
+@@
+-before
++after
+*** End Patch`,
+    },
+    {
+      label: 'Windows trailing component',
+      expectedReason: 'trailing-dot-or-space',
+      rejectedPath: 'nested. /file.ts',
+      patch: `*** Begin Patch
+*** Update File: nested. /file.ts
+@@
+-before
++after
+*** End Patch`,
+    },
+    {
+      label: 'Windows reserved device extension',
+      expectedReason: 'reserved-device-name',
+      rejectedPath: 'NUL.txt',
+      patch: `*** Begin Patch
+*** Update File: NUL.txt
+@@
+-before
++after
+*** End Patch`,
+    },
+    {
+      label: 'Windows superscript reserved device',
+      expectedReason: 'reserved-device-name',
+      rejectedPath: 'nested/LPT².log',
+      patch: `*** Begin Patch
+*** Update File: nested/LPT².log
+@@
+-before
++after
+*** End Patch`,
+    },
+    {
+      label: 'Windows short-name alias',
+      expectedReason: 'short-name-alias',
+      rejectedPath: 'PROGRA~1/file.ts',
+      patch: `*** Begin Patch
+*** Update File: PROGRA~1/file.ts
+@@
+-before
++after
+*** End Patch`,
+    },
+    {
+      label: 'Windows invalid character',
+      expectedReason: 'invalid-character',
+      rejectedPath: 'bad?.ts',
+      patch: `*** Begin Patch
+*** Update File: bad?.ts
+@@
+-before
++after
+*** End Patch`,
+    },
+    {
+      label: 'workspace escape',
+      expectedReason: 'workspace-escape',
+      rejectedPath: '../outside.ts',
+      patch: `*** Begin Patch
+*** Update File: ../outside.ts
+@@
+-before
++after
+*** End Patch`,
+    },
+    {
+      label: 'restricted path case alias',
+      expectedReason: 'restricted-path',
+      rejectedPath: '.GIT/config',
+      patch: `*** Begin Patch
+*** Update File: .GIT/config
+@@
+-before
++after
+*** End Patch`,
+    },
+    {
+      label: 'exact duplicate target',
+      expectedReason: 'duplicate-target',
+      rejectedPath: 'same.ts',
+      patch: `*** Begin Patch
+*** Update File: same.ts
+@@
+-before
++after
+*** Update File: same.ts
+@@
+-before
++after again
+*** End Patch`,
+    },
+    {
+      label: 'Windows case-only duplicate target',
+      expectedReason: 'duplicate-target',
+      rejectedPath: 'folder/file.ts',
+      patch: `*** Begin Patch
+*** Update File: Folder/File.ts
+@@
+-before
++after
+*** Update File: folder/file.ts
+@@
+-before
++after again
+*** End Patch`,
+    },
+  ])(
+    'rejects $label before every remote coordination or I/O side effect',
+    async ({ label, expectedReason, patch: patchText, rejectedPath }) => {
+      const sessionId = `remote-patch-invalid-${label.replaceAll(' ', '-')}`;
+      const { requests, service } = createRemotePatchSession({
+        sessionId,
+        workspaceRoot: 'C:\\workspace',
+        files: new Map(),
+      });
+      const workspaceLockSpy = vi.spyOn(
+        patchTransactionCoordinator,
+        'withPatchWorkspaceLock'
+      );
+      const opaqueLockSpy = vi.spyOn(
+        FileLockManager.getInstance(),
+        'acquireOpaqueLocks'
+      );
+      const stringLeaseSpy = vi.spyOn(service, 'tryAcquireMutationLease');
+      const parsedLeaseSpy = vi.spyOn(service, 'tryAcquireMutationLeaseForParsedPaths');
+
+      const result = await applyPatchTool.execute({ patch: patchText }, undefined, {
+        sessionId,
+        messageId: `remote-invalid-${label}`,
+        workspaceRoot: 'C:\\workspace',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.llmContent).toBe('ACP remote patch is invalid');
+      expect(result.error).toEqual({
+        type: 'validation_error',
+        code: 'acp_remote_patch_invalid',
+        message: 'ACP remote patch is invalid',
+        details: { reason: expectedReason },
+      });
+      expect(result.metadata).toMatchObject({ sideEffectsUncertain: false });
+      expect(JSON.stringify(result)).not.toContain(rejectedPath);
+      expect(workspaceLockSpy).not.toHaveBeenCalled();
+      expect(opaqueLockSpy).not.toHaveBeenCalled();
+      expect(stringLeaseSpy).not.toHaveBeenCalled();
+      expect(parsedLeaseSpy).not.toHaveBeenCalled();
+      expect(requests).toEqual([]);
+      expect(await listPatchStateEntries()).toEqual([]);
+    }
+  );
+
   it('remote ApplyPatch 只接受 Update File，不能退化为 Add File', async () => {
     const sessionId = 'remote-patch-update-only';
     const remoteFiles = new Map<string, string>();
-    const { requests } = createRemotePatchSession({
+    const { requests, service } = createRemotePatchSession({
       sessionId,
       workspaceRoot: 'C:\\workspace',
       files: remoteFiles,
     });
+    const parseSpy = vi.spyOn(service, 'parsePath');
 
     const result = await applyPatchTool.execute(
       {
@@ -541,11 +839,16 @@ describe('ApplyPatch builtin tool', () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.llmContent).toContain('Update File operations only');
+    expect(result.llmContent).toBe('ACP remote patch is invalid');
+    expect(result.error).toMatchObject({
+      type: 'validation_error',
+      code: 'acp_remote_patch_invalid',
+    });
     expect(result.metadata).toMatchObject({
       sideEffectsUncertain: false,
       write_verified: false,
     });
+    expect(parseSpy).not.toHaveBeenCalled();
     expect(requests).toEqual([]);
     expect(remoteFiles.has('C:\\workspace\\source.ts')).toBe(false);
   });
@@ -589,6 +892,47 @@ describe('ApplyPatch builtin tool', () => {
       },
     ]);
     expect(remoteFiles.has('C:\\workspace\\missing.ts')).toBe(false);
+  });
+
+  it('redacts remote planner path and hunk content after preflight I/O', async () => {
+    const sessionId = 'remote-patch-planner-redaction';
+    const rejectedPath = 'private-file.ts';
+    const rejectedContent = 'PRIVATE_EXPECTED_CONTENT';
+    const { requests } = createRemotePatchSession({
+      sessionId,
+      workspaceRoot: 'C:\\workspace',
+      files: new Map([['C:\\workspace\\private-file.ts', 'public content\n']]),
+    });
+
+    const result = await applyPatchTool.execute(
+      {
+        patch: `*** Begin Patch
+*** Update File: ${rejectedPath}
+@@
+-${rejectedContent}
++replacement
+*** End Patch`,
+      },
+      undefined,
+      {
+        sessionId,
+        messageId: 'remote-planner-redaction',
+        workspaceRoot: 'C:\\workspace',
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.type).toBe('execution_error');
+    expect(result.llmContent).toBe('ACP remote patch preflight failed');
+    expect(result.error?.message).toBe('ACP remote patch preflight failed');
+    expect(JSON.stringify(result)).not.toContain(rejectedPath);
+    expect(JSON.stringify(result)).not.toContain(rejectedContent);
+    expect(result.metadata).toMatchObject({
+      sideEffectsUncertain: false,
+      write_acknowledged: false,
+      write_verified: false,
+    });
+    expect(requests).toHaveLength(1);
   });
 
   it('remote ApplyPatch 在 preflight compare 发现远端内容漂移时返回确定性失败 metadata', async () => {
@@ -653,11 +997,12 @@ describe('ApplyPatch builtin tool', () => {
       ['C:\\workspace\\first.ts', 'const first = false;\n'],
       ['C:\\workspace\\second.ts', 'const second = false;\n'],
     ]);
-    const { requests } = createRemotePatchSession({
+    const { requests, service } = createRemotePatchSession({
       sessionId,
       workspaceRoot: 'C:\\workspace',
       files: remoteFiles,
     });
+    const parseSpy = vi.spyOn(service, 'parsePath');
 
     const result = await applyPatchTool.execute(
       {
@@ -681,12 +1026,16 @@ describe('ApplyPatch builtin tool', () => {
     );
 
     expect(result.success).toBe(true);
+    expect(parseSpy).not.toHaveBeenCalled();
     expect(result.metadata).toMatchObject({
       kind: 'patch',
       snapshot_created: false,
       write_verified: true,
       sideEffectsUncertain: false,
     });
+    expect(result.metadata?.summary).toContain('C:\\workspace');
+    expect(result.metadata?.summary).not.toContain('acp-remote-workspace:');
+    expect(String(result.llmContent)).toContain('C:\\workspace\\first.ts');
     expect(requests).toEqual([
       { kind: 'read', path: 'C:\\workspace\\first.ts' },
       { kind: 'read', path: 'C:\\workspace\\second.ts' },
@@ -714,11 +1063,6 @@ describe('ApplyPatch builtin tool', () => {
     expect(patchStateEntries.join('\n')).not.toContain('workspace');
     expect(patchStateEntries.join('\n')).not.toContain('first.ts');
     expect(patchStateEntries.join('\n')).not.toContain('second.ts');
-    const service = getAcpFileSystemService(sessionId);
-    expect(service).toBeInstanceOf(AcpFileSystemService);
-    if (!(service instanceof AcpFileSystemService)) {
-      throw new Error('expected ACP remote filesystem service');
-    }
     expect(
       service.getRemoteAccessRecord('C:\\workspace\\first.ts')?.lastOperation
     ).toBe('edit');
@@ -1052,7 +1396,7 @@ describe('ApplyPatch builtin tool', () => {
         events.push('workspace:entered');
         return operation();
       });
-    const tryAcquireSpy = vi.spyOn(service, 'tryAcquireMutationLease');
+    const tryAcquireSpy = vi.spyOn(service, 'tryAcquireMutationLeaseForParsedPaths');
     const acquireOpaqueLocksSpy = vi
       .spyOn(FileLockManager.getInstance(), 'acquireOpaqueLocks')
       .mockImplementation(async (lockKeys, operation) => {
@@ -1060,8 +1404,10 @@ describe('ApplyPatch builtin tool', () => {
         return originalAcquireOpaqueLocks(lockKeys, operation);
       });
     tryAcquireSpy.mockImplementation((paths) => {
-      events.push(`lease:${JSON.stringify([...paths])}`);
-      return AcpFileSystemService.prototype.tryAcquireMutationLease.call(
+      events.push(
+        `lease:${JSON.stringify(paths.map((remotePath) => remotePath.wirePath))}`
+      );
+      return AcpFileSystemService.prototype.tryAcquireMutationLeaseForParsedPaths.call(
         service,
         paths
       );
@@ -1095,10 +1441,9 @@ describe('ApplyPatch builtin tool', () => {
     );
     expect(acquireOpaqueLocksSpy.mock.calls[0]?.[0]).toHaveLength(opaqueKeys.length);
     expect(tryAcquireSpy).toHaveBeenCalledTimes(1);
-    expect(tryAcquireSpy).toHaveBeenCalledWith([
-      'C:\\workspace\\alpha.ts',
-      'C:\\workspace\\zeta.ts',
-    ]);
+    expect(
+      tryAcquireSpy.mock.calls[0]?.[0].map((remotePath) => remotePath.wirePath)
+    ).toEqual(['C:\\workspace\\alpha.ts', 'C:\\workspace\\zeta.ts']);
     expect(events).toEqual([
       `workspace:${createRemotePatchWorkspaceIdentity(sessionId, 'C:\\workspace')}`,
       'workspace:entered',
