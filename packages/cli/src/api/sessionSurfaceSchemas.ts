@@ -16,28 +16,66 @@ const SessionSurfaceRemoteRefSchema = Type.String({
   pattern: '^acp-remote-workspace:[A-Za-z0-9_-]{43}$',
 });
 
-export const SessionSurfaceLocatorSchema = Runtime(
+const SessionSurfaceLimitSchema = Type.Optional(
+  Type.Integer({ minimum: 1, maximum: 100 })
+);
+
+export const SessionLocatorV2Schema = Runtime(
   Type.Union([
     StrictObject({
-      kind: Type.Literal('local'),
+      version: Type.Literal(2),
       sessionId: Type.String({ minLength: 1 }),
-      projectPath: Type.String({ minLength: 1 }),
+      workspace: StrictObject({
+        kind: Type.Literal('local'),
+        projectPath: Type.String({ minLength: 1 }),
+      }),
     }),
     StrictObject({
-      kind: Type.Literal('remote'),
-      ref: SessionSurfaceRemoteRefSchema,
+      version: Type.Literal(2),
+      sessionId: Type.String({ minLength: 1 }),
+      workspace: StrictObject({
+        kind: Type.Literal('acp-remote'),
+        workspaceRef: SessionSurfaceRemoteRefSchema,
+      }),
     }),
   ])
 );
-export type SessionSurfaceLocator = Static<typeof SessionSurfaceLocatorSchema>;
+export type SessionLocatorV2 = Static<typeof SessionLocatorV2Schema>;
+
+export const SurfaceUnavailableReasonSchema = Runtime(
+  StringEnum([
+    'history-only',
+    'owner-offline',
+    'owner-mismatch',
+    'archived',
+    'surface-not-supported',
+    'capability-not-advertised',
+  ])
+);
+export type SurfaceUnavailableReason = Static<typeof SurfaceUnavailableReasonSchema>;
 
 export const SessionSurfaceCapabilitiesSchema = Runtime(
   StrictObject({
-    canOpen: Type.Boolean(),
-    canSummarize: Type.Boolean(),
-    canReadHistory: Type.Boolean(),
-    canFork: Type.Boolean(),
-    canListCatalog: Type.Boolean(),
+    connection: StringEnum(['local', 'online', 'offline']),
+    history: StrictObject({
+      read: Type.Boolean(),
+      fork: Type.Boolean(),
+    }),
+    turn: StrictObject({
+      start: Type.Boolean(),
+      reason: Type.Optional(SurfaceUnavailableReasonSchema),
+    }),
+    files: StrictObject({
+      readText: Type.Boolean(),
+      writeText: Type.Boolean(),
+      browse: StringEnum(['none', 'known-files', 'tree']),
+      reason: Type.Optional(SurfaceUnavailableReasonSchema),
+    }),
+    terminal: StrictObject({
+      mode: StringEnum(['none', 'command', 'interactive']),
+      owner: StringEnum(['none', 'local', 'acp-remote']),
+      reason: Type.Optional(SurfaceUnavailableReasonSchema),
+    }),
   })
 );
 export type SessionSurfaceCapabilities = Static<
@@ -46,24 +84,52 @@ export type SessionSurfaceCapabilities = Static<
 
 export const SessionSurfaceMessageSchema = Runtime(
   StrictObject({
-    id: Type.String({ minLength: 1 }),
-    role: StringEnum(['user', 'assistant', 'system', 'tool']),
+    id: Type.String({ pattern: '^surface-message:[0-9]+:.+$' }),
+    role: StringEnum(['user', 'assistant']),
     content: Type.String(),
-    timestamp: Type.Number(),
-    truncated: Type.Boolean(),
+    timestamp: Type.String({ minLength: 1 }),
+    truncated: Type.Optional(Type.Boolean()),
   })
 );
 export type SessionSurfaceMessage = Static<typeof SessionSurfaceMessageSchema>;
 
-export const SessionSurfaceCatalogEntrySchema = Runtime(
+const SessionTaskStatusSchema = StringEnum([
+  'queued',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
+
+const SessionSurfacePathStyleSchema = StringEnum(['posix', 'win32']);
+
+const SessionSurfaceRelationTypeSchema = StringEnum(['subagent', 'fork']);
+
+const SessionSurfaceCursorSchema = Type.String({ minLength: 1 });
+
+const SessionSurfaceSnapshotSchema = Type.String({ minLength: 1 });
+
+export const SessionSurfaceSummarySchema = Runtime(
   StrictObject({
-    id: Type.String({ minLength: 1 }),
-    title: Type.String({ minLength: 1 }),
+    locator: SessionLocatorV2Schema,
+    displayCwd: Type.String({ minLength: 1 }),
+    pathStyle: Type.Optional(SessionSurfacePathStyleSchema),
+    title: Type.Optional(Type.String()),
+    rootId: Type.String({ minLength: 1 }),
+    parentId: Type.Optional(Type.String({ minLength: 1 })),
+    relationType: Type.Optional(SessionSurfaceRelationTypeSchema),
+    taskStatus: SessionTaskStatusSchema,
+    messageCount: Type.Integer({ minimum: 0 }),
+    firstMessageTime: Type.String({ minLength: 1 }),
+    lastMessageTime: Type.String({ minLength: 1 }),
+    hasErrors: Type.Boolean(),
+    archivedAt: Type.Optional(Type.String({ minLength: 1 })),
+    selectedModelId: Type.Optional(Type.String({ minLength: 1 })),
+    capabilities: SessionSurfaceCapabilitiesSchema,
   })
 );
-export type SessionSurfaceCatalogEntry = Static<
-  typeof SessionSurfaceCatalogEntrySchema
->;
+export type SessionSurfaceSummary = Static<typeof SessionSurfaceSummarySchema>;
 
 export const SessionSurfaceErrorCodeSchema = Runtime(
   StringEnum([
@@ -87,6 +153,7 @@ export const SessionSurfaceErrorEnvelopeSchema = Runtime(
     error: StrictObject({
       code: SessionSurfaceErrorCodeSchema,
       message: Type.String({ minLength: 1 }),
+      retryable: Type.Boolean(),
     }),
   })
 );
@@ -94,48 +161,45 @@ export type SessionSurfaceErrorEnvelope = Static<
   typeof SessionSurfaceErrorEnvelopeSchema
 >;
 
-const SessionSurfaceLimitSchema = Type.Integer({ minimum: 1, maximum: 100 });
-
-export const SessionSurfaceSummaryRequestSchema = Runtime(
+export const SessionSurfaceCatalogPageSchema = Runtime(
   StrictObject({
-    locator: SessionSurfaceLocatorSchema,
+    sessions: Type.Array(SessionSurfaceSummarySchema),
+    nextCursor: Type.Optional(SessionSurfaceCursorSchema),
   })
 );
-export type SessionSurfaceSummaryRequest = Static<
-  typeof SessionSurfaceSummaryRequestSchema
->;
+export type SessionSurfaceCatalogPage = Static<typeof SessionSurfaceCatalogPageSchema>;
 
-export const SessionSurfaceSummaryResultSchema = Runtime(
+export const SessionSurfaceHistoryPageSchema = Runtime(
   StrictObject({
-    locator: SessionSurfaceLocatorSchema,
-    summary: Type.String(),
-    capabilities: SessionSurfaceCapabilitiesSchema,
+    messages: Type.Array(SessionSurfaceMessageSchema),
+    olderCursor: Type.Optional(SessionSurfaceCursorSchema),
+    snapshot: SessionSurfaceSnapshotSchema,
+    truncated: Type.Boolean(),
   })
 );
-export type SessionSurfaceSummaryResult = Static<
-  typeof SessionSurfaceSummaryResultSchema
->;
+export type SessionSurfaceHistoryPage = Static<typeof SessionSurfaceHistoryPageSchema>;
 
 export const SessionSurfaceOpenRequestSchema = Runtime(
   StrictObject({
-    locator: SessionSurfaceLocatorSchema,
+    locator: SessionLocatorV2Schema,
+    limit: SessionSurfaceLimitSchema,
   })
 );
 export type SessionSurfaceOpenRequest = Static<typeof SessionSurfaceOpenRequestSchema>;
 
 export const SessionSurfaceOpenResultSchema = Runtime(
   StrictObject({
-    locator: SessionSurfaceLocatorSchema,
-    opened: Type.Boolean(),
-    readOnly: Type.Boolean(),
-    capabilities: SessionSurfaceCapabilitiesSchema,
+    session: SessionSurfaceSummarySchema,
+    history: SessionSurfaceHistoryPageSchema,
   })
 );
 export type SessionSurfaceOpenResult = Static<typeof SessionSurfaceOpenResultSchema>;
 
 export const SessionSurfaceHistoryRequestSchema = Runtime(
   StrictObject({
-    locator: SessionSurfaceLocatorSchema,
+    locator: SessionLocatorV2Schema,
+    cursor: SessionSurfaceCursorSchema,
+    expectedSnapshot: SessionSurfaceSnapshotSchema,
     limit: SessionSurfaceLimitSchema,
   })
 );
@@ -143,65 +207,9 @@ export type SessionSurfaceHistoryRequest = Static<
   typeof SessionSurfaceHistoryRequestSchema
 >;
 
-export const SessionSurfaceHistoryResultSchema = Runtime(
-  StrictObject({
-    locator: SessionSurfaceLocatorSchema,
-    messages: Type.Array(SessionSurfaceMessageSchema),
-    hasMore: Type.Boolean(),
-  })
-);
-export type SessionSurfaceHistoryResult = Static<
-  typeof SessionSurfaceHistoryResultSchema
->;
-
-export const SessionSurfaceHistoryOpenRequestSchema = Runtime(
-  StrictObject({
-    locator: SessionSurfaceLocatorSchema,
-    cursor: Type.String({ minLength: 1 }),
-    limit: SessionSurfaceLimitSchema,
-  })
-);
-export type SessionSurfaceHistoryOpenRequest = Static<
-  typeof SessionSurfaceHistoryOpenRequestSchema
->;
-
-export const SessionSurfaceHistoryOpenResultSchema = Runtime(
-  StrictObject({
-    locator: SessionSurfaceLocatorSchema,
-    cursor: Type.String({ minLength: 1 }),
-    messages: Type.Array(SessionSurfaceMessageSchema),
-    hasMore: Type.Boolean(),
-  })
-);
-export type SessionSurfaceHistoryOpenResult = Static<
-  typeof SessionSurfaceHistoryOpenResultSchema
->;
-
-export const SessionSurfaceCatalogRequestSchema = Runtime(
-  StrictObject({
-    locator: SessionSurfaceLocatorSchema,
-    limit: SessionSurfaceLimitSchema,
-  })
-);
-export type SessionSurfaceCatalogRequest = Static<
-  typeof SessionSurfaceCatalogRequestSchema
->;
-
-export const SessionSurfaceCatalogResultSchema = Runtime(
-  StrictObject({
-    locator: SessionSurfaceLocatorSchema,
-    entries: Type.Array(SessionSurfaceCatalogEntrySchema),
-    hasMore: Type.Boolean(),
-  })
-);
-export type SessionSurfaceCatalogResult = Static<
-  typeof SessionSurfaceCatalogResultSchema
->;
-
 export const SessionSurfaceForkRequestSchema = Runtime(
   StrictObject({
-    locator: SessionSurfaceLocatorSchema,
-    message: SessionSurfaceMessageSchema,
+    locator: SessionLocatorV2Schema,
   })
 );
 export type SessionSurfaceForkRequest = Static<typeof SessionSurfaceForkRequestSchema>;

@@ -1,61 +1,87 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SessionLocatorV2Schema,
   SessionSurfaceCapabilitiesSchema,
-  SessionSurfaceCatalogRequestSchema,
-  SessionSurfaceCatalogResultSchema,
+  SessionSurfaceCatalogPageSchema,
   SessionSurfaceErrorCodeSchema,
   SessionSurfaceErrorEnvelopeSchema,
   SessionSurfaceForkRequestSchema,
-  SessionSurfaceHistoryOpenRequestSchema,
-  SessionSurfaceHistoryOpenResultSchema,
+  SessionSurfaceHistoryPageSchema,
   SessionSurfaceHistoryRequestSchema,
-  SessionSurfaceHistoryResultSchema,
-  SessionSurfaceLocatorSchema,
   SessionSurfaceMessageSchema,
   SessionSurfaceOpenRequestSchema,
   SessionSurfaceOpenResultSchema,
-  SessionSurfaceSummaryRequestSchema,
-  SessionSurfaceSummaryResultSchema,
+  SessionSurfaceSummarySchema,
+  SurfaceUnavailableReasonSchema,
 } from '../../../../src/api/sessionSurfaceSchemas.js';
 
 describe('session surface schemas', () => {
-  describe('SessionSurfaceLocatorSchema', () => {
-    it('accepts strict local and remote discriminated locators', () => {
+  describe('SessionLocatorV2Schema', () => {
+    it('accepts strict local and remote locators with nested workspaces', () => {
       expect(
-        SessionSurfaceLocatorSchema.parse({
-          kind: 'local',
+        SessionLocatorV2Schema.parse({
+          version: 2,
           sessionId: 'session-local',
-          projectPath: '/workspace/project',
+          workspace: {
+            kind: 'local',
+            projectPath: '/workspace/project',
+          },
         })
       ).toMatchObject({
-        kind: 'local',
+        version: 2,
         sessionId: 'session-local',
       });
 
       expect(
-        SessionSurfaceLocatorSchema.parse({
-          kind: 'remote',
-          ref: `acp-remote-workspace:${'A'.repeat(43)}`,
+        SessionLocatorV2Schema.parse({
+          version: 2,
+          sessionId: 'session-remote',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
         })
       ).toMatchObject({
-        kind: 'remote',
+        version: 2,
+        sessionId: 'session-remote',
       });
     });
 
-    it('rejects additional properties and invalid remote refs', () => {
+    it('rejects forbidden remote fields, extra properties, and invalid refs', () => {
+      const remoteLocator = {
+        version: 2,
+        sessionId: 'session-remote',
+        workspace: {
+          kind: 'acp-remote',
+          workspaceRef: `acp-remote-workspace:${'B'.repeat(43)}`,
+        },
+      } as const;
+
       expect(() =>
-        SessionSurfaceLocatorSchema.parse({
-          kind: 'local',
-          sessionId: 'session-local',
-          projectPath: '/workspace/project',
-          extra: true,
+        SessionLocatorV2Schema.parse({
+          ...remoteLocator,
+          projectPath: '/private/state',
         })
       ).toThrow();
 
       expect(() =>
-        SessionSurfaceLocatorSchema.parse({
-          kind: 'remote',
-          ref: 'acp-remote-workspace:not-long-enough',
+        SessionLocatorV2Schema.parse({
+          ...remoteLocator,
+          workspace: {
+            ...remoteLocator.workspace,
+            wirePath: 'C:/private/repo',
+          },
+        })
+      ).toThrow();
+
+      expect(() =>
+        SessionLocatorV2Schema.parse({
+          version: 2,
+          sessionId: 'session-remote',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: 'acp-remote-workspace:not-long-enough',
+          },
         })
       ).toThrow();
     });
@@ -65,34 +91,64 @@ describe('session surface schemas', () => {
     it('accepts a strict message with only the allowed fields', () => {
       expect(
         SessionSurfaceMessageSchema.parse({
-          id: 'msg-1',
+          id: 'surface-message:1:abc',
           role: 'assistant',
           content: 'hello',
-          timestamp: 1_726_000_000_000,
-          truncated: false,
+          timestamp: '2026-09-02T00:00:00.000Z',
         })
       ).toMatchObject({
+        id: 'surface-message:1:abc',
         role: 'assistant',
-        truncated: false,
+        timestamp: '2026-09-02T00:00:00.000Z',
       });
     });
 
-    it('rejects extra message fields', () => {
+    it('rejects extra fields, forbidden roles, and non-string timestamps', () => {
       expect(() =>
         SessionSurfaceMessageSchema.parse({
-          id: 'msg-1',
+          id: 'surface-message:1:abc',
+          role: 'assistant',
+          content: 'hello',
+          timestamp: '2026-09-02T00:00:00.000Z',
+          metadata: {},
+        })
+      ).toThrow();
+
+      expect(() =>
+        SessionSurfaceMessageSchema.parse({
+          id: 'surface-message:2:def',
+          role: 'tool',
+          content: 'hello',
+          timestamp: '2026-09-02T00:00:00.000Z',
+        })
+      ).toThrow();
+
+      expect(() =>
+        SessionSurfaceMessageSchema.parse({
+          id: 'surface-message:3:ghi',
           role: 'assistant',
           content: 'hello',
           timestamp: 1_726_000_000_000,
-          truncated: false,
-          metadata: {},
         })
       ).toThrow();
     });
   });
 
-  describe('SessionSurfaceErrorCodeSchema', () => {
-    it('contains the required session surface error codes', () => {
+  describe('enum contracts', () => {
+    it('contains the approved unavailable reasons and error codes', () => {
+      const reasons = [
+        'history-only',
+        'owner-offline',
+        'owner-mismatch',
+        'archived',
+        'surface-not-supported',
+        'capability-not-advertised',
+      ] as const;
+
+      for (const reason of reasons) {
+        expect(SurfaceUnavailableReasonSchema.parse(reason)).toBe(reason);
+      }
+
       const codes = [
         'invalid_session_surface_request',
         'invalid_session_locator',
@@ -114,104 +170,260 @@ describe('session surface schemas', () => {
   });
 
   describe('strict envelopes', () => {
-    it('accepts strict capability, summary, open, history, catalog, and fork shapes', () => {
+    it('accepts capability, summary, open, history, catalog, fork, and error shapes', () => {
       const locator = {
-        kind: 'remote',
-        ref: `acp-remote-workspace:${'B'.repeat(43)}`,
+        version: 2,
+        sessionId: 'session-remote',
+        workspace: {
+          kind: 'acp-remote',
+          workspaceRef: `acp-remote-workspace:${'C'.repeat(43)}`,
+        },
       } as const;
 
       expect(
         SessionSurfaceCapabilitiesSchema.parse({
-          canOpen: true,
-          canSummarize: true,
-          canReadHistory: true,
-          canFork: false,
-          canListCatalog: true,
-        })
-      ).toMatchObject({
-        canFork: false,
-      });
-
-      expect(
-        SessionSurfaceSummaryRequestSchema.parse({
-          locator,
-        })
-      ).toMatchObject({
-        locator,
-      });
-
-      expect(
-        SessionSurfaceSummaryResultSchema.parse({
-          locator,
-          summary: 'ready',
-          capabilities: {
-            canOpen: true,
-            canSummarize: true,
-            canReadHistory: true,
-            canFork: false,
-            canListCatalog: true,
+          connection: 'online',
+          history: {
+            read: true,
+            fork: true,
+          },
+          turn: {
+            start: false,
+            reason: 'history-only',
+          },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'capability-not-advertised',
+          },
+          terminal: {
+            mode: 'none',
+            owner: 'acp-remote',
+            reason: 'history-only',
           },
         })
       ).toMatchObject({
-        summary: 'ready',
+        connection: 'online',
+      });
+
+      expect(
+        SessionSurfaceSummarySchema.parse({
+          locator,
+          displayCwd: '/workspace/remote',
+          pathStyle: 'posix',
+          title: 'Remote session',
+          rootId: 'root-1',
+          parentId: 'parent-1',
+          relationType: 'fork',
+          taskStatus: 'running',
+          messageCount: 12,
+          firstMessageTime: '2026-09-02T00:00:00.000Z',
+          lastMessageTime: '2026-09-02T01:00:00.000Z',
+          hasErrors: false,
+          archivedAt: '2026-09-02T02:00:00.000Z',
+          selectedModelId: 'openai/gpt-5.6',
+          capabilities: {
+            connection: 'offline',
+            history: {
+              read: true,
+              fork: false,
+            },
+            turn: {
+              start: false,
+              reason: 'archived',
+            },
+            files: {
+              readText: false,
+              writeText: false,
+              browse: 'none',
+              reason: 'archived',
+            },
+            terminal: {
+              mode: 'none',
+              owner: 'none',
+              reason: 'archived',
+            },
+          },
+        })
+      ).toMatchObject({
+        locator,
+        title: 'Remote session',
       });
 
       expect(
         SessionSurfaceOpenRequestSchema.parse({
           locator,
+          limit: 50,
+        })
+      ).toMatchObject({
+        locator,
+        limit: 50,
+      });
+
+      expect(
+        SessionSurfaceOpenResultSchema.parse({
+          session: {
+            locator,
+            displayCwd: '/workspace/remote',
+            rootId: 'root-1',
+            taskStatus: 'running',
+            messageCount: 12,
+            firstMessageTime: '2026-09-02T00:00:00.000Z',
+            lastMessageTime: '2026-09-02T01:00:00.000Z',
+            hasErrors: false,
+            capabilities: {
+              connection: 'online',
+              history: {
+                read: true,
+                fork: true,
+              },
+              turn: {
+                start: false,
+                reason: 'history-only',
+              },
+              files: {
+                readText: false,
+                writeText: false,
+                browse: 'none',
+                reason: 'capability-not-advertised',
+              },
+              terminal: {
+                mode: 'none',
+                owner: 'acp-remote',
+                reason: 'history-only',
+              },
+            },
+          },
+          history: {
+            messages: [
+              {
+                id: 'surface-message:1:abc',
+                role: 'user',
+                content: 'hello',
+                timestamp: '2026-09-02T00:00:00.000Z',
+              },
+            ],
+            snapshot: 'snapshot-1',
+            truncated: false,
+          },
+        })
+      ).toMatchObject({
+        history: {
+          snapshot: 'snapshot-1',
+        },
+      });
+
+      expect(
+        SessionSurfaceHistoryRequestSchema.parse({
+          locator,
+          cursor: 'cursor-1',
+          expectedSnapshot: 'snapshot-1',
+          limit: 100,
+        })
+      ).toMatchObject({
+        cursor: 'cursor-1',
+        expectedSnapshot: 'snapshot-1',
+        limit: 100,
+      });
+
+      expect(
+        SessionSurfaceHistoryPageSchema.parse({
+          messages: [
+            {
+              id: 'surface-message:1:abc',
+              role: 'user',
+              content: 'hello',
+              timestamp: '2026-09-02T00:00:00.000Z',
+            },
+          ],
+          olderCursor: 'cursor-2',
+          snapshot: 'snapshot-1',
+          truncated: false,
+        })
+      ).toMatchObject({
+        olderCursor: 'cursor-2',
+      });
+
+      expect(
+        SessionSurfaceCatalogPageSchema.parse({
+          sessions: [
+            {
+              locator,
+              displayCwd: '/workspace/remote',
+              rootId: 'root-1',
+              taskStatus: 'running',
+              messageCount: 12,
+              firstMessageTime: '2026-09-02T00:00:00.000Z',
+              lastMessageTime: '2026-09-02T01:00:00.000Z',
+              hasErrors: false,
+              capabilities: {
+                connection: 'offline',
+                history: {
+                  read: true,
+                  fork: false,
+                },
+                turn: {
+                  start: false,
+                  reason: 'owner-offline',
+                },
+                files: {
+                  readText: false,
+                  writeText: false,
+                  browse: 'none',
+                  reason: 'owner-offline',
+                },
+                terminal: {
+                  mode: 'none',
+                  owner: 'none',
+                  reason: 'owner-offline',
+                },
+              },
+            },
+          ],
+          nextCursor: 'catalog-cursor-1',
+        })
+      ).toMatchObject({
+        nextCursor: 'catalog-cursor-1',
+      });
+
+      expect(
+        SessionSurfaceForkRequestSchema.parse({
+          locator,
         })
       ).toMatchObject({
         locator,
       });
 
       expect(
-        SessionSurfaceOpenResultSchema.parse({
-          locator,
-          opened: true,
-          readOnly: false,
-          capabilities: {
-            canOpen: true,
-            canSummarize: true,
-            canReadHistory: true,
-            canFork: true,
-            canListCatalog: true,
+        SessionSurfaceErrorEnvelopeSchema.parse({
+          error: {
+            code: 'session_surface_unavailable',
+            message: 'surface unavailable',
+            retryable: true,
           },
         })
       ).toMatchObject({
-        opened: true,
+        error: {
+          code: 'session_surface_unavailable',
+          retryable: true,
+        },
       });
+    });
+
+    it('rejects out-of-range limits and extra properties in nested objects', () => {
+      const locator = {
+        version: 2,
+        sessionId: 'session-remote',
+        workspace: {
+          kind: 'acp-remote',
+          workspaceRef: `acp-remote-workspace:${'D'.repeat(43)}`,
+        },
+      } as const;
 
       expect(
-        SessionSurfaceHistoryRequestSchema.parse({
+        SessionSurfaceOpenRequestSchema.parse({
           locator,
-          limit: 100,
-        })
-      ).toMatchObject({
-        limit: 100,
-      });
-
-      expect(
-        SessionSurfaceHistoryResultSchema.parse({
-          locator,
-          messages: [
-            {
-              id: 'msg-1',
-              role: 'user',
-              content: 'hello',
-              timestamp: 1_726_000_000_000,
-              truncated: false,
-            },
-          ],
-          hasMore: false,
-        })
-      ).toMatchObject({
-        hasMore: false,
-      });
-
-      expect(
-        SessionSurfaceHistoryOpenRequestSchema.parse({
-          locator,
-          cursor: 'cursor-1',
           limit: 1,
         })
       ).toMatchObject({
@@ -219,101 +431,72 @@ describe('session surface schemas', () => {
       });
 
       expect(
-        SessionSurfaceHistoryOpenResultSchema.parse({
+        SessionSurfaceOpenRequestSchema.parse({
           locator,
-          cursor: 'cursor-1',
-          messages: [],
-          hasMore: false,
+          limit: 100,
         })
       ).toMatchObject({
-        cursor: 'cursor-1',
+        limit: 100,
       });
-
-      expect(
-        SessionSurfaceCatalogRequestSchema.parse({
-          locator,
-          limit: 50,
-        })
-      ).toMatchObject({
-        limit: 50,
-      });
-
-      expect(
-        SessionSurfaceCatalogResultSchema.parse({
-          locator,
-          entries: [
-            {
-              id: 'entry-1',
-              title: 'First session',
-            },
-          ],
-          hasMore: false,
-        })
-      ).toMatchObject({
-        hasMore: false,
-      });
-
-      expect(
-        SessionSurfaceForkRequestSchema.parse({
-          locator,
-          message: {
-            id: 'msg-1',
-            role: 'user',
-            content: 'fork from here',
-            timestamp: 1_726_000_000_000,
-            truncated: false,
-          },
-        })
-      ).toMatchObject({
-        locator,
-      });
-
-      expect(
-        SessionSurfaceErrorEnvelopeSchema.parse({
-          error: {
-            code: 'session_surface_unavailable',
-            message: 'surface unavailable',
-          },
-        })
-      ).toMatchObject({
-        error: {
-          code: 'session_surface_unavailable',
-        },
-      });
-    });
-
-    it('rejects out-of-range limits and extra properties in nested objects', () => {
-      const locator = {
-        kind: 'remote',
-        ref: `acp-remote-workspace:${'C'.repeat(43)}`,
-      } as const;
 
       expect(() =>
-        SessionSurfaceHistoryRequestSchema.parse({
+        SessionSurfaceOpenRequestSchema.parse({
           locator,
           limit: 0,
         })
       ).toThrow();
 
       expect(() =>
-        SessionSurfaceCatalogRequestSchema.parse({
+        SessionSurfaceHistoryRequestSchema.parse({
           locator,
+          cursor: 'cursor-1',
+          expectedSnapshot: 'snapshot-1',
           limit: 101,
         })
       ).toThrow();
 
       expect(() =>
-        SessionSurfaceSummaryResultSchema.parse({
+        SessionSurfaceSummarySchema.parse({
           locator,
-          summary: 'ready',
+          displayCwd: '/workspace/remote',
+          rootId: 'root-1',
+          taskStatus: 'running',
+          messageCount: 12,
+          firstMessageTime: '2026-09-02T00:00:00.000Z',
+          lastMessageTime: '2026-09-02T01:00:00.000Z',
+          hasErrors: false,
           capabilities: {
-            canOpen: true,
-            canSummarize: true,
-            canReadHistory: true,
-            canFork: true,
-            canListCatalog: true,
-            extra: false,
+            connection: 'offline',
+            history: {
+              read: true,
+              fork: false,
+              extra: false,
+            },
+            turn: {
+              start: false,
+              reason: 'archived',
+            },
+            files: {
+              readText: false,
+              writeText: false,
+              browse: 'none',
+              reason: 'archived',
+            },
+            terminal: {
+              mode: 'none',
+              owner: 'none',
+              reason: 'archived',
+            },
           },
+        })
+      ).toThrow();
+
+      expect(() =>
+        SessionSurfaceHistoryPageSchema.parse({
+          messages: [],
+          snapshot: 'snapshot-1',
+          truncated: false,
+          extra: true,
         })
       ).toThrow();
 
@@ -322,6 +505,7 @@ describe('session surface schemas', () => {
           error: {
             code: 'session_surface_unavailable',
             message: 'surface unavailable',
+            retryable: true,
             detail: 'too much',
           },
         })
