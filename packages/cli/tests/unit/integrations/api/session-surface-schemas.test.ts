@@ -6,8 +6,10 @@ import {
   SessionSurfaceErrorCodeSchema,
   SessionSurfaceErrorEnvelopeSchema,
   SessionSurfaceForkRequestSchema,
+  type SessionSurfaceForkResult,
   SessionSurfaceHistoryPageSchema,
   SessionSurfaceHistoryRequestSchema,
+  type SessionSurfaceHistoryResult,
   SessionSurfaceMessageSchema,
   SessionSurfaceOpenRequestSchema,
   SessionSurfaceOpenResultSchema,
@@ -16,6 +18,67 @@ import {
 } from '../../../../src/api/sessionSurfaceSchemas.js';
 
 describe('session surface schemas', () => {
+  const remoteLocator = {
+    version: 2,
+    sessionId: 'session-remote',
+    workspace: {
+      kind: 'acp-remote',
+      workspaceRef: `acp-remote-workspace:${'Z'.repeat(43)}`,
+    },
+  } as const;
+
+  const summaryFixture = {
+    locator: remoteLocator,
+    displayCwd: '/workspace/remote',
+    rootId: 'root-1',
+    taskStatus: 'running',
+    messageCount: 12,
+    firstMessageTime: '2026-09-02T00:00:00.000Z',
+    lastMessageTime: '2026-09-02T01:00:00.000Z',
+    hasErrors: false,
+    capabilities: {
+      connection: 'offline',
+      history: {
+        read: true,
+        fork: false,
+      },
+      turn: {
+        start: false,
+        reason: 'owner-offline',
+      },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none',
+        reason: 'owner-offline',
+      },
+      terminal: {
+        mode: 'none',
+        owner: 'none',
+        reason: 'owner-offline',
+      },
+    },
+  } as const;
+
+  const historyResultFixture: SessionSurfaceHistoryResult = {
+    messages: [
+      {
+        id: 'surface-message:1:abc',
+        role: 'user',
+        content: 'hello',
+        timestamp: '2026-09-02T00:00:00.000Z',
+      },
+    ],
+    olderCursor: 'cursor-2',
+    snapshot: 'snapshot-1',
+    truncated: false,
+  };
+
+  const forkResultFixture: SessionSurfaceForkResult = {
+    session: summaryFixture,
+    history: historyResultFixture,
+  };
+
   describe('SessionLocatorV2Schema', () => {
     it('accepts strict local and remote locators with nested workspaces', () => {
       expect(
@@ -170,6 +233,15 @@ describe('session surface schemas', () => {
   });
 
   describe('strict envelopes', () => {
+    it('reuses existing wire shapes for history and fork result aliases', () => {
+      expect(SessionSurfaceHistoryPageSchema.parse(historyResultFixture)).toEqual(
+        historyResultFixture
+      );
+      expect(SessionSurfaceOpenResultSchema.parse(forkResultFixture)).toEqual(
+        forkResultFixture
+      );
+    });
+
     it('accepts capability, summary, open, history, catalog, fork, and error shapes', () => {
       const locator = {
         version: 2,

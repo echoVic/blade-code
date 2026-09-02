@@ -178,6 +178,7 @@ export const SessionSurfaceHistoryPageSchema = Runtime(
   })
 );
 export type SessionSurfaceHistoryPage = Static<typeof SessionSurfaceHistoryPageSchema>;
+export type SessionSurfaceHistoryResult = SessionSurfaceHistoryPage;
 
 export const SessionSurfaceOpenRequestSchema = Runtime(
   StrictObject({
@@ -194,6 +195,7 @@ export const SessionSurfaceOpenResultSchema = Runtime(
   })
 );
 export type SessionSurfaceOpenResult = Static<typeof SessionSurfaceOpenResultSchema>;
+export type SessionSurfaceForkResult = SessionSurfaceOpenResult;
 
 export const SessionSurfaceHistoryRequestSchema = Runtime(
   StrictObject({
