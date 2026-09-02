@@ -421,22 +421,19 @@ async function executeRemoteWrite(
 ): Promise<ToolResult> {
   const { file_path, content, encoding } = params;
   const deadlineAt = Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS;
-  const stableMetadata = {
-    file_path,
-    sideEffectsUncertain: false,
-  } satisfies Pick<WriteMetadata, 'file_path' | 'sideEffectsUncertain'>;
   let remotePath: AcpRemotePath;
   try {
     remotePath = fsService.parsePath(file_path);
   } catch (error) {
     if (error instanceof AcpRemotePathError) {
-      return createInvalidAcpRemotePathResult({
-        filePath: file_path,
-        mutation: true,
-      });
+      return createInvalidAcpRemotePathResult({ mutation: true });
     }
     throw error;
   }
+  const stableMetadata = {
+    file_path: remotePath.wirePath,
+    sideEffectsUncertain: false,
+  } satisfies Pick<WriteMetadata, 'file_path' | 'sideEffectsUncertain'>;
 
   updateOutput?.('开始写入文件...');
 
@@ -496,7 +493,7 @@ async function executeRemoteWrite(
           message: 'Remote file state requires a fresh Read before mutation',
         },
         metadata: {
-          file_path,
+          ...stableMetadata,
           write_acknowledged: false,
           write_verified: false,
           sideEffectsUncertain: true,
@@ -540,9 +537,8 @@ async function executeRemoteWrite(
             message: 'File not read before write',
           },
           metadata: {
-            file_path,
+            ...stableMetadata,
             requiresRead: true,
-            sideEffectsUncertain: false,
           },
         };
       }
@@ -556,10 +552,7 @@ async function executeRemoteWrite(
             type: ToolErrorType.VALIDATION_ERROR,
             message: 'File modified externally',
           },
-          metadata: {
-            file_path,
-            sideEffectsUncertain: false,
-          },
+          metadata: stableMetadata,
         };
       }
     }
@@ -579,13 +572,13 @@ async function executeRemoteWrite(
       lease.commitVerified();
     }
     const metadata: WriteMetadata = {
-      file_path,
+      file_path: remotePath.wirePath,
       content_size: content.length,
       file_size: Buffer.byteLength(content, 'utf8'),
       encoding,
       summary: previous.exists
-        ? `写入 ${basename(file_path)} 并完成远端回读校验`
-        : `创建 ${basename(file_path)} 并完成远端回读校验`,
+        ? `写入 ${remoteBasename(remotePath.wirePath)} 并完成远端回读校验`
+        : `创建 ${remoteBasename(remotePath.wirePath)} 并完成远端回读校验`,
       kind: 'edit',
       oldContent: previous.exists ? previous.content : '',
       newContent: content,
@@ -599,8 +592,8 @@ async function executeRemoteWrite(
     return {
       success: true,
       llmContent: previous.exists
-        ? `Wrote ${file_path} (${content.length} chars, updated existing file)`
-        : `Created ${file_path} (${content.length} chars, new file)`,
+        ? `Wrote ${remotePath.wirePath} (${content.length} chars, updated existing file)`
+        : `Created ${remotePath.wirePath} (${content.length} chars, new file)`,
       metadata,
     };
   } catch (error) {
@@ -614,7 +607,7 @@ async function executeRemoteWrite(
           message: 'Remote file state requires a fresh Read before mutation',
         },
         metadata: {
-          file_path,
+          file_path: remotePath.wirePath,
           file_size: Buffer.byteLength(content, 'utf8'),
           encoding,
           kind: 'edit',
@@ -637,7 +630,7 @@ async function executeRemoteWrite(
           message: error.message,
         },
         metadata: {
-          file_path,
+          file_path: remotePath.wirePath,
           file_size: Buffer.byteLength(content, 'utf8'),
           encoding,
           kind: 'edit',
@@ -661,7 +654,7 @@ async function executeRemoteWrite(
           message: 'Remote file state requires a fresh Read before mutation',
         },
         metadata: {
-          file_path,
+          file_path: remotePath.wirePath,
           write_acknowledged: false,
           write_verified: false,
           sideEffectsUncertain: true,
@@ -684,4 +677,11 @@ async function executeRemoteWrite(
   } finally {
     lease.release();
   }
+}
+
+function remoteBasename(filePath: string): string {
+  const lastForwardSlash = filePath.lastIndexOf('/');
+  const lastBackslash = filePath.lastIndexOf('\\');
+  const separatorIndex = Math.max(lastForwardSlash, lastBackslash);
+  return separatorIndex >= 0 ? filePath.slice(separatorIndex + 1) : filePath;
 }

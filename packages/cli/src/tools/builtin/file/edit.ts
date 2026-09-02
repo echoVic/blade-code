@@ -732,22 +732,19 @@ async function executeRemoteEdit(
 ): Promise<ToolResult> {
   const { file_path, old_string, new_string, replace_all } = params;
   const deadlineAt = Date.now() + ACP_REMOTE_FILE_REQUEST_TIMEOUT_MS;
-  const stableMetadata = {
-    file_path,
-    sideEffectsUncertain: false,
-  } satisfies Pick<EditMetadata, 'file_path' | 'sideEffectsUncertain'>;
   let remotePath: AcpRemotePath;
   try {
     remotePath = fsService.parsePath(file_path);
   } catch (error) {
     if (error instanceof AcpRemotePathError) {
-      return createInvalidAcpRemotePathResult({
-        filePath: file_path,
-        mutation: true,
-      });
+      return createInvalidAcpRemotePathResult({ mutation: true });
     }
     throw error;
   }
+  const stableMetadata = {
+    file_path: remotePath.wirePath,
+    sideEffectsUncertain: false,
+  } satisfies Pick<EditMetadata, 'file_path' | 'sideEffectsUncertain'>;
 
   updateOutput?.('Starting to read file...');
 
@@ -788,7 +785,7 @@ async function executeRemoteEdit(
           message: 'Remote file state requires a fresh Read before mutation',
         },
         metadata: {
-          file_path,
+          ...stableMetadata,
           write_acknowledged: false,
           write_verified: false,
           sideEffectsUncertain: true,
@@ -836,10 +833,10 @@ async function executeRemoteEdit(
     lease.release();
     return {
       success: false,
-      llmContent: `File not found: ${file_path}`,
+      llmContent: 'File not found',
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
-        message: '文件不存在',
+        message: 'File not found',
       },
       metadata: stableMetadata,
     };
@@ -897,14 +894,12 @@ async function executeRemoteEdit(
   const matchResult = smartMatch(content, old_string);
   if (!matchResult.matched) {
     lease.release();
-    const errorDetails = generateRichErrorMessage(content, old_string, file_path);
     return {
       success: false,
-      llmContent: errorDetails.llmContent,
+      llmContent: 'String not found in file',
       error: {
         type: ToolErrorType.EXECUTION_ERROR,
-        message: '未找到匹配内容',
-        details: errorDetails.metadata,
+        message: 'String not found in file',
       },
       metadata: stableMetadata,
     };
@@ -1003,7 +998,7 @@ async function executeRemoteEdit(
       4
     );
     const metadata: EditMetadata = {
-      file_path,
+      file_path: remotePath.wirePath,
       matches_found: matches.length,
       replacements_made: replacedCount,
       replace_all,
@@ -1016,8 +1011,8 @@ async function executeRemoteEdit(
       diff_snippet: diffSnippet,
       summary:
         replacedCount === 1
-          ? `替换 1 处匹配到 ${basename(file_path)}`
-          : `替换 ${replacedCount} 处匹配到 ${basename(file_path)}`,
+          ? `替换 1 处匹配到 ${remoteBasename(remotePath.wirePath)}`
+          : `替换 ${replacedCount} 处匹配到 ${remoteBasename(remotePath.wirePath)}`,
       kind: 'edit',
       oldContent: content,
       newContent,
@@ -1030,8 +1025,8 @@ async function executeRemoteEdit(
     return {
       success: true,
       llmContent: diffSnippet
-        ? `Edited ${file_path} (${replacedCount} replacement${replacedCount > 1 ? 's' : ''}):\n${diffSnippet}`
-        : `Edited ${file_path} (${replacedCount} replacement${replacedCount > 1 ? 's' : ''})`,
+        ? `Edited ${remotePath.wirePath} (${replacedCount} replacement${replacedCount > 1 ? 's' : ''}):\n${diffSnippet}`
+        : `Edited ${remotePath.wirePath} (${replacedCount} replacement${replacedCount > 1 ? 's' : ''})`,
       metadata,
     };
   } catch (error) {
@@ -1045,7 +1040,7 @@ async function executeRemoteEdit(
           message: 'Remote file state requires a fresh Read before mutation',
         },
         metadata: {
-          file_path,
+          file_path: remotePath.wirePath,
           matches_found: matches.length,
           replacements_made: replacedCount,
           replace_all,
@@ -1074,7 +1069,7 @@ async function executeRemoteEdit(
           message: error.message,
         },
         metadata: {
-          file_path,
+          file_path: remotePath.wirePath,
           matches_found: matches.length,
           replacements_made: replacedCount,
           replace_all,
@@ -1098,6 +1093,13 @@ async function executeRemoteEdit(
   } finally {
     lease.release();
   }
+}
+
+function remoteBasename(filePath: string): string {
+  const lastForwardSlash = filePath.lastIndexOf('/');
+  const lastBackslash = filePath.lastIndexOf('\\');
+  const separatorIndex = Math.max(lastForwardSlash, lastBackslash);
+  return separatorIndex >= 0 ? filePath.slice(separatorIndex + 1) : filePath;
 }
 
 /**

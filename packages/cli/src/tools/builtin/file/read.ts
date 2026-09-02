@@ -188,7 +188,7 @@ export const readTool = createTool({
           });
         } catch (error) {
           if (isAcpResourceNotFoundError(error)) {
-            const message = `File not found: ${file_path}`;
+            const message = 'File not found';
             return {
               success: false,
               llmContent: message,
@@ -218,7 +218,7 @@ export const readTool = createTool({
 
         let content = fullContent;
         const metadata: ReadMetadata = {
-          file_path,
+          file_path: remotePath.wirePath,
           file_size: Buffer.byteLength(fullContent, 'utf8'),
           file_type: ext,
           encoding,
@@ -234,7 +234,7 @@ export const readTool = createTool({
           metadata.end_line = sliced.metadata.end_line;
         }
 
-        const fileName = basename(file_path);
+        const fileName = remoteBasename(remotePath.wirePath);
         const linesRead = metadata.lines_read || metadata.total_lines;
         metadata.summary = linesRead
           ? `读取 ${linesRead} 行从 ${fileName}`
@@ -574,4 +574,11 @@ function checkIsBinaryFile(ext: string): boolean {
     '.eot',
   ];
   return binaryExtensions.includes(ext);
+}
+
+function remoteBasename(filePath: string): string {
+  const lastForwardSlash = filePath.lastIndexOf('/');
+  const lastBackslash = filePath.lastIndexOf('\\');
+  const separatorIndex = Math.max(lastForwardSlash, lastBackslash);
+  return separatorIndex >= 0 ? filePath.slice(separatorIndex + 1) : filePath;
 }

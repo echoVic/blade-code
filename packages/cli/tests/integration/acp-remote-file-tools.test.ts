@@ -524,6 +524,41 @@ describe('ACP remote Read builtin tool', () => {
     expect(service.checkRemoteAccess(filePath, remoteContent)).toBe('current');
   });
 
+  it('remote Read success metadata uses canonical Windows wirePath and Windows basename in summary', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const inputPath = String.raw`C:\Repo\dir\..\nested\report.txt`;
+    const canonicalPath = String.raw`C:\Repo\nested\report.txt`;
+    const remoteContent = 'remote utf8 line 1\n第二行 remote\n';
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-read-canonical-wire-path';
+    initializeRemoteSession(client, sessionId, profile.workspace.wirePath, profile);
+    client.files.set(canonicalPath, remoteContent);
+
+    const result = await executeRead(inputPath, sessionId);
+
+    expect(result).toMatchObject({
+      success: true,
+      llmContent: remoteContent,
+      metadata: {
+        file_path: canonicalPath,
+        file_size: Buffer.byteLength(remoteContent, 'utf8'),
+        file_type: '.txt',
+        encoding: 'utf8',
+        acp_mode: true,
+        summary: '读取 report.txt',
+      },
+    });
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: canonicalPath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
   it('remote Read slices lines after recording the full remote content digest', async () => {
     const root = await createTempRoot('blade-acp-remote-slice-');
     const filePath = path.join(root, 'slice.me');
@@ -693,8 +728,10 @@ describe('ACP remote Read builtin tool', () => {
     const result = await executeRead(filePath, sessionId);
 
     expect(result.success).toBe(false);
-    expect(result.llmContent).toBe(`File not found: ${filePath}`);
+    expect(result.llmContent).toBe('File not found');
     expect(result.error?.type).toBe('execution_error');
+    expect(result.error?.message).toBe('File not found');
+    expect(JSON.stringify(result)).not.toContain(filePath);
     expect(readSpy).toHaveBeenCalledTimes(1);
     expect(client.requests).toEqual([
       {
@@ -1214,10 +1251,10 @@ describe('ACP remote Write/Edit builtin tools', () => {
         message: INVALID_REMOTE_PATH_MESSAGE,
       },
       metadata: {
-        file_path: filePath,
         sideEffectsUncertain: false,
       },
     });
+    expect(Object.hasOwn(result.metadata ?? {}, 'file_path')).toBe(false);
     expect(String(result.llmContent)).not.toContain(filePath);
     expect(JSON.stringify(result.error ?? {})).not.toContain(filePath);
     expect(logs).not.toContain(filePath);
@@ -1252,10 +1289,10 @@ describe('ACP remote Write/Edit builtin tools', () => {
         message: INVALID_REMOTE_PATH_MESSAGE,
       },
       metadata: {
-        file_path: filePath,
         sideEffectsUncertain: false,
       },
     });
+    expect(Object.hasOwn(result.metadata ?? {}, 'file_path')).toBe(false);
     expect(String(result.llmContent)).not.toContain(filePath);
     expect(JSON.stringify(result.error ?? {})).not.toContain(filePath);
     expect(logs).not.toContain(filePath);
@@ -1454,6 +1491,49 @@ describe('ACP remote Write/Edit builtin tools', () => {
     ]);
   });
 
+  it('remote Write read-before-write metadata uses canonical Windows wirePath for noncanonical input', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const inputPath = String.raw`C:\Repo\dir\..\nested\existing.txt`;
+    const canonicalPath = String.raw`C:\Repo\nested\existing.txt`;
+    const client = new ControlledFileClient();
+    client.files.set(canonicalPath, 'remote original\n');
+    const sessionId = 'remote-write-needs-read-canonical-metadata';
+    initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      profile
+    );
+
+    const result = await executeWrite(inputPath, 'remote updated\n', sessionId);
+
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        type: 'validation_error',
+        message: 'File not read before write',
+      },
+      metadata: {
+        file_path: canonicalPath,
+        requiresRead: true,
+        sideEffectsUncertain: false,
+      },
+    });
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: canonicalPath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
   it('remote Write sanitizes preflight read errors and keeps sentinel details out of the result', async () => {
     const root = await createTempRoot('blade-acp-remote-write-preflight-sanitize-');
     const filePath = path.join(root, 'sanitize.txt');
@@ -1626,6 +1706,57 @@ describe('ACP remote Write/Edit builtin tools', () => {
     ]);
   });
 
+  it('remote Write modified metadata uses canonical Windows wirePath for noncanonical input', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const inputPath = String.raw`C:\Repo\dir\..\nested\stale.txt`;
+    const canonicalPath = String.raw`C:\Repo\nested\stale.txt`;
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-stale-canonical-metadata';
+    initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      profile
+    );
+
+    await expectRemoteReadSuccess(client, canonicalPath, sessionId, 'alpha\n');
+    client.files.set(canonicalPath, 'beta\n');
+
+    const result = await executeWrite(inputPath, 'gamma\n', sessionId);
+
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        type: 'validation_error',
+        message: 'File modified externally',
+      },
+      metadata: {
+        file_path: canonicalPath,
+        sideEffectsUncertain: false,
+      },
+    });
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: canonicalPath,
+          sessionId,
+        },
+      },
+      {
+        kind: 'read',
+        request: {
+          path: canonicalPath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
   it('remote Edit rejects stale digests after a remote Read without issuing a write request', async () => {
     const root = await createTempRoot('blade-acp-remote-edit-stale-');
     const filePath = path.join(root, 'stale.txt');
@@ -1667,6 +1798,57 @@ describe('ACP remote Write/Edit builtin tools', () => {
     ]);
   });
 
+  it('remote Write mutation error metadata uses canonical Windows wirePath for noncanonical input', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const inputPath = String.raw`C:\Repo\dir\..\nested\matrix.txt`;
+    const canonicalPath = String.raw`C:\Repo\nested\matrix.txt`;
+    const client = new ControlledFileClient();
+    client.enqueueWriteBehavior({
+      kind: 'leave-old-and-throw',
+      error: new Error('write rejected'),
+    });
+    const sessionId = 'remote-write-mutation-error-canonical-metadata';
+    initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      profile
+    );
+
+    await expectRemoteReadSuccess(client, canonicalPath, sessionId, 'alpha\n');
+
+    const result = await executeWrite(inputPath, 'beta\n', sessionId);
+
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        type: 'execution_error',
+      },
+      metadata: {
+        file_path: canonicalPath,
+        file_size: Buffer.byteLength('beta\n', 'utf8'),
+        encoding: 'utf8',
+        kind: 'edit',
+        oldContent: 'alpha\n',
+        newContent: 'beta\n',
+        snapshot_created: false,
+        write_acknowledged: false,
+        write_verified: false,
+        sideEffectsUncertain: false,
+      },
+    });
+    expect(client.requests.map((request) => request.request.path)).toEqual([
+      canonicalPath,
+      canonicalPath,
+      canonicalPath,
+      canonicalPath,
+    ]);
+  });
+
   it('remote Write currently does not report verified mutation metadata after an acknowledged write', async () => {
     const root = await createTempRoot('blade-acp-remote-write-metadata-');
     const filePath = path.join(root, 'metadata.txt');
@@ -1697,6 +1879,57 @@ describe('ACP remote Write/Edit builtin tools', () => {
     }
     expect(service.getRemoteAccessRecord(filePath)?.lastOperation).toBe('write');
     expect(service.checkRemoteAccess(filePath, 'created remotely\n')).toBe('current');
+  });
+
+  it('remote Write success metadata uses canonical Windows wirePath and Windows basename in summary', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const inputPath = String.raw`C:\Repo\dir\..\nested\report.txt`;
+    const canonicalPath = String.raw`C:\Repo\nested\report.txt`;
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-canonical-wire-path';
+    initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      profile
+    );
+
+    const result = await executeWrite(inputPath, 'created remotely\n', sessionId);
+
+    expect(result.success).toBe(true);
+    expect(result.llmContent).toBe(`Created ${canonicalPath} (17 chars, new file)`);
+    expect(result.metadata).toMatchObject({
+      file_path: canonicalPath,
+      summary: '创建 report.txt 并完成远端回读校验',
+    });
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: canonicalPath,
+          sessionId,
+        },
+      },
+      {
+        kind: 'write',
+        request: {
+          path: canonicalPath,
+          content: 'created remotely\n',
+          sessionId,
+        },
+      },
+      {
+        kind: 'read',
+        request: {
+          path: canonicalPath,
+          sessionId,
+        },
+      },
+    ]);
   });
 
   it('remote Edit currently does not classify uncertain outcomes when write throws after applying remotely', async () => {
@@ -1829,13 +2062,109 @@ describe('ACP remote Write/Edit builtin tools', () => {
     const result = await executeEdit(filePath, 'alpha', 'beta', sessionId);
 
     expect(result.success).toBe(false);
-    expect(result.llmContent).toBe(`File not found: ${filePath}`);
+    expect(result.llmContent).toBe('File not found');
     expect(result.error?.type).toBe('execution_error');
+    expect(result.error?.message).toBe('File not found');
+    expect(result.metadata).toMatchObject({
+      file_path: filePath,
+      sideEffectsUncertain: false,
+    });
     expect(client.requests).toEqual([
       {
         kind: 'read',
         request: {
           path: filePath,
+          sessionId,
+        },
+      },
+    ]);
+  });
+
+  it('remote Edit success metadata uses canonical Windows wirePath and Windows basename in summary', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const inputPath = String.raw`C:\Repo\dir\..\nested\report.txt`;
+    const canonicalPath = String.raw`C:\Repo\nested\report.txt`;
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-edit-canonical-wire-path';
+    initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      profile
+    );
+
+    await expectRemoteReadSuccess(client, canonicalPath, sessionId, 'alpha beta\n');
+
+    const result = await executeEdit(inputPath, 'beta', 'gamma', sessionId);
+
+    expect(result.success).toBe(true);
+    expect(String(result.llmContent)).toContain(
+      `Edited ${canonicalPath} (1 replacement)`
+    );
+    expect(result.metadata).toMatchObject({
+      file_path: canonicalPath,
+      summary: '替换 1 处匹配到 report.txt',
+    });
+    expect(client.requests.map((request) => request.request.path)).toEqual([
+      canonicalPath,
+      canonicalPath,
+      canonicalPath,
+      canonicalPath,
+    ]);
+  });
+
+  it('remote Edit string-not-found failure uses safe fixed text without leaking input or canonical path', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const inputPath = String.raw`C:\Repo\dir\..\nested\report.txt`;
+    const canonicalPath = String.raw`C:\Repo\nested\report.txt`;
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-edit-string-not-found-sanitized';
+    initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      profile
+    );
+
+    await expectRemoteReadSuccess(client, canonicalPath, sessionId, 'alpha beta\n');
+
+    const result = await executeEdit(inputPath, 'missing text', 'gamma', sessionId);
+
+    expect(result.success).toBe(false);
+    expect(result.llmContent).toBe('String not found in file');
+    expect(result.error).toMatchObject({
+      type: 'execution_error',
+      message: 'String not found in file',
+    });
+    expect(result.metadata).toMatchObject({
+      file_path: canonicalPath,
+      sideEffectsUncertain: false,
+    });
+    expect(Object.hasOwn(result.error ?? {}, 'details')).toBe(false);
+    expect(String(result.llmContent)).not.toContain(inputPath);
+    expect(String(result.llmContent)).not.toContain(canonicalPath);
+    expect(String(result.error?.message)).not.toContain(inputPath);
+    expect(String(result.error?.message)).not.toContain(canonicalPath);
+    expect(client.requests).toEqual([
+      {
+        kind: 'read',
+        request: {
+          path: canonicalPath,
+          sessionId,
+        },
+      },
+      {
+        kind: 'read',
+        request: {
+          path: canonicalPath,
           sessionId,
         },
       },
@@ -2115,6 +2444,130 @@ describe('ACP remote Write/Edit builtin tools', () => {
 
     blockedWrite.release();
     await firstEdit;
+  });
+
+  it('remote Write requiresRead metadata uses canonical Windows wirePath for noncanonical input', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const inputPath = String.raw`C:\Repo\dir\..\nested\quarantine.txt`;
+    const canonicalPath = String.raw`C:\Repo\nested\quarantine.txt`;
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-write-requires-read-canonical-metadata';
+    initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      profile
+    );
+
+    await expectRemoteReadSuccess(client, canonicalPath, sessionId, 'alpha\n');
+
+    vi.useFakeTimers({ now: 7_000 });
+    try {
+      const blockedWrite = client.enqueueBlockedWrite();
+      const pendingWrite = executeWrite(canonicalPath, 'beta\n', sessionId);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await vi.advanceTimersByTimeAsync(30_001);
+      const timedOutWrite = await pendingWrite;
+      expect(timedOutWrite).toMatchObject({
+        success: false,
+        metadata: {
+          file_path: canonicalPath,
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
+          requiresRead: true,
+        },
+      });
+
+      const writeAfterTimeout = await executeWrite(inputPath, 'gamma\n', sessionId);
+      expect(writeAfterTimeout).toMatchObject({
+        success: false,
+        error: {
+          type: 'execution_error',
+          message: 'Remote file state requires a fresh Read before mutation',
+        },
+        metadata: {
+          file_path: canonicalPath,
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
+          requiresRead: true,
+        },
+      });
+
+      blockedWrite.release();
+      await vi.runAllTimersAsync();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('remote Edit requiresRead metadata uses canonical Windows wirePath for noncanonical input', async () => {
+    const profile = createAcpRemotePathProfile(String.raw`C:\Repo`);
+    const inputPath = String.raw`C:\Repo\dir\..\nested\quarantine.txt`;
+    const canonicalPath = String.raw`C:\Repo\nested\quarantine.txt`;
+    const client = new ControlledFileClient();
+    const sessionId = 'remote-edit-requires-read-canonical-metadata';
+    initializeRemoteSession(
+      client,
+      sessionId,
+      profile.workspace.wirePath,
+      {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      profile
+    );
+
+    await expectRemoteReadSuccess(client, canonicalPath, sessionId, 'alpha beta\n');
+
+    vi.useFakeTimers({ now: 9_000 });
+    try {
+      const blockedWrite = client.enqueueBlockedWrite();
+      const pendingWrite = executeWrite(canonicalPath, 'alpha gamma\n', sessionId);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await vi.advanceTimersByTimeAsync(30_001);
+      const timedOutWrite = await pendingWrite;
+      expect(timedOutWrite).toMatchObject({
+        success: false,
+        metadata: {
+          file_path: canonicalPath,
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
+          requiresRead: true,
+        },
+      });
+
+      const editAfterTimeout = await executeEdit(inputPath, 'beta', 'delta', sessionId);
+      expect(editAfterTimeout).toMatchObject({
+        success: false,
+        error: {
+          type: 'execution_error',
+          message: 'Remote file state requires a fresh Read before mutation',
+        },
+        metadata: {
+          file_path: canonicalPath,
+          write_acknowledged: false,
+          write_verified: false,
+          sideEffectsUncertain: true,
+          requiresRead: true,
+        },
+      });
+
+      blockedWrite.release();
+      await vi.runAllTimersAsync();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('remote Write quarantines a pending mutation, blocks Read Write Edit and ApplyPatch guidance, and requires a fresh same-session Read before re-enabling mutation', async () => {
