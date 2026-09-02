@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.128] - 2026-09-02
+
+### Added
+- Added bilingual reference and evidence pages for ACP Win32 remote path identity hardening, covering the frozen path profile, durable remote workspace identity, exact-versus-collision path responsibilities, typed remote path and patch validation errors, and the bounded release-evidence layout for Tasks 1-8.
+
+### Fixed
+- Froze ACP remote path style from the Session workspace, preserved the case-sensitive wire path for RPCs, and split exact ledger authority from conservative collision fencing so Windows case aliases and similar spellings cannot silently reuse write authorization.
+- Routed ACP remote Sessions through protected host-private state roots and explicit execution/resource roots, keeping remote workspace descriptors durable while preventing host-only workspace config, hooks, LSP, Git, task isolation, and local terminal fallback from re-entering the remote path.
+- Accepted existing same-owner Blade storage roots that are not group/world writable while keeping the ACP remote namespace and digest scopes at private `0700` permissions.
+- Made remote single-file tools and update-only `ApplyPatch` fail closed on unsafe Windows spellings, workspace escape, restricted targets, and duplicate targets before host-private patch state, locks, leases, or remote writes begin.
+- Canonicalized remote Read/Write/Edit result paths and Windows basenames across host platforms, while redacting not-found and match failures from model-visible error text.
+- Removed raw rejected paths from ToolExecutor invalid-path preflight and unknown-session Write/Edit metadata, including at the helper type boundary.
+- Surfaced only allowlisted fixed ACP filesystem failures through the shared TUI/ACP/Headless/Web display formatter, keeping unknown client errors generic.
+
+### Tests
+- Recorded the Task 1-8 causal RED commands, commit-responsibility map, focused deterministic and GUI/TUI results, independent reviews, full-suite and coverage gates, and zero-retry two-model real-API qualification.
+
 ## [0.10.127] - 2026-08-31
 
 ### Added

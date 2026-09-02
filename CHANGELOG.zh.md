@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.128] - 2026-09-02
+
+### 新增
+- 新增 ACP Win32 remote path identity hardening 的双语 reference 与 evidence 页面，覆盖冻结 path profile、durable remote workspace identity、exact 与 collision path 职责划分、typed remote path / patch validation error，以及 Tasks 1-8 的有界 release-evidence 结构。
+
+### 修复
+- 将 ACP remote path style 冻结到 Session workspace，保留用于 RPC 的 case-sensitive wire path，并把 exact ledger authority 与保守 collision fencing 分离，避免 Windows 大小写别名等路径拼写静默复用写入授权。
+- 将 ACP remote Session 统一路由到受保护的 host-private state root 与显式 execution/resource roots，在保留 durable remote workspace descriptor 的同时，阻止 host-only workspace config、hooks、LSP、Git、task isolation 与 local terminal fallback 回流到 remote path。
+- 兼容由当前用户拥有且 group/world 不可写的既有 Blade storage root，同时继续要求 ACP remote namespace 与 digest scope 使用私有 `0700` 权限。
+- 让 remote single-file tools 与 update-only `ApplyPatch` 在进入 host-private patch state、locks、leases 或 remote write 之前，就对 unsafe Windows spelling、workspace escape、restricted target 和 duplicate target 统一 fail closed。
+- 统一 remote Read / Write / Edit 结果中的 canonical path 与跨平台 Windows basename，并从模型可见错误文本中移除 not-found 和匹配失败路径。
+- 从 ToolExecutor invalid-path preflight 与 unknown-session Write / Edit metadata 中移除被拒绝的 raw path，并在 helper 类型边界阻止其重新引入。
+- 通过 TUI / ACP / Headless / Web 共用的展示格式化器，仅呈现 allowlist 内的固定 ACP filesystem 错误，未知 Client 错误继续保持通用提示。
+
+### 测试
+- 记录 Task 1-8 的 causal RED 命令、commit responsibility 映射、focused deterministic 与 GUI/TUI 结果、独立审查、全量测试与 coverage 门禁，以及零重试双模型 real-API qualification。
+
 ## [0.10.127] - 2026-08-31
 
 ### 新增
