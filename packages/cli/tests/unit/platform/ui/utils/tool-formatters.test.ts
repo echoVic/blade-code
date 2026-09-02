@@ -211,6 +211,109 @@ describe('tool formatters', () => {
     expect(display.detail).not.toContain('ACP client exploded');
   });
 
+  it.each([
+    {
+      toolName: 'Read',
+      message: 'ACP remote file path is invalid',
+      llmContent: 'ACP remote file path is invalid: /private/remote/secret.txt',
+      metadata: undefined,
+    },
+    {
+      toolName: 'Write',
+      message: 'ACP session filesystem is unavailable',
+      llmContent: 'raw client detail with /private/remote/write-target.txt',
+      metadata: {
+        file_path: '/private/remote/write-target.txt',
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      toolName: 'Edit',
+      message: 'ACP remote filesystem does not support writeTextFile',
+      llmContent:
+        'ACP remote Edit requires writeTextFile capability for /private/remote/edit-target.txt.',
+      metadata: {
+        file_path: '/private/remote/edit-target.txt',
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      toolName: 'ApplyPatch',
+      message: 'ACP remote ApplyPatch requires a frozen ACP remote filesystem owner',
+      llmContent: 'client owner detail with /private/remote/patch-target.txt',
+      metadata: {
+        kind: 'patch',
+        changes: [],
+        affected_paths: ['/private/remote/patch-target.txt'],
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      toolName: 'ApplyPatch',
+      message: 'ACP remote ApplyPatch requires readTextFile capability',
+      llmContent: 'client stack with /private/remote/readback-target.txt',
+      metadata: {
+        kind: 'patch',
+        changes: [],
+        affected_paths: ['/private/remote/readback-target.txt'],
+        sideEffectsUncertain: false,
+      },
+    },
+    {
+      toolName: 'ApplyPatch',
+      message: 'ACP remote ApplyPatch requires writeTextFile capability',
+      llmContent: 'client stack with /private/remote/writeback-target.txt',
+      metadata: {
+        kind: 'patch',
+        changes: [],
+        affected_paths: ['/private/remote/writeback-target.txt'],
+        sideEffectsUncertain: false,
+      },
+    },
+  ])(
+    'shows safe ACP remote file failures for $toolName without raw details',
+    ({ toolName, message, llmContent, metadata }) => {
+      const display = formatToolDisplay(toolName, {
+        success: false,
+        llmContent,
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          message,
+        },
+        ...(metadata ? { metadata } : {}),
+      });
+
+      expect(display.summary).toBe(message);
+      expect(renderToolDisplayToString(display)).toContain(message);
+      expect(JSON.stringify(display)).not.toContain('/private/remote');
+      expect(JSON.stringify(display)).not.toContain('client stack');
+      expect(JSON.stringify(display)).not.toContain('client owner detail');
+      expect(JSON.stringify(display)).not.toContain('raw client detail');
+      expect(JSON.stringify(display)).not.toContain(
+        'requires writeTextFile capability for'
+      );
+    }
+  );
+
+  it('keeps non-whitelisted failed file tool errors generic without raw details', () => {
+    const display = formatToolDisplay('Read', {
+      success: false,
+      llmContent: 'raw client content with /private/remote/secret.txt',
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: 'ACP client exploded with raw remote stack details',
+      },
+    });
+
+    expect(display).toEqual({
+      status: 'fail',
+      summary: '执行失败',
+      detail: undefined,
+    });
+    expect(JSON.stringify(display)).not.toContain('raw remote stack details');
+    expect(JSON.stringify(display)).not.toContain('/private/remote');
+  });
+
   it('renders bounded Browser summaries without page snapshot content', () => {
     expect(
       formatToolCallSummary('BrowserNavigate', {

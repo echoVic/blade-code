@@ -614,6 +614,40 @@ function mutationUncertaintyDetail(
   return 'Side effects: uncertain; inspect before retrying';
 }
 
+function safeAcpRemoteFileFailureSummary(
+  toolName: string,
+  result: ToolResult
+): string | null {
+  if (result.success) return null;
+  if (
+    toolName !== 'Read' &&
+    toolName !== 'Write' &&
+    toolName !== 'Edit' &&
+    toolName !== 'ApplyPatch'
+  ) {
+    return null;
+  }
+
+  const message = result.error?.message;
+  if (!message) return null;
+  if (
+    message === 'ACP remote file path is invalid' ||
+    message === 'ACP session filesystem is unavailable' ||
+    message === 'ACP remote Read requires readTextFile capability' ||
+    message === 'ACP remote ApplyPatch requires a frozen ACP remote filesystem owner' ||
+    message === 'ACP remote ApplyPatch requires readTextFile capability' ||
+    message === 'ACP remote ApplyPatch requires writeTextFile capability'
+  ) {
+    return message;
+  }
+
+  const unsupportedPrefix = 'ACP remote filesystem does not support ';
+  if (!message.startsWith(unsupportedPrefix)) return null;
+
+  const operation = message.slice(unsupportedPrefix.length);
+  return operation === 'readTextFile' || operation === 'writeTextFile' ? message : null;
+}
+
 /**
  * 统一工具展示格式化入口
  * 所有面向用户的展示（CLI TUI / Web SSE / Headless / ACP）都应通过此函数
@@ -629,6 +663,7 @@ export function formatToolDisplay(
       : 'warn';
   const summary =
     (result.metadata?.summary as string | undefined) ||
+    safeAcpRemoteFileFailureSummary(toolName, result) ||
     (result.success ? '执行成功' : '执行失败');
   const detail = shouldShowToolDetail(toolName, result)
     ? generateToolDetail(toolName, result) || undefined
