@@ -1,8 +1,19 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
-import { lstat, mkdir, open, readdir, realpath } from 'node:fs/promises';
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  realpath,
+  unlink,
+} from 'node:fs/promises';
 import path from 'node:path';
+import type { SqliteDb } from '../context/storage/sqlite/driver.js';
+import { openDb } from '../context/storage/sqlite/driver.js';
 import type { AcpRemoteWorkspaceDescriptorV1 } from '../context/types.js';
 import {
   type AcpRemoteStateScope,
@@ -15,6 +26,9 @@ const SURFACE_WORKSPACES_DIRECTORY = 'surface-workspaces-v1';
 const EXACT_IDENTITY_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const WORKSPACE_REFERENCE_PATTERN = /^acp-remote-workspace:[A-Za-z0-9_-]{43}$/;
 const MAX_EXACT_BINDINGS_PER_SCOPE = 1024;
+const CAPACITY_COORDINATOR_FILE = '.surface-workspaces-v1.capacity.sqlite';
+const TEMP_REFERENCE_FILE_PATTERN =
+  /^\.tmp-acp-remote-workspace-([1-9][0-9]*)-[a-f0-9]{32}\.pending$/;
 
 type SessionSurfaceErrorCode =
   | 'session_surface_not_found'
@@ -30,6 +44,27 @@ interface WorkspaceReferenceRecord {
 interface WorkspaceReferenceDirectoryState {
   readonly recordsByDigest: ReadonlyMap<string, WorkspaceReferenceRecord>;
   readonly workspaceRefToDigest: ReadonlyMap<string, string>;
+}
+
+interface WorkspaceReferencePublishContext {
+  readonly finalPath: string;
+  readonly referenceDirectoryPath: string;
+  readonly tempPath: string;
+}
+
+interface WorkspaceReferenceHooksForTesting {
+  readonly afterPublish?: (context: WorkspaceReferencePublishContext) => Promise<void>;
+  readonly afterCapacityLockAcquired?: () => Promise<void>;
+  readonly beforeCapacityLockAttempt?: () => Promise<void>;
+  readonly beforePublish?: (context: WorkspaceReferencePublishContext) => Promise<void>;
+  readonly syncDirectory?: (directoryPath: string) => Promise<void>;
+}
+
+interface CapacityCoordinator {
+  readonly database: SqliteDb;
+  readonly identity: Awaited<ReturnType<FileHandle['stat']>>;
+  readonly identityHandle: FileHandle;
+  readonly path: string;
 }
 
 class AcpRemoteWorkspaceReferenceError extends Error {
@@ -56,6 +91,8 @@ class AcpRemoteWorkspaceReferenceError extends Error {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
+
+let referenceHooksForTesting: WorkspaceReferenceHooksForTesting | undefined;
 
 export function getAcpRemoteWorkspaceReferenceDirectoryPath(
   scope: AcpRemoteStateScope
@@ -100,69 +137,51 @@ export async function getOrCreateAcpRemoteWorkspaceReference(
   return withReferenceScope(hostStateRoot, descriptor, async (scope, exactDigest) => {
     const referenceDirectoryPath = getAcpRemoteWorkspaceReferenceDirectoryPath(scope);
     await ensureReferenceDirectory(scope, referenceDirectoryPath);
-
-    const state = await readReferenceDirectoryState(
-      scope,
-      referenceDirectoryPath,
-      true
-    );
-    const existing = state.recordsByDigest.get(exactDigest);
-    if (existing) {
-      return existing.workspaceRef;
-    }
-    if (state.recordsByDigest.size >= MAX_EXACT_BINDINGS_PER_SCOPE) {
-      throw new AcpRemoteWorkspaceReferenceError('session_surface_capacity');
-    }
-
-    const referenceFilePath = path.join(referenceDirectoryPath, `${exactDigest}.json`);
-    const existingRefs = new Set(state.workspaceRefToDigest.keys());
-    for (let attempt = 0; attempt < 32; attempt += 1) {
-      const workspaceRef = createWorkspaceReference();
-      if (existingRefs.has(workspaceRef)) {
-        continue;
+    return withReferenceCapacityLock(referenceDirectoryPath, async () => {
+      await cleanupAbandonedReferenceTemps(referenceDirectoryPath);
+      const state = await readReferenceDirectoryState(
+        scope,
+        referenceDirectoryPath,
+        true
+      );
+      const existing = state.recordsByDigest.get(exactDigest);
+      if (existing) return existing.workspaceRef;
+      if (state.recordsByDigest.size >= MAX_EXACT_BINDINGS_PER_SCOPE) {
+        throw new AcpRemoteWorkspaceReferenceError('session_surface_capacity');
       }
-
-      const payload: WorkspaceReferenceRecord = {
-        version: 1,
-        exactIdentityDigest: exactDigest,
-        workspaceRef,
-      };
-      const serializedPayload = JSON.stringify(payload);
-
-      try {
-        const handle = await open(referenceFilePath, 'wx', 0o600);
-        try {
-          await assertPrivateRegularFileHandle(
-            handle,
-            referenceFilePath,
-            referenceDirectoryPath
-          );
-          await handle.writeFile(serializedPayload, 'utf8');
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
-
-        await assertPrivateRegularFile(referenceFilePath, referenceDirectoryPath);
-        await syncDirectory(referenceDirectoryPath);
-        return workspaceRef;
-      } catch (error) {
-        const errno = errnoCode(error);
-        if (errno === 'EEXIST') {
-          return readAcpRemoteWorkspaceReference(hostStateRoot, descriptor);
-        }
-        if (errno === 'ENOENT') {
-          throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
-        }
-        if (error instanceof AcpRemoteWorkspaceReferenceError) {
-          throw error;
-        }
-        throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+      const referenceFilePath = path.join(
+        referenceDirectoryPath,
+        `${exactDigest}.json`
+      );
+      const existingRefs = new Set(state.workspaceRefToDigest.keys());
+      for (let attempt = 0; attempt < 32; attempt += 1) {
+        const workspaceRef = createWorkspaceReference();
+        if (existingRefs.has(workspaceRef)) continue;
+        return publishWorkspaceReferenceRecord(
+          scope,
+          referenceDirectoryPath,
+          referenceFilePath,
+          descriptor,
+          { version: 1, exactIdentityDigest: exactDigest, workspaceRef }
+        );
       }
-    }
-
-    throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+      throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+    });
   });
+}
+
+/** @internal */
+export function __setAcpRemoteWorkspaceReferenceHooksForTesting(
+  hooks: WorkspaceReferenceHooksForTesting | undefined
+): void {
+  referenceHooksForTesting = hooks;
+}
+
+/** @internal */
+export function __shouldSyncAcpRemoteWorkspaceReferenceDirectoryForTesting(
+  platform: NodeJS.Platform
+): boolean {
+  return shouldSyncDirectory(platform);
 }
 
 async function withReferenceScope<T>(
@@ -208,6 +227,150 @@ async function ensureReferenceDirectory(
   }
 }
 
+async function withReferenceCapacityLock<T>(
+  referenceDirectoryPath: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  await referenceHooksForTesting?.beforeCapacityLockAttempt?.();
+  const coordinator = await openCapacityCoordinator(referenceDirectoryPath);
+  let transactionOpen = false;
+  let primaryError: unknown;
+  let coordinationError: unknown;
+  let result: { readonly value: T } | undefined;
+  try {
+    coordinator.database.exec('BEGIN IMMEDIATE;');
+    transactionOpen = true;
+    await referenceHooksForTesting?.afterCapacityLockAcquired?.();
+    result = { value: await operation() };
+  } catch (error) {
+    primaryError = error;
+  }
+  if (transactionOpen) {
+    try {
+      await assertCapacityCoordinatorIdentity(coordinator);
+      coordinator.database.exec('ROLLBACK;');
+    } catch (error) {
+      coordinationError = error;
+    }
+  }
+  try {
+    coordinator.database.close();
+  } catch (error) {
+    if (!transactionOpen) coordinationError = error;
+  }
+  await coordinator.identityHandle.close().catch(() => undefined);
+  if (coordinationError !== undefined) {
+    throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+  }
+  if (primaryError instanceof AcpRemoteWorkspaceReferenceError) {
+    throw primaryError;
+  }
+  if (primaryError !== undefined || !result) {
+    throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+  }
+  return result.value;
+}
+
+async function openCapacityCoordinator(
+  referenceDirectoryPath: string
+): Promise<CapacityCoordinator> {
+  const databasePath = path.join(referenceDirectoryPath, CAPACITY_COORDINATOR_FILE);
+  let database: SqliteDb | null = null;
+  let identityHandle: FileHandle | undefined;
+  try {
+    let created = false;
+    try {
+      const createHandle = await open(databasePath, 'wx', 0o600);
+      created = true;
+      await createHandle.sync();
+      await createHandle.close();
+    } catch (error) {
+      if (errnoCode(error) !== 'EEXIST') throw error;
+    }
+    await assertPrivateRegularFile(databasePath, referenceDirectoryPath);
+    if (created) await syncDirectory(referenceDirectoryPath);
+    identityHandle = await open(databasePath, 'r');
+    await assertPrivateRegularFileHandle(
+      identityHandle,
+      databasePath,
+      referenceDirectoryPath
+    );
+    const identity = await identityHandle.stat({ bigint: true });
+    database = await openDb(databasePath);
+    if (!database) {
+      throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+    }
+    database.exec('PRAGMA locking_mode=NORMAL;');
+    database.exec('PRAGMA journal_mode=DELETE;');
+    database.exec('PRAGMA synchronous=FULL;');
+    database.exec('PRAGMA busy_timeout=30000;');
+    if (process.platform !== 'win32') await chmod(databasePath, 0o600);
+    await assertPrivateRegularFileHandle(
+      identityHandle,
+      databasePath,
+      referenceDirectoryPath
+    );
+    await assertCapacityCoordinatorAuxiliaryFiles(databasePath, referenceDirectoryPath);
+    return { database, identity, identityHandle, path: databasePath };
+  } catch (error) {
+    await identityHandle?.close().catch(() => undefined);
+    try {
+      database?.close();
+    } catch {
+      // Keep the outward error fixed and redacted.
+    }
+    if (error instanceof AcpRemoteWorkspaceReferenceError) throw error;
+    throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+  }
+}
+
+async function assertCapacityCoordinatorIdentity(
+  coordinator: CapacityCoordinator
+): Promise<void> {
+  await assertPrivateRegularFileHandle(
+    coordinator.identityHandle,
+    coordinator.path,
+    path.dirname(coordinator.path)
+  );
+  const currentIdentity = await coordinator.identityHandle.stat({ bigint: true });
+  if (!sameFile(coordinator.identity, currentIdentity)) {
+    throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+  }
+}
+
+async function assertCapacityCoordinatorAuxiliaryFiles(
+  coordinatorPath: string,
+  referenceDirectoryPath: string
+): Promise<void> {
+  for (const suffix of ['-journal', '-shm', '-wal']) {
+    const auxiliaryPath = `${coordinatorPath}${suffix}`;
+    try {
+      if (process.platform !== 'win32') await chmod(auxiliaryPath, 0o600);
+      await assertPrivateRegularFile(auxiliaryPath, referenceDirectoryPath);
+    } catch (error) {
+      if (errnoCode(error) !== 'ENOENT') {
+        if (error instanceof AcpRemoteWorkspaceReferenceError) throw error;
+        throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+      }
+    }
+  }
+}
+
+async function cleanupAbandonedReferenceTemps(
+  referenceDirectoryPath: string
+): Promise<void> {
+  const entries = await readdir(referenceDirectoryPath, { withFileTypes: true });
+  let removed = false;
+  for (const entry of entries) {
+    if (!TEMP_REFERENCE_FILE_PATTERN.test(entry.name)) continue;
+    const tempPath = path.join(referenceDirectoryPath, entry.name);
+    await assertPrivateRegularFile(tempPath, referenceDirectoryPath);
+    await unlink(tempPath);
+    removed = true;
+  }
+  if (removed) await syncDirectory(referenceDirectoryPath);
+}
+
 async function readReferenceDirectoryState(
   scope: AcpRemoteStateScope,
   referenceDirectoryPath: string,
@@ -244,6 +407,13 @@ async function readReferenceDirectoryState(
   const recordsByDigest = new Map<string, WorkspaceReferenceRecord>();
   const workspaceRefToDigest = new Map<string, string>();
   for (const entry of entries) {
+    if (TEMP_REFERENCE_FILE_PATTERN.test(entry.name)) {
+      await assertPrivateRegularFile(
+        path.join(referenceDirectoryPath, entry.name),
+        referenceDirectoryPath
+      );
+      continue;
+    }
     if (!entry.name.endsWith('.json')) {
       continue;
     }
@@ -352,6 +522,10 @@ function createWorkspaceReference(): string {
   return `acp-remote-workspace:${randomBytes(32).toString('base64url')}`;
 }
 
+function createTempReferenceFileName(): string {
+  return `.tmp-acp-remote-workspace-${process.pid}-${randomBytes(16).toString('hex')}.pending`;
+}
+
 async function assertPrivateDirectory(
   directoryPath: string,
   expectedParent: string
@@ -451,12 +625,140 @@ async function assertExactRealpathChild(
 }
 
 async function syncDirectory(directoryPath: string): Promise<void> {
+  if (!shouldSyncDirectory(process.platform)) return;
+  try {
+    if (referenceHooksForTesting?.syncDirectory) {
+      await referenceHooksForTesting.syncDirectory(directoryPath);
+      return;
+    }
+    await syncDirectoryInternal(directoryPath);
+  } catch {
+    throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+  }
+}
+
+function shouldSyncDirectory(platform: NodeJS.Platform): boolean {
+  return platform !== 'win32';
+}
+
+async function syncDirectoryInternal(directoryPath: string): Promise<void> {
   const handle = await open(directoryPath, 'r');
   try {
     await handle.sync();
   } finally {
     await handle.close();
   }
+}
+
+async function publishWorkspaceReferenceRecord(
+  scope: AcpRemoteStateScope,
+  referenceDirectoryPath: string,
+  referenceFilePath: string,
+  descriptor: AcpRemoteWorkspaceDescriptorV1,
+  payload: WorkspaceReferenceRecord
+): Promise<string> {
+  const tempPath = path.join(referenceDirectoryPath, createTempReferenceFileName());
+  let tempHandle: FileHandle | undefined;
+  let tempIdentity: Awaited<ReturnType<FileHandle['stat']>> | undefined;
+  let finalPublished = false;
+  let committed = false;
+  let result: string | undefined;
+  let primaryError: unknown;
+  try {
+    tempHandle = await open(tempPath, 'wx', 0o600);
+    await tempHandle.writeFile(JSON.stringify(payload), 'utf8');
+    await tempHandle.sync();
+    await assertPrivateRegularFileHandle(tempHandle, tempPath, referenceDirectoryPath);
+    tempIdentity = await tempHandle.stat({ bigint: true });
+    await tempHandle.close();
+    tempHandle = undefined;
+    await referenceHooksForTesting?.beforePublish?.({
+      finalPath: referenceFilePath,
+      referenceDirectoryPath,
+      tempPath,
+    });
+    try {
+      await link(tempPath, referenceFilePath);
+      finalPublished = true;
+    } catch (error) {
+      if (errnoCode(error) !== 'EEXIST') throw error;
+      result = await readCommittedWorkspaceReferenceInScope(scope, descriptor);
+    }
+    if (finalPublished) {
+      const finalStats = await lstat(referenceFilePath, { bigint: true });
+      if (!tempIdentity || !sameFile(tempIdentity, finalStats)) {
+        throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+      }
+      await assertPrivateRegularFile(referenceFilePath, referenceDirectoryPath);
+      await syncDirectory(referenceDirectoryPath);
+      committed = true;
+      result = payload.workspaceRef;
+      try {
+        await referenceHooksForTesting?.afterPublish?.({
+          finalPath: referenceFilePath,
+          referenceDirectoryPath,
+          tempPath,
+        });
+      } catch {
+        // The binding is already durable; later cleanup cannot revoke commit.
+      }
+    }
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    await tempHandle?.close().catch(() => undefined);
+  }
+  if (primaryError !== undefined && finalPublished && !committed && tempIdentity) {
+    try {
+      const finalStats = await lstat(referenceFilePath, { bigint: true });
+      if (sameFile(tempIdentity, finalStats)) {
+        await unlink(referenceFilePath);
+        await syncDirectory(referenceDirectoryPath);
+      }
+    } catch {
+      // Preserve uncertain state rather than deleting a replacement by pathname.
+    }
+  }
+  try {
+    await unlink(tempPath);
+    if (!committed) await syncDirectory(referenceDirectoryPath);
+  } catch (error) {
+    if (errnoCode(error) !== 'ENOENT' && primaryError === undefined && !committed) {
+      primaryError = error;
+    }
+  }
+  if (primaryError instanceof AcpRemoteWorkspaceReferenceError) {
+    throw primaryError;
+  }
+  if (primaryError !== undefined || result === undefined) {
+    throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+  }
+  return result;
+}
+
+async function readCommittedWorkspaceReferenceInScope(
+  scope: AcpRemoteStateScope,
+  descriptor: AcpRemoteWorkspaceDescriptorV1
+): Promise<string> {
+  const referenceDirectoryPath = getAcpRemoteWorkspaceReferenceDirectoryPath(scope);
+  const state = await readReferenceDirectoryState(scope, referenceDirectoryPath, true);
+  const digest = exactIdentityDigest(
+    parseAcpRemoteWorkspaceDescriptor(descriptor).exactIdentity
+  );
+  const record = state.recordsByDigest.get(digest);
+  if (!record) {
+    throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
+  }
+  return record.workspaceRef;
+}
+
+function sameFile(
+  left: Awaited<ReturnType<FileHandle['stat']>>,
+  right: Awaited<ReturnType<typeof lstat>>
+): boolean {
+  return (
+    BigInt(left.dev) === BigInt(right.dev) && BigInt(left.ino) === BigInt(right.ino)
+  );
 }
 
 function errnoCode(error: unknown): string | undefined {

@@ -1,8 +1,10 @@
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import {
   chmod,
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   rm,
@@ -12,7 +14,9 @@ import {
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { setTimeout as delay } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
 import {
   createAcpRemoteWorkspaceDescriptor,
@@ -21,15 +25,207 @@ import {
   withValidatedAcpRemoteStateScope,
 } from '../../../../src/acp/AcpRemoteWorkspace.js';
 
+vi.unmock('child_process');
+vi.unmock('node:child_process');
+
 async function loadReferenceModule() {
   return import('../../../../src/acp/AcpRemoteWorkspaceReference.js');
+}
+
+const REFERENCE_MODULE_URL = pathToFileURL(
+  path.resolve(
+    import.meta.dirname,
+    '../../../../src/acp/AcpRemoteWorkspaceReference.ts'
+  )
+).href;
+const CHILD_TIMEOUT_MS = 20_000;
+
+type ReferenceOutcome =
+  | { readonly type: 'result'; readonly workspaceRef: string }
+  | {
+      readonly type: 'error';
+      readonly code?: string;
+      readonly message: string;
+      readonly retryable?: boolean;
+    };
+
+interface ReferenceTestHooks {
+  readonly afterPublish?: (context: {
+    readonly finalPath: string;
+    readonly referenceDirectoryPath: string;
+    readonly tempPath: string;
+  }) => Promise<void>;
+  readonly afterCapacityLockAcquired?: () => Promise<void>;
+  readonly beforeCapacityLockAttempt?: () => Promise<void>;
+  readonly beforePublish?: (context: {
+    readonly finalPath: string;
+    readonly referenceDirectoryPath: string;
+    readonly tempPath: string;
+  }) => Promise<void>;
+  readonly syncDirectory?: (directoryPath: string) => Promise<void>;
+}
+
+interface ReferenceTestSeams {
+  readonly setHooks: (hooks: ReferenceTestHooks | undefined) => void;
+  readonly shouldSyncDirectory: (platform: NodeJS.Platform) => boolean;
+}
+
+function requireReferenceTestSeams(module: object): ReferenceTestSeams {
+  if (
+    !('__setAcpRemoteWorkspaceReferenceHooksForTesting' in module) ||
+    typeof module.__setAcpRemoteWorkspaceReferenceHooksForTesting !== 'function' ||
+    !('__shouldSyncAcpRemoteWorkspaceReferenceDirectoryForTesting' in module) ||
+    typeof module.__shouldSyncAcpRemoteWorkspaceReferenceDirectoryForTesting !==
+      'function'
+  ) {
+    throw new Error('AcpRemoteWorkspaceReference test seams are unavailable');
+  }
+  const setHooks = module.__setAcpRemoteWorkspaceReferenceHooksForTesting;
+  const shouldSyncDirectory =
+    module.__shouldSyncAcpRemoteWorkspaceReferenceDirectoryForTesting;
+  return {
+    setHooks: (hooks) => setHooks(hooks),
+    shouldSyncDirectory: (platform) => shouldSyncDirectory(platform),
+  };
+}
+
+function createCaseVariantStem(variant: number): string {
+  return variant
+    .toString(2)
+    .padStart(11, '0')
+    .split('')
+    .map((bit, bitIndex) =>
+      bit === '1'
+        ? String.fromCharCode('A'.charCodeAt(0) + bitIndex)
+        : String.fromCharCode('a'.charCodeAt(0) + bitIndex)
+    )
+    .join('');
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await lstat(filePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+async function waitForFile(filePath: string): Promise<void> {
+  const deadline = Date.now() + CHILD_TIMEOUT_MS;
+  while (!(await fileExists(filePath))) {
+    if (Date.now() >= deadline) {
+      throw new Error('Timed out waiting for child-process barrier');
+    }
+    await delay(10);
+  }
+}
+
+function startReferenceChild(input: {
+  readonly descriptor: ReturnType<typeof createAcpRemoteWorkspaceDescriptor>;
+  readonly hostStateRoot: string;
+  readonly readyPath?: string;
+  readonly releasePath?: string;
+  readonly storageRoot: string;
+  readonly waitAfterLockPath?: string;
+}): {
+  readonly child: ChildProcessWithoutNullStreams;
+  readonly outcome: Promise<ReferenceOutcome>;
+} {
+  const childSource = [
+    "import { writeFile } from 'node:fs/promises';",
+    "import { setTimeout as delay } from 'node:timers/promises';",
+    'const rawInput = process.env.BLADE_REFERENCE_WORKER_INPUT;',
+    'const moduleUrl = process.env.BLADE_REFERENCE_MODULE_URL;',
+    "if (!rawInput || !moduleUrl) throw new Error('Reference child input is missing');",
+    'const input = JSON.parse(rawInput);',
+    'process.env.BLADE_STORAGE_ROOT = input.storageRoot;',
+    'const module = await import(moduleUrl);',
+    'if (input.readyPath && input.releasePath) {',
+    'module.__setAcpRemoteWorkspaceReferenceHooksForTesting({',
+    'beforeCapacityLockAttempt: async () => {',
+    "await writeFile(input.readyPath, 'ready', 'utf8');",
+    'while (!(await Bun.file(input.releasePath).exists())) await delay(5);',
+    '},',
+    '});',
+    '}',
+    'if (input.waitAfterLockPath) {',
+    'module.__setAcpRemoteWorkspaceReferenceHooksForTesting({',
+    'afterPublish: async () => {',
+    "await writeFile(input.waitAfterLockPath, 'locked', 'utf8');",
+    'await new Promise(() => undefined);',
+    '},',
+    '});',
+    '}',
+    'try {',
+    'const workspaceRef = await module.getOrCreateAcpRemoteWorkspaceReference(input.hostStateRoot, input.descriptor);',
+    "process.stdout.write(JSON.stringify({ type: 'result', workspaceRef }) + '\\n');",
+    '} catch (error) {',
+    "process.stdout.write(JSON.stringify({ type: 'error', code: error && typeof error === 'object' && typeof error.code === 'string' ? error.code : undefined, message: error instanceof Error ? error.message : String(error), retryable: error && typeof error === 'object' && typeof error.retryable === 'boolean' ? error.retryable : undefined }) + '\\n');",
+    '}',
+  ].join('\n');
+  const child = spawn('bun', ['-e', childSource], {
+    cwd: path.resolve(import.meta.dirname, '../../../..'),
+    env: {
+      ...process.env,
+      BLADE_REFERENCE_MODULE_URL: REFERENCE_MODULE_URL,
+      BLADE_REFERENCE_WORKER_INPUT: JSON.stringify(input),
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const outcome = new Promise<ReferenceOutcome>((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('Reference child timed out'));
+    }, CHILD_TIMEOUT_MS);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once('exit', (code, signal) => {
+      clearTimeout(timeout);
+      const line = stdout
+        .split('\n')
+        .map((entry) => entry.trim())
+        .findLast((entry) => entry.startsWith('{'));
+      if (code !== 0 || signal || !line) {
+        reject(new Error(`Reference child failed (${code ?? signal}): ${stderr}`));
+        return;
+      }
+      resolve(JSON.parse(line) as ReferenceOutcome);
+    });
+  });
+  return { child, outcome };
+}
+
+async function syncDirectoryForFixture(directoryPath: string): Promise<void> {
+  if (process.platform === 'win32') return;
+  const handle = await open(directoryPath, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 }
 
 describe('AcpRemoteWorkspaceReference', () => {
   let storageRoot: string;
   let previousStorageRoot: string | undefined;
+  let children: Set<ChildProcessWithoutNullStreams>;
 
   beforeEach(async () => {
+    children = new Set();
     previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
     storageRoot = await mkdtemp(
       path.join(os.tmpdir(), 'blade-acp-remote-workspace-reference-test-')
@@ -38,6 +234,14 @@ describe('AcpRemoteWorkspaceReference', () => {
   });
 
   afterEach(async () => {
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+    children.clear();
+    const module = await loadReferenceModule();
+    if ('__setAcpRemoteWorkspaceReferenceHooksForTesting' in module) {
+      module.__setAcpRemoteWorkspaceReferenceHooksForTesting(undefined);
+    }
     if (previousStorageRoot === undefined) {
       delete process.env.BLADE_STORAGE_ROOT;
     } else {
@@ -418,4 +622,365 @@ describe('AcpRemoteWorkspaceReference', () => {
       retryable: true,
     });
   });
+
+  it('publishes only a complete synced sidecar and reads an EEXIST winner without reentering the scope gate', async () => {
+    const module = await loadReferenceModule();
+    const seams = requireReferenceTestSeams(module);
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo\\Atomic.ts')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    let releasePublish: (() => void) | undefined;
+    const release = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    let publishContext:
+      | {
+          readonly finalPath: string;
+          readonly referenceDirectoryPath: string;
+          readonly tempPath: string;
+        }
+      | undefined;
+    let markReady: (() => void) | undefined;
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    seams.setHooks({
+      beforePublish: async (context) => {
+        publishContext = context;
+        markReady?.();
+        await release;
+      },
+    });
+
+    const pending = module.getOrCreateAcpRemoteWorkspaceReference(
+      hostStateRoot,
+      descriptor
+    );
+    await ready;
+    if (!publishContext) throw new Error('Publish context was not captured');
+
+    await expect(lstat(publishContext.finalPath)).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    const stagedPayload = JSON.parse(
+      await readFile(publishContext.tempPath, 'utf8')
+    ) as Record<string, unknown>;
+    expect(stagedPayload).toMatchObject({
+      version: 1,
+      exactIdentityDigest: path.basename(publishContext.finalPath, '.json'),
+    });
+    expect(stagedPayload.workspaceRef).toMatch(
+      /^acp-remote-workspace:[A-Za-z0-9_-]{43}$/
+    );
+
+    const winnerRef = `acp-remote-workspace:${'w'.repeat(43)}`;
+    const winnerHandle = await open(publishContext.finalPath, 'wx', 0o600);
+    try {
+      await winnerHandle.writeFile(
+        JSON.stringify({
+          version: 1,
+          exactIdentityDigest: path.basename(publishContext.finalPath, '.json'),
+          workspaceRef: winnerRef,
+        }),
+        'utf8'
+      );
+      await winnerHandle.sync();
+    } finally {
+      await winnerHandle.close();
+    }
+    await syncDirectoryForFixture(publishContext.referenceDirectoryPath);
+    releasePublish?.();
+
+    await expect(pending).resolves.toBe(winnerRef);
+    expect(await fileExists(publishContext.tempPath)).toBe(false);
+    seams.setHooks(undefined);
+  });
+
+  it('uses platform policy to avoid opening directories for fsync on win32', async () => {
+    const seams = requireReferenceTestSeams(await loadReferenceModule());
+    expect(seams.shouldSyncDirectory('win32')).toBe(false);
+    expect(seams.shouldSyncDirectory('darwin')).toBe(true);
+    expect(seams.shouldSyncDirectory('linux')).toBe(true);
+  });
+
+  it('cleans abandoned private temp sidecars before creating a binding', async () => {
+    const {
+      getAcpRemoteWorkspaceReferenceDirectoryPath,
+      getOrCreateAcpRemoteWorkspaceReference,
+    } = await loadReferenceModule();
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo\\CrashTemp.ts')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    let tempPath = '';
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      const directoryPath = getAcpRemoteWorkspaceReferenceDirectoryPath(scope);
+      await mkdir(directoryPath, { recursive: false, mode: 0o700 });
+      tempPath = path.join(
+        directoryPath,
+        '.tmp-acp-remote-workspace-99999999-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pending'
+      );
+      await writeFile(tempPath, '{', { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    });
+
+    await expect(
+      getOrCreateAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+    ).resolves.toMatch(/^acp-remote-workspace:[A-Za-z0-9_-]{43}$/);
+    expect(await fileExists(tempPath)).toBe(false);
+  });
+
+  it('fails closed when the private capacity coordinator is a symlink', async () => {
+    const {
+      getAcpRemoteWorkspaceReferenceDirectoryPath,
+      getOrCreateAcpRemoteWorkspaceReference,
+    } = await loadReferenceModule();
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo\\CoordinatorSymlink.ts')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      const directoryPath = getAcpRemoteWorkspaceReferenceDirectoryPath(scope);
+      await mkdir(directoryPath, { recursive: false, mode: 0o700 });
+      const targetPath = path.join(directoryPath, 'outside.sqlite');
+      await writeFile(targetPath, '', { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+      await symlink(
+        targetPath,
+        path.join(directoryPath, '.surface-workspaces-v1.capacity.sqlite')
+      );
+    });
+
+    await expect(
+      getOrCreateAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+    ).rejects.toMatchObject({
+      code: 'session_surface_state_invalid',
+      message: 'Session surface state is invalid',
+      retryable: false,
+    });
+  });
+
+  it.runIf(process.platform !== 'win32')(
+    'fails closed when the private capacity coordinator has a public mode',
+    async () => {
+      const {
+        getAcpRemoteWorkspaceReferenceDirectoryPath,
+        getOrCreateAcpRemoteWorkspaceReference,
+      } = await loadReferenceModule();
+      const descriptor = createAcpRemoteWorkspaceDescriptor(
+        createAcpRemotePathProfile('C:\\Repo\\CoordinatorMode.ts')
+      );
+      const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+      await ensureAcpRemoteHostStateRoot(hostStateRoot);
+      await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+        const directoryPath = getAcpRemoteWorkspaceReferenceDirectoryPath(scope);
+        await mkdir(directoryPath, { recursive: false, mode: 0o700 });
+        await writeFile(
+          path.join(directoryPath, '.surface-workspaces-v1.capacity.sqlite'),
+          '',
+          { encoding: 'utf8', flag: 'wx', mode: 0o644 }
+        );
+      });
+
+      await expect(
+        getOrCreateAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+      ).rejects.toMatchObject({
+        code: 'session_surface_state_invalid',
+        message: 'Session surface state is invalid',
+        retryable: false,
+      });
+    }
+  );
+
+  it('maps directory sync failures to a redacted state error', async () => {
+    const module = await loadReferenceModule();
+    const seams = requireReferenceTestSeams(module);
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo\\SyncFailure.ts')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    seams.setHooks({
+      syncDirectory: async (directoryPath) => {
+        throw new Error(`private path ${directoryPath}`);
+      },
+    });
+
+    await expect(
+      module.getOrCreateAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+    ).rejects.toMatchObject({
+      code: 'session_surface_state_invalid',
+      message: 'Session surface state is invalid',
+      retryable: false,
+    });
+  });
+
+  it.runIf(process.platform !== 'win32')(
+    'keeps an already committed binding authoritative when post-commit cleanup fails',
+    async () => {
+      const module = await loadReferenceModule();
+      const seams = requireReferenceTestSeams(module);
+      const descriptor = createAcpRemoteWorkspaceDescriptor(
+        createAcpRemotePathProfile('C:\\Repo\\CommittedCleanup.ts')
+      );
+      const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+      await ensureAcpRemoteHostStateRoot(hostStateRoot);
+      let obstructedTempPath = '';
+      seams.setHooks({
+        afterPublish: async ({ tempPath }) => {
+          obstructedTempPath = tempPath;
+          await unlink(tempPath);
+          await mkdir(tempPath, { mode: 0o700 });
+        },
+      });
+
+      const workspaceRef = await module.getOrCreateAcpRemoteWorkspaceReference(
+        hostStateRoot,
+        descriptor
+      );
+      expect(workspaceRef).toMatch(/^acp-remote-workspace:[A-Za-z0-9_-]{43}$/);
+      if (!obstructedTempPath) throw new Error('Temp cleanup was not obstructed');
+      await rm(obstructedTempPath, { recursive: true, force: true });
+      await expect(
+        module.readAcpRemoteWorkspaceReference(hostStateRoot, descriptor)
+      ).resolves.toBe(workspaceRef);
+    }
+  );
+
+  it('releases the cross-process coordinator after its owner is killed', async () => {
+    const { getOrCreateAcpRemoteWorkspaceReference } = await loadReferenceModule();
+    const firstDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo\\CrashLock.ts')
+    );
+    const secondDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo\\crashlock.ts')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(
+      firstDescriptor.collisionIdentity
+    );
+    expect(secondDescriptor.collisionIdentity).toBe(firstDescriptor.collisionIdentity);
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const lockedPath = path.join(storageRoot, 'coordinator-locked');
+    const holder = startReferenceChild({
+      descriptor: firstDescriptor,
+      hostStateRoot,
+      storageRoot,
+      waitAfterLockPath: lockedPath,
+    });
+    children.add(holder.child);
+    await Promise.race([
+      waitForFile(lockedPath),
+      holder.outcome.then((outcome) => {
+        throw new Error(
+          `Reference child exited before acquiring the lock: ${JSON.stringify(outcome)}`
+        );
+      }),
+    ]);
+    holder.child.kill('SIGKILL');
+    await new Promise<void>((resolve) => holder.child.once('exit', () => resolve()));
+
+    await expect(
+      getOrCreateAcpRemoteWorkspaceReference(hostStateRoot, secondDescriptor)
+    ).resolves.toMatch(/^acp-remote-workspace:[A-Za-z0-9_-]{43}$/);
+  }, 30_000);
+
+  it('keeps exactly one free capacity slot across two real Bun processes', async () => {
+    const {
+      getAcpRemoteWorkspaceReferenceDirectoryPath,
+      getAcpRemoteWorkspaceReferenceFilePath,
+      getOrCreateAcpRemoteWorkspaceReference,
+    } = await loadReferenceModule();
+    const rootDescriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile(`C:\\${createCaseVariantStem(0)}\\race.ts`)
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(
+      rootDescriptor.collisionIdentity
+    );
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    await getOrCreateAcpRemoteWorkspaceReference(hostStateRoot, rootDescriptor);
+    let referenceDirectoryPath = '';
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      referenceDirectoryPath = getAcpRemoteWorkspaceReferenceDirectoryPath(scope);
+      for (let index = 1; index < 1023; index += 1) {
+        const descriptor = createAcpRemoteWorkspaceDescriptor(
+          createAcpRemotePathProfile(`C:\\${createCaseVariantStem(index)}\\race.ts`)
+        );
+        const sidecarPath = getAcpRemoteWorkspaceReferenceFilePath(scope, descriptor);
+        await writeFile(
+          sidecarPath,
+          JSON.stringify({
+            version: 1,
+            exactIdentityDigest: path.basename(sidecarPath, '.json'),
+            workspaceRef: `acp-remote-workspace:B${index
+              .toString(36)
+              .padStart(42, 'A')
+              .slice(-42)}`,
+          }),
+          { encoding: 'utf8', flag: 'wx', mode: 0o600 }
+        );
+      }
+      await syncDirectoryForFixture(referenceDirectoryPath);
+    });
+
+    const contenderA = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile(`C:\\${createCaseVariantStem(1023)}\\race.ts`)
+    );
+    const contenderB = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile(`C:\\${createCaseVariantStem(1024)}\\race.ts`)
+    );
+    expect(contenderA.collisionIdentity).toBe(rootDescriptor.collisionIdentity);
+    expect(contenderB.collisionIdentity).toBe(rootDescriptor.collisionIdentity);
+
+    const readyA = path.join(storageRoot, 'ready-a');
+    const readyB = path.join(storageRoot, 'ready-b');
+    const releasePath = path.join(storageRoot, 'release');
+    const workerA = startReferenceChild({
+      descriptor: contenderA,
+      hostStateRoot,
+      readyPath: readyA,
+      releasePath,
+      storageRoot,
+    });
+    children.add(workerA.child);
+    const workerB = startReferenceChild({
+      descriptor: contenderB,
+      hostStateRoot,
+      readyPath: readyB,
+      releasePath,
+      storageRoot,
+    });
+    children.add(workerB.child);
+    await Promise.race([
+      Promise.all([waitForFile(readyA), waitForFile(readyB)]),
+      workerA.outcome.then((outcome) => {
+        throw new Error(
+          `Reference child A exited before the barrier: ${JSON.stringify(outcome)}`
+        );
+      }),
+      workerB.outcome.then((outcome) => {
+        throw new Error(
+          `Reference child B exited before the barrier: ${JSON.stringify(outcome)}`
+        );
+      }),
+    ]);
+    await writeFile(releasePath, 'go', 'utf8');
+    const outcomes = await Promise.all([workerA.outcome, workerB.outcome]);
+    expect(outcomes, JSON.stringify(outcomes)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'result' })])
+    );
+    expect(outcomes.filter((outcome) => outcome.type === 'result')).toHaveLength(1);
+    expect(
+      outcomes.filter(
+        (outcome) =>
+          outcome.type === 'error' &&
+          outcome.code === 'session_surface_capacity' &&
+          outcome.retryable === true
+      )
+    ).toHaveLength(1);
+    expect(
+      (await readdir(referenceDirectoryPath)).filter((entry) => entry.endsWith('.json'))
+    ).toHaveLength(1024);
+  }, 30_000);
 });
