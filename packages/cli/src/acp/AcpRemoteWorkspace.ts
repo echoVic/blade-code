@@ -341,7 +341,7 @@ async function withValidatedAcpRemoteNamespace<T>(
   normalizedStorageRoot: string,
   operation: (namespacePath: string) => Promise<T>
 ): Promise<T> {
-  await ensureExistingPrivateDirectoryAtExactPath(
+  await ensureExistingTrustedStorageRootAtExactPath(
     normalizedStorageRoot,
     normalizedStorageRoot
   );
@@ -372,7 +372,7 @@ async function ensureAcpRemoteHostStateRootForStorageRoot(
       throw new AcpRemoteWorkspaceStateError('storage-root-mismatch');
     }
 
-    await ensureExistingPrivateDirectoryAtExactPath(
+    await ensureExistingTrustedStorageRootAtExactPath(
       validated.storageRoot,
       normalizedStorageRoot
     );
@@ -449,16 +449,41 @@ async function ensureExistingPrivateChildDirectory(
   );
 }
 
-async function ensureExistingPrivateDirectoryAtExactPath(
+async function ensureExistingTrustedStorageRootAtExactPath(
   directoryPath: string,
   expectedPath: string
 ): Promise<void> {
   const stats = await lstat(directoryPath);
-  validatePrivateDirectoryStats(stats, directoryPath);
+  validateTrustedStorageRootStats(stats, directoryPath);
   await ensureExactRealpath(directoryPath, expectedPath);
 }
 
+function validateTrustedStorageRootStats(
+  stats: Awaited<ReturnType<typeof lstat>>,
+  directoryPath: string
+): void {
+  validateOwnedDirectoryStats(stats, directoryPath);
+  const mode = directoryMode(stats);
+  if (
+    process.platform !== 'win32' &&
+    ((mode & 0o700) !== 0o700 || (mode & 0o022) !== 0)
+  ) {
+    throw new AcpRemoteWorkspaceStateError('protected-root-mode');
+  }
+}
+
 function validatePrivateDirectoryStats(
+  stats: Awaited<ReturnType<typeof lstat>>,
+  directoryPath: string
+): void {
+  validateOwnedDirectoryStats(stats, directoryPath);
+  const mode = directoryMode(stats);
+  if (process.platform !== 'win32' && mode !== 0o700) {
+    throw new AcpRemoteWorkspaceStateError('protected-root-mode');
+  }
+}
+
+function validateOwnedDirectoryStats(
   stats: Awaited<ReturnType<typeof lstat>>,
   directoryPath: string
 ): void {
@@ -468,16 +493,15 @@ function validatePrivateDirectoryStats(
   if (typeof process.getuid === 'function' && stats.uid !== process.getuid()) {
     throw new AcpRemoteWorkspaceStateError('protected-root-owner');
   }
-  const mode =
-    typeof stats.mode === 'bigint'
-      ? Number(stats.mode & BigInt(0o777))
-      : stats.mode & 0o777;
-  if (process.platform !== 'win32' && mode !== 0o700) {
-    throw new AcpRemoteWorkspaceStateError('protected-root-mode');
-  }
   if (directoryPath.includes(`..${path.sep}`)) {
     throw new AcpRemoteWorkspaceStateError('protected-root-shape');
   }
+}
+
+function directoryMode(stats: Awaited<ReturnType<typeof lstat>>): number {
+  return typeof stats.mode === 'bigint'
+    ? Number(stats.mode & BigInt(0o777))
+    : stats.mode & 0o777;
 }
 
 async function ensureExactRealpathChild(

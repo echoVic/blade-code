@@ -287,7 +287,7 @@ describe('AcpRemoteWorkspace', () => {
     await rm(redirectedRoot, { recursive: true, force: true });
   });
 
-  it('rejects a world-readable configured storage root on POSIX hosts', async () => {
+  it('accepts a same-owner 0755 storage root while keeping remote scopes private', async () => {
     if (process.platform === 'win32') {
       return;
     }
@@ -298,9 +298,29 @@ describe('AcpRemoteWorkspace', () => {
     );
     const root = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
 
+    await expect(ensureAcpRemoteHostStateRoot(root)).resolves.toBeUndefined();
+
+    const namespaceStat = await lstat(path.dirname(root));
+    const leafStat = await lstat(root);
+    expect(namespaceStat.mode & 0o777).toBe(0o700);
+    expect(leafStat.mode & 0o777).toBe(0o700);
+  });
+
+  it('rejects a group-writable configured storage root on POSIX hosts', async () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    await chmod(storageRoot, 0o770);
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Repo')
+    );
+    const root = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+
     await expect(ensureAcpRemoteHostStateRoot(root)).rejects.toThrow(
       /remote workspace/i
     );
+    await expect(lstat(path.dirname(root))).rejects.toThrow();
   });
 
   it('lists validated remote scopes only after validating the storage root and namespace', async () => {
