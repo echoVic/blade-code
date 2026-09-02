@@ -120,7 +120,7 @@ import {
   SURFACE_EGRESS_WRITE_TIMEOUT_MS,
 } from '../utils/BoundedSerialEgress.js';
 import type { AcpRemotePathProfile } from './AcpRemotePath.js';
-import { AcpServiceContext } from './AcpServiceContext.js';
+import { AcpServiceContext, type AcpSessionRegistration } from './AcpServiceContext.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -328,6 +328,7 @@ export class AcpSession {
   private destroyed = false;
   private destroyFinished = false;
   private destroyPromise?: Promise<void>;
+  private serviceRegistration?: AcpSessionRegistration;
   private messages: Message[];
   private contextMessages: Message[];
   private mode: AcpModeId;
@@ -480,7 +481,7 @@ export class AcpSession {
     );
 
     // 初始化 ACP 服务上下文（按会话隔离，不使用 process.chdir）
-    AcpServiceContext.initializeSession(
+    const serviceRegistration = AcpServiceContext.initializeSession(
       this.connection,
       this.id,
       this.clientCapabilities,
@@ -490,6 +491,9 @@ export class AcpSession {
       },
       this.roots.kind === 'acp-remote' ? this.roots.profile : undefined
     );
+    if (serviceRegistration) {
+      this.serviceRegistration = serviceRegistration;
+    }
     logger.debug(`[AcpSession ${this.id}] ACP service context initialized`);
     const recoveredInteraction =
       this.roots.kind === 'local'
@@ -2925,7 +2929,10 @@ export class AcpSession {
     }
     if (agent) await attempt(() => agent.destroy());
     if (runtime) await attempt(() => runtime.dispose());
-    await attempt(() => AcpServiceContext.destroySession(this.id));
+    await attempt(() =>
+      AcpServiceContext.destroyRegisteredSession(this.serviceRegistration)
+    );
+    this.serviceRegistration = undefined;
     logger.debug(`[AcpSession ${this.id}] Destroyed`);
 
     if (firstError !== undefined) throw firstError;

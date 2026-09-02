@@ -676,10 +676,16 @@ interface SessionServices {
   fileSystemService: FileSystemService;
   terminalService: TerminalService;
   connection: AgentSideConnection;
+  registration: AcpSessionRegistration;
   sendUpdate?: (update: SessionNotification['update']) => Promise<void>;
   clientCapabilities: ClientCapabilities | null;
   executionRoot: string;
   remoteFileSystem: boolean;
+}
+
+export interface AcpSessionRegistration {
+  readonly generation: string;
+  readonly sessionId: string;
 }
 
 interface RemoteSurfaceOwnerBinding {
@@ -719,7 +725,7 @@ export class AcpServiceContext {
   private static remoteSurfaceOwners: Map<string, RemoteSurfaceOwnerBinding> =
     new Map();
   private static remoteSurfaceOwnerKeysBySessionId: Map<string, string> = new Map();
-  private static remoteSurfaceOwnerGeneration = 0;
+  private static sessionRegistrationGeneration = 0n;
   private static currentSessionId: string | null = null;
 
   private constructor() {
@@ -749,14 +755,14 @@ export class AcpServiceContext {
     executionRoot: string,
     sendUpdate?: (update: SessionNotification['update']) => Promise<void>,
     remotePathProfile?: AcpRemotePathProfile
-  ): void {
+  ): AcpSessionRegistration | undefined {
     const existingSession = AcpServiceContext.sessions.get(sessionId);
     if (existingSession) {
       AcpServiceContext.currentSessionId = sessionId;
       logger.debug(
         `[AcpServiceContext:${sessionId}] initializeSession ignored because the session already exists`
       );
-      return;
+      return undefined;
     }
 
     const usesRemoteFileSystem =
@@ -792,10 +798,16 @@ export class AcpServiceContext {
     );
 
     // 存储会话服务
+    AcpServiceContext.sessionRegistrationGeneration += 1n;
+    const registration: AcpSessionRegistration = Object.freeze({
+      generation: `acp-owner-generation:${AcpServiceContext.sessionRegistrationGeneration.toString(36)}`,
+      sessionId,
+    });
     const services: SessionServices = {
       fileSystemService,
       terminalService,
       connection,
+      registration,
       sendUpdate,
       clientCapabilities: clientCapabilities || null,
       executionRoot,
@@ -808,10 +820,9 @@ export class AcpServiceContext {
         sessionId,
         profile.workspace.exactIdentity
       );
-      AcpServiceContext.remoteSurfaceOwnerGeneration += 1;
       AcpServiceContext.remoteSurfaceOwners.set(ownerKey, {
         exactIdentity: profile.workspace.exactIdentity,
-        generation: `acp-owner-generation:${AcpServiceContext.remoteSurfaceOwnerGeneration.toString(36)}`,
+        generation: registration.generation,
         readText: clientCapabilities?.fs?.readTextFile === true,
         services,
         writeText: clientCapabilities?.fs?.writeTextFile === true,
@@ -828,6 +839,7 @@ export class AcpServiceContext {
       readTextFile: clientCapabilities?.fs?.readTextFile,
       writeTextFile: clientCapabilities?.fs?.writeTextFile,
     });
+    return registration;
   }
 
   /**
@@ -854,6 +866,15 @@ export class AcpServiceContext {
     }
 
     logger.debug(`[AcpServiceContext:${sessionId}] Session destroyed`);
+  }
+
+  static destroyRegisteredSession(
+    registration: AcpSessionRegistration | undefined
+  ): void {
+    if (!registration) return;
+    const services = AcpServiceContext.sessions.get(registration.sessionId);
+    if (services?.registration !== registration) return;
+    AcpServiceContext.destroySession(registration.sessionId);
   }
 
   /**

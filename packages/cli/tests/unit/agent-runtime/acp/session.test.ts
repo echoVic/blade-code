@@ -231,7 +231,11 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
 vi.mock('../../../../src/acp/AcpServiceContext.js', () => ({
   isAcpMode: vi.fn(() => true),
   AcpServiceContext: {
-    initializeSession: vi.fn(),
+    initializeSession: vi.fn(() => ({
+      generation: 'acp-owner-generation:test',
+      sessionId: 'test-session-id',
+    })),
+    destroyRegisteredSession: vi.fn(),
     destroySession: vi.fn(),
     setCurrentSession: vi.fn(),
     getInstance: vi.fn(() => ({
@@ -5961,8 +5965,11 @@ describe('AcpSession', () => {
       expect(cancel).toHaveBeenCalledTimes(1);
       expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
       expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
-      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
-      expect(AcpServiceContext.destroySession).toHaveBeenCalledWith('test-session-id');
+      expect(AcpServiceContext.destroyRegisteredSession).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroyRegisteredSession).toHaveBeenCalledWith({
+        generation: 'acp-owner-generation:test',
+        sessionId: 'test-session-id',
+      });
       await expect(session.setModel('gpt-4')).rejects.toThrow(
         'Session not initialized'
       );
@@ -6004,7 +6011,7 @@ describe('AcpSession', () => {
         );
         expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
         expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
-        expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+        expect(AcpServiceContext.destroyRegisteredSession).toHaveBeenCalledTimes(1);
         await expect(session.setModel('gpt-4')).rejects.toThrow(
           'Session not initialized'
         );
@@ -6012,7 +6019,7 @@ describe('AcpSession', () => {
         await expect(session.destroy()).resolves.toBeUndefined();
         expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
         expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
-        expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+        expect(AcpServiceContext.destroyRegisteredSession).toHaveBeenCalledTimes(1);
       }
     );
 
@@ -6030,7 +6037,7 @@ describe('AcpSession', () => {
       );
       expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
       expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
-      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroyRegisteredSession).toHaveBeenCalledTimes(1);
     });
 
     it('ACP context destroy 失败时应该在其余 cleanup 后重抛且保持幂等', async () => {
@@ -6039,19 +6046,21 @@ describe('AcpSession', () => {
       const { AcpServiceContext } = await import(
         '../../../../src/acp/AcpServiceContext.js'
       );
-      vi.mocked(AcpServiceContext.destroySession).mockImplementationOnce(() => {
-        throw new Error('context destroy failed');
-      });
+      vi.mocked(AcpServiceContext.destroyRegisteredSession).mockImplementationOnce(
+        () => {
+          throw new Error('context destroy failed');
+        }
+      );
 
       await expect(session.destroy()).rejects.toThrow('context destroy failed');
       expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
       expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
-      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroyRegisteredSession).toHaveBeenCalledTimes(1);
 
       await expect(session.destroy()).resolves.toBeUndefined();
       expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
       expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
-      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroyRegisteredSession).toHaveBeenCalledTimes(1);
     });
 
     it('runtime 创建失败的半初始化会话仍应该清理 ACP context', async () => {
@@ -6068,7 +6077,7 @@ describe('AcpSession', () => {
       const { AcpServiceContext } = await import(
         '../../../../src/acp/AcpServiceContext.js'
       );
-      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroyRegisteredSession).toHaveBeenCalledTimes(1);
       expect(runtimeState.runtime.dispose).not.toHaveBeenCalled();
     });
 

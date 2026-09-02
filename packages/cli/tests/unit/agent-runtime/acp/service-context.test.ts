@@ -735,6 +735,63 @@ describe('AcpServiceContext session isolation', () => {
     ).toEqual({ connection: 'offline' });
   });
 
+  it('does not let duplicate or stale registrations destroy the accepted owner', () => {
+    const acceptedHarness = createPairedAcpHarness(new ControlledFileClient());
+    const duplicateHarness = createPairedAcpHarness(new ControlledFileClient());
+    harnesses.push(acceptedHarness, duplicateHarness);
+    const acceptedProfile = createAcpRemotePathProfile('/workspace/accepted');
+    const duplicateProfile = createAcpRemotePathProfile('/workspace/duplicate');
+    const acceptedDescriptor = createAcpRemoteWorkspaceDescriptor(acceptedProfile);
+    const duplicateDescriptor = createAcpRemoteWorkspaceDescriptor(duplicateProfile);
+    const acceptedRegistration = AcpServiceContext.initializeSession(
+      acceptedHarness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true } },
+      acceptedProfile.workspace.wirePath,
+      undefined,
+      acceptedProfile
+    );
+    const duplicateRegistration = AcpServiceContext.initializeSession(
+      duplicateHarness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+      duplicateProfile.workspace.wirePath,
+      undefined,
+      duplicateProfile
+    );
+
+    expect(acceptedRegistration).toBeDefined();
+    expect(duplicateRegistration).toBeUndefined();
+    AcpServiceContext.destroyRegisteredSession(duplicateRegistration);
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot('session-a', acceptedDescriptor)
+    ).toMatchObject({ connection: 'online', readText: true, writeText: false });
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot('session-a', duplicateDescriptor)
+    ).toEqual({ connection: 'offline' });
+
+    AcpServiceContext.destroyRegisteredSession(acceptedRegistration);
+    const rebuiltRegistration = AcpServiceContext.initializeSession(
+      duplicateHarness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+      duplicateProfile.workspace.wirePath,
+      undefined,
+      duplicateProfile
+    );
+    expect(rebuiltRegistration).toBeDefined();
+
+    AcpServiceContext.destroyRegisteredSession(acceptedRegistration);
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot('session-a', duplicateDescriptor)
+    ).toMatchObject({
+      connection: 'online',
+      readText: true,
+      writeText: true,
+      terminal: true,
+    });
+  });
+
   it('fails closed without spawning locally when a remote filesystem Session has no terminal capability', async () => {
     const client = new ControlledTerminalClient();
     const harness = createPairedAcpHarness(client);
