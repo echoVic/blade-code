@@ -12,6 +12,7 @@ import {
   createAcpRemotePathProfile,
   parseAcpRemotePath,
 } from '../../../../src/acp/AcpRemotePath.js';
+import { createAcpRemoteWorkspaceDescriptor } from '../../../../src/acp/AcpRemoteWorkspace.js';
 import {
   AcpServiceContext,
   getAcpFileSystemService,
@@ -536,6 +537,202 @@ describe('AcpServiceContext session isolation', () => {
     await expect(fileSystem.readTextFile('/workspace/a/file.ts')).resolves.toBe(
       'remote content'
     );
+  });
+
+  it('projects an exact read-only remote surface owner snapshot', () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const profile = createAcpRemotePathProfile('C:\\workspace');
+    const descriptor = createAcpRemoteWorkspaceDescriptor(profile);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      {
+        fs: { readTextFile: true, writeTextFile: false },
+        terminal: true,
+      },
+      profile.workspace.wirePath,
+      undefined,
+      profile
+    );
+
+    const snapshot = AcpServiceContext.getRemoteSurfaceOwnerSnapshot(
+      'session-a',
+      descriptor
+    );
+    expect(snapshot).toEqual({
+      connection: 'online',
+      generation: expect.stringMatching(/^acp-owner-generation:/),
+      readText: true,
+      writeText: false,
+      terminal: true,
+    });
+    expect(JSON.stringify(snapshot)).not.toContain(profile.workspace.wirePath);
+    expect(JSON.stringify(snapshot)).not.toContain(profile.workspace.exactIdentity);
+  });
+
+  it('projects a remote surface owner offline after its ACP connection closes', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const profile = createAcpRemotePathProfile('/workspace/a');
+    const descriptor = createAcpRemoteWorkspaceDescriptor(profile);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true } },
+      profile.workspace.wirePath,
+      undefined,
+      profile
+    );
+
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot('session-a', descriptor)
+    ).toMatchObject({ connection: 'online' });
+
+    await harness.close();
+
+    expect(harness.agentConnection.signal.aborted).toBe(true);
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot('session-a', descriptor)
+    ).toEqual({ connection: 'offline' });
+  });
+
+  it('does not project an already closed ACP connection as an online owner', async () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const profile = createAcpRemotePathProfile('/workspace/a');
+    const descriptor = createAcpRemoteWorkspaceDescriptor(profile);
+
+    await harness.close();
+    expect(harness.agentConnection.signal.aborted).toBe(true);
+
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true } },
+      profile.workspace.wirePath,
+      undefined,
+      profile
+    );
+
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot('session-a', descriptor)
+    ).toEqual({ connection: 'offline' });
+  });
+
+  it('keeps collision-only and unknown remote surface rows offline', () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const acceptedProfile = createAcpRemotePathProfile('C:\\Repo\\Surface.ts');
+    const collisionProfile = createAcpRemotePathProfile('c:\\repo\\surface.ts');
+    const acceptedDescriptor = createAcpRemoteWorkspaceDescriptor(acceptedProfile);
+    const collisionDescriptor = createAcpRemoteWorkspaceDescriptor(collisionProfile);
+    expect(collisionDescriptor.collisionIdentity).toBe(
+      acceptedDescriptor.collisionIdentity
+    );
+    expect(collisionDescriptor.exactIdentity).not.toBe(
+      acceptedDescriptor.exactIdentity
+    );
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true } },
+      acceptedProfile.workspace.wirePath,
+      undefined,
+      acceptedProfile
+    );
+
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot('session-a', collisionDescriptor)
+    ).toEqual({ connection: 'offline' });
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot(
+        'unknown-session',
+        acceptedDescriptor
+      )
+    ).toEqual({ connection: 'offline' });
+  });
+
+  it('removes the owner before destroy and fences a rebuilt generation', () => {
+    const client = new ControlledFileClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const profile = createAcpRemotePathProfile('/workspace/a');
+    const descriptor = createAcpRemoteWorkspaceDescriptor(profile);
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true } },
+      profile.workspace.wirePath,
+      undefined,
+      profile
+    );
+    const first = AcpServiceContext.getRemoteSurfaceOwnerSnapshot(
+      'session-a',
+      descriptor
+    );
+    expect(first.connection).toBe('online');
+    if (first.connection !== 'online') throw new Error('expected online owner');
+
+    AcpServiceContext.destroySession('session-a');
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot('session-a', descriptor)
+    ).toEqual({ connection: 'offline' });
+
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true } },
+      profile.workspace.wirePath,
+      undefined,
+      profile
+    );
+    const rebuilt = AcpServiceContext.getRemoteSurfaceOwnerSnapshot(
+      'session-a',
+      descriptor
+    );
+    expect(rebuilt.connection).toBe('online');
+    if (rebuilt.connection !== 'online') throw new Error('expected rebuilt owner');
+    expect(rebuilt.generation).not.toBe(first.generation);
+  });
+
+  it('does not transfer online ownership to a duplicate Session ID in another exact workspace', () => {
+    const acceptedClient = new ControlledFileClient();
+    const duplicateClient = new ControlledFileClient();
+    const acceptedHarness = createPairedAcpHarness(acceptedClient);
+    const duplicateHarness = createPairedAcpHarness(duplicateClient);
+    harnesses.push(acceptedHarness, duplicateHarness);
+    const acceptedProfile = createAcpRemotePathProfile('C:\\Repo\\Surface.ts');
+    const duplicateProfile = createAcpRemotePathProfile('c:\\repo\\surface.ts');
+    const acceptedDescriptor = createAcpRemoteWorkspaceDescriptor(acceptedProfile);
+    const duplicateDescriptor = createAcpRemoteWorkspaceDescriptor(duplicateProfile);
+    AcpServiceContext.initializeSession(
+      acceptedHarness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true } },
+      acceptedProfile.workspace.wirePath,
+      undefined,
+      acceptedProfile
+    );
+    AcpServiceContext.initializeSession(
+      duplicateHarness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+      duplicateProfile.workspace.wirePath,
+      undefined,
+      duplicateProfile
+    );
+
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot('session-a', acceptedDescriptor)
+    ).toMatchObject({ connection: 'online', readText: true });
+    expect(
+      AcpServiceContext.getRemoteSurfaceOwnerSnapshot('session-a', duplicateDescriptor)
+    ).toEqual({ connection: 'offline' });
   });
 
   it('fails closed without spawning locally when a remote filesystem Session has no terminal capability', async () => {

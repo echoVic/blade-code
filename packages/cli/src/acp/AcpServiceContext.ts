@@ -17,6 +17,7 @@ import {
   type ForegroundProcessOwnership,
   prepareForegroundProcess,
 } from '../context/storage/DurableForegroundProcess.js';
+import type { AcpRemoteWorkspaceDescriptorV1 } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import {
   type FileStat,
@@ -38,6 +39,7 @@ import {
   type AcpRemotePathProfile,
   createAcpRemotePathProfile,
 } from './AcpRemotePath.js';
+import { parseAcpRemoteWorkspaceDescriptor } from './AcpRemoteWorkspace.js';
 
 const logger = createLogger(LogCategory.AGENT);
 const ACP_TERMINAL_OUTPUT_READ_TIMEOUT_MS = 5_000;
@@ -680,6 +682,32 @@ interface SessionServices {
   remoteFileSystem: boolean;
 }
 
+interface RemoteSurfaceOwnerBinding {
+  readonly exactIdentity: AcpRemoteWorkspaceDescriptorV1['exactIdentity'];
+  readonly generation: string;
+  readonly readText: boolean;
+  readonly services: SessionServices;
+  readonly writeText: boolean;
+  readonly terminal: boolean;
+}
+
+export type RemoteSurfaceOwnerSnapshot =
+  | { readonly connection: 'offline' }
+  | {
+      readonly connection: 'online';
+      readonly generation: string;
+      readonly readText: boolean;
+      readonly writeText: boolean;
+      readonly terminal: boolean;
+    };
+
+function remoteSurfaceOwnerKey(
+  sessionId: string,
+  exactIdentity: AcpRemoteWorkspaceDescriptorV1['exactIdentity']
+): string {
+  return JSON.stringify([sessionId, exactIdentity]);
+}
+
 /**
  * ACP 服务上下文管理器
  *
@@ -688,6 +716,10 @@ interface SessionServices {
  */
 export class AcpServiceContext {
   private static sessions: Map<string, SessionServices> = new Map();
+  private static remoteSurfaceOwners: Map<string, RemoteSurfaceOwnerBinding> =
+    new Map();
+  private static remoteSurfaceOwnerKeysBySessionId: Map<string, string> = new Map();
+  private static remoteSurfaceOwnerGeneration = 0;
   private static currentSessionId: string | null = null;
 
   private constructor() {
@@ -760,7 +792,7 @@ export class AcpServiceContext {
     );
 
     // 存储会话服务
-    AcpServiceContext.sessions.set(sessionId, {
+    const services: SessionServices = {
       fileSystemService,
       terminalService,
       connection,
@@ -768,7 +800,25 @@ export class AcpServiceContext {
       clientCapabilities: clientCapabilities || null,
       executionRoot,
       remoteFileSystem: usesRemoteFileSystem,
-    });
+    };
+    AcpServiceContext.sessions.set(sessionId, services);
+    if (usesRemoteFileSystem) {
+      const profile = remotePathProfile ?? createAcpRemotePathProfile(executionRoot);
+      const ownerKey = remoteSurfaceOwnerKey(
+        sessionId,
+        profile.workspace.exactIdentity
+      );
+      AcpServiceContext.remoteSurfaceOwnerGeneration += 1;
+      AcpServiceContext.remoteSurfaceOwners.set(ownerKey, {
+        exactIdentity: profile.workspace.exactIdentity,
+        generation: `acp-owner-generation:${AcpServiceContext.remoteSurfaceOwnerGeneration.toString(36)}`,
+        readText: clientCapabilities?.fs?.readTextFile === true,
+        services,
+        writeText: clientCapabilities?.fs?.writeTextFile === true,
+        terminal: clientCapabilities?.terminal === true,
+      });
+      AcpServiceContext.remoteSurfaceOwnerKeysBySessionId.set(sessionId, ownerKey);
+    }
 
     // 设置当前会话（用于便捷函数）
     AcpServiceContext.currentSessionId = sessionId;
@@ -786,6 +836,11 @@ export class AcpServiceContext {
    * 只清理指定会话，不影响其他会话。
    */
   static destroySession(sessionId: string): void {
+    const ownerKey = AcpServiceContext.remoteSurfaceOwnerKeysBySessionId.get(sessionId);
+    if (ownerKey) {
+      AcpServiceContext.remoteSurfaceOwners.delete(ownerKey);
+      AcpServiceContext.remoteSurfaceOwnerKeysBySessionId.delete(sessionId);
+    }
     const services = AcpServiceContext.sessions.get(sessionId);
     if (services?.fileSystemService instanceof AcpFileSystemService) {
       services.fileSystemService.dispose();
@@ -826,6 +881,36 @@ export class AcpServiceContext {
 
   static isRemoteFileSystem(sessionId: string): boolean {
     return AcpServiceContext.sessions.get(sessionId)?.remoteFileSystem ?? false;
+  }
+
+  static getRemoteSurfaceOwnerSnapshot(
+    sessionId: string,
+    descriptor: AcpRemoteWorkspaceDescriptorV1
+  ): RemoteSurfaceOwnerSnapshot {
+    let parsed: AcpRemoteWorkspaceDescriptorV1;
+    try {
+      parsed = parseAcpRemoteWorkspaceDescriptor(descriptor);
+    } catch {
+      return { connection: 'offline' };
+    }
+    const binding = AcpServiceContext.remoteSurfaceOwners.get(
+      remoteSurfaceOwnerKey(sessionId, parsed.exactIdentity)
+    );
+    if (
+      !binding ||
+      binding.exactIdentity !== parsed.exactIdentity ||
+      AcpServiceContext.sessions.get(sessionId) !== binding.services ||
+      binding.services.connection.signal.aborted
+    ) {
+      return { connection: 'offline' };
+    }
+    return {
+      connection: 'online',
+      generation: binding.generation,
+      readText: binding.readText,
+      writeText: binding.writeText,
+      terminal: binding.terminal,
+    };
   }
 
   // ==================== 兼容旧 API（实例方法）====================
