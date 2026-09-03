@@ -5,6 +5,7 @@ import { nativeDirectoryPicker } from '../../services/DirectoryPicker.js';
 import { projectRegistry } from '../../services/ProjectRegistry.js';
 import { getCwd } from '../../utils/cwd.js';
 import { BadRequestError, BladeServerError } from '../error.js';
+import { normalizeLocalWorkspacePath } from '../sessionRef.js';
 
 const BindProjectSchema = Type.Object({
   path: Type.String({ minLength: 1 }),
@@ -13,6 +14,16 @@ const BindProjectSchema = Type.Object({
 interface ProjectRoutesOptions {
   pickDirectory?: () => Promise<ProjectDirectorySelection>;
   allowDirectoryPickerRequest?: (origin: string | undefined) => boolean;
+}
+
+function requireLocalProjectPath(projectPath: string): string {
+  try {
+    return normalizeLocalWorkspacePath(projectPath);
+  } catch (error) {
+    throw new BadRequestError(
+      error instanceof Error ? error.message : 'Project path is invalid'
+    );
+  }
 }
 
 export function isLocalDirectoryPickerOrigin(origin: string | undefined): boolean {
@@ -55,7 +66,8 @@ export const ProjectRoutes = (options: ProjectRoutesOptions = {}) => {
       throw new BadRequestError('A project path is required');
     }
     try {
-      const project = await projectRegistry.bind(parsed.data.path, getCwd());
+      const projectPath = requireLocalProjectPath(parsed.data.path);
+      const project = await projectRegistry.bind(projectPath, getCwd());
       return c.json(project, 201);
     } catch (error) {
       throw new BadRequestError(
@@ -87,7 +99,9 @@ export const ProjectRoutes = (options: ProjectRoutesOptions = {}) => {
       throw new BadRequestError('A project path is required');
     }
     try {
-      const removed = await projectRegistry.unbind(projectPath);
+      const removed = await projectRegistry.unbind(
+        requireLocalProjectPath(projectPath)
+      );
       return c.json({ success: true, removed });
     } catch (error) {
       throw new BadRequestError(

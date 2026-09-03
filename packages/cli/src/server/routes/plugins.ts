@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
 import { resolveWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
@@ -16,6 +17,7 @@ import {
 } from '../../plugins/PluginLifecycle.js';
 import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
 import { BadRequestError, NotFoundError } from '../error.js';
+import { normalizeLocalWorkspacePath } from '../sessionRef.js';
 
 const PluginStateSchema = Type.Object({
   projectPath: Type.String({ minLength: 1 }),
@@ -68,10 +70,39 @@ const PluginSourcePolicySchema = Type.Object({
 });
 
 function requireProjectPath(projectPath: string | undefined): string {
-  if (!projectPath || !path.isAbsolute(projectPath)) {
+  if (!projectPath) {
     throw new BadRequestError('projectPath must be absolute');
   }
-  return path.resolve(projectPath);
+  try {
+    return normalizeLocalWorkspacePath(projectPath);
+  } catch {
+    throw new BadRequestError('projectPath must reference a local workspace');
+  }
+}
+
+function isLocalPluginSource(source: string): boolean {
+  return (
+    path.isAbsolute(source) ||
+    source.startsWith('./') ||
+    source.startsWith('../') ||
+    source === '~' ||
+    source.startsWith('~/')
+  );
+}
+
+function requireAllowedPluginSource(source: string, workspaceRoot: string): void {
+  if (!isLocalPluginSource(source)) return;
+  const expanded =
+    source === '~'
+      ? homedir()
+      : source.startsWith('~/')
+        ? path.join(homedir(), source.slice(2))
+        : source;
+  try {
+    normalizeLocalWorkspacePath(path.resolve(workspaceRoot, expanded));
+  } catch {
+    throw new BadRequestError('Plugin source must reference a local workspace');
+  }
 }
 
 async function projectPlugins(projectPath: string) {
@@ -216,6 +247,7 @@ export const PluginRoutes = () => {
       );
     }
     const projectPath = requireProjectPath(parsed.data.projectPath);
+    requireAllowedPluginSource(parsed.data.source, projectPath);
     const { result } = await installWorkspacePlugin(projectPath, parsed.data.source, {
       trusted: parsed.data.trust,
       ref: parsed.data.ref,
@@ -236,6 +268,7 @@ export const PluginRoutes = () => {
       throw new BadRequestError('Invalid marketplace add request');
     }
     const projectPath = requireProjectPath(parsed.data.projectPath);
+    requireAllowedPluginSource(parsed.data.source, projectPath);
     const result = await addPluginMarketplace(
       projectPath,
       parsed.data.source,

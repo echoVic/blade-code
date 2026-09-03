@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import path from 'node:path';
+import { Hono } from 'hono';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import { deriveAcpRemoteHostStateRoot } from '../../../../src/acp/AcpRemoteWorkspace.js';
 
 const mocks = vi.hoisted(() => ({
   enabled: true,
@@ -42,6 +46,7 @@ vi.mock('../../../../src/agent/teams/TeamRuntime.js', () => ({
   },
 }));
 
+import { BladeServerError } from '../../../../src/server/error.js';
 import { TeamRoutes } from '../../../../src/server/routes/team.js';
 
 const owner = {
@@ -63,6 +68,10 @@ describe('TeamRoutes', () => {
     mocks.sendMessage.mockResolvedValue([{ id: 'message-1' }]);
     mocks.claimTask.mockResolvedValue({ id: '1' });
     mocks.delete.mockResolvedValue({ name: 'review-team', status: 'deleted' });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('fails closed when Agent Teams are disabled', async () => {
@@ -132,6 +141,29 @@ describe('TeamRoutes', () => {
 
     expect(missing.status).toBe(400);
     expect(relative.status).toBe(400);
+    expect(mocks.list).not.toHaveBeenCalled();
+  });
+
+  it('rejects a protected remote state root before resolving the Session owner', async () => {
+    const descriptor = createAcpRemotePathProfile('/remote/team');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    vi.stubEnv('BLADE_STORAGE_ROOT', path.dirname(path.dirname(protectedRoot)));
+
+    const app = new Hono();
+    app.onError((error, context) =>
+      error instanceof BladeServerError
+        ? context.json(error.toObject(), error.statusCode as 400)
+        : context.json({ error: String(error) }, 500)
+    );
+    app.route('/teams', TeamRoutes());
+    const response = await app.request(
+      `/teams?sessionId=session-a&projectPath=${encodeURIComponent(protectedRoot)}`
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.findSessionMetadata).not.toHaveBeenCalled();
     expect(mocks.list).not.toHaveBeenCalled();
   });
 });

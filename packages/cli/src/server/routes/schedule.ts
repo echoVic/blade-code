@@ -16,6 +16,7 @@ import {
   InternalServerError,
   NotFoundError,
 } from '../error.js';
+import { normalizeLocalWorkspacePath } from '../sessionRef.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -55,7 +56,14 @@ export const ScheduleRoutes = (store: ScheduleStore, scheduler?: TaskScheduler) 
     if (!parsed.success) {
       throw new BadRequestError('Invalid schedule request');
     }
-    const projectPath = parsed.data.projectPath || c.get('directory') || getCwd();
+    let projectPath: string;
+    try {
+      projectPath = normalizeLocalWorkspacePath(
+        parsed.data.projectPath || c.get('directory') || getCwd()
+      );
+    } catch {
+      throw new BadRequestError('projectPath must reference a local workspace');
+    }
     try {
       const schedule = await store.create({ ...parsed.data, projectPath });
       return c.json(ScheduleSchema.parse(schedule), 201);

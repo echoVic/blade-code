@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import { deriveAcpRemoteHostStateRoot } from '../../../../src/acp/AcpRemoteWorkspace.js';
 import { ConfigManager } from '../../../../src/config/ConfigManager.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
 import { HookTrustService } from '../../../../src/hooks/HookTrustService.js';
@@ -207,5 +209,20 @@ describe('Hook trust routes', () => {
     });
     expect(postResponse.status).toBe(400);
     expect(HookManager.getInstance().isSessionPaused('../escape', project)).toBe(false);
+  });
+
+  it('rejects a protected remote state root before loading hook resources', async () => {
+    const descriptor = createAcpRemotePathProfile('/remote/hooks');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    const load = vi.spyOn(ConfigManager.getInstance(), 'loadWorkspaceHooks');
+
+    const response = await app.request(
+      `/hooks/trust?projectPath=${encodeURIComponent(protectedRoot)}`
+    );
+
+    expect(response.status).toBe(400);
+    expect(load).not.toHaveBeenCalled();
   });
 });

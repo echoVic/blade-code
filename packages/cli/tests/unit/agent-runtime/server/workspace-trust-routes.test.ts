@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import { deriveAcpRemoteHostStateRoot } from '../../../../src/acp/AcpRemoteWorkspace.js';
 import { resetWorkspaceIdentityCache } from '../../../../src/security/WorkspaceIdentity.js';
 import { WorkspaceTrustService } from '../../../../src/security/WorkspaceTrustService.js';
 import { BladeServerError } from '../../../../src/server/error.js';
@@ -42,7 +44,7 @@ describe('Workspace trust routes', () => {
     app = new Hono();
     app.onError((error, context) => {
       if (error instanceof BladeServerError) {
-        return context.json(error.toObject(), error.statusCode as 400);
+        return context.json(error.toObject(), error.statusCode as 400 | 500);
       }
       return context.json({ error: { message: error.message } }, 500);
     });
@@ -50,6 +52,7 @@ describe('Workspace trust routes', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     WorkspaceTrustService.resetInstance();
     resetWorkspaceIdentityCache();
@@ -99,5 +102,21 @@ describe('Workspace trust routes', () => {
   it('rejects relative project paths before filesystem access', async () => {
     const response = await app.request('/workspace-trust?projectPath=relative');
     expect(response.status).toBe(400);
+  });
+
+  it('rejects a protected remote state root before reading trust state', async () => {
+    vi.stubEnv('BLADE_STORAGE_ROOT', path.join(root, 'storage'));
+    const descriptor = createAcpRemotePathProfile('/remote/trust');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    const status = vi.spyOn(WorkspaceTrustService.getInstance(), 'getStatus');
+
+    const response = await app.request(
+      `/workspace-trust?projectPath=${encodeURIComponent(protectedRoot)}`
+    );
+
+    expect(response.status).toBe(400);
+    expect(status).not.toHaveBeenCalled();
   });
 });

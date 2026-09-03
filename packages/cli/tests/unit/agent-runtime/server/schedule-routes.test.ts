@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import { deriveAcpRemoteHostStateRoot } from '../../../../src/acp/AcpRemoteWorkspace.js';
 import { TaskScheduler } from '../../../../src/agent/runtime/TaskScheduler.js';
 import { ScheduleRoutes } from '../../../../src/server/routes/schedule.js';
 import { ScheduleStore } from '../../../../src/services/ScheduleStore.js';
@@ -28,6 +30,7 @@ describe('ScheduleRoutes', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -104,5 +107,30 @@ describe('ScheduleRoutes', () => {
     ).toBe(400);
     expect((await app.request('/missing')).status).toBe(404);
     expect((await app.request('/missing/run', { method: 'POST' })).status).toBe(404);
+  });
+
+  it('rejects a protected remote state root before persisting a schedule', async () => {
+    const storageRoot = path.join(root, 'storage');
+    vi.stubEnv('BLADE_STORAGE_ROOT', storageRoot);
+    const descriptor = createAcpRemotePathProfile('/remote/schedule');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    const create = vi.spyOn(store, 'create');
+
+    const response = await ScheduleRoutes(store).request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Remote schedule',
+        prompt: 'Must not run',
+        projectPath: protectedRoot,
+        trigger: { kind: 'interval', intervalMs: 60_000 },
+        enabled: true,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(create).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import path from 'node:path';
+import { Hono } from 'hono';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import { deriveAcpRemoteHostStateRoot } from '../../../../src/acp/AcpRemoteWorkspace.js';
+import { BladeServerError } from '../../../../src/server/error.js';
 import { McpRoutes } from '../../../../src/server/routes/mcp.js';
 import { ModelsRoutes } from '../../../../src/server/routes/models.js';
 import { SkillsRoutes } from '../../../../src/server/routes/skills.js';
@@ -18,9 +23,11 @@ const mocks = vi.hoisted(() => ({
   getSkill: vi.fn(),
   refreshSkills: vi.fn(),
   resolveResources: vi.fn(),
+  resolveModelResources: vi.fn(),
   getAllModels: vi.fn(),
   getCurrentModel: vi.fn(),
   resolveModelConfig: vi.fn(),
+  installFromLocal: vi.fn(),
 }));
 
 vi.mock('../../../../src/mcp/McpRegistry.js', () => ({
@@ -55,6 +62,10 @@ vi.mock('../../../../src/agent/resources/WorkspaceAgentResources.js', () => ({
   ) => operation(await mocks.resolveResources()),
 }));
 
+vi.mock('../../../../src/agent/resources/WorkspaceModelResources.js', () => ({
+  resolveWorkspaceModelResources: mocks.resolveModelResources,
+}));
+
 vi.mock('../../../../src/store/vanilla.js', () => ({
   configActions: () => ({
     addModel: vi.fn(),
@@ -75,6 +86,14 @@ vi.mock('../../../../src/services/pi/PiModelCatalog.js', () => ({
   }),
 }));
 
+vi.mock('../../../../src/skills/SkillInstaller.js', () => ({
+  getSkillInstaller: () => ({
+    installOfficialSkill: vi.fn(),
+    installFromRepo: vi.fn(),
+    installFromLocal: mocks.installFromLocal,
+  }),
+}));
+
 describe('management routes', () => {
   beforeEach(() => {
     mocks.getAllServers.mockReset();
@@ -91,9 +110,11 @@ describe('management routes', () => {
     mocks.getSkill.mockReset();
     mocks.refreshSkills.mockReset();
     mocks.resolveResources.mockReset();
+    mocks.resolveModelResources.mockReset();
     mocks.getAllModels.mockReset();
     mocks.getCurrentModel.mockReset();
     mocks.resolveModelConfig.mockReset();
+    mocks.installFromLocal.mockReset();
     mocks.getAllServers.mockReturnValue(new Map());
     mocks.getServerStatus.mockReturnValue(null);
     mocks.registerServer.mockResolvedValue(undefined);
@@ -123,8 +144,21 @@ describe('management routes', () => {
         },
       };
     });
+    mocks.resolveModelResources.mockResolvedValue({
+      config: {
+        models: [],
+      },
+      catalog: {
+        resolveConfig: mocks.resolveModelConfig,
+      },
+    });
     mocks.getAllModels.mockReturnValue([]);
     mocks.getCurrentModel.mockReturnValue(undefined);
+    mocks.installFromLocal.mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('returns a non-success status when MCP discovery fails', async () => {
@@ -349,10 +383,34 @@ describe('management routes', () => {
     });
   });
 
-  it('returns a non-success status when model discovery fails', async () => {
-    mocks.getAllModels.mockImplementation(() => {
-      throw new Error('Model registry unavailable');
+  it('rejects a protected remote state root before skill discovery', async () => {
+    const descriptor = createAcpRemotePathProfile('/remote/skills');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    vi.stubEnv('BLADE_STORAGE_ROOT', path.dirname(path.dirname(protectedRoot)));
+
+    const app = new Hono<{ Variables: { directory: string } }>();
+    app.onError((error, context) =>
+      error instanceof BladeServerError
+        ? context.json(error.toObject(), error.statusCode as 400)
+        : context.json({ error: String(error) }, 500)
+    );
+    app.use('*', async (context, next) => {
+      context.set('directory', protectedRoot);
+      return next();
     });
+    app.route('/skills', SkillsRoutes());
+
+    const response = await app.request('/skills');
+    expect(response.status).toBe(400);
+    expect(mocks.resolveResources).not.toHaveBeenCalled();
+  });
+
+  it('returns a non-success status when model discovery fails', async () => {
+    mocks.resolveModelResources.mockRejectedValue(
+      new Error('Model registry unavailable')
+    );
 
     const response = await ModelsRoutes().request('/');
 
@@ -363,6 +421,60 @@ describe('management routes', () => {
         message: 'Failed to get models',
       },
     });
+  });
+
+  it('rejects a protected remote state root before model discovery', async () => {
+    const descriptor = createAcpRemotePathProfile('/remote/models');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    vi.stubEnv('BLADE_STORAGE_ROOT', path.dirname(path.dirname(protectedRoot)));
+
+    const app = new Hono<{ Variables: { directory: string } }>();
+    app.onError((error, context) =>
+      error instanceof BladeServerError
+        ? context.json(error.toObject(), error.statusCode as 400)
+        : context.json({ error: String(error) }, 500)
+    );
+    app.use('*', async (context, next) => {
+      context.set('directory', protectedRoot);
+      return next();
+    });
+    app.route('/models', ModelsRoutes());
+
+    const response = await app.request('/models');
+    expect(response.status).toBe(400);
+    expect(mocks.resolveModelResources).not.toHaveBeenCalled();
+    expect(mocks.resolveResources).not.toHaveBeenCalled();
+  });
+
+  it('rejects a protected remote state root before installing a local skill', async () => {
+    const descriptor = createAcpRemotePathProfile('/remote/local-skill-source');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    vi.stubEnv('BLADE_STORAGE_ROOT', path.dirname(path.dirname(protectedRoot)));
+
+    const app = new Hono<{ Variables: { directory: string } }>();
+    app.onError((error, context) =>
+      error instanceof BladeServerError
+        ? context.json(error.toObject(), error.statusCode as 400)
+        : context.json({ error: String(error) }, 500)
+    );
+    app.use('*', async (context, next) => {
+      context.set('directory', '/tmp/local-skill-workspace');
+      return next();
+    });
+    app.route('/skills', SkillsRoutes());
+
+    const response = await app.request('/skills/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: 'local', path: protectedRoot }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.installFromLocal).not.toHaveBeenCalled();
   });
 
   it('returns a gateway error when the remote catalog is unavailable', async () => {

@@ -1,7 +1,10 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import { deriveAcpRemoteHostStateRoot } from '../../../../src/acp/AcpRemoteWorkspace.js';
 
 vi.mock('../../../../src/skills/SkillInstaller.js', () => ({
   getSkillInstaller: () => ({
@@ -12,9 +15,13 @@ vi.mock('../../../../src/skills/SkillInstaller.js', () => ({
 import { resetWorkspaceAgentResources } from '../../../../src/agent/resources/WorkspaceAgentResources.js';
 import { ConfigManager } from '../../../../src/config/ConfigManager.js';
 import { ConfigService } from '../../../../src/config/ConfigService.js';
-import { resetPluginInstaller } from '../../../../src/plugins/PluginInstaller.js';
+import {
+  getPluginInstaller,
+  resetPluginInstaller,
+} from '../../../../src/plugins/PluginInstaller.js';
 import { uninstallWorkspacePlugin } from '../../../../src/plugins/PluginLifecycle.js';
 import { WorkspaceTrustService } from '../../../../src/security/WorkspaceTrustService.js';
+import { BladeServerError } from '../../../../src/server/error.js';
 import { PluginRoutes } from '../../../../src/server/routes/plugins.js';
 
 async function writeFixture(root: string, relativePath: string, content: string) {
@@ -50,6 +57,10 @@ describe('PluginRoutes', () => {
     ConfigManager.resetInstance();
     ConfigService.resetInstance();
     resetPluginInstaller();
+    getPluginInstaller(
+      path.join(root, 'home', '.blade', 'plugins'),
+      path.join(root, 'home', '.blade', 'plugin-state')
+    );
     WorkspaceTrustService.resetInstance();
     resetWorkspaceAgentResources();
     await WorkspaceTrustService.getInstance().trust(workspace);
@@ -120,6 +131,100 @@ describe('PluginRoutes', () => {
         }),
       ])
     );
+  });
+
+  it('rejects a protected remote state root before plugin discovery', async () => {
+    const descriptor = createAcpRemotePathProfile('/remote/plugins');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    const app = new Hono();
+    app.onError((error, context) =>
+      error instanceof BladeServerError
+        ? context.json(error.toObject(), error.statusCode as 400)
+        : context.json({ error: String(error) }, 500)
+    );
+    app.route('/plugins', PluginRoutes());
+    const response = await app.request(
+      `/plugins?projectPath=${encodeURIComponent(protectedRoot)}`
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects a protected remote state root before installing a local plugin', async () => {
+    const descriptor = createAcpRemotePathProfile('/remote/plugin-source');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    const source = path.join(protectedRoot, 'plugin-source');
+    const install = vi.spyOn(getPluginInstaller(), 'install').mockResolvedValue({
+      success: false,
+      code: 'INVALID_SOURCE',
+      error: 'Protected source reached installer',
+    });
+    const app = new Hono();
+    app.onError((error, context) =>
+      error instanceof BladeServerError
+        ? context.json(error.toObject(), error.statusCode as 400)
+        : context.json({ error: String(error) }, 500)
+    );
+    app.route('/plugins', PluginRoutes());
+
+    try {
+      const response = await app.request('/plugins/install', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectPath: workspace,
+          source,
+          trust: true,
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(install).not.toHaveBeenCalled();
+    } finally {
+      install.mockRestore();
+    }
+  });
+
+  it('rejects a protected remote state root before adding a local marketplace', async () => {
+    const descriptor = createAcpRemotePathProfile('/remote/marketplace-source');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    const source = path.join(protectedRoot, 'marketplace-source');
+    const addMarketplace = vi
+      .spyOn(getPluginInstaller(), 'addMarketplace')
+      .mockResolvedValue({
+        success: false,
+        code: 'INVALID_SOURCE',
+        error: 'Protected source reached installer',
+      });
+    const app = new Hono();
+    app.onError((error, context) =>
+      error instanceof BladeServerError
+        ? context.json(error.toObject(), error.statusCode as 400)
+        : context.json({ error: String(error) }, 500)
+    );
+    app.route('/plugins', PluginRoutes());
+
+    try {
+      const response = await app.request('/plugins/marketplaces', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectPath: workspace,
+          source,
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(addMarketplace).not.toHaveBeenCalled();
+    } finally {
+      addMarketplace.mockRestore();
+    }
   });
 
   it('persists and returns the effective global plugin source policy', async () => {

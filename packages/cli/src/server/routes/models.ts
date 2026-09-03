@@ -18,8 +18,20 @@ import { getSupportedServiceTiers } from '../../services/pi/serviceTier.js';
 import { configActions, getConfig, getModelById } from '../../store/vanilla.js';
 import { getCwd } from '../../utils/cwd.js';
 import { BadRequestError, InternalServerError } from '../error.js';
+import { normalizeLocalWorkspacePath } from '../sessionRef.js';
 
 const logger = createLogger(LogCategory.SERVICE);
+
+function resolveWorkspaceRoot(directory: string | undefined): string {
+  const workspaceRoot = directory || getCwd();
+  try {
+    return normalizeLocalWorkspacePath(workspaceRoot, directory ? 'directory' : 'cwd');
+  } catch (error) {
+    throw new BadRequestError(
+      error instanceof Error ? error.message : 'directory is invalid'
+    );
+  }
+}
 
 export function projectModelConfig(
   config: ModelConfig,
@@ -77,7 +89,7 @@ export const ModelsRoutes = () => {
     try {
       const startupConfig = getConfig();
       if (!startupConfig) throw new Error('Config not initialized');
-      const workspaceRoot = c.get('directory') || getCwd();
+      const workspaceRoot = resolveWorkspaceRoot(c.get('directory'));
       const [resources, agentResources] = await Promise.all([
         resolveWorkspaceModelResources(workspaceRoot, startupConfig),
         resolveWorkspaceAgentResources(workspaceRoot),
@@ -96,6 +108,7 @@ export const ModelsRoutes = () => {
         current: current ? describe(current) : null,
       });
     } catch (error) {
+      if (error instanceof BadRequestError) throw error;
       logger.error('[ModelsRoutes] Failed to get models:', error);
       const failure = new InternalServerError('Failed to get models');
       return c.json(failure.toObject(), 500);

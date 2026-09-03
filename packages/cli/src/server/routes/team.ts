@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { Hono } from 'hono';
 import { getSubagentRegistry } from '../../agent/subagents/SubagentRegistry.js';
 import { TeamRuntime } from '../../agent/teams/TeamRuntime.js';
@@ -19,7 +18,7 @@ import {
   NotFoundError,
   ServiceUnavailableError,
 } from '../error.js';
-import type { SessionRef } from '../sessionRef.js';
+import { normalizeLocalWorkspacePath, type SessionRef } from '../sessionRef.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -143,10 +142,15 @@ async function resolveOwner(
   sessionId: string | undefined,
   projectPath: string | undefined
 ): Promise<SessionRef> {
-  if (!sessionId || !projectPath || !path.isAbsolute(projectPath)) {
+  if (!sessionId || !projectPath) {
     throw new BadRequestError('sessionId and absolute projectPath are required');
   }
-  const resolvedProjectPath = path.resolve(projectPath);
+  let resolvedProjectPath: string;
+  try {
+    resolvedProjectPath = normalizeLocalWorkspacePath(projectPath);
+  } catch {
+    throw new BadRequestError('sessionId and local projectPath are required');
+  }
   const metadata = await SessionService.findSessionMetadata(
     sessionId,
     resolvedProjectPath

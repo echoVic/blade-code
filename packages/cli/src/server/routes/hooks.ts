@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { Hono } from 'hono';
 import { withWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
 import { ConfigManager } from '../../config/ConfigManager.js';
@@ -13,6 +12,7 @@ import {
 import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
 import { getConfig } from '../../store/vanilla.js';
 import { BadRequestError, ConflictError } from '../error.js';
+import { normalizeLocalWorkspacePath } from '../sessionRef.js';
 
 const HookTrustActionSchema = Type.Object({
   projectPath: Type.String({ minLength: 1 }),
@@ -27,10 +27,14 @@ const HookSessionActionSchema = Type.Object({
 });
 
 function requireProjectPath(projectPath: string | undefined): string {
-  if (!projectPath || !path.isAbsolute(projectPath)) {
+  if (!projectPath) {
     throw new BadRequestError('projectPath must be absolute');
   }
-  return path.resolve(projectPath);
+  try {
+    return normalizeLocalWorkspacePath(projectPath);
+  } catch {
+    throw new BadRequestError('projectPath must reference a local workspace');
+  }
 }
 
 function requireSessionId(sessionId: string | undefined): string {

@@ -13,6 +13,8 @@ import {
 } from '../../plugins/PluginIntegrator.js';
 import { getSkillInstaller } from '../../skills/SkillInstaller.js';
 import { getCwd } from '../../utils/cwd.js';
+import { BadRequestError } from '../error.js';
+import { normalizeLocalWorkspacePath } from '../sessionRef.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -21,6 +23,14 @@ const SKILLS_CONFIG_PATH = path.join(homedir(), '.blade', 'skills-config.json');
 
 interface SkillsConfig {
   disabled: string[];
+}
+
+function requireLocalDirectory(directory: string): string {
+  try {
+    return normalizeLocalWorkspacePath(directory, 'directory');
+  } catch {
+    throw new BadRequestError('directory must reference a local workspace');
+  }
 }
 
 async function loadSkillsConfig(): Promise<SkillsConfig> {
@@ -142,7 +152,7 @@ export const SkillsRoutes = () => {
 
   app.get('/', async (c) => {
     try {
-      const directory = c.get('directory') || getCwd();
+      const directory = requireLocalDirectory(c.get('directory') || getCwd());
       const registry = (await resolveWorkspaceAgentResources(directory)).skills;
       const skills = registry.getAll();
       const config = await loadSkillsConfig();
@@ -164,6 +174,7 @@ export const SkillsRoutes = () => {
 
       return c.json(result);
     } catch (error) {
+      if (error instanceof BadRequestError) throw error;
       logger.error('[SkillsRoutes] Failed to get skills:', error);
       return c.json(
         {
@@ -191,7 +202,7 @@ export const SkillsRoutes = () => {
   app.delete('/:name', async (c) => {
     try {
       const name = c.req.param('name');
-      const directory = c.get('directory') || getCwd();
+      const directory = requireLocalDirectory(c.get('directory') || getCwd());
       return withWorkspaceAgentResources(directory, async (resources) => {
         const registry = resources.skills;
         const skill = registry.get(name);
@@ -219,6 +230,7 @@ export const SkillsRoutes = () => {
         return c.json({ success: true });
       });
     } catch (error) {
+      if (error instanceof BadRequestError) throw error;
       logger.error('[SkillsRoutes] Failed to uninstall skill:', error);
       return c.json({ success: false, error: (error as Error).message }, 500);
     }
@@ -234,7 +246,7 @@ export const SkillsRoutes = () => {
       };
 
       const installer = getSkillInstaller();
-      const directory = c.get('directory') || getCwd();
+      const directory = requireLocalDirectory(c.get('directory') || getCwd());
       return withWorkspaceAgentResources(directory, async (resources) => {
         const registry = resources.skills;
         let success = false;
@@ -260,7 +272,8 @@ export const SkillsRoutes = () => {
             );
           }
         } else if (body.source === 'local' && body.path) {
-          success = await installer.installFromLocal(body.path, body.name);
+          const localSourcePath = requireLocalDirectory(path.resolve(body.path));
+          success = await installer.installFromLocal(localSourcePath, body.name);
           if (!success) {
             return c.json(
               {
@@ -288,6 +301,7 @@ export const SkillsRoutes = () => {
         return c.json({ success: true });
       });
     } catch (error) {
+      if (error instanceof BadRequestError) throw error;
       logger.error('[SkillsRoutes] Failed to install skill:', error);
       return c.json({ success: false, error: (error as Error).message }, 500);
     }
