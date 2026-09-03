@@ -1,13 +1,30 @@
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import {
   assertValidSessionId,
   getBladeStorageRoot,
-  isAcpRemoteHostStateRoot,
 } from '../context/storage/pathUtils.js';
 
 export interface SessionRef {
   sessionId: string;
   projectPath: string;
+}
+
+function resolveThroughExistingAncestor(value: string): string {
+  let candidate = path.resolve(value);
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      return path.resolve(realpathSync.native(candidate), ...suffix.reverse());
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+      const parent = path.dirname(candidate);
+      if (parent === candidate) return path.resolve(value);
+      suffix.push(path.basename(candidate));
+      candidate = parent;
+    }
+  }
 }
 
 export function normalizeLocalWorkspacePath(
@@ -18,11 +35,12 @@ export function normalizeLocalWorkspacePath(
     throw new Error(`${label} must be absolute`);
   }
   const normalized = path.resolve(projectPath);
+  const canonical = resolveThroughExistingAncestor(normalized);
   const remoteNamespace = path.join(
-    path.resolve(getBladeStorageRoot()),
+    resolveThroughExistingAncestor(getBladeStorageRoot()),
     'acp-remote-workspaces'
   );
-  const relativeToRemoteNamespace = path.relative(remoteNamespace, normalized);
+  const relativeToRemoteNamespace = path.relative(remoteNamespace, canonical);
   const remoteRootSegment = relativeToRemoteNamespace.split(path.sep)[0];
   const isProtectedRemoteStatePath =
     relativeToRemoteNamespace === '' ||
@@ -30,7 +48,7 @@ export function normalizeLocalWorkspacePath(
       !path.isAbsolute(relativeToRemoteNamespace) &&
       !relativeToRemoteNamespace.startsWith(`..${path.sep}`) &&
       remoteRootSegment !== undefined &&
-      isAcpRemoteHostStateRoot(path.join(remoteNamespace, remoteRootSegment)));
+      /^[a-f0-9]{64}$/i.test(remoteRootSegment));
   if (isProtectedRemoteStatePath) {
     throw new Error(`${label} must reference a local workspace`);
   }

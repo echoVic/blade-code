@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -6,6 +6,7 @@ import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js
 import {
   createAcpRemoteWorkspaceDescriptor,
   deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
 } from '../../../../src/acp/AcpRemoteWorkspace.js';
 import {
   normalizeLocalWorkspacePath,
@@ -76,6 +77,40 @@ describe('sessionRef helpers', () => {
     expect(
       normalizeSessionRef({ sessionId: 'session-1', projectPath: hostStateRoot })
     ).toEqual({ sessionId: 'session-1', projectPath: hostStateRoot });
+  });
+
+  it('rejects filesystem aliases of protected ACP remote state roots', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/aliased-workspace')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.collisionIdentity,
+      storageRoot
+    );
+    await ensureAcpRemoteHostStateRoot(hostStateRoot);
+    const aliasParent = await mkdtemp(
+      path.join(os.tmpdir(), 'blade-session-ref-alias-')
+    );
+    const storageAlias = path.join(aliasParent, 'storage-alias');
+    await symlink(storageRoot, storageAlias, 'dir');
+    const aliasedHostStateRoot = path.join(
+      storageAlias,
+      path.relative(storageRoot, hostStateRoot)
+    );
+    await expect(realpath(aliasedHostStateRoot)).resolves.toBe(
+      await realpath(hostStateRoot)
+    );
+
+    try {
+      expect(() => normalizeLocalWorkspacePath(aliasedHostStateRoot)).toThrow(
+        'projectPath must reference a local workspace'
+      );
+      expect(() =>
+        normalizeLocalWorkspacePath(path.join(aliasedHostStateRoot, 'sessions'))
+      ).toThrow('projectPath must reference a local workspace');
+    } finally {
+      await rm(aliasParent, { recursive: true, force: true });
+    }
   });
 
   it('normalizes absolute paths consistently', () => {
