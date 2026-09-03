@@ -91,14 +91,7 @@ export function projectSessionSurfaceMessages(
   options: SessionSurfaceProjectionOptions
 ): SessionSurfaceMessage[] {
   const maxContentBytes = resolveMaxContentBytes(options.maxContentBytes);
-  const privateRoots = resolvePrivateRoots(
-    options.privateRoots,
-    options.bladeStorageRoots ?? []
-  );
-  const caseInsensitivePrivateRoots = resolvePrivateRoots(
-    options.caseInsensitivePrivateRoots ?? [],
-    []
-  );
+  const { privateRoots, caseInsensitivePrivateRoots } = resolvePrivateRootSets(options);
   const privateValues = resolvePrivateValues(options.privateValues ?? []);
   const materialized = materializeSessionEvents(events);
   const messages = new Map<string, ProjectedMessageState>();
@@ -205,14 +198,15 @@ export function redactSessionSurfaceText(
   value: string,
   options: SessionSurfaceRedactionOptions
 ): string {
+  const { privateRoots, caseInsensitivePrivateRoots } = resolvePrivateRootSets(options);
   return redactPrivateValues(
     redactPrivateRoots(
       redactPrivateRoots(
         stripUnsafeTerminalContent(value),
-        resolvePrivateRoots(options.caseInsensitivePrivateRoots ?? [], []),
+        caseInsensitivePrivateRoots,
         true
       ),
-      resolvePrivateRoots(options.privateRoots, options.bladeStorageRoots ?? [])
+      privateRoots
     ),
     resolvePrivateValues(options.privateValues ?? [])
   );
@@ -326,6 +320,27 @@ function resolvePrivateRoots(
   return [...new Set([...privateRoots, ...bladeStorageRoots].filter(Boolean))].sort(
     (left, right) => right.length - left.length
   );
+}
+
+function isWin32Path(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
+function resolvePrivateRootSets(options: SessionSurfaceRedactionOptions): {
+  privateRoots: string[];
+  caseInsensitivePrivateRoots: string[];
+} {
+  const roots = resolvePrivateRoots(
+    options.privateRoots,
+    options.bladeStorageRoots ?? []
+  );
+  return {
+    privateRoots: roots.filter((root) => !isWin32Path(root)),
+    caseInsensitivePrivateRoots: resolvePrivateRoots(
+      [...(options.caseInsensitivePrivateRoots ?? []), ...roots.filter(isWin32Path)],
+      []
+    ),
+  };
 }
 
 function resolvePrivateValues(privateValues: readonly string[]): string[] {

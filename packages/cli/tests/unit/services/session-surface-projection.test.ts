@@ -300,6 +300,22 @@ describe('projectSessionSurfaceMessages', () => {
         ),
       })
     ).toBe('read [private state path]');
+    const win32HostStateRoot = `C:\\Users\\Alice\\.blade\\acp-remote-workspaces\\${'a'.repeat(64)}`;
+    expect(
+      redactSessionSurfaceText(
+        `host c:/users/alice/.blade/acp-remote-workspaces/${'a'.repeat(64)}/secret.jsonl`,
+        remoteSessionSurfaceRedactionOptions(win32HostStateRoot, win32Descriptor)
+      )
+    ).toBe('host [private state path]');
+    expect(
+      redactSessionSurfaceText(
+        'storage c:/users/alice/.blade/projects/leak/session.jsonl',
+        {
+          privateRoots: [],
+          bladeStorageRoots: ['C:\\Users\\Alice\\.blade'],
+        }
+      )
+    ).toBe('storage [private state path]');
     expect(() => createSessionSurfaceMessageId(0, 'durable-message')).toThrow(
       SessionSurfaceProjectionError
     );
