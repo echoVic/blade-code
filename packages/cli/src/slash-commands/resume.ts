@@ -17,16 +17,19 @@ const resumeCommand: SlashCommand = {
   examples: ['/resume - 打开会话选择器', '/resume abc123xyz - 直接恢复指定的会话'],
   async handler(
     args: string[],
-    _context: SlashCommandContext
+    context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     if (args.length > 1) {
       return { success: false, error: 'Usage: /resume [sessionId]' };
     }
 
     try {
-      const sessions = await SessionService.listSessions({
-        includeSubagents: false,
-      });
+      const listedSessions = context.sessionSurfaces
+        ? await context.sessionSurfaces.list()
+        : await SessionService.listSessions({ includeSubagents: false });
+      const sessions = listedSessions.filter(
+        (session) => session.relationType !== 'subagent'
+      );
 
       if (args.length === 0) {
         if (sessions.length === 0) {
@@ -42,7 +45,11 @@ const resumeCommand: SlashCommand = {
       }
 
       const sessionId = args[0]!;
-      const matches = sessions.filter((candidate) => candidate.sessionId === sessionId);
+      const matches = sessions.filter((candidate) =>
+        'locator' in candidate
+          ? candidate.locator.sessionId === sessionId
+          : candidate.sessionId === sessionId
+      );
       if (matches.length === 0) {
         return { success: false, error: `Session not found: ${sessionId}` };
       }

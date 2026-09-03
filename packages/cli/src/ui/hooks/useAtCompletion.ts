@@ -6,7 +6,7 @@
 
 import fg from 'fast-glob';
 import Fuse from 'fuse.js';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getCwd } from '../../utils/cwd.js';
 import {
   DEFAULT_EXCLUDE_DIRS,
@@ -68,6 +68,10 @@ export interface UseAtCompletionOptions {
   debounceDelay?: number;
   /** 是否启用模糊匹配，默认 true */
   fuzzyMatch?: boolean;
+  /** 禁止任何文件系统扫描。 */
+  disabled?: boolean;
+  /** 在实际执行扫描前再次确认请求仍被允许。 */
+  canRequest?: () => boolean;
 }
 
 /**
@@ -148,7 +152,11 @@ export function useAtCompletion(
     ignorePatterns = DEFAULT_IGNORE_PATTERNS,
     debounceDelay = 300,
     fuzzyMatch = true,
+    disabled = false,
+    canRequest,
   } = options;
+  const canRequestRef = useRef(canRequest);
+  canRequestRef.current = canRequest;
 
   // 文件列表状态
   const [files, setFiles] = useState<string[]>([]);
@@ -160,7 +168,7 @@ export function useAtCompletion(
     () => JSON.stringify(ignorePatterns),
     [ignorePatterns]
   );
-  const shouldLoadFiles = input.includes('@');
+  const shouldLoadFiles = !disabled && input.includes('@');
 
   // 提取 @ 提及
   const atMatch = useMemo(() => {
@@ -202,6 +210,11 @@ export function useAtCompletion(
     let cancelled = false;
 
     const loadFiles = async () => {
+      if (disabled || canRequestRef.current?.() === false) {
+        setFiles([]);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const foundFiles = (await fg('**/*', {
@@ -246,7 +259,7 @@ export function useAtCompletion(
     };
     // ignorePatternsKey intentionally represents the array's semantic value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shouldLoadFiles, cwd, debounceDelay, ignorePatternsKey]);
+  }, [shouldLoadFiles, cwd, debounceDelay, ignorePatternsKey, disabled]);
 
   const fuse = useMemo(
     () =>

@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream';
 import { render } from 'ink';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionSurfaceSummary } from '../../../src/api/sessionSurfaceSchemas.js';
 import type { Message } from '../../../src/services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../../../src/services/SessionService.js';
 import { FocusId } from '../../../src/store/types.js';
@@ -20,9 +21,15 @@ const sessionServiceMocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
 }));
 
-vi.mock('../../../src/ui/utils/sessionActivation.js', () => ({
-  activateSessionSelection: activationMocks.activateSessionSelection,
-}));
+vi.mock('../../../src/ui/utils/sessionActivation.js', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../../src/ui/utils/sessionActivation.js')
+  >('../../../src/ui/utils/sessionActivation.js');
+  return {
+    ...actual,
+    activateSessionSelection: activationMocks.activateSessionSelection,
+  };
+});
 
 vi.mock('../../../src/services/SessionService.js', async () => {
   const actual = await vi.importActual<
@@ -319,6 +326,69 @@ function createSessionMetadata(
   };
 }
 
+function createLocalSurfaceSummary(metadata: SessionMetadata): SessionSurfaceSummary {
+  return {
+    locator: {
+      version: 2,
+      sessionId: metadata.sessionId,
+      workspace: { kind: 'local', projectPath: metadata.projectPath },
+    },
+    displayCwd: metadata.projectPath,
+    title: metadata.title,
+    rootId: metadata.rootId,
+    parentId: metadata.parentId,
+    relationType: metadata.relationType,
+    taskStatus: metadata.taskStatus,
+    messageCount: metadata.messageCount,
+    firstMessageTime: metadata.firstMessageTime,
+    lastMessageTime: metadata.lastMessageTime,
+    hasErrors: metadata.hasErrors,
+    archivedAt: metadata.archivedAt,
+    selectedModelId: metadata.selectedModelId,
+    capabilities: {
+      connection: 'local',
+      history: { read: true, fork: metadata.archivedAt === undefined },
+      turn: metadata.archivedAt
+        ? { start: false, reason: 'archived' }
+        : { start: true },
+      files: metadata.archivedAt
+        ? { readText: false, writeText: false, browse: 'none', reason: 'archived' }
+        : { readText: true, writeText: true, browse: 'tree' },
+      terminal: metadata.archivedAt
+        ? { mode: 'none', owner: 'none', reason: 'archived' }
+        : { mode: 'interactive', owner: 'local' },
+    },
+  };
+}
+
+function createRemoteSurfaceSummary(): SessionSurfaceSummary {
+  return {
+    ...createLocalSurfaceSummary(createSessionMetadata()),
+    locator: {
+      version: 2,
+      sessionId: 'remote-session-12345678',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'R'.repeat(43)}`,
+      },
+    },
+    displayCwd: 'C:\\Remote\\Repo',
+    title: 'Remote Session',
+    capabilities: {
+      connection: 'offline',
+      history: { read: true, fork: true },
+      turn: { start: false, reason: 'history-only' },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none',
+        reason: 'history-only',
+      },
+      terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+    },
+  };
+}
+
 function resetStore(): void {
   vanillaStore.setState((state) => ({
     ...state,
@@ -326,6 +396,7 @@ function resetStore(): void {
       ...state.app,
       activeModal: 'none',
       sessionSelectorData: undefined,
+      sessionHistoryViewerData: undefined,
     },
     focus: {
       ...state.focus,
@@ -413,7 +484,7 @@ describe('session selector fork integration', () => {
     const app = render(
       <SessionSelector
         intent="fork"
-        sessions={[session]}
+        sessions={[createLocalSurfaceSummary(session)]}
         onSelect={onSelect}
         onCancel={onCancel}
       />,
@@ -475,7 +546,11 @@ describe('session selector fork integration', () => {
     }));
 
     const app = render(
-      <SessionSelector intent="resume" sessions={[session]} onSelect={onSelect} />,
+      <SessionSelector
+        intent="resume"
+        sessions={[createLocalSurfaceSummary(session)]}
+        onSelect={onSelect}
+      />,
       {
         stdin,
         stdout,
@@ -543,7 +618,7 @@ describe('session selector fork integration', () => {
         updatedAt: '2026-08-07T12:00:00.000Z',
       },
     });
-    const selections: SessionMetadata[] = [];
+    const selections: SessionSurfaceSummary[] = [];
     const stdin = new TestInputStream();
     const stdout = new TestOutputStream();
     const stderr = new TestOutputStream();
@@ -559,7 +634,7 @@ describe('session selector fork integration', () => {
     const app = render(
       <SessionSelector
         intent="fork"
-        sessions={[ordinary, subagent, forked]}
+        sessions={[ordinary, subagent, forked].map(createLocalSurfaceSummary)}
         onSelect={(session) => {
           selections.push(session);
         }}
@@ -584,9 +659,6 @@ describe('session selector fork integration', () => {
           expect(output).toContain(workspaceLabel);
           expect(output).toContain('[DONE]');
           expect(output).toContain('[QUEUED]');
-          expect(output).toContain('wt:blade-worktree-task-demo');
-          expect(output).toContain('2 files +7 -1');
-          expect(output).toContain('delivery:applied');
           expect(output).toContain('↳ fork');
           expect(output).not.toContain('↳ subagent');
         },
@@ -603,9 +675,8 @@ describe('session selector fork integration', () => {
           expect(selectedChunk).toContain('> [QUEUED]');
           expect(selectedChunk).toContain(workspaceLabel);
           expect(selectedChunk).toContain('[QUEUED]');
-          expect(selectedChunk).toContain('wt:blade-worktree-task-demo');
           expect(selectedChunk.replace(/\s+/g, ' ')).toContain(
-            '(main) | 12 条消息 | wt:blade-worktree-task-demo | queue:2/4 | 2 files +7 -1 | delivery:applied ↳ fork'
+            `${workspaceLabel} | 12 条消息 ↳ fork`
           );
         },
         () =>
@@ -617,7 +688,7 @@ describe('session selector fork integration', () => {
 
       await waitForAssertion(
         () => {
-          expect(selections).toEqual([forked]);
+          expect(selections).toEqual([createLocalSurfaceSummary(forked)]);
         },
         () =>
           `output=${JSON.stringify(stdout.output)} selections=${JSON.stringify(selections)}`
@@ -669,7 +740,7 @@ describe('session selector fork integration', () => {
     expect(getState().focus.currentFocus).toBe(FocusId.MAIN_INPUT);
     expect(getState().app.sessionSelectorData).toEqual({
       intent: 'fork',
-      sessions: [ordinary, forked],
+      sessions: [ordinary, forked].map(createLocalSurfaceSummary),
     });
 
     const selectorState = getState().app.sessionSelectorData;
@@ -681,9 +752,12 @@ describe('session selector fork integration', () => {
       throw new Error('session selector state was not created');
     }
 
-    const handleSelection = async (session: SessionMetadata) => {
+    const handleSelection = async (session: SessionSurfaceSummary) => {
       await activationMocks.activateSessionSelection(
-        { intent: selectorState.intent, session },
+        {
+          intent: selectorState.intent,
+          session: session.locator.sessionId === forked.sessionId ? forked : ordinary,
+        },
         process.cwd(),
         sessionActions,
         cleanupAgent
@@ -737,7 +811,7 @@ describe('session selector fork integration', () => {
           expect(stdout.output.length).toBeGreaterThan(outputLengthBeforeMove);
           expect(selectedChunk).toContain('> ');
           expect(selectedChunk).toContain(workspaceLabel);
-          expect(selectedChunk).toContain('(main) | 12 条消息 ↳ fork');
+          expect(selectedChunk).toContain('| 12 条消息 ↳ fork');
         },
         () =>
           `output=${JSON.stringify(stdout.output)} stderr=${JSON.stringify(stderr.output)}`
@@ -768,5 +842,84 @@ describe('session selector fork integration', () => {
       stdout.end();
       stderr.end();
     }
+  });
+
+  it('routes a remote /resume id through the owned surface catalog only', async () => {
+    const remote = createRemoteSurfaceSummary();
+    const appActions = getState().app.actions;
+    const cleanupAgent = vi.fn(async () => undefined);
+    const sessionSurfaces = { list: vi.fn(async () => [remote]) };
+
+    const routeResult = await processSlashCommand(
+      createResolvedInput('/resume remote-session-12345678'),
+      appActions,
+      getState().session.actions,
+      new AbortController().signal,
+      cleanupAgent,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getCwd(),
+      undefined,
+      sessionSurfaces
+    );
+
+    expect(routeResult).toEqual({
+      type: 'handled',
+      commandResult: { success: true },
+    });
+    expect(sessionSurfaces.list).toHaveBeenCalledOnce();
+    expect(sessionServiceMocks.listSessions).not.toHaveBeenCalled();
+    expect(getState().app.activeModal).toBe('sessionHistoryViewer');
+    expect(getState().app.sessionHistoryViewerData).toEqual({
+      intent: 'resume',
+      session: remote,
+    });
+    expect(activationMocks.activateSessionSelection).not.toHaveBeenCalled();
+    expect(cleanupAgent).not.toHaveBeenCalled();
+  });
+
+  it('routes a remote /fork id to a history-only fork intent', async () => {
+    const remote = createRemoteSurfaceSummary();
+    const appActions = getState().app.actions;
+    const cleanupAgent = vi.fn(async () => undefined);
+    const sessionSurfaces = { list: vi.fn(async () => [remote]) };
+
+    const routeResult = await processSlashCommand(
+      createResolvedInput('/fork remote-session-12345678'),
+      appActions,
+      getState().session.actions,
+      new AbortController().signal,
+      cleanupAgent,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getCwd(),
+      undefined,
+      sessionSurfaces
+    );
+
+    expect(routeResult).toEqual({
+      type: 'handled',
+      commandResult: { success: true },
+    });
+    expect(getState().app.sessionHistoryViewerData).toEqual({
+      intent: 'fork',
+      session: remote,
+    });
+    expect(activationMocks.activateSessionSelection).not.toHaveBeenCalled();
+    expect(cleanupAgent).not.toHaveBeenCalled();
   });
 });

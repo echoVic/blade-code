@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => {
     workspaceRoot: '/active-workspace',
     storeSessionId: 'recovered-cli-session',
     storeWorkspaceRoot: '/active-workspace',
+    activeModal: 'none' as 'none' | 'sessionHistoryViewer',
     createAgent: vi.fn(),
     cleanupAgent: vi.fn(),
     steerActiveTurn: vi.fn(),
@@ -179,6 +180,7 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
 vi.mock('../../../../../src/store/vanilla.js', () => ({
   ensureStoreInitialized: vi.fn().mockResolvedValue(undefined),
   getState: () => ({
+    app: { activeModal: mocks.activeModal },
     command: { isProcessing: mocks.storeProcessing },
     session: {
       sessionId: mocks.storeSessionId,
@@ -372,6 +374,7 @@ describe('useCommandHandler durable recovery', () => {
     mocks.workspaceRoot = '/active-workspace';
     mocks.storeSessionId = 'recovered-cli-session';
     mocks.storeWorkspaceRoot = '/active-workspace';
+    mocks.activeModal = 'none';
     mocks.isProcessing = false;
     mocks.storeProcessing = false;
     mocks.sideConversation = null;
@@ -1480,6 +1483,26 @@ describe('useCommandHandler durable recovery', () => {
     });
 
     expect(hook?.cleanupAgent).toBe(mocks.cleanupAgent);
+  });
+
+  it('rejects a stale command callback while remote history is open', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    await renderHarness();
+    mocks.activeModal = 'sessionHistoryViewer';
+
+    await act(async () => {
+      await hook?.executeCommand({
+        text: '/fork parent-session',
+        displayText: '/fork parent-session',
+        images: [],
+        parts: [{ type: 'text', text: '/fork parent-session' }],
+      });
+    });
+
+    expect(mocks.processSlashCommand).not.toHaveBeenCalled();
+    expect(mocks.createAbortController).not.toHaveBeenCalled();
+    expect(mocks.createAgent).not.toHaveBeenCalled();
+    expect(mocks.addUserMessage).not.toHaveBeenCalled();
   });
 
   it('passes its runtime cleanup dependency to direct slash activation routing', async () => {

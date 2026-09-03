@@ -5,6 +5,10 @@
  * `SlashRouteResult` 联合类型显式分离"UI 展示什么"和"Agent 实际收到什么"。
  */
 
+import {
+  type SessionSurfaceSummary,
+  SessionSurfaceSummarySchema,
+} from '../../api/sessionSurfaceSchemas.js';
 import type { Message, UsageInfo } from '../../services/ChatServiceInterface.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
@@ -18,7 +22,11 @@ import type { useAppActions, useSessionActions } from '../../store/selectors/ind
 import { getCwd } from '../../utils/cwd.js';
 import type { ResolvedInput } from '../hooks/useInputBuffer.js';
 import type { CleanupAgent } from './sessionActivation.js';
-import { activateSessionSelection } from './sessionActivation.js';
+import {
+  activateSessionSelection,
+  resolveLocalSessionSurface,
+  toLocalSessionSurfaceSummary,
+} from './sessionActivation.js';
 
 // ==================== 类型定义 ====================
 
@@ -126,6 +134,27 @@ function isSessionMetadata(value: unknown): value is SessionMetadata {
   );
 }
 
+function isSessionSurfaceSummary(value: unknown): value is SessionSurfaceSummary {
+  return SessionSurfaceSummarySchema.safeParse(value).success;
+}
+
+function isSessionSelectionCandidate(
+  value: unknown
+): value is SessionMetadata | SessionSurfaceSummary {
+  if (typeof value !== 'object' || value === null) return false;
+  return Object.hasOwn(value, 'locator')
+    ? isSessionSurfaceSummary(value)
+    : isSessionMetadata(value);
+}
+
+function toSurfaceCandidate(
+  candidate: SessionMetadata | SessionSurfaceSummary
+): SessionSurfaceSummary {
+  return isSessionSurfaceSummary(candidate)
+    ? candidate
+    : toLocalSessionSurfaceSummary(candidate);
+}
+
 // ==================== 类型守卫 ====================
 
 export function isInvokeSkillAction(data: unknown): data is InvokeSkillData {
@@ -208,13 +237,12 @@ export function isSessionSelectionAction(
   const action = (data as { action?: unknown }).action;
   if (action === 'select_session') {
     const sessions = (data as { sessions?: unknown }).sessions;
-    return (
-      Array.isArray(sessions) && sessions.every((session) => isSessionMetadata(session))
-    );
+    return Array.isArray(sessions) && sessions.every(isSessionSelectionCandidate);
   }
 
   if (action === 'activate_session') {
-    return isSessionMetadata((data as { session?: unknown }).session);
+    const session = (data as { session?: unknown }).session;
+    return isSessionSelectionCandidate(session);
   }
 
   return false;
@@ -267,7 +295,10 @@ function handleSlashMessage(
       return true;
     case 'show_session_selector': {
       const sessions = (data as { sessions?: SessionMetadata[] } | undefined)?.sessions;
-      appActions.showSessionSelector(sessions ?? [], 'resume');
+      appActions.showSessionSelector(
+        (sessions ?? []).map(toLocalSessionSurfaceSummary),
+        'resume'
+      );
       return true;
     }
     case 'session_forked': {
@@ -373,7 +404,8 @@ export async function processSlashCommand(
   responseVerbosity?: SlashCommandContext['responseVerbosity'],
   communicationStyle?: SlashCommandContext['communicationStyle'],
   workspaceRoot: string = getCwd(),
-  codeReview?: SlashCommandContext['codeReview']
+  codeReview?: SlashCommandContext['codeReview'],
+  sessionSurfaces?: SlashCommandContext['sessionSurfaces']
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
 
@@ -404,6 +436,7 @@ export async function processSlashCommand(
     responseVerbosity,
     communicationStyle,
     codeReview,
+    sessionSurfaces,
     signal,
   };
 
@@ -412,14 +445,22 @@ export async function processSlashCommand(
   if (slashResult.success && isSessionSelectionAction(slashResult.data)) {
     if (slashResult.data.action === 'select_session') {
       appActions.showSessionSelector(
-        slashResult.data.sessions,
+        slashResult.data.sessions.map(toSurfaceCandidate),
         slashResult.data.intent
       );
       return { type: 'handled', commandResult: { success: true } };
     }
 
+    const surface = toSurfaceCandidate(slashResult.data.session);
+    if (surface.locator.workspace.kind === 'acp-remote') {
+      appActions.showSessionHistoryViewer(surface, slashResult.data.intent);
+      return { type: 'handled', commandResult: { success: true } };
+    }
+    const localSession = isSessionMetadata(slashResult.data.session)
+      ? slashResult.data.session
+      : await resolveLocalSessionSurface(surface);
     await activateSessionSelection(
-      slashResult.data,
+      { ...slashResult.data, session: localSession },
       workspaceRoot,
       sessionActions,
       cleanupAgent

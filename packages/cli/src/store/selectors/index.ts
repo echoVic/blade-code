@@ -126,6 +126,9 @@ export const useModelEditorTarget = () =>
 export const useSessionSelectorState = () =>
   useBladeStore((state) => state.app.sessionSelectorData);
 
+export const useSessionHistoryViewerState = () =>
+  useBladeStore((state) => state.app.sessionHistoryViewerData);
+
 /**
  * 获取是否等待第二次 Ctrl+C
  */

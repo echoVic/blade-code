@@ -1,10 +1,21 @@
 import { SessionService } from '../services/SessionService.js';
-import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
+import type {
+  SessionSelectionCandidate,
+  SlashCommand,
+  SlashCommandContext,
+  SlashCommandResult,
+} from './types.js';
 
-function getForkableSessions(
-  sessions: Awaited<ReturnType<typeof SessionService.listSessions>>
-) {
-  return sessions.filter((session) => session.relationType !== 'subagent');
+function getForkableSessions(sessions: readonly SessionSelectionCandidate[]) {
+  return sessions.filter(
+    (session) =>
+      session.relationType !== 'subagent' &&
+      (!('locator' in session) || session.capabilities.history.fork)
+  );
+}
+
+function candidateSessionId(candidate: SessionSelectionCandidate): string {
+  return 'locator' in candidate ? candidate.locator.sessionId : candidate.sessionId;
 }
 
 export const forkCommand: SlashCommand = {
@@ -17,7 +28,7 @@ export const forkCommand: SlashCommand = {
   examples: ['/fork - 打开会话选择器', '/fork parent-session - 直接 fork 指定会话'],
   async handler(
     args: string[],
-    _context: SlashCommandContext
+    context: SlashCommandContext
   ): Promise<SlashCommandResult> {
     if (args.length > 1) {
       return {
@@ -27,9 +38,9 @@ export const forkCommand: SlashCommand = {
     }
 
     try {
-      const listedSessions = await SessionService.listSessions({
-        includeSubagents: false,
-      });
+      const listedSessions = context.sessionSurfaces
+        ? await context.sessionSurfaces.list()
+        : await SessionService.listSessions({ includeSubagents: false });
 
       const forkableSessions = getForkableSessions(listedSessions);
 
@@ -53,7 +64,7 @@ export const forkCommand: SlashCommand = {
 
       const sessionId = args[0]!;
       const listedMatches = listedSessions.filter(
-        (session) => session.sessionId === sessionId
+        (session) => candidateSessionId(session) === sessionId
       );
       if (
         listedMatches.length > 0 &&
@@ -66,7 +77,7 @@ export const forkCommand: SlashCommand = {
       }
 
       const selectedSessions = forkableSessions.filter(
-        (session) => session.sessionId === sessionId
+        (session) => candidateSessionId(session) === sessionId
       );
       if (selectedSessions.length === 0) {
         return {

@@ -33,6 +33,7 @@ import { Bus } from '../../server/bus.js';
 import { sameSessionRef } from '../../server/sessionRef.js';
 import { SessionInteractionService } from '../../services/SessionInteractionService.js';
 import { renderUserShellCommandForDisplay } from '../../services/UserShellCommandService.js';
+import type { SlashCommandContext } from '../../slash-commands/types.js';
 import {
   useAgentTeamsEnabled,
   useAppActions,
@@ -97,7 +98,8 @@ export const useCommandHandler = (
   confirmationHandler?: ConfirmationHandler,
   maxTurns?: number,
   onDismissConfirmations?: () => void,
-  agents?: SubagentConfig[]
+  agents?: SubagentConfig[],
+  sessionSurfaces?: SlashCommandContext['sessionSurfaces']
 ) => {
   // ==================== Store 选择器 ====================
   const isProcessing = useIsProcessing();
@@ -484,7 +486,8 @@ export const useCommandHandler = (
           workspaceRoot,
           {
             run: runCodeReview,
-          }
+          },
+          sessionSurfaces
         );
 
         if (slashResult.type === 'handled') {
@@ -865,6 +868,9 @@ export const useCommandHandler = (
 
   // ==================== executeCommand ====================
   const executeCommand = useMemoizedFn(async (resolved: ResolvedInput) => {
+    if (getState().app.activeModal === 'sessionHistoryViewer') {
+      return;
+    }
     if (!resolved.text.trim() && resolved.images.length === 0) {
       return;
     }

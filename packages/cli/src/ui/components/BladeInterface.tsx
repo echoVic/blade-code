@@ -2,6 +2,7 @@ import { useMemoizedFn } from 'ahooks';
 import ansiEscapes from 'ansi-escapes';
 import { Box, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import type { SessionSurfaceSummary } from '../../api/sessionSurfaceSchemas.js';
 import { parseCliAgents } from '../../cli/agents.js';
 import {
   type ModelConfig,
@@ -21,6 +22,7 @@ import {
   useModelEditorTarget,
   usePermissionMode,
   useSessionActions,
+  useSessionHistoryViewerState,
   useSessionId,
   useSessionSelectorState,
   useThemeName,
@@ -37,10 +39,12 @@ import { useInputBuffer } from '../hooks/useInputBuffer.js';
 import { useMainInput } from '../hooks/useMainInput.js';
 import { useRefreshStatic } from '../hooks/useRefreshStatic.js';
 import { useTerminalInput } from '../input/TerminalInputRouter.js';
+import { SessionHistoryController } from '../services/SessionHistoryController.js';
 import { themeManager } from '../themes/ThemeManager.js';
 import { clearRawRenderer } from '../utils/rawStreamRenderer.js';
 import {
   activateSessionSelection,
+  dispatchSessionSurfaceSelection,
   listSessionCandidatesForIntent,
 } from '../utils/sessionActivation.js';
 import { AgentCreationWizard } from './AgentCreationWizard.js';
@@ -58,10 +62,12 @@ import { ModelConfigWizard } from './model-config/index.js';
 import { PermissionsManager } from './PermissionsManager.js';
 import { PluginsManager } from './PluginsManager.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
+import { SessionHistoryViewer } from './SessionHistoryViewer.js';
 import { SessionSelector } from './SessionSelector.js';
 import { SideConversationPanel } from './SideConversationPanel.js';
 import { SkillsManager } from './SkillsManager.js';
 import { SubagentProgress } from './SubagentProgress.js';
+import { getMostRecentLocalSessionCandidate } from './sessionSelectorModel.js';
 import { TeamProgress } from './TeamProgress.js';
 import { ThemeSelector } from './ThemeSelector.js';
 import { TranscriptPager } from './TranscriptPager.js';
@@ -99,6 +105,14 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const readyAnnouncementSent = useRef(false);
   const lastInitializationError = useRef<string | null>(null);
   const pagerTransitionMountedRef = useRef(false);
+  const sessionHistoryControllerRef = useRef<SessionHistoryController | null>(null);
+  if (!sessionHistoryControllerRef.current) {
+    sessionHistoryControllerRef.current = new SessionHistoryController();
+  }
+  const sessionHistoryController = sessionHistoryControllerRef.current;
+  const [sessionHistoryState, setSessionHistoryState] = useState(
+    sessionHistoryController.getState()
+  );
   const [transcriptPagerOpen, setTranscriptPagerOpen] = useState(false);
 
   // ==================== Context & Hooks ====================
@@ -107,6 +121,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const initializationError = useInitializationError();
   const activeModal = useActiveModal();
   const sessionSelectorState = useSessionSelectorState();
+  const sessionHistoryViewerState = useSessionHistoryViewerState();
   const modelEditorTarget = useModelEditorTarget();
   const appActions = useAppActions();
 
@@ -158,7 +173,20 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     confirmationHandler,
     otherProps.maxTurns,
     dismissAll,
-    invocationAgents
+    invocationAgents,
+    { list: () => sessionHistoryController.listAll() }
+  );
+
+  useEffect(
+    () => sessionHistoryController.subscribe(setSessionHistoryState),
+    [sessionHistoryController]
+  );
+
+  useEffect(
+    () => () => {
+      void sessionHistoryController.close();
+    },
+    [sessionHistoryController]
   );
 
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
@@ -300,15 +328,43 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   );
 
-  const resolveSessionMetadata = useMemoizedFn(
+  const activateSurfaceSession = useMemoizedFn(
+    async (
+      summary: SessionSurfaceSummary,
+      intent: SessionSelectionIntent,
+      options?: { newSessionId?: string; announceFork?: boolean }
+    ) => {
+      await dispatchSessionSurfaceSelection(
+        summary,
+        intent,
+        {
+          openHistory: (remote, remoteIntent) => {
+            appActions.showSessionHistoryViewer(remote, remoteIntent);
+          },
+          activateLocal: async (metadata, localIntent) => {
+            await sessionHistoryController.closeView();
+            await activatePersistedSession(metadata, localIntent, options);
+            appActions.closeModal();
+          },
+        },
+        options
+      );
+    }
+  );
+
+  const resolveSessionSummary = useMemoizedFn(
     async (
       sourceSessionId: string,
       intent: SessionSelectionIntent
-    ): Promise<SessionMetadata> => {
+    ): Promise<SessionSurfaceSummary> => {
       const workspace = workspaceRoot;
-      const sessions = await listSessionCandidatesForIntent(intent, workspace);
+      const sessions = await listSessionCandidatesForIntent(
+        intent,
+        workspace,
+        sessionHistoryController
+      );
       const matches = sessions.filter(
-        (candidate) => candidate.sessionId === sourceSessionId
+        (candidate) => candidate.locator.sessionId === sourceSessionId
       );
       if (matches.length === 0) {
         throw new Error(`Session not found: ${sourceSessionId}`);
@@ -332,7 +388,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     isProcessing,
     handlePermissionModeToggle,
     handleToggleShortcuts,
-    activeModal === 'shortcuts'
+    activeModal === 'shortcuts',
+    activeModal === 'sessionHistoryViewer'
   );
 
   // 当有输入内容时，自动关闭快捷键帮助
@@ -346,7 +403,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     readyAnnouncementSent.current = true;
     try {
       const intent: SessionSelectionIntent = otherProps.forkSession ? 'fork' : 'resume';
-      const sessions = await listSessionCandidatesForIntent(intent, workspaceRoot);
+      const sessions = await listSessionCandidatesForIntent(
+        intent,
+        workspaceRoot,
+        sessionHistoryController
+      );
 
       if (sessions.length === 0) {
         if (otherProps.forkSession) {
@@ -358,8 +419,17 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         return;
       }
 
-      const mostRecentSession = sessions[0];
-      await activatePersistedSession(mostRecentSession, intent, {
+      const mostRecentSession = getMostRecentLocalSessionCandidate(sessions);
+      if (!mostRecentSession) {
+        if (otherProps.forkSession) {
+          logger.error('没有可供 fork 的本地历史会话');
+          safeExit(1);
+          return;
+        }
+        sessionActions.addAssistantMessage('没有找到本地历史会话，开始新对话。');
+        return;
+      }
+      await activateSurfaceSession(mostRecentSession, intent, {
         newSessionId: otherProps.forkSession ? otherProps.sessionId : undefined,
         announceFork: otherProps.forkSession ? false : undefined,
       });
@@ -380,8 +450,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         const intent: SessionSelectionIntent = otherProps.forkSession
           ? 'fork'
           : 'resume';
-        const session = await resolveSessionMetadata(otherProps.resume, intent);
-        await activatePersistedSession(session, intent, {
+        const session = await resolveSessionSummary(otherProps.resume, intent);
+        await activateSurfaceSession(session, intent, {
           newSessionId: otherProps.forkSession ? otherProps.sessionId : undefined,
           announceFork: otherProps.forkSession ? false : undefined,
         });
@@ -389,7 +459,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       }
 
       const intent: SessionSelectionIntent = otherProps.forkSession ? 'fork' : 'resume';
-      const sessions = await listSessionCandidatesForIntent(intent, workspaceRoot);
+      const sessions = await listSessionCandidatesForIntent(
+        intent,
+        workspaceRoot,
+        sessionHistoryController
+      );
 
       if (sessions.length === 0) {
         logger.error('没有找到历史会话');
@@ -454,13 +528,19 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   });
 
   const closeModal = useMemoizedFn(() => {
+    void sessionHistoryController.closeView();
     appActions.closeModal();
   });
 
-  const handleSessionSelect = useMemoizedFn(async (session: SessionMetadata) => {
+  const handleSessionSelect = useMemoizedFn(async (session: SessionSurfaceSummary) => {
     try {
-      await activatePersistedSession(session, sessionSelectorState?.intent ?? 'resume');
-      appActions.closeModal();
+      const intent = sessionSelectorState?.intent ?? 'resume';
+      await activateSurfaceSession(session, intent, {
+        newSessionId:
+          intent === 'fork' && otherProps.forkSession
+            ? otherProps.sessionId
+            : undefined,
+      });
     } catch (error) {
       logger.error('[BladeInterface] Failed to restore session:', error);
       sessionActions.addAssistantMessage(
@@ -471,12 +551,26 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   });
 
   const handleSessionCancel = useMemoizedFn(() => {
+    void sessionHistoryController.closeView();
     if (otherProps.resume) {
       safeExit(0);
     } else {
       appActions.closeModal();
     }
   });
+
+  useEffect(() => {
+    if (activeModal === 'sessionHistoryViewer' && sessionHistoryViewerState) {
+      void sessionHistoryController.activate(
+        sessionHistoryViewerState.session,
+        sessionHistoryViewerState.intent
+      );
+      return;
+    }
+    if (sessionHistoryController.getState().status !== 'idle') {
+      void sessionHistoryController.closeView();
+    }
+  }, [activeModal, sessionHistoryController, sessionHistoryViewerState]);
 
   const handleModelEditRequest = useMemoizedFn((model: ModelConfig) => {
     appActions.showModelEditWizard(model);
@@ -511,6 +605,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     } else if (activeModal === 'sessionSelector') {
       // 显示会话选择器时，焦点转移到选择器
       focusActions.setFocus(FocusId.SESSION_SELECTOR);
+    } else if (activeModal === 'sessionHistoryViewer') {
+      focusActions.setFocus(FocusId.SESSION_HISTORY_VIEWER);
     } else if (activeModal === 'themeSelector') {
       // 显示主题选择器时，焦点转移到选择器
       focusActions.setFocus(FocusId.THEME_SELECTOR);
@@ -729,9 +825,16 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     ) : activeModal === 'sessionSelector' ? (
       <SessionSelector
         intent={sessionSelectorState?.intent ?? 'resume'}
-        sessions={sessionSelectorState?.sessions}
+        sessions={sessionSelectorState?.sessions ?? []}
         onSelect={handleSessionSelect}
         onCancel={handleSessionCancel}
+      />
+    ) : activeModal === 'sessionHistoryViewer' ? (
+      <SessionHistoryViewer
+        state={sessionHistoryState}
+        onLoadOlder={(target) => sessionHistoryController.loadOlder(target)}
+        onFork={(target) => sessionHistoryController.fork(target)}
+        onClose={closeModal}
       />
     ) : activeModal === 'hooksManager' ? (
       <HooksManager
@@ -774,6 +877,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           onChangeCursorPosition={inputBuffer.setCursorPosition}
           onAddPasteMapping={inputBuffer.addPasteMapping}
           onAddImagePasteMapping={inputBuffer.addImagePasteMapping}
+          disabled={activeModal === 'sessionHistoryViewer'}
         />
 
         {inlineModelSelectorVisible && (

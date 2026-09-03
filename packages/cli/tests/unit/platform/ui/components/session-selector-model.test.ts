@@ -1,24 +1,74 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionMetadata } from '../../../../../src/services/SessionService.js';
+import type {
+  SessionSurfaceCapabilities,
+  SessionSurfaceSummary,
+} from '../../../../../src/api/sessionSurfaceSchemas.js';
 
-function createSessionMetadata(
-  overrides: Partial<SessionMetadata> = {}
-): SessionMetadata {
+const REMOTE_WORKSPACE_REF_A = `acp-remote-workspace:${'A'.repeat(43)}`;
+const REMOTE_WORKSPACE_REF_B = `acp-remote-workspace:${'B'.repeat(43)}`;
+
+function createCapabilities(
+  overrides: Partial<SessionSurfaceCapabilities> = {}
+): SessionSurfaceCapabilities {
   return {
-    sessionId: 'session-1',
-    projectPath: '/workspace/a',
-    gitBranch: 'main',
-    rootId: 'root-1',
-    parentId: undefined,
-    relationType: undefined,
+    connection: 'local',
+    history: { read: true, fork: true },
+    turn: { start: true },
+    files: { readText: true, writeText: true, browse: 'tree' },
+    terminal: { mode: 'interactive', owner: 'local' },
+    ...overrides,
+  };
+}
+
+function createLocalSummary(
+  overrides: Partial<SessionSurfaceSummary> = {}
+): SessionSurfaceSummary {
+  return {
+    locator: {
+      version: 2,
+      sessionId: 'session-1',
+      workspace: { kind: 'local', projectPath: '/workspace/a' },
+    },
+    displayCwd: '/workspace/a',
+    pathStyle: 'posix',
     title: 'Session One',
-    agentType: 'default',
-    model: 'gpt-5',
+    rootId: 'root-1',
     taskStatus: 'completed',
     messageCount: 3,
     firstMessageTime: '2026-08-01T10:00:00.000Z',
     lastMessageTime: '2026-08-03T11:00:00.000Z',
     hasErrors: false,
+    capabilities: createCapabilities(),
+    ...overrides,
+  };
+}
+
+function createRemoteSummary(
+  overrides: Partial<SessionSurfaceSummary> = {}
+): SessionSurfaceSummary {
+  return {
+    ...createLocalSummary(),
+    locator: {
+      version: 2,
+      sessionId: 'remote-session-1',
+      workspace: { kind: 'acp-remote', workspaceRef: REMOTE_WORKSPACE_REF_A },
+    },
+    displayCwd: 'C:\\Repo',
+    pathStyle: 'win32',
+    title: 'Fix Windows path handling',
+    messageCount: 42,
+    capabilities: createCapabilities({
+      connection: 'offline',
+      history: { read: true, fork: true },
+      turn: { start: false, reason: 'history-only' },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none',
+        reason: 'history-only',
+      },
+      terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+    }),
     ...overrides,
   };
 }
@@ -41,59 +91,69 @@ describe('sessionSelectorModel', () => {
     });
   });
 
-  it('filters out subagent sessions only for fork intent and preserves input order', async () => {
-    const ordinary = createSessionMetadata({ sessionId: 'ordinary-1' });
-    const subagent = createSessionMetadata({
-      sessionId: 'subagent-1',
+  it('excludes subagents from the user catalog and filters fork capability', async () => {
+    const ordinary = createLocalSummary();
+    const subagent = createLocalSummary({
+      locator: {
+        version: 2,
+        sessionId: 'subagent-1',
+        workspace: { kind: 'local', projectPath: '/workspace/a' },
+      },
       relationType: 'subagent',
       rootId: 'root-subagent',
     });
-    const forked = createSessionMetadata({
-      sessionId: 'forked-1',
-      relationType: 'fork',
-      rootId: 'root-fork',
+    const archivedRemote = createRemoteSummary({
+      archivedAt: '2026-09-02T08:00:00.000Z',
+      capabilities: createCapabilities({
+        connection: 'offline',
+        history: { read: true, fork: false },
+      }),
     });
 
     const { getVisibleSessionCandidates } = await import(
       '../../../../../src/ui/components/sessionSelectorModel.js'
     );
 
-    expect(getVisibleSessionCandidates([ordinary, subagent, forked], 'fork')).toEqual([
-      ordinary,
-      forked,
-    ]);
-    expect(getVisibleSessionCandidates([ordinary, subagent, forked], 'resume')).toEqual(
-      [ordinary, subagent, forked]
-    );
+    expect(
+      getVisibleSessionCandidates([ordinary, subagent, archivedRemote], 'fork')
+    ).toEqual([ordinary]);
+    expect(
+      getVisibleSessionCandidates([ordinary, subagent, archivedRemote], 'resume')
+    ).toEqual([ordinary, archivedRemote]);
   });
 
-  it('builds stable distinct compound keys for session candidates', async () => {
-    const sameIdOtherWorkspace = createSessionMetadata({
-      sessionId: 'shared-id',
-      projectPath: '/workspace/b',
-      rootId: 'root-2',
+  it('uses the complete locator for stable keys when session ids collide', async () => {
+    const remoteA = createRemoteSummary();
+    const remoteB = createRemoteSummary({
+      locator: {
+        version: 2,
+        sessionId: 'remote-session-1',
+        workspace: { kind: 'acp-remote', workspaceRef: REMOTE_WORKSPACE_REF_B },
+      },
+      displayCwd: '/same/display/path',
     });
-    const sameWorkspaceOtherId = createSessionMetadata({
-      sessionId: 'different-id',
-      projectPath: '/workspace/a',
-      rootId: 'root-3',
+    const local = createLocalSummary({
+      locator: {
+        version: 2,
+        sessionId: 'remote-session-1',
+        workspace: { kind: 'local', projectPath: '/workspace/a' },
+      },
+      displayCwd: '/same/display/path',
     });
 
     const { getSessionCandidateKey } = await import(
       '../../../../../src/ui/components/sessionSelectorModel.js'
     );
 
-    const ordinaryKey = getSessionCandidateKey(
-      createSessionMetadata({ sessionId: 'shared-id' })
-    );
-    const otherWorkspaceKey = getSessionCandidateKey(sameIdOtherWorkspace);
-    const otherIdKey = getSessionCandidateKey(sameWorkspaceOtherId);
+    const remoteAKey = getSessionCandidateKey(remoteA);
+    const remoteBKey = getSessionCandidateKey(remoteB);
+    const localKey = getSessionCandidateKey(local);
 
-    expect(ordinaryKey).toBe('/workspace/a\u0000shared-id');
-    expect(
-      getSessionCandidateKey(createSessionMetadata({ sessionId: 'shared-id' }))
-    ).toBe(ordinaryKey);
-    expect(new Set([ordinaryKey, otherWorkspaceKey, otherIdKey]).size).toBe(3);
+    expect(new Set([remoteAKey, remoteBKey, localKey]).size).toBe(3);
+    expect(remoteAKey).toContain(REMOTE_WORKSPACE_REF_A);
+    expect(remoteBKey).toContain(REMOTE_WORKSPACE_REF_B);
+    expect(remoteAKey).not.toContain(remoteA.displayCwd);
+    expect(remoteBKey).not.toContain(remoteB.displayCwd);
   });
 
   it('uses durable semantic titles with a stable legacy fallback', async () => {
@@ -102,36 +162,71 @@ describe('sessionSelectorModel', () => {
     );
 
     expect(
-      getSessionDisplayTitle(
-        createSessionMetadata({ title: 'Implement project navigation' })
-      )
-    ).toBe('Implement project navigation');
+      getSessionDisplayTitle(createLocalSummary({ title: 'Implement navigation' }))
+    ).toBe('Implement navigation');
     expect(
       getSessionDisplayTitle(
-        createSessionMetadata({
-          sessionId: 'legacy-session-id',
+        createLocalSummary({
+          locator: {
+            version: 2,
+            sessionId: 'legacy-session-id',
+            workspace: { kind: 'local', projectPath: '/workspace/a' },
+          },
           title: '   ',
         })
       )
     ).toBe('Session legacy-s');
   });
 
-  it('projects durable delivery outcomes into the compact TUI label', async () => {
-    const { getSessionDeliveryLabel } = await import(
+  it('labels remote history rows without treating display cwd as a local path', async () => {
+    const { getSessionSelectorLabel } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+    const remote = createRemoteSummary({ displayCwd: 'C:\\Repo' });
+
+    const label = getSessionSelectorLabel(remote, '2026-09-02 16:20');
+
+    expect(label).toContain('[remote · offline · history]');
+    expect(label).toContain('Fix Windows path handling');
+    expect(label).toContain('C:\\Repo');
+    expect(label).toContain('C:\\Repo · 42 messages · 2026-09-02 16:20');
+    expect(label).not.toContain(REMOTE_WORKSPACE_REF_A);
+  });
+
+  it('keeps local rows on the familiar compact path label', async () => {
+    const { getSessionSelectorLabel } = await import(
       '../../../../../src/ui/components/sessionSelectorModel.js'
     );
 
-    expect(getSessionDeliveryLabel(createSessionMetadata())).toBe('');
-    expect(
-      getSessionDeliveryLabel(
-        createSessionMetadata({
-          taskDelivery: {
-            status: 'conflicted',
-            updatedAt: '2026-08-07T12:00:00.000Z',
-            message: 'Source workspace changed',
-          },
-        })
-      )
-    ).toBe(' | delivery:conflicted');
+    const label = getSessionSelectorLabel(createLocalSummary(), '今天 16:20');
+
+    expect(label).toContain('[DONE]');
+    expect(label).toContain('| a |');
+    expect(label).not.toContain('[remote');
+  });
+
+  it('preserves local-only automatic continue when a remote row is newer', async () => {
+    const { getMostRecentLocalSessionCandidate } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+    const remote = createRemoteSummary({
+      lastMessageTime: '2026-09-02T12:00:00.000Z',
+    });
+    const local = createLocalSummary({
+      lastMessageTime: '2026-09-02T11:00:00.000Z',
+    });
+    const subagent = createLocalSummary({
+      locator: {
+        version: 2,
+        sessionId: 'newer-local-subagent',
+        workspace: { kind: 'local', projectPath: '/workspace/a' },
+      },
+      relationType: 'subagent',
+      rootId: 'root-subagent',
+      lastMessageTime: '2026-09-02T13:00:00.000Z',
+    });
+
+    expect(getMostRecentLocalSessionCandidate([subagent, remote, local])).toBe(local);
+    expect(getMostRecentLocalSessionCandidate([remote])).toBeUndefined();
   });
 });

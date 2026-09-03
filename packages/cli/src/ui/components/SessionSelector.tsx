@@ -3,11 +3,10 @@
  * 用于交互式选择历史会话
  */
 
-import { basename } from 'node:path';
 import { Box, Text } from 'ink';
 import SelectInput from 'ink-select-input';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
+import type { SessionSurfaceSummary } from '../../api/sessionSurfaceSchemas.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
@@ -15,16 +14,15 @@ import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 import {
   getSessionCandidateKey,
-  getSessionDeliveryLabel,
-  getSessionDisplayTitle,
   getSessionSelectorCopy,
+  getSessionSelectorLabel,
   getVisibleSessionCandidates,
 } from './sessionSelectorModel.js';
 
 interface SessionSelectorProps {
   intent: SessionSelectionIntent;
-  sessions?: SessionMetadata[]; // 可选，如果不提供则自动加载
-  onSelect: (session: SessionMetadata) => void | Promise<void>;
+  sessions: SessionSurfaceSummary[];
+  onSelect: (session: SessionSurfaceSummary) => void | Promise<void>;
   onCancel?: () => void; // 可选，用于 --resume CLI 模式，在 /resume 斜杠命令模式下由全局处理器处理
 }
 
@@ -48,30 +46,6 @@ function formatTimestamp(timestamp: string): string {
   }
 
   return `${date.getMonth() + 1}/${date.getDate()}`;
-}
-
-/**
- * 格式化项目路径（显示项目名称）
- */
-function formatProjectPath(projectPath: string): string {
-  return basename(projectPath);
-}
-
-function formatTaskStatus(status: SessionMetadata['taskStatus']): string {
-  switch (status) {
-    case 'queued':
-      return 'QUEUED';
-    case 'running':
-      return 'RUNNING';
-    case 'failed':
-      return 'FAILED';
-    case 'cancelled':
-      return 'CANCELLED';
-    case 'interrupted':
-      return 'INTERRUPTED';
-    case 'completed':
-      return 'DONE';
-  }
 }
 
 /**
@@ -104,8 +78,6 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   onSelect,
   onCancel,
 }) => {
-  const [loadedSessions, setLoadedSessions] = useState<SessionMetadata[]>([]);
-  const [loading, setLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
   const [isActivating, setIsActivating] = useState(false);
   const isActivatingRef = useRef(false);
@@ -163,73 +135,20 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
     { isActive: isFocused } // 只在有焦点时激活
   );
 
-  // 如果没有提供 sessions，则自动加载
-  useEffect(() => {
-    if (propSessions) {
-      setLoadedSessions(propSessions);
-      return;
-    }
-
-    const loadSessions = async () => {
-      setLoading(true);
-      try {
-        const sessions = await SessionService.listSessions({
-          includeSubagents: false,
-        });
-        setLoadedSessions(sessions);
-      } catch (error) {
-        console.error('[SessionSelector] Failed to load sessions:', error);
-        setLoadedSessions([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadSessions();
-  }, [propSessions]);
-
   const sessions = useMemo(
-    () => getVisibleSessionCandidates(propSessions || loadedSessions, intent),
-    [intent, propSessions, loadedSessions]
+    () => getVisibleSessionCandidates(propSessions, intent),
+    [intent, propSessions]
   );
   const copy = useMemo(() => getSessionSelectorCopy(intent), [intent]);
 
   // 转换为 SelectInput 的 items 格式
   const items = useMemo(() => {
     return sessions.map((session) => {
-      const projectName = formatProjectPath(
-        session.taskSourceProjectPath ?? session.projectPath
-      );
       const timeStr = formatTimestamp(session.lastMessageTime);
-      const title = getSessionDisplayTitle(session);
-      const statusStr = `[${formatTaskStatus(session.taskStatus)}]`;
-      const branchStr = session.gitBranch ? ` (${session.gitBranch})` : '';
-      const errorStr = session.hasErrors ? ' [!]' : '';
-      const relationStr = session.taskRetriedFrom
-        ? ` ↻ retry:${session.taskRetriedFrom.sessionId.slice(0, 6)}`
-        : session.relationType === 'subagent'
-          ? ' ↳ subagent'
-          : session.relationType === 'fork'
-            ? ' ↳ fork'
-            : '';
-      const isolationStr =
-        session.taskIsolation === 'worktree'
-          ? ` | wt:${session.taskWorktreeBranch ?? 'managed'}`
-          : session.taskIsolation === 'local'
-            ? ' | local'
-            : '';
-      const diffStr = session.taskDiffStat
-        ? ` | ${session.taskDiffStat.changedFiles} files +${session.taskDiffStat.additions} -${session.taskDiffStat.deletions}`
-        : '';
-      const queueStr =
-        session.taskStatus === 'queued' && session.taskQueuePosition
-          ? ` | queue:${session.taskQueuePosition}/${session.taskQueueDepth ?? session.taskQueuePosition}`
-          : '';
-      const deliveryStr = getSessionDeliveryLabel(session);
 
       return {
         key: getSessionCandidateKey(session),
-        label: `${statusStr} ${title} · ${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${isolationStr}${queueStr}${diffStr}${deliveryStr}${errorStr}${relationStr}`,
+        label: getSessionSelectorLabel(session, timeStr),
         value: session,
       };
     });
@@ -259,7 +178,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
     setCurrentPage(0);
   }, [sessions.length]);
 
-  const handleSelect = (item: { label: string; value: SessionMetadata }) => {
+  const handleSelect = (item: { label: string; value: SessionSurfaceSummary }) => {
     if (isActivatingRef.current) {
       return;
     }
@@ -278,14 +197,6 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
       .then(() => onSelect(item.value))
       .then(settle, settle);
   };
-
-  if (loading) {
-    return (
-      <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Text>正在加载会话列表...</Text>
-      </Box>
-    );
-  }
 
   if (sessions.length === 0) {
     return (

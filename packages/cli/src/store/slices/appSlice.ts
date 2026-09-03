@@ -10,8 +10,8 @@
  */
 
 import type { StateCreator } from 'zustand';
+import type { SessionSurfaceSummary } from '../../api/sessionSurfaceSchemas.js';
 import type { ModelConfig } from '../../config/types.js';
-import type { SessionMetadata } from '../../services/SessionService.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type {
@@ -32,6 +32,7 @@ const initialAppState: AppState = {
   initializationError: null,
   activeModal: 'none',
   sessionSelectorData: undefined,
+  sessionHistoryViewerData: undefined,
   modelEditorTarget: null,
   tasks: [],
   awaitingSecondCtrlC: false,
@@ -83,7 +84,7 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
      * 显示会话选择器
      */
     showSessionSelector: (
-      sessions: SessionMetadata[],
+      sessions: SessionSurfaceSummary[],
       intent: SessionSelectionIntent = 'resume'
     ) => {
       set((state) => ({
@@ -94,6 +95,21 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
             intent,
             sessions,
           },
+          sessionHistoryViewerData: undefined,
+        },
+      }));
+    },
+
+    showSessionHistoryViewer: (
+      session: SessionSurfaceSummary,
+      intent: SessionSelectionIntent = 'resume'
+    ) => {
+      set((state) => ({
+        app: {
+          ...state.app,
+          activeModal: 'sessionHistoryViewer',
+          sessionSelectorData: undefined,
+          sessionHistoryViewerData: { intent, session },
         },
       }));
     },
@@ -120,6 +136,7 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
           ...state.app,
           activeModal: 'none',
           sessionSelectorData: undefined,
+          sessionHistoryViewerData: undefined,
           modelEditorTarget: null,
         },
       }));

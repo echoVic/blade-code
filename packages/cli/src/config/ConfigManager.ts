@@ -1555,8 +1555,8 @@ export function mergeRuntimeConfig(
   result.model = cliOptions.model;
 
   // 5. CLI 专属字段 - 会话管理
-  // --session-id 在交互模式下由 App.tsx initializeApp() 消费：
-  // 调用 sessionActions().restoreSession(resumeSessionId, []) 覆盖 store 的默认随机 ID。
+  // --session-id 在交互模式下由 App.tsx initializeApp() 消费。普通新会话会
+  // 覆盖 store 的默认随机 ID；fork 模式会在 source identity 解析后再传给 local fork。
   // Headless 模式（commands/headless.ts）直接使用该值设置 chatContext.sessionId。
   result.resumeSessionId = cliOptions.sessionId;
   result.forkSession = cliOptions.forkSession;

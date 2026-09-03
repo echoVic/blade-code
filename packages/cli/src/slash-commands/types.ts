@@ -7,6 +7,7 @@ import type {
   SessionMcpContentSnapshot,
 } from '../agent/runtime/SessionRuntime.js';
 import type { AgentSession } from '../agent/subagents/AgentSessionStore.js';
+import type { SessionSurfaceSummary } from '../api/sessionSurfaceSchemas.js';
 import type {
   McpCompletionInput,
   McpNormalizedCompletionResult,
@@ -42,6 +43,7 @@ import type { SideConversationResult } from '../services/SideConversationService
 import { sessionActions } from '../store/vanilla.js';
 
 export type SessionSelectionIntent = 'resume' | 'fork';
+export type SessionSelectionCandidate = SessionMetadata | SessionSurfaceSummary;
 
 export type SlashCommandWorkspaceKind = 'local' | 'acp-remote';
 
@@ -65,12 +67,12 @@ export type SessionSelectionAction =
   | {
       action: 'select_session';
       intent: SessionSelectionIntent;
-      sessions: SessionMetadata[];
+      sessions: SessionSelectionCandidate[];
     }
   | {
       action: 'activate_session';
       intent: SessionSelectionIntent;
-      session: SessionMetadata;
+      session: SessionSelectionCandidate;
     };
 
 export type SlashCommandAction =
@@ -117,8 +119,8 @@ export interface SlashCommandData {
   postTokens?: number;
   filesIncluded?: string[];
   /** Resume 相关 */
-  sessions?: SessionMetadata[];
-  session?: SessionMetadata;
+  sessions?: SessionSelectionCandidate[];
+  session?: SessionSelectionCandidate;
   /** 扩展字段（用于未来新增的数据类型） */
   [key: string]: unknown;
 }
@@ -188,6 +190,10 @@ export interface SlashCommandContext {
   workspaceRoot?: string;
   /** 当前调用方拥有的会话历史；ACP 等非 UI 表面应显式传入 */
   messages?: Message[];
+  /** Lifecycle-owned, UI-safe Session history catalog boundary. */
+  sessionSurfaces?: {
+    list: () => Promise<SessionSurfaceSummary[]>;
+  };
   /** 当前表面拥有的 session runtime rewind 边界 */
   rewind?: {
     listCheckpoints: () => Promise<SessionRewindCheckpoint[]>;

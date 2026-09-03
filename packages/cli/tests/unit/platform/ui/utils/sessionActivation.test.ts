@@ -1,7 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../../src/acp/AcpRemotePath.js';
+import { createAcpRemoteWorkspaceDescriptor } from '../../../../../src/acp/AcpRemoteWorkspace.js';
+import type { SessionSurfaceSummary } from '../../../../../src/api/sessionSurfaceSchemas.js';
 import { PermissionMode } from '../../../../../src/config/types.js';
+import { getBladeStorageRoot } from '../../../../../src/context/storage/BladeStorageRoot.js';
 import type { Message } from '../../../../../src/services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../../../../../src/services/SessionService.js';
 import type { SessionMessage } from '../../../../../src/store/types.js';
@@ -10,6 +14,7 @@ import { buildContextMessagesFromSession } from '../../../../../src/ui/utils/ses
 const serviceMocks = vi.hoisted(() => ({
   assertSessionWritable: vi.fn(),
   forkSession: vi.fn(),
+  findSessionMetadata: vi.fn(),
   listSessions: vi.fn(),
   loadSession: vi.fn(),
   loadSessionModelContext: vi.fn(),
@@ -29,6 +34,7 @@ vi.mock('../../../../../src/services/SessionService.js', async () => {
       ...actual.SessionService,
       assertSessionWritable: serviceMocks.assertSessionWritable,
       forkSession: serviceMocks.forkSession,
+      findSessionMetadata: serviceMocks.findSessionMetadata,
       listSessions: serviceMocks.listSessions,
       loadSession: serviceMocks.loadSession,
       loadSessionModelContext: serviceMocks.loadSessionModelContext,
@@ -68,6 +74,41 @@ function createSessionMetadata(
     lastMessageTime: '2026-08-03T11:00:00.000Z',
     hasErrors: false,
     ...overrides,
+  };
+}
+
+function createLocalSurfaceSummary(metadata: SessionMetadata): SessionSurfaceSummary {
+  return {
+    locator: {
+      version: 2,
+      sessionId: metadata.sessionId,
+      workspace: { kind: 'local', projectPath: metadata.projectPath },
+    },
+    displayCwd: metadata.projectPath,
+    title: metadata.title,
+    rootId: metadata.rootId,
+    parentId: metadata.parentId,
+    relationType: metadata.relationType,
+    taskStatus: metadata.taskStatus,
+    messageCount: metadata.messageCount,
+    firstMessageTime: metadata.firstMessageTime,
+    lastMessageTime: metadata.lastMessageTime,
+    hasErrors: metadata.hasErrors,
+    archivedAt: metadata.archivedAt,
+    selectedModelId: metadata.selectedModelId,
+    capabilities: {
+      connection: 'local',
+      history: { read: true, fork: metadata.archivedAt === undefined },
+      turn: metadata.archivedAt
+        ? { start: false, reason: 'archived' }
+        : { start: true },
+      files: metadata.archivedAt
+        ? { readText: false, writeText: false, browse: 'none', reason: 'archived' }
+        : { readText: true, writeText: true, browse: 'tree' },
+      terminal: metadata.archivedAt
+        ? { mode: 'none', owner: 'none', reason: 'archived' }
+        : { mode: 'interactive', owner: 'local' },
+    },
   };
 }
 
@@ -128,6 +169,7 @@ describe('activateSessionSelection', () => {
     serviceMocks.assertSessionWritable.mockReset();
     serviceMocks.assertSessionWritable.mockResolvedValue(undefined);
     serviceMocks.forkSession.mockReset();
+    serviceMocks.findSessionMetadata.mockReset();
     serviceMocks.listSessions.mockReset();
     serviceMocks.loadSession.mockReset();
     serviceMocks.loadSessionModelContext.mockReset();
@@ -137,6 +179,144 @@ describe('activateSessionSelection', () => {
     actions.addAssistantMessage.mockReset();
     cleanupAgent.mockReset();
     cleanupAgent.mockResolvedValue(undefined);
+  });
+
+  it('resolves a V2 local summary through its exact locator before activation', async () => {
+    const metadata = createSessionMetadata({
+      sessionId: 'local-surface',
+      projectPath: '/workspace/exact',
+    });
+    serviceMocks.findSessionMetadata.mockResolvedValue(metadata);
+    const { resolveLocalSessionSurface } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await expect(
+      resolveLocalSessionSurface(createLocalSurfaceSummary(metadata))
+    ).resolves.toBe(metadata);
+    expect(serviceMocks.findSessionMetadata).toHaveBeenCalledWith(
+      'local-surface',
+      '/workspace/exact'
+    );
+  });
+
+  it('rejects a remote summary before calling any local Session lookup', async () => {
+    const summary = createLocalSurfaceSummary(createSessionMetadata());
+    summary.locator = {
+      version: 2,
+      sessionId: 'remote-surface',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'R'.repeat(43)}`,
+      },
+    };
+    const { resolveLocalSessionSurface } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await expect(resolveLocalSessionSurface(summary)).rejects.toThrow(
+      'Remote history cannot enter the local activation path'
+    );
+    expect(serviceMocks.findSessionMetadata).not.toHaveBeenCalled();
+  });
+
+  it('rejects a protected remote state root disguised as a local locator', async () => {
+    const metadata = createSessionMetadata({
+      sessionId: 'forged-local-surface',
+      projectPath: path.join(
+        getBladeStorageRoot(),
+        'acp-remote-workspaces',
+        'a'.repeat(64),
+        'sessions'
+      ),
+    });
+    const { resolveLocalSessionSurface } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await expect(
+      resolveLocalSessionSurface(createLocalSurfaceSummary(metadata))
+    ).rejects.toThrow('projectPath must reference a local workspace');
+    expect(serviceMocks.findSessionMetadata).not.toHaveBeenCalled();
+  });
+
+  it('rejects a local locator whose record became remote before activation', async () => {
+    const catalogMetadata = createSessionMetadata({
+      sessionId: 'reclassified-session',
+      projectPath: '/workspace/exact',
+    });
+    serviceMocks.findSessionMetadata.mockResolvedValue({
+      ...catalogMetadata,
+      remoteWorkspace: createAcpRemoteWorkspaceDescriptor(
+        createAcpRemotePathProfile('C:\\Remote\\Repo')
+      ),
+    });
+    const { resolveLocalSessionSurface } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await expect(
+      resolveLocalSessionSurface(createLocalSurfaceSummary(catalogMetadata))
+    ).rejects.toThrow('Remote history cannot enter the local activation path');
+    expect(serviceMocks.findSessionMetadata).toHaveBeenCalledWith(
+      'reclassified-session',
+      '/workspace/exact'
+    );
+  });
+
+  it('dispatches a remote summary only to the history surface', async () => {
+    const summary = createLocalSurfaceSummary(createSessionMetadata());
+    summary.locator = {
+      version: 2,
+      sessionId: 'remote-surface',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'R'.repeat(43)}`,
+      },
+    };
+    const openHistory = vi.fn();
+    const activateLocal = vi.fn();
+    const { dispatchSessionSurfaceSelection } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await expect(
+      dispatchSessionSurfaceSelection(summary, 'resume', { openHistory, activateLocal })
+    ).resolves.toBe('history-only');
+
+    expect(openHistory).toHaveBeenCalledWith(summary, 'resume');
+    expect(activateLocal).not.toHaveBeenCalled();
+    expect(serviceMocks.findSessionMetadata).not.toHaveBeenCalled();
+  });
+
+  it('rejects a custom child id for a remote fork before opening history', async () => {
+    const summary = createLocalSurfaceSummary(createSessionMetadata());
+    summary.locator = {
+      version: 2,
+      sessionId: 'remote-surface',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'R'.repeat(43)}`,
+      },
+    };
+    const openHistory = vi.fn();
+    const activateLocal = vi.fn();
+    const { dispatchSessionSurfaceSelection } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await expect(
+      dispatchSessionSurfaceSelection(
+        summary,
+        'fork',
+        { openHistory, activateLocal },
+        { newSessionId: 'requested-child' }
+      )
+    ).rejects.toThrow('Custom Session IDs are unavailable for remote history forks');
+
+    expect(openHistory).not.toHaveBeenCalled();
+    expect(activateLocal).not.toHaveBeenCalled();
+    expect(serviceMocks.findSessionMetadata).not.toHaveBeenCalled();
   });
 
   it('does not switch stores or announce when cleanup fails after durable fork creation', async () => {
@@ -552,7 +732,7 @@ describe('listSessionCandidatesForIntent', () => {
 
     await expect(
       listSessionCandidatesForIntent('fork', '/workspace/project/nested/..')
-    ).resolves.toEqual(candidates);
+    ).resolves.toEqual(candidates.map(createLocalSurfaceSummary));
 
     expect(serviceMocks.listSessions).toHaveBeenCalledWith({
       includeSubagents: false,
@@ -574,7 +754,7 @@ describe('listSessionCandidatesForIntent', () => {
 
     await expect(
       listSessionCandidatesForIntent('resume', '/workspace/project')
-    ).resolves.toEqual(candidates);
+    ).resolves.toEqual(candidates.map(createLocalSurfaceSummary));
 
     expect(serviceMocks.listSessions).toHaveBeenCalledWith({
       includeSubagents: false,

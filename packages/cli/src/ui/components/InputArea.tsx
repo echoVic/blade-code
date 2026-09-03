@@ -15,6 +15,7 @@ interface InputAreaProps {
   onAddPasteMapping: (original: string) => number;
   /** 添加图片粘贴映射，返回标记 ID */
   onAddImagePasteMapping: (base64: string, mimeType: string) => number;
+  disabled?: boolean;
 }
 
 /**
@@ -30,10 +31,11 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
     onChangeCursorPosition,
     onAddPasteMapping,
     onAddImagePasteMapping,
+    disabled = false,
   }) => {
     // 使用 Zustand store 管理焦点
     const currentFocus = useCurrentFocus();
-    const isFocused = currentFocus === FocusId.MAIN_INPUT;
+    const isFocused = currentFocus === FocusId.MAIN_INPUT && !disabled;
     const isShellMode = input.trimStart().startsWith('!');
 
     // 文本粘贴回调 - 处理大段文本粘贴

@@ -10,6 +10,7 @@
 
 import type { ActionStationarityEvent } from '../agent/loop/actionStationarity.js';
 import type { TeamSnapshot } from '../agent/teams/TeamRuntime.js';
+import type { SessionSurfaceSummary } from '../api/sessionSurfaceSchemas.js';
 import type {
   CommunicationStyleSelection,
   ModelConfig,
@@ -29,7 +30,6 @@ import type { ProviderCircuitEvent } from '../services/pi/providerCircuitBreaker
 import type { ProviderAdmissionEvent } from '../services/pi/providerRequestAdmission.js';
 import type { ProviderRetryEvent } from '../services/pi/providerRetry.js';
 import type { ProviderStallEvent } from '../services/pi/providerStall.js';
-import type { SessionMetadata } from '../services/SessionService.js';
 import type { SideConversationResult } from '../services/SideConversationService.js';
 import type { SessionSelectionIntent } from '../slash-commands/types.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
@@ -237,6 +237,7 @@ export type ActiveModal =
   | 'themeSelector'
   | 'permissionsManager'
   | 'sessionSelector'
+  | 'sessionHistoryViewer'
   | 'taskPanel'
   | 'shortcuts'
   | 'modelSelector'
@@ -263,7 +264,12 @@ export interface SubagentProgress {
 
 export interface SessionSelectorState {
   intent: SessionSelectionIntent;
-  sessions: SessionMetadata[];
+  sessions: SessionSurfaceSummary[];
+}
+
+export interface SessionHistoryViewerState {
+  intent: SessionSelectionIntent;
+  session: SessionSurfaceSummary;
 }
 
 export interface SideConversationState {
@@ -283,6 +289,7 @@ export interface AppState {
   initializationError: string | null;
   activeModal: ActiveModal;
   sessionSelectorData: SessionSelectorState | undefined;
+  sessionHistoryViewerData: SessionHistoryViewerState | undefined;
   modelEditorTarget: ModelConfig | null;
   tasks: TaskListItem[];
   awaitingSecondCtrlC: boolean; // 是否等待第二次 Ctrl+C 退出
@@ -304,7 +311,11 @@ export interface AppActions {
   setInitializationError: (error: string | null) => void;
   setActiveModal: (modal: ActiveModal) => void;
   showSessionSelector: (
-    sessions: SessionMetadata[],
+    sessions: SessionSurfaceSummary[],
+    intent?: SessionSelectionIntent
+  ) => void;
+  showSessionHistoryViewer: (
+    session: SessionSurfaceSummary,
     intent?: SessionSelectionIntent
   ) => void;
   showModelEditWizard: (model: ModelConfig) => void;
@@ -350,6 +361,7 @@ export enum FocusId {
   MAIN_INPUT = 'main-input',
   TRANSCRIPT_PAGER = 'transcript-pager',
   SESSION_SELECTOR = 'session-selector',
+  SESSION_HISTORY_VIEWER = 'session-history-viewer',
   CONFIRMATION_PROMPT = 'confirmation-prompt',
   THEME_SELECTOR = 'theme-selector',
   MODEL_SELECTOR = 'model-selector',

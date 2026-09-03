@@ -15,6 +15,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionSurfaceSummary } from '../../../../../src/api/sessionSurfaceSchemas.js';
 import type { SessionMetadata } from '../../../../../src/services/SessionService.js';
 import type { AppActions, SessionActions } from '../../../../../src/store/types.js';
 import type { ResolvedInput } from '../../../../../src/ui/hooks/useInputBuffer.js';
@@ -59,9 +60,15 @@ const activationMocks = vi.hoisted(() => ({
   activateSessionSelection: vi.fn(),
 }));
 
-vi.mock('../../../../../src/ui/utils/sessionActivation.js', () => ({
-  activateSessionSelection: activationMocks.activateSessionSelection,
-}));
+vi.mock('../../../../../src/ui/utils/sessionActivation.js', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../../../../src/ui/utils/sessionActivation.js')
+  >('../../../../../src/ui/utils/sessionActivation.js');
+  return {
+    ...actual,
+    activateSessionSelection: activationMocks.activateSessionSelection,
+  };
+});
 
 // ==================== 测试工具 ====================
 
@@ -96,12 +103,75 @@ function createSessionMetadata(
   };
 }
 
+function createLocalSurfaceSummary(metadata: SessionMetadata): SessionSurfaceSummary {
+  return {
+    locator: {
+      version: 2,
+      sessionId: metadata.sessionId,
+      workspace: { kind: 'local', projectPath: metadata.projectPath },
+    },
+    displayCwd: metadata.projectPath,
+    title: metadata.title,
+    rootId: metadata.rootId,
+    parentId: metadata.parentId,
+    relationType: metadata.relationType,
+    taskStatus: metadata.taskStatus,
+    messageCount: metadata.messageCount,
+    firstMessageTime: metadata.firstMessageTime,
+    lastMessageTime: metadata.lastMessageTime,
+    hasErrors: metadata.hasErrors,
+    archivedAt: metadata.archivedAt,
+    selectedModelId: metadata.selectedModelId,
+    capabilities: {
+      connection: 'local',
+      history: { read: true, fork: metadata.archivedAt === undefined },
+      turn: metadata.archivedAt
+        ? { start: false, reason: 'archived' }
+        : { start: true },
+      files: metadata.archivedAt
+        ? { readText: false, writeText: false, browse: 'none', reason: 'archived' }
+        : { readText: true, writeText: true, browse: 'tree' },
+      terminal: metadata.archivedAt
+        ? { mode: 'none', owner: 'none', reason: 'archived' }
+        : { mode: 'interactive', owner: 'local' },
+    },
+  };
+}
+
+function createRemoteSurfaceSummary(): SessionSurfaceSummary {
+  return {
+    ...createLocalSurfaceSummary(createSessionMetadata()),
+    locator: {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'R'.repeat(43)}`,
+      },
+    },
+    displayCwd: 'C:\\Remote\\Repo',
+    capabilities: {
+      connection: 'offline',
+      history: { read: true, fork: true },
+      turn: { start: false, reason: 'history-only' },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none',
+        reason: 'history-only',
+      },
+      terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+    },
+  };
+}
+
 function createMockAppActions(): AppActions {
   return {
     setInitializationStatus: vi.fn(),
     setInitializationError: vi.fn(),
     setActiveModal: vi.fn(),
     showSessionSelector: vi.fn(),
+    showSessionHistoryViewer: vi.fn(),
     showModelEditWizard: vi.fn(),
     closeModal: vi.fn(),
     setTasks: vi.fn(),
@@ -696,7 +766,10 @@ describe('processSlashCommand', () => {
         type: 'handled',
         commandResult: { success: true },
       });
-      expect(appActions.showSessionSelector).toHaveBeenCalledWith(sessions, 'fork');
+      expect(appActions.showSessionSelector).toHaveBeenCalledWith(
+        sessions.map(createLocalSurfaceSummary),
+        'fork'
+      );
     });
 
     it('structured activate_session action should delegate to activateSessionSelection', async () => {
@@ -733,6 +806,34 @@ describe('processSlashCommand', () => {
         sessionActions,
         cleanupAgent
       );
+    });
+
+    it('routes a remote surface to the history viewer without local activation', async () => {
+      const session = createRemoteSurfaceSummary();
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: { action: 'activate_session', intent: 'resume', session },
+      });
+      const appActions = createMockAppActions();
+
+      const result = await processSlashCommand(
+        createResolvedInput('/resume remote-session'),
+        appActions,
+        createMockSessionActions(),
+        new AbortController().signal,
+        cleanupAgent
+      );
+
+      expect(result).toEqual({
+        type: 'handled',
+        commandResult: { success: true },
+      });
+      expect(appActions.showSessionHistoryViewer).toHaveBeenCalledWith(
+        session,
+        'resume'
+      );
+      expect(activationMocks.activateSessionSelection).not.toHaveBeenCalled();
+      expect(cleanupAgent).not.toHaveBeenCalled();
     });
 
     it('does not route failed structured select_session results as handled success', async () => {
@@ -860,7 +961,10 @@ describe('processSlashCommand', () => {
         type: 'handled',
         commandResult: { success: true },
       });
-      expect(appActions.showSessionSelector).toHaveBeenCalledWith(sessions, 'resume');
+      expect(appActions.showSessionSelector).toHaveBeenCalledWith(
+        sessions.map(createLocalSurfaceSummary),
+        'resume'
+      );
     });
   });
 

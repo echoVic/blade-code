@@ -28,6 +28,7 @@ import { useTerminalInputModes } from './hooks/useTerminalInputModes.js';
 import { TerminalInputRouterProvider } from './input/TerminalInputRouter.js';
 import { themeManager } from './themes/ThemeManager.js';
 import { formatErrorMessage } from './utils/security.js';
+import { initializeLocalSessionIdentity } from './utils/sessionStartup.js';
 
 /**
  * UI 入口层的 props 类型
@@ -100,11 +101,11 @@ const AppContent: React.FC<AppProps> = (props) => {
 
       // 3. 更新 Store 状态, 检查模型配置
       initializeStoreState(mergedConfig);
-      // 3.5 如果 --session-id 指定了会话 ID，覆盖 store 中的默认随机 ID
-      // 必须在 setLoggerSessionId 之前执行，确保日志也使用正确的 session ID
-      if (mergedConfig.resumeSessionId) {
-        sessionActions().restoreSession(mergedConfig.resumeSessionId, []);
-      }
+      // 3.5 非 fork 启动时，--session-id 覆盖 store 中的默认随机 ID。
+      // fork 的 child ID 要等 source workspace 解析后再交给 local activation。
+      initializeLocalSessionIdentity(mergedConfig, (sessionId) => {
+        sessionActions().restoreSession(sessionId, []);
+      });
 
       // 4. Debug 模式日志（Logger 已由 blade.tsx 早期初始化）
       if (mergedConfig.debug) {

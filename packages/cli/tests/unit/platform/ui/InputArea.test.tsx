@@ -23,13 +23,13 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
 }));
 
 vi.mock('../../../../src/ui/components/CustomTextInput.js', () => ({
-  CustomTextInput: ({ value }: { value: string }) =>
-    React.createElement('span', { 'data-input': value }),
+  CustomTextInput: ({ value, focus }: { value: string; focus?: boolean }) =>
+    React.createElement('span', { 'data-focus': String(focus), 'data-input': value }),
 }));
 
 import { InputArea } from '../../../../src/ui/components/InputArea.js';
 
-function renderInput(input: string): string {
+function renderInput(input: string, disabled = false): string {
   return renderToStaticMarkup(
     <InputArea
       input={input}
@@ -38,6 +38,7 @@ function renderInput(input: string): string {
       onChangeCursorPosition={() => undefined}
       onAddPasteMapping={() => 1}
       onAddImagePasteMapping={() => 1}
+      disabled={disabled}
     />
   );
 }
@@ -57,5 +58,9 @@ describe('InputArea', () => {
     expect(html).toContain('data-border-color="yellow"');
     expect(html).toContain('data-color="yellow"');
     expect(html).toContain('$ ');
+  });
+
+  it('removes input focus when the history viewer disables the composer', () => {
+    expect(renderInput('kept draft', true)).toContain('data-focus="false"');
   });
 });

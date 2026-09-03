@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionSurfaceSummary } from '../../../../src/api/sessionSurfaceSchemas.js';
 import type { SessionMetadata } from '../../../../src/services/SessionService.js';
 import type { SlashCommandContext } from '../../../../src/slash-commands/types.js';
 
@@ -29,6 +30,36 @@ function session(sessionId: string, projectPath: string): SessionMetadata {
     firstMessageTime: '2026-08-01T00:00:00.000Z',
     lastMessageTime: '2026-08-01T00:00:00.000Z',
     hasErrors: false,
+  };
+}
+
+function surface(
+  sessionId: string,
+  relationType?: SessionSurfaceSummary['relationType']
+): SessionSurfaceSummary {
+  return {
+    locator: {
+      version: 2,
+      sessionId,
+      workspace: { kind: 'local', projectPath: '/workspace/a' },
+    },
+    displayCwd: '/workspace/a',
+    pathStyle: 'posix',
+    title: sessionId,
+    rootId: relationType === 'subagent' ? 'root-parent' : sessionId,
+    relationType,
+    taskStatus: 'completed',
+    messageCount: 1,
+    firstMessageTime: '2026-08-01T00:00:00.000Z',
+    lastMessageTime: '2026-08-01T00:00:00.000Z',
+    hasErrors: false,
+    capabilities: {
+      connection: 'local',
+      history: { read: true, fork: true },
+      turn: { start: true },
+      files: { readText: true, writeText: true, browse: 'tree' },
+      terminal: { mode: 'interactive', owner: 'local' },
+    },
   };
 }
 
@@ -90,5 +121,28 @@ describe('/resume slash command', () => {
       success: false,
       error: 'Multiple workspaces contain session shared; use /resume to select one',
     });
+  });
+
+  it('excludes subagents from an injected V2 catalog and explicit lookup', async () => {
+    const ordinary = surface('ordinary-session');
+    const subagent = surface('subagent-session', 'subagent');
+    const sessionSurfaces = { list: vi.fn(async () => [ordinary, subagent]) };
+    const { default: resumeCommand } = await import(
+      '../../../../src/slash-commands/resume.js'
+    );
+
+    await expect(
+      resumeCommand.handler([], { ...context, sessionSurfaces })
+    ).resolves.toEqual({
+      success: true,
+      data: { action: 'select_session', intent: 'resume', sessions: [ordinary] },
+    });
+    await expect(
+      resumeCommand.handler(['subagent-session'], { ...context, sessionSurfaces })
+    ).resolves.toEqual({
+      success: false,
+      error: 'Session not found: subagent-session',
+    });
+    expect(mocks.listSessions).not.toHaveBeenCalled();
   });
 });

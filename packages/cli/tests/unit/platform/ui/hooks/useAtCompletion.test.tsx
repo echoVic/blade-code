@@ -23,9 +23,15 @@ describe('useAtCompletion', () => {
   let input = '';
   let state: ReturnType<typeof useAtCompletion> | undefined;
   let cwd = '/workspace/one';
+  let disabled = false;
 
   function Harness() {
-    state = useAtCompletion(input, input.length, { cwd, debounceDelay: 300 });
+    state = useAtCompletion(input, input.length, {
+      cwd,
+      debounceDelay: 300,
+      disabled,
+      canRequest: () => !disabled,
+    });
     return null;
   }
 
@@ -34,10 +40,29 @@ describe('useAtCompletion', () => {
     clearAtCompletionCache();
     mocks.glob.mockReset().mockResolvedValue(['src/alpha.ts', 'docs/readme.md']);
     input = '';
+    disabled = false;
     cwd = `/workspace/${Math.random()}`;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
+  });
+
+  it('does not execute an already queued scan after history-only disables requests', async () => {
+    input = '@src';
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    disabled = true;
+    await act(async () => {
+      root.render(<Harness />);
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(mocks.glob).not.toHaveBeenCalled();
+    expect(state?.suggestions).toEqual([]);
+    expect(state?.loading).toBe(false);
   });
 
   afterEach(() => {

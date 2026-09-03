@@ -11,6 +11,7 @@ import {
   useWorkspaceRoot,
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
+import { getState } from '../../store/vanilla.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
 import { endsWithSeparator } from '../../utils/pathHelpers.js';
 import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
@@ -36,7 +37,8 @@ export const useMainInput = (
   isProcessing?: boolean,
   onTogglePermissionMode?: () => void,
   onToggleShortcuts?: () => void,
-  isShortcutsModalOpen?: boolean
+  isShortcutsModalOpen?: boolean,
+  disabled = false
 ) => {
   // 使用 Zustand store 管理焦点
   const currentFocus = useCurrentFocus();
@@ -66,6 +68,8 @@ export const useMainInput = (
   const atCompletion = useAtCompletion(input, cursorPosition, {
     cwd: workspaceRoot,
     maxSuggestions: 10,
+    disabled,
+    canRequest: () => getState().app.activeModal !== 'sessionHistoryViewer',
   });
 
   // 使用智能 Ctrl+C 处理
@@ -87,6 +91,11 @@ export const useMainInput = (
 
   // 更新建议列表（支持斜杠命令和 @ 文件提及）
   useEffect(() => {
+    if (disabled) {
+      setShowSuggestions(false);
+      setSuggestions([]);
+      return;
+    }
     // 优先检查 @ 文件补全（可以在任何位置触发，包括斜杠命令后面）
     if (atCompletion.hasQuery && atCompletion.suggestions.length > 0) {
       // @ 文件/目录建议（转换为 CommandSuggestion 格式）
@@ -117,7 +126,7 @@ export const useMainInput = (
       setShowSuggestions(false);
       setSuggestions([]);
     }
-  }, [input, atCompletion.hasQuery, atCompletion.suggestions, workspaceRoot]);
+  }, [input, atCompletion.hasQuery, atCompletion.suggestions, workspaceRoot, disabled]);
 
   // 处理清屏
   const handleClear = useMemoizedFn(() => {
@@ -127,6 +136,7 @@ export const useMainInput = (
 
   // 处理提交
   const handleSubmit = useMemoizedFn(() => {
+    if (disabled) return;
     logger.debug('[DIAG] handleSubmit called:', { input, showSuggestions });
 
     // 直接使用用户输入的内容，不使用建议
@@ -326,7 +336,7 @@ export const useMainInput = (
       return false;
     },
     {
-      isActive: isFocused,
+      isActive: isFocused && !disabled,
       priority: 20,
     }
   );

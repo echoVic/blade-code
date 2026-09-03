@@ -173,6 +173,7 @@ function resetStore(parentId: string): void {
       ...state.app,
       activeModal: 'none',
       sessionSelectorData: undefined,
+      sessionHistoryViewerData: undefined,
       tasks: [],
       reasoningEffort: 'off',
       subagentProgress: null,
