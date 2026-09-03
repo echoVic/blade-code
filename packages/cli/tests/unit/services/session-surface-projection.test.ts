@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+} from '../../../src/acp/AcpRemoteWorkspace.js';
 import {
   type SessionSurfaceMessage,
   SessionSurfaceMessageSchema,
@@ -9,6 +14,7 @@ import {
   createSessionSurfaceMessageId,
   projectSessionSurfaceMessages,
   redactSessionSurfaceText,
+  remoteSessionSurfaceRedactionOptions,
   SessionSurfaceProjectionError,
 } from '../../../src/services/sessionSurfaceProjection.js';
 
@@ -283,6 +289,17 @@ describe('projectSessionSurfaceMessages', () => {
         privateValues: ['PRIVATE_IDENTITY'],
       })
     ).toBe('before [private state path]suffix after');
+    const win32Descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Private\\Remote\\Repo')
+    );
+    expect(
+      redactSessionSurfaceText('read c:\\private\\remote\\repo\\secret.txt', {
+        ...remoteSessionSurfaceRedactionOptions(
+          deriveAcpRemoteHostStateRoot(win32Descriptor.collisionIdentity),
+          win32Descriptor
+        ),
+      })
+    ).toBe('read [private state path]');
     expect(() => createSessionSurfaceMessageId(0, 'durable-message')).toThrow(
       SessionSurfaceProjectionError
     );

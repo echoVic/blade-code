@@ -33,6 +33,7 @@ import {
   __resetProjectionIOForTesting,
   __setProjectionIOForTesting,
   type MetadataDeriver,
+  projectSessionSurfaceSummaryFields,
   readSessionSurfaceCandidates,
   readSessionSurfaceCatalogPage,
   readSessionSurfaceHistoryPage,
@@ -423,6 +424,37 @@ describe('SQLite projection sync', () => {
     expect(candidate?.summary.selectedModelId).toBe('[private state path]');
     expect(JSON.stringify(candidate)).not.toContain(privateTitle);
     expect(JSON.stringify(candidate)).not.toContain(privateModel);
+  });
+
+  it('rejects private or malformed remote lineage identifiers before projection', () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Private\\Remote\\Repo')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const metadata = {
+      sessionId: 'remote-lineage-session',
+      projectPath: hostStateRoot,
+      remoteWorkspace: descriptor,
+      rootId: 'root-session',
+      taskStatus: 'completed',
+      messageCount: 0,
+      firstMessageTime: ts,
+      lastMessageTime: ts,
+      hasErrors: false,
+    };
+
+    expect(() =>
+      projectSessionSurfaceSummaryFields(
+        { ...metadata, rootId: `${hostStateRoot}/secret` },
+        `acp-remote-workspace:${'A'.repeat(43)}`
+      )
+    ).toThrow(SessionSurfaceProjectionError);
+    expect(() =>
+      projectSessionSurfaceSummaryFields(
+        { ...metadata, parentId: descriptor.exactIdentity },
+        `acp-remote-workspace:${'A'.repeat(43)}`
+      )
+    ).toThrow(SessionSurfaceProjectionError);
   });
 
   it('derives a protected public workspace reference for remote surface rows', async () => {

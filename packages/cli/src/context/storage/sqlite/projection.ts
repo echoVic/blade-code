@@ -488,10 +488,9 @@ export function projectSessionSurfaceSummaryFields(
     (remoteDescriptor &&
       deriveAcpRemoteHostStateRoot(remoteDescriptor.collisionIdentity) !==
         metadata.projectPath) ||
-    typeof metadata.rootId !== 'string' ||
-    !metadata.rootId ||
-    (metadata.parentId !== undefined &&
-      (typeof metadata.parentId !== 'string' || !metadata.parentId)) ||
+    !isValidSessionId(metadata.sessionId) ||
+    !isValidSessionId(metadata.rootId) ||
+    (metadata.parentId !== undefined && !isValidSessionId(metadata.parentId)) ||
     (metadata.relationType !== undefined &&
       metadata.relationType !== 'subagent' &&
       metadata.relationType !== 'fork') ||

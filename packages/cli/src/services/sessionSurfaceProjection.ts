@@ -38,6 +38,7 @@ type PartEvent = Extract<
 
 export interface SessionSurfaceProjectionOptions {
   privateRoots: readonly string[];
+  caseInsensitivePrivateRoots?: readonly string[];
   privateValues?: readonly string[];
   bladeStorageRoots?: readonly string[];
   maxContentBytes?: number;
@@ -45,17 +46,23 @@ export interface SessionSurfaceProjectionOptions {
 
 export type SessionSurfaceRedactionOptions = Pick<
   SessionSurfaceProjectionOptions,
-  'privateRoots' | 'privateValues' | 'bladeStorageRoots'
+  'privateRoots' | 'caseInsensitivePrivateRoots' | 'privateValues' | 'bladeStorageRoots'
 >;
 
 export function remoteSessionSurfaceRedactionOptions(
   hostStateRoot: string,
   descriptor: AcpRemoteWorkspaceDescriptorV1
 ): SessionSurfaceRedactionOptions {
-  return {
-    privateRoots: [hostStateRoot, descriptor.wirePath],
+  const options: SessionSurfaceRedactionOptions = {
+    privateRoots: [hostStateRoot],
     privateValues: [descriptor.exactIdentity, descriptor.collisionIdentity],
   };
+  if (descriptor.style === 'win32') {
+    options.caseInsensitivePrivateRoots = [descriptor.wirePath];
+  } else {
+    options.privateRoots = [hostStateRoot, descriptor.wirePath];
+  }
+  return options;
 }
 
 interface ProjectedPart {
@@ -88,6 +95,10 @@ export function projectSessionSurfaceMessages(
     options.privateRoots,
     options.bladeStorageRoots ?? []
   );
+  const caseInsensitivePrivateRoots = resolvePrivateRoots(
+    options.caseInsensitivePrivateRoots ?? [],
+    []
+  );
   const privateValues = resolvePrivateValues(options.privateValues ?? []);
   const materialized = materializeSessionEvents(events);
   const messages = new Map<string, ProjectedMessageState>();
@@ -118,6 +129,7 @@ export function projectSessionSurfaceMessages(
     const surfaceMessage = projectMessageState(
       state,
       privateRoots,
+      caseInsensitivePrivateRoots,
       privateValues,
       maxContentBytes
     );
@@ -140,6 +152,7 @@ function escapeForRegExp(value: string): string {
 function projectMessageState(
   state: ProjectedMessageState,
   privateRoots: readonly string[],
+  caseInsensitivePrivateRoots: readonly string[],
   privateValues: readonly string[],
   maxContentBytes: number
 ): SessionSurfaceMessage | undefined {
@@ -163,7 +176,10 @@ function projectMessageState(
 
   const timestamp = validateCanonicalIsoInstant(state.event.data.createdAt);
   const redacted = redactPrivateValues(
-    redactPrivateRoots(normalizedTerminalContent, privateRoots),
+    redactPrivateRoots(
+      redactPrivateRoots(normalizedTerminalContent, caseInsensitivePrivateRoots, true),
+      privateRoots
+    ),
     privateValues
   );
   const normalized = redacted.trim();
@@ -191,7 +207,11 @@ export function redactSessionSurfaceText(
 ): string {
   return redactPrivateValues(
     redactPrivateRoots(
-      stripUnsafeTerminalContent(value),
+      redactPrivateRoots(
+        stripUnsafeTerminalContent(value),
+        resolvePrivateRoots(options.caseInsensitivePrivateRoots ?? [], []),
+        true
+      ),
       resolvePrivateRoots(options.privateRoots, options.bladeStorageRoots ?? [])
     ),
     resolvePrivateValues(options.privateValues ?? [])
@@ -322,29 +342,52 @@ function redactPrivateValues(value: string, privateValues: readonly string[]): s
   return result;
 }
 
-function redactPrivateRoots(value: string, roots: readonly string[]): string {
+function redactPrivateRoots(
+  value: string,
+  roots: readonly string[],
+  caseInsensitive = false
+): string {
   let result = value;
   for (const root of roots) {
-    result = redactPrivateRoot(result, root);
+    result = redactPrivateRoot(result, root, caseInsensitive);
   }
   return result;
 }
 
-function redactPrivateRoot(value: string, root: string): string {
+function redactPrivateRoot(
+  value: string,
+  root: string,
+  caseInsensitive: boolean
+): string {
   if (!root) return value;
 
   let cursor = 0;
   let output = '';
+  const matcher = caseInsensitive
+    ? new RegExp(
+        root
+          .split(/[\\/]+/)
+          .map((segment) => escapeForRegExp(segment))
+          .join('[\\\\/]+'),
+        'i'
+      )
+    : undefined;
 
   while (cursor < value.length) {
-    const match = value.indexOf(root, cursor);
+    const insensitiveMatch = matcher?.exec(value.slice(cursor));
+    const match = matcher
+      ? insensitiveMatch
+        ? cursor + insensitiveMatch.index
+        : -1
+      : value.indexOf(root, cursor);
     if (match < 0) {
       output += value.slice(cursor);
       break;
     }
 
     output += value.slice(cursor, match);
-    const end = matchPrivatePathEnd(value, match, root);
+    const matchedLength = insensitiveMatch?.[0].length ?? root.length;
+    const end = matchPrivatePathEnd(value, match, matchedLength);
     if (end === match) {
       output += value[match];
       cursor = match + 1;
@@ -358,8 +401,8 @@ function redactPrivateRoot(value: string, root: string): string {
   return output;
 }
 
-function matchPrivatePathEnd(value: string, start: number, root: string): number {
-  const afterRoot = start + root.length;
+function matchPrivatePathEnd(value: string, start: number, rootLength: number): number {
+  const afterRoot = start + rootLength;
   if (afterRoot >= value.length) {
     return afterRoot;
   }
