@@ -92,7 +92,7 @@ const CatalogQuerySchema = Type.Object(
   { additionalProperties: false }
 );
 
-const MAX_REQUEST_BODY_BYTES = 64 * 1024;
+export const SESSION_SURFACE_MAX_REQUEST_BODY_BYTES = 64 * 1024;
 const CATALOG_QUERY_KEYS = new Set(['cursor', 'limit', 'archived', 'workspaceKind']);
 const OPEN_BODY_KEYS = new Set(['locator', 'limit']);
 const HISTORY_BODY_KEYS = new Set(['locator', 'cursor', 'expectedSnapshot', 'limit']);
@@ -307,8 +307,44 @@ function setLocatorLogContext(
 }
 
 async function readStrictJson(request: Request): Promise<unknown> {
-  const source = await request.text();
-  if (!source || Buffer.byteLength(source, 'utf8') > MAX_REQUEST_BODY_BYTES) {
+  const declaredLength = request.headers.get('content-length');
+  if (
+    declaredLength !== null &&
+    (!/^\d+$/.test(declaredLength) ||
+      Number(declaredLength) > SESSION_SURFACE_MAX_REQUEST_BODY_BYTES)
+  ) {
+    throw invalidRequest();
+  }
+  const reader = request.body?.getReader();
+  if (!reader) throw invalidRequest();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      byteLength += value.byteLength;
+      if (byteLength > SESSION_SURFACE_MAX_REQUEST_BODY_BYTES) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The fixed invalid-request response remains authoritative.
+        }
+        throw invalidRequest();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const source = new TextDecoder().decode(bytes);
+  if (!source) {
     throw invalidRequest();
   }
   try {

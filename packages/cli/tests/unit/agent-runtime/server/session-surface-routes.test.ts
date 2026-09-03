@@ -338,6 +338,52 @@ describe('SessionSurfaceRouteController', () => {
     }
   });
 
+  it('stops reading a streaming request body once the 64 KiB limit is exceeded', async () => {
+    const { createSessionSurfaceRouteController } = await import(
+      '../../../../src/server/routes/sessionSurface.js'
+    );
+    const service = {
+      listPage: vi.fn(),
+      open: vi.fn(),
+      historyPage: vi.fn(),
+      fork: vi.fn(),
+      close: vi.fn(async () => undefined),
+    };
+    const controller = createSessionSurfaceRouteController({ service });
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(stream) {
+        pulls += 1;
+        if (pulls <= 5) {
+          stream.enqueue(new Uint8Array(32 * 1024));
+        } else {
+          stream.close();
+        }
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const requestInit: RequestInit & { duplex: 'half' } = {
+      method: 'POST',
+      body,
+      duplex: 'half',
+    };
+
+    try {
+      const response = await controller.app.fetch(
+        new Request('http://localhost/open', requestInit)
+      );
+      expect(response.status).toBe(400);
+      expect(cancelled).toBe(true);
+      expect(pulls).toBeLessThan(6);
+      expect(service.open).not.toHaveBeenCalled();
+    } finally {
+      await controller.shutdown();
+    }
+  });
+
   it('rejects reserved property names at every request object boundary', async () => {
     const { createSessionSurfaceRouteController } = await import(
       '../../../../src/server/routes/sessionSurface.js'

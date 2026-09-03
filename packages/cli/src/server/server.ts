@@ -38,6 +38,7 @@ import {
 } from './routes/session.js';
 import {
   createSessionSurfaceRouteController,
+  SESSION_SURFACE_MAX_REQUEST_BODY_BYTES,
   type SessionSurfaceRouteController,
 } from './routes/sessionSurface.js';
 import { SkillsRoutes } from './routes/skills.js';
@@ -80,6 +81,68 @@ const COMPRESSIBLE_ASSET_EXTENSIONS = new Set([
 ]);
 const STATIC_COMPRESSION_MIN_BYTES = 1024;
 const STALE_SESSION_GC_INTERVAL_MS = 60 * 60 * 1000;
+
+class SessionSurfaceRequestBodyTooLargeError extends Error {}
+
+function isSessionSurfacePath(pathname: string): boolean {
+  return pathname === '/sessions/v2' || pathname.startsWith('/sessions/v2/');
+}
+
+function readNodeRequestBody(
+  req: import('node:http').IncomingMessage,
+  signal: AbortSignal,
+  maximumBytes?: number
+): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let byteLength = 0;
+    const cleanup = () => {
+      req.off('data', handleData);
+      req.off('end', handleEnd);
+      req.off('error', handleError);
+      signal.removeEventListener('abort', handleAbort);
+    };
+    const handleData = (chunk: Buffer) => {
+      byteLength += chunk.byteLength;
+      if (maximumBytes !== undefined && byteLength > maximumBytes) {
+        cleanup();
+        req.resume();
+        reject(new SessionSurfaceRequestBodyTooLargeError());
+        return;
+      }
+      chunks.push(chunk);
+    };
+    const handleEnd = () => {
+      cleanup();
+      resolve(Buffer.concat(chunks, byteLength));
+    };
+    const handleError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const handleAbort = () => {
+      cleanup();
+      reject(signal.reason);
+    };
+
+    const declaredLength = req.headers['content-length'];
+    if (
+      maximumBytes !== undefined &&
+      declaredLength !== undefined &&
+      (!/^\d+$/.test(declaredLength) || Number(declaredLength) > maximumBytes)
+    ) {
+      req.resume();
+      reject(new SessionSurfaceRequestBodyTooLargeError());
+      return;
+    }
+
+    req.on('data', handleData);
+    req.once('end', handleEnd);
+    req.once('error', handleError);
+    signal.addEventListener('abort', handleAbort, { once: true });
+    if (signal.aborted) handleAbort();
+  });
+}
 
 type Variables = {
   directory: string;
@@ -639,36 +702,13 @@ function startWithNode(
 
         let body: BodyInit | undefined;
         if (req.method !== 'GET' && req.method !== 'HEAD') {
-          const buffer = await new Promise<Buffer>((resolve, reject) => {
-            const chunks: Buffer[] = [];
-            const cleanup = () => {
-              req.off('data', handleData);
-              req.off('end', handleEnd);
-              req.off('error', handleError);
-              requestController.signal.removeEventListener('abort', handleAbort);
-            };
-            const handleData = (chunk: Buffer) => chunks.push(chunk);
-            const handleEnd = () => {
-              cleanup();
-              resolve(Buffer.concat(chunks));
-            };
-            const handleError = (error: Error) => {
-              cleanup();
-              reject(error);
-            };
-            const handleAbort = () => {
-              cleanup();
-              reject(requestController.signal.reason);
-            };
-
-            req.on('data', handleData);
-            req.once('end', handleEnd);
-            req.once('error', handleError);
-            requestController.signal.addEventListener('abort', handleAbort, {
-              once: true,
-            });
-            if (requestController.signal.aborted) handleAbort();
-          });
+          const buffer = await readNodeRequestBody(
+            req,
+            requestController.signal,
+            isSessionSurfacePath(url.pathname)
+              ? SESSION_SURFACE_MAX_REQUEST_BODY_BYTES
+              : undefined
+          );
           body = buffer.toString();
         }
 
@@ -704,6 +744,21 @@ function startWithNode(
         }
       } catch (error) {
         if (requestController.signal.aborted) return;
+        if (error instanceof SessionSurfaceRequestBodyTooLargeError) {
+          res.statusCode = 400;
+          res.setHeader('content-type', 'application/json; charset=UTF-8');
+          res.setHeader('connection', 'close');
+          res.end(
+            JSON.stringify({
+              error: {
+                code: 'invalid_session_surface_request',
+                message: 'Session surface request is invalid',
+                retryable: false,
+              },
+            })
+          );
+          return;
+        }
         logger.error('[Server] Node request error:', error);
         res.statusCode = 500;
         res.end(

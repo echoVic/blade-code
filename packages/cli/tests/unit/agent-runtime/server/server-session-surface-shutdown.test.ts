@@ -247,6 +247,71 @@ describe('BladeServer session surface route ownership', () => {
     expect(BladeServer.getSessionSurfaceStatsForTests()).toBeUndefined();
   });
 
+  it('rejects an oversized chunked V2 body before the client finishes sending it', async () => {
+    vi.doUnmock('../../../../src/server/routes/sessionSurface.js');
+    vi.doUnmock('../../../../src/server/routes/session.js');
+    vi.doUnmock('../../../../src/server/routes/events.js');
+    vi.doUnmock('node:http');
+    const { BladeServer } = await import('../../../../src/server/server.js');
+    const { request: createHttpRequest } =
+      await vi.importActual<typeof import('node:http')>('node:http');
+    const server = await BladeServer.listenAsync({
+      hostname: '127.0.0.1',
+      port: 0,
+    });
+    let client: ReturnType<typeof createHttpRequest> | undefined;
+
+    try {
+      const responsePromise = new Promise<{ status: number; body: string }>(
+        (resolve, reject) => {
+          client = createHttpRequest(
+            new URL('/sessions/v2/open', server.url),
+            {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                connection: 'close',
+              },
+            },
+            (response) => {
+              const chunks: Buffer[] = [];
+              response.on('data', (chunk: Buffer) => chunks.push(chunk));
+              response.once('end', () =>
+                resolve({
+                  status: response.statusCode ?? 0,
+                  body: Buffer.concat(chunks).toString('utf8'),
+                })
+              );
+            }
+          );
+          client.once('error', reject);
+          client.write(Buffer.alloc(40 * 1024, 0x61));
+          client.write(Buffer.alloc(40 * 1024, 0x62));
+        }
+      );
+      const response = await Promise.race([
+        responsePromise,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('server waited for the unbounded request body')),
+            1_000
+          )
+        ),
+      ]);
+      expect(response.status).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({
+        error: {
+          code: 'invalid_session_surface_request',
+          message: 'Session surface request is invalid',
+          retryable: false,
+        },
+      });
+    } finally {
+      client?.destroy();
+      await server.stop();
+    }
+  });
+
   it('cleans surface ownership after a real transport startup failure and can restart', async () => {
     vi.doUnmock('../../../../src/server/routes/sessionSurface.js');
     vi.doUnmock('../../../../src/server/routes/session.js');
