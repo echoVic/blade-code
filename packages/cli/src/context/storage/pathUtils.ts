@@ -1,5 +1,6 @@
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import * as path from 'node:path';
 import {
@@ -76,6 +77,51 @@ export function isAcpRemoteHostStateRoot(value: string): boolean {
     segments[0] === 'acp-remote-workspaces' &&
     isAcpRemoteWorkspaceDigest(segments[1] ?? '')
   );
+}
+
+function resolveThroughExistingAncestor(value: string): string {
+  let candidate = path.resolve(value);
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      return path.resolve(realpathSync.native(candidate), ...suffix.reverse());
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+      const parent = path.dirname(candidate);
+      if (parent === candidate) return path.resolve(value);
+      suffix.push(path.basename(candidate));
+      candidate = parent;
+    }
+  }
+}
+
+export function normalizeLocalWorkspacePath(
+  projectPath: string,
+  label: 'projectPath' | 'directory' | 'cwd' | 'sourcePath' = 'projectPath'
+): string {
+  if (!path.isAbsolute(projectPath)) {
+    throw new Error(`${label} must be absolute`);
+  }
+  const normalized = path.resolve(projectPath);
+  const canonical = resolveThroughExistingAncestor(normalized);
+  const remoteNamespace = path.join(
+    resolveThroughExistingAncestor(getBladeStorageRoot()),
+    'acp-remote-workspaces'
+  );
+  const relativeToRemoteNamespace = path.relative(remoteNamespace, canonical);
+  const remoteRootSegment = relativeToRemoteNamespace.split(path.sep)[0];
+  const isProtectedRemoteStatePath =
+    relativeToRemoteNamespace === '' ||
+    (relativeToRemoteNamespace !== '..' &&
+      !path.isAbsolute(relativeToRemoteNamespace) &&
+      !relativeToRemoteNamespace.startsWith(`..${path.sep}`) &&
+      remoteRootSegment !== undefined &&
+      /^[a-f0-9]{64}$/i.test(remoteRootSegment));
+  if (isProtectedRemoteStatePath) {
+    throw new Error(`${label} must reference a local workspace`);
+  }
+  return normalized;
 }
 
 export function getSessionStoragePath(projectPath: string): string {
@@ -200,11 +246,19 @@ export async function listSessionStorageScopes(): Promise<
   const storageRoot = path.resolve(getBladeStorageRoot());
   const localScopes = await listProjectDirectories()
     .then((directories) =>
-      directories.map((directory) => ({
-        storagePath: path.join(storageRoot, 'projects', directory),
-        projectPath: unescapeProjectPath(directory),
-        kind: 'local' as const,
-      }))
+      directories.flatMap((directory) => {
+        try {
+          return [
+            {
+              storagePath: path.join(storageRoot, 'projects', directory),
+              projectPath: normalizeLocalWorkspacePath(unescapeProjectPath(directory)),
+              kind: 'local' as const,
+            },
+          ];
+        } catch {
+          return [];
+        }
+      })
     )
     .catch(() => []);
 

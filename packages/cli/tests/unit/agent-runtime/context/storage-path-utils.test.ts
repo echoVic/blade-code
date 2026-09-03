@@ -152,6 +152,7 @@ describe('context storage paths', () => {
     const remoteRootB = deriveAcpRemoteHostStateRoot(remoteB.collisionIdentity);
     await ensureAcpRemoteHostStateRoot(remoteRootA);
     await ensureAcpRemoteHostStateRoot(remoteRootB);
+    await mkdir(getProjectStoragePath(remoteRootA), { recursive: true });
 
     const remoteNamespace = path.join(storageRoot, 'acp-remote-workspaces');
     await mkdir(path.join(remoteNamespace, 'not-a-digest'), { recursive: true });
@@ -167,8 +168,14 @@ describe('context storage paths', () => {
       path.join(remoteNamespace, 'ignored-symlink-not-a-valid-digest')
     );
 
-    expect(await listProjectDirectories()).toEqual(['-workspace-demo']);
-    await expect(listSessionStorageScopes()).resolves.toEqual(
+    expect(await listProjectDirectories()).toEqual(
+      expect.arrayContaining([
+        '-workspace-demo',
+        path.basename(getProjectStoragePath(remoteRootA)),
+      ])
+    );
+    const scopes = await listSessionStorageScopes();
+    expect(scopes).toEqual(
       expect.arrayContaining([
         {
           storagePath: localStoragePath,
@@ -187,7 +194,11 @@ describe('context storage paths', () => {
         },
       ])
     );
-    const scopes = await listSessionStorageScopes();
+    expect(
+      scopes.some(
+        (scope) => scope.kind === 'local' && scope.projectPath === remoteRootA
+      )
+    ).toBe(false);
     expect(scopes.some((scope) => scope.storagePath.includes('not-a-digest'))).toBe(
       false
     );

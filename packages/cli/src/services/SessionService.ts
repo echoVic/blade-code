@@ -56,6 +56,7 @@ import {
   getSessionFilePath,
   getSessionGoalFilePath,
   isValidSessionId,
+  normalizeLocalWorkspacePath,
   unescapeProjectPath,
 } from '../context/storage/pathUtils.js';
 import {
@@ -1340,10 +1341,7 @@ export class SessionService {
     assertValidSessionId(sessionId);
 
     if (projectPath !== undefined) {
-      if (!path.isAbsolute(projectPath)) {
-        throw new Error('Session catalog cwd must be absolute');
-      }
-      const resolvedProjectPath = path.resolve(projectPath);
+      const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
       const filePath = this.getSessionFilePath(resolvedProjectPath, sessionId);
       try {
         const stored = await this.readStoredSessionMetadata(
@@ -1395,10 +1393,7 @@ export class SessionService {
   ): Promise<Message[]> {
     try {
       if (projectPath) {
-        if (!path.isAbsolute(projectPath)) {
-          throw new Error('Session catalog cwd must be absolute');
-        }
-        const resolvedProjectPath = path.resolve(projectPath);
+        const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
         const filePath = this.getSessionFilePath(resolvedProjectPath, sessionId);
         try {
           return await this.loadSessionFromFile(
@@ -1441,10 +1436,7 @@ export class SessionService {
   ): Promise<Message[]> {
     try {
       if (projectPath) {
-        if (!path.isAbsolute(projectPath)) {
-          throw new Error('Session catalog cwd must be absolute');
-        }
-        const resolvedProjectPath = path.resolve(projectPath);
+        const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
         const filePath = this.getSessionFilePath(resolvedProjectPath, sessionId);
         try {
           return await this.loadSessionModelContextFromFile(
@@ -1636,7 +1628,12 @@ export class SessionService {
           ) {
             continue;
           }
-          const projectPath = path.resolve(created.cwd);
+          let projectPath: string;
+          try {
+            projectPath = normalizeLocalWorkspacePath(created.cwd);
+          } catch {
+            continue;
+          }
           if (getSessionFilePath(projectPath, sessionId) !== filePath) continue;
           candidates.set(`${projectPath}\0${sessionId}`, {
             projectPath,
@@ -5026,7 +5023,7 @@ export class SessionService {
     if (!path.isAbsolute(projectPath)) {
       throw new Error('Session catalog cwd must be absolute');
     }
-    return path.resolve(projectPath);
+    return normalizeLocalWorkspacePath(projectPath);
   }
 
   private static validateSessionWorkspace(
@@ -5047,7 +5044,7 @@ export class SessionService {
     if (!path.isAbsolute(projectPath)) {
       throw new Error('Fork workspace paths must be absolute');
     }
-    return path.resolve(projectPath);
+    return normalizeLocalWorkspacePath(projectPath);
   }
 
   private static parseStoredSession(

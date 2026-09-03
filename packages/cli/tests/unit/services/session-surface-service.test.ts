@@ -530,6 +530,29 @@ describe('SessionSurfaceService', () => {
     expect(timestamp).toBeTruthy();
   });
 
+  it('rejects a protected remote state root disguised as a local locator', async () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/disguised-local')
+    );
+    const protectedRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    const locator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'disguised-local-session',
+      workspace: { kind: 'local', projectPath: protectedRoot },
+    };
+    const readLocal = vi.spyOn(SessionService, 'readValidatedLocalSurfaceSnapshot');
+    const forkLocal = vi.spyOn(SessionService, 'forkSession');
+
+    await expect(service.open(locator)).rejects.toMatchObject({
+      code: 'invalid_session_locator',
+    });
+    await expect(service.fork(locator)).rejects.toMatchObject({
+      code: 'invalid_session_locator',
+    });
+    expect(readLocal).not.toHaveBeenCalled();
+    expect(forkLocal).not.toHaveBeenCalled();
+  });
+
   it('falls back to bounded JSONL catalog and history when SQLite is unavailable', async () => {
     const localSessionId = 'fallback-local-session';
     const remoteSessionId = 'fallback-remote-session';

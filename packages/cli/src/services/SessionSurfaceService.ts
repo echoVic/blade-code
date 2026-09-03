@@ -16,7 +16,11 @@ import {
   type SessionSurfaceSummary,
   SessionSurfaceSummarySchema,
 } from '../api/sessionSurfaceSchemas.js';
-import { getBladeStorageRoot, isValidSessionId } from '../context/storage/pathUtils.js';
+import {
+  getBladeStorageRoot,
+  isValidSessionId,
+  normalizeLocalWorkspacePath,
+} from '../context/storage/pathUtils.js';
 import type { SqliteDb } from '../context/storage/sqlite/driver.js';
 import {
   getProjectionDb,
@@ -1049,14 +1053,12 @@ function normalizeLimit(value: number | undefined): number {
 function parseLocator(value: unknown): SessionLocatorV2 {
   try {
     const locator = SessionLocatorV2Schema.parse(value);
-    if (
-      !isValidSessionId(locator.sessionId) ||
-      (locator.workspace.kind === 'local' &&
-        (!path.isAbsolute(locator.workspace.projectPath) ||
-          path.resolve(locator.workspace.projectPath) !==
-            locator.workspace.projectPath))
-    ) {
+    if (!isValidSessionId(locator.sessionId)) {
       throw new Error('invalid');
+    }
+    if (locator.workspace.kind === 'local') {
+      const normalized = normalizeLocalWorkspacePath(locator.workspace.projectPath);
+      if (normalized !== locator.workspace.projectPath) throw new Error('invalid');
     }
     return locator;
   } catch {
