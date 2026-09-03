@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.129] - 2026-09-02
+
+### 新增
+- 新增统一且有界的 V2 Session catalog 与 history surface，覆盖 local 和 ACP remote Session，并采用 opaque public workspace reference、严格 TypeBox contract、snapshot-bound pagination 及白名单化的 user/assistant 消息。
+- 重点建设 Web GUI 与终端 TUI 的 remote history 体验，支持 remote/连接状态标记、canonical display path、增量分页、已加载页面搜索、复制、fork、刷新恢复及明确的 history-only 提示。
+- 新增双语 reference 与 qualification evidence 页面，记录用户流程、隐私和 capability 边界、实现责任、完整仓库门禁、coverage，以及零重试 production GUI/TUI 验证。
+
+### 修复
+- 每次操作均重新校验 exact、generation-current 的 ACP ownership；owner 离线后仍可读取已持久化历史，同时阻止 public reference 或 display path 成为执行授权。
+- 将 remote history-only view 与 local Session state 隔离，并在 presentation 和 dispatch 两层阻止 prompt、file、terminal、Browser、review、rewind、task、subagent 与 per-Session SSE 活动。
+- 从 catalog title、SQLite/JSONL history、error、URL、log 与 browser surface 中清除 remote wire path、protected host-state root、descriptor identity 和 legacy private canary，同时保留 canonical remote display path。
+- 在 filesystem、Git、project resource 或 PTY 工作开始前，拒绝通过 legacy local Session、suggestions 与 terminal route 传入 protected ACP state root。
+- 对 suggestions tree/content path 同时执行 lexical 与 canonical containment，阻止父目录 traversal 及 workspace 内 symlink 暴露本地 workspace 外的文件或目录名。
+
+### 测试
+- 使用 Playwright Chromium 验证 production Web surface，并以真实 Ink input 验证终端 surface；`deepseek-v4-flash` 与 `deepseek-v4-pro` 均在 framework retry `0`、model `maxRetries=0` 下通过。
+- 新增 schema、protected reference、owner generation、projection、cursor、service、route、Web、TUI、lifecycle、privacy 与 local compatibility 的确定性覆盖，并通过完整仓库及独立 CLI/Web coverage 门禁。
+
 ## [0.10.128] - 2026-09-02
 
 ### 新增

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.129] - 2026-09-02
+
+### Added
+- Added one bounded V2 Session catalog and history surface for local and ACP remote Sessions, using opaque public workspace references, strict TypeBox contracts, snapshot-bound pagination, and allowlisted user/assistant messages.
+- Added first-class Web GUI and terminal TUI remote-history experiences with remote and connection-state badges, canonical display paths, incremental paging, loaded-page search, copy, fork, refresh restoration, and explicit history-only guidance.
+- Added bilingual reference and qualification-evidence pages covering user workflows, privacy and capability boundaries, implementation responsibility, full repository gates, coverage, and zero-retry production GUI/TUI validation.
+
+### Fixed
+- Revalidated exact, generation-current ACP ownership at every operation while keeping persisted history available when its owner is offline and preventing public references or display paths from becoming execution authority.
+- Kept remote history-only views isolated from local Session state and blocked prompt submission, file, terminal, Browser, review, rewind, task, subagent, and per-Session SSE activity at both presentation and dispatch boundaries.
+- Redacted remote wire paths, protected host-state roots, descriptor identities, and legacy private canaries from catalog titles, SQLite and JSONL history, errors, URLs, logs, and browser surfaces while preserving the canonical remote display path.
+- Rejected protected ACP state roots at legacy local Session, suggestions, and terminal routes before filesystem, Git, project-resource, or PTY work.
+- Contained suggestion tree and content paths lexically and canonically, preventing parent traversal and workspace-internal symlinks from exposing files or directory names outside the local workspace.
+
+### Tests
+- Qualified the production Web surface in Playwright Chromium and the terminal surface with real Ink input for `deepseek-v4-flash` and `deepseek-v4-pro`, with framework retry `0` and model `maxRetries=0`.
+- Added deterministic schema, protected-reference, owner-generation, projection, cursor, service, route, Web, TUI, lifecycle, privacy, and local-compatibility coverage, then passed the full repository and separate CLI/Web coverage gates.
+
 ## [0.10.128] - 2026-09-02
 
 ### Added
