@@ -277,6 +277,12 @@ describe('projectSessionSurfaceMessages', () => {
         privateRoots: [POSIX_ROOT],
       })
     ).toBe('[private state path]');
+    expect(
+      redactSessionSurfaceText('before PRIVATE_IDENTITYsuffix after', {
+        privateRoots: [],
+        privateValues: ['PRIVATE_IDENTITY'],
+      })
+    ).toBe('before [private state path]suffix after');
     expect(() => createSessionSurfaceMessageId(0, 'durable-message')).toThrow(
       SessionSurfaceProjectionError
     );

@@ -38,7 +38,10 @@ import {
   SessionSurfaceCursorRegistry,
   type SessionSurfaceCursorRegistryOptions,
 } from './SessionSurfaceCursorRegistry.js';
-import { projectSessionSurfaceMessages } from './sessionSurfaceProjection.js';
+import {
+  projectSessionSurfaceMessages,
+  remoteSessionSurfaceRedactionOptions,
+} from './sessionSurfaceProjection.js';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 100;
@@ -699,9 +702,12 @@ export class SessionSurfaceService {
           signal
         );
     const messages = projectSessionSurfaceMessages(snapshot.entries, {
-      privateRoots: resolved.remoteCandidate
-        ? [resolved.remoteCandidate.hostStateRoot]
-        : [],
+      ...(resolved.remoteCandidate
+        ? remoteSessionSurfaceRedactionOptions(
+            resolved.remoteCandidate.hostStateRoot,
+            resolved.remoteCandidate.descriptor
+          )
+        : { privateRoots: [] }),
       bladeStorageRoots: [getBladeStorageRoot()],
     });
     const selected = boundHistoryMessages(

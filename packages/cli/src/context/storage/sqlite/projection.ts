@@ -35,6 +35,7 @@ import {
   createSessionSurfaceMessageId,
   projectSessionSurfaceMessages,
   redactSessionSurfaceText,
+  remoteSessionSurfaceRedactionOptions,
   SessionSurfaceProjectionError,
 } from '../../../services/sessionSurfaceProjection.js';
 import type { SessionEvent } from '../../types.js';
@@ -507,7 +508,9 @@ export function projectSessionSurfaceSummaryFields(
     throw new SessionSurfaceProjectionError();
   }
   const redactionOptions = {
-    privateRoots: remoteDescriptor ? [metadata.projectPath] : [],
+    ...(remoteDescriptor
+      ? remoteSessionSurfaceRedactionOptions(metadata.projectPath, remoteDescriptor)
+      : { privateRoots: [] }),
     bladeStorageRoots: [getBladeStorageRoot()],
   };
   const relationType = metadata.relationType as 'subagent' | 'fork' | undefined;
@@ -954,7 +957,9 @@ async function syncSessionValidated(
       : undefined;
   signal?.throwIfAborted();
   const surfaceMessages = projectSessionSurfaceMessages(raw, {
-    privateRoots: sourceKind === 'acp-remote' ? [projectPath] : [],
+    ...(durableRemoteDescriptor
+      ? remoteSessionSurfaceRedactionOptions(projectPath, durableRemoteDescriptor)
+      : { privateRoots: [] }),
     bladeStorageRoots: [getBladeStorageRoot()],
   });
   const projected: ProjectedSession = {

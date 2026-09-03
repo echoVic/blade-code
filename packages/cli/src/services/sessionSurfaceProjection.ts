@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { SessionSurfaceMessage } from '../api/sessionSurfaceSchemas.js';
-import type { SessionEvent } from '../context/types.js';
+import type { AcpRemoteWorkspaceDescriptorV1, SessionEvent } from '../context/types.js';
 import type { Message } from './ChatServiceInterface.js';
 import { isClientVisibleMessage } from './clientMessageVisibility.js';
 import { materializeSessionEvents } from './sessionRewind.js';
@@ -38,14 +38,25 @@ type PartEvent = Extract<
 
 export interface SessionSurfaceProjectionOptions {
   privateRoots: readonly string[];
+  privateValues?: readonly string[];
   bladeStorageRoots?: readonly string[];
   maxContentBytes?: number;
 }
 
 export type SessionSurfaceRedactionOptions = Pick<
   SessionSurfaceProjectionOptions,
-  'privateRoots' | 'bladeStorageRoots'
+  'privateRoots' | 'privateValues' | 'bladeStorageRoots'
 >;
+
+export function remoteSessionSurfaceRedactionOptions(
+  hostStateRoot: string,
+  descriptor: AcpRemoteWorkspaceDescriptorV1
+): SessionSurfaceRedactionOptions {
+  return {
+    privateRoots: [hostStateRoot, descriptor.wirePath],
+    privateValues: [descriptor.exactIdentity, descriptor.collisionIdentity],
+  };
+}
 
 interface ProjectedPart {
   partId: string;
@@ -77,6 +88,7 @@ export function projectSessionSurfaceMessages(
     options.privateRoots,
     options.bladeStorageRoots ?? []
   );
+  const privateValues = resolvePrivateValues(options.privateValues ?? []);
   const materialized = materializeSessionEvents(events);
   const messages = new Map<string, ProjectedMessageState>();
 
@@ -103,7 +115,12 @@ export function projectSessionSurfaceMessages(
 
   const projected: SessionSurfaceMessage[] = [];
   for (const state of messages.values()) {
-    const surfaceMessage = projectMessageState(state, privateRoots, maxContentBytes);
+    const surfaceMessage = projectMessageState(
+      state,
+      privateRoots,
+      privateValues,
+      maxContentBytes
+    );
     if (surfaceMessage) {
       projected.push(surfaceMessage);
     }
@@ -123,6 +140,7 @@ function escapeForRegExp(value: string): string {
 function projectMessageState(
   state: ProjectedMessageState,
   privateRoots: readonly string[],
+  privateValues: readonly string[],
   maxContentBytes: number
 ): SessionSurfaceMessage | undefined {
   const role = state.event.data.role;
@@ -144,7 +162,10 @@ function projectMessageState(
   }
 
   const timestamp = validateCanonicalIsoInstant(state.event.data.createdAt);
-  const redacted = redactPrivateRoots(normalizedTerminalContent, privateRoots);
+  const redacted = redactPrivateValues(
+    redactPrivateRoots(normalizedTerminalContent, privateRoots),
+    privateValues
+  );
   const normalized = redacted.trim();
   if (!normalized) {
     return undefined;
@@ -168,9 +189,12 @@ export function redactSessionSurfaceText(
   value: string,
   options: SessionSurfaceRedactionOptions
 ): string {
-  return redactPrivateRoots(
-    stripUnsafeTerminalContent(value),
-    resolvePrivateRoots(options.privateRoots, options.bladeStorageRoots ?? [])
+  return redactPrivateValues(
+    redactPrivateRoots(
+      stripUnsafeTerminalContent(value),
+      resolvePrivateRoots(options.privateRoots, options.bladeStorageRoots ?? [])
+    ),
+    resolvePrivateValues(options.privateValues ?? [])
   );
 }
 
@@ -282,6 +306,20 @@ function resolvePrivateRoots(
   return [...new Set([...privateRoots, ...bladeStorageRoots].filter(Boolean))].sort(
     (left, right) => right.length - left.length
   );
+}
+
+function resolvePrivateValues(privateValues: readonly string[]): string[] {
+  return [...new Set(privateValues.filter(Boolean))].sort(
+    (left, right) => right.length - left.length
+  );
+}
+
+function redactPrivateValues(value: string, privateValues: readonly string[]): string {
+  let result = value;
+  for (const privateValue of privateValues) {
+    result = result.split(privateValue).join(PRIVATE_PATH_PLACEHOLDER);
+  }
+  return result;
 }
 
 function redactPrivateRoots(value: string, roots: readonly string[]): string {

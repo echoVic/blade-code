@@ -265,14 +265,33 @@ describe('SessionSurfaceService', () => {
       sessionId,
       hostStateRoot,
       descriptor,
-      { title: 'Remote history', taskStatus: 'completed' }
+      {
+        title:
+          'Remote history ' +
+          descriptor.wirePath +
+          '/private ' +
+          descriptor.exactIdentity +
+          'suffix',
+        taskStatus: 'completed',
+      }
     );
     const sourcePath = await withValidatedAcpRemoteStateScope(
       hostStateRoot,
       async (scope) => getAcpRemoteSessionFilePath(scope, sessionId)
     );
     await new JSONLStore(sourcePath).appendBatch(
-      messageEvents(sessionId, hostStateRoot, 'remote-message', 'user', 'remote', 1)
+      messageEvents(
+        sessionId,
+        hostStateRoot,
+        'remote-message',
+        'user',
+        'Read ' +
+          descriptor.wirePath +
+          '/inputs/source.txt before ' +
+          descriptor.collisionIdentity +
+          'suffix',
+        1
+      )
     );
     const remoteSummary = (
       await service.listPage({ archived: false, workspaceKind: 'acp-remote' })
@@ -293,6 +312,16 @@ describe('SessionSurfaceService', () => {
 
     const opened = await service.open(remoteSummary.locator);
     expect(opened.session.displayCwd).toBe(descriptor.wirePath);
+    expect(opened.session.title).toBe(
+      'Remote history [private state path] [private state path]suffix'
+    );
+    expect(opened.history.messages[0]?.content).toBe(
+      'Read [private state path] before [private state path]suffix'
+    );
+    expect(JSON.stringify(opened)).not.toContain(descriptor.wirePath + '/private');
+    expect(JSON.stringify(opened.history)).not.toContain(descriptor.wirePath);
+    expect(JSON.stringify(opened)).not.toContain(descriptor.exactIdentity);
+    expect(JSON.stringify(opened)).not.toContain(descriptor.collisionIdentity);
     expect(JSON.stringify(opened)).not.toContain(hostStateRoot);
     const forked = await service.fork(remoteSummary.locator);
     expect(forked.session.locator.workspace.kind).toBe('acp-remote');
@@ -483,8 +512,25 @@ describe('SessionSurfaceService', () => {
       remoteSessionId,
       hostStateRoot,
       descriptor,
-      { title: 'Remote fallback', taskStatus: 'completed' }
+      {
+        title: `Remote fallback ${descriptor.wirePath}/private`,
+        taskStatus: 'completed',
+      }
     );
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      await new JSONLStore(
+        getAcpRemoteSessionFilePath(scope, remoteSessionId)
+      ).appendBatch(
+        messageEvents(
+          remoteSessionId,
+          hostStateRoot,
+          'fallback-remote-message',
+          'user',
+          `Read ${descriptor.wirePath}/inputs/source.txt through fallback`,
+          2
+        )
+      );
+    });
     const fallback = new SessionSurfaceService({ database: null });
 
     const first = await fallback.listPage({ archived: false, limit: 1 });
@@ -502,6 +548,15 @@ describe('SessionSurfaceService', () => {
     const local = summaries.find(
       (summary) => summary.locator.workspace.kind === 'local'
     )!;
+    const remote = summaries.find(
+      (summary) => summary.locator.workspace.kind === 'acp-remote'
+    )!;
+    expect(remote.displayCwd).toBe(descriptor.wirePath);
+    expect(remote.title).toBe('Remote fallback [private state path]');
+    const openedRemote = await fallback.open(remote.locator, { limit: 1 });
+    expect(openedRemote.history.messages.map((message) => message.content)).toEqual([
+      'Read [private state path] through fallback',
+    ]);
     const opened = await fallback.open(local.locator, { limit: 1 });
     expect(opened.history.messages.map((message) => message.content)).toEqual([
       'local',
