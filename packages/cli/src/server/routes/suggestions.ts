@@ -124,7 +124,15 @@ export const SuggestionsRoutes = () => {
     const directory = requireLocalDirectory(c.get('directory') || getCwd());
     try {
       const subPath = c.req.query('path') || '';
-      const targetDir = subPath ? path.join(directory, subPath) : directory;
+      const targetDir = path.resolve(directory, subPath);
+      const relative = path.relative(directory, targetDir);
+      if (
+        relative === '..' ||
+        relative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relative)
+      ) {
+        return c.json({ error: 'Invalid file path' }, 400);
+      }
 
       const entries = await readdir(targetDir, { withFileTypes: true });
 

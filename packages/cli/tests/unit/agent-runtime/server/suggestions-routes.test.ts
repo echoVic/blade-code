@@ -226,6 +226,38 @@ describe('SuggestionsRoutes local path guard', () => {
     expect(mocks.execSync).not.toHaveBeenCalled();
   });
 
+  it('rejects file tree subpaths that escape the local workspace', async () => {
+    const app = createSuggestionsApp();
+
+    const response = await app.request(
+      `/suggestions/files/tree?path=${encodeURIComponent('../outside')}`,
+      {
+        headers: { 'x-blade-directory': localDirectory },
+      }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'Invalid file path' });
+    expect(mocks.readdir).not.toHaveBeenCalled();
+  });
+
+  it('keeps local file tree directories whose names begin with two dots', async () => {
+    const app = createSuggestionsApp();
+
+    const response = await app.request(
+      `/suggestions/files/tree?path=${encodeURIComponent('..notes')}`,
+      {
+        headers: { 'x-blade-directory': localDirectory },
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.readdir).toHaveBeenCalledWith(
+      path.resolve(localDirectory, '..notes'),
+      { withFileTypes: true }
+    );
+  });
+
   it('keeps ordinary local absolute paths working for suggestions routes', async () => {
     const app = createSuggestionsApp();
 
