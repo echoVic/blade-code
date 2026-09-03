@@ -2393,6 +2393,37 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState().historySurfaceOlderCursor).toBeNull();
   });
 
+  it('retains the newly loaded older window when history exceeds five hundred messages', async () => {
+    const currentIds = Array.from({ length: 450 }, (_, index) => `current-${index}`);
+    const olderIds = Array.from({ length: 100 }, (_, index) => `older-${index}`);
+    const message = (id: string, sequence: number) => ({
+      id: `surface-message:${sequence}:${id}`,
+      role: 'assistant' as const,
+      content: id,
+      timestamp: '2026-09-02T00:00:00.000Z',
+    });
+    const remote = createSurfaceOpenResult(createRemoteLocator(), {
+      messages: currentIds.map((id, index) => message(id, index + 101)),
+      olderCursor: 'older-1',
+    });
+    vi.mocked(sessionService.openSurface).mockResolvedValue(remote);
+    vi.mocked(sessionService.loadSurfaceHistoryPage).mockResolvedValue({
+      messages: olderIds.map((id, index) => message(id, index + 1)),
+      olderCursor: 'older-2',
+      snapshot: 'snapshot-1',
+      truncated: false,
+    });
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+
+    await useSessionStore.getState().loadOlderSurfaceHistory();
+
+    const retained = useSessionStore.getState().historySurfaceMessages;
+    expect(retained).toHaveLength(500);
+    expect(retained[0]?.content).toBe('older-0');
+    expect(retained.at(-1)?.content).toBe('current-399');
+    expect(useSessionStore.getState().historySurfaceOlderCursor).toBe('older-2');
+  });
+
   it('rejects a crafted older-page read when the selected surface cannot read history', async () => {
     const remote = createSurfaceOpenResult();
     remote.session.capabilities.history.read = false;

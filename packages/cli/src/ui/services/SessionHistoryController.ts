@@ -134,10 +134,9 @@ function prependDistinctMessages(
   current: readonly SessionSurfaceMessage[]
 ): SessionSurfaceMessage[] {
   const currentIds = new Set(current.map((message) => message.id));
-  return boundedMessages([
-    ...older.filter((message) => !currentIds.has(message.id)),
-    ...current,
-  ]);
+  return [...older.filter((message) => !currentIds.has(message.id)), ...current]
+    .slice(0, MAX_RETAINED_HISTORY_MESSAGES)
+    .map((message) => ({ ...message }));
 }
 
 export class SessionHistoryController {

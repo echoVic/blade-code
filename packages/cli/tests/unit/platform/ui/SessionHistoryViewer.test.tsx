@@ -251,7 +251,7 @@ describe('SessionHistoryController', () => {
     await controller.close();
   });
 
-  it('retains at most five hundred messages across older pages', async () => {
+  it('retains the newly loaded older window when history exceeds five hundred messages', async () => {
     const currentIds = Array.from({ length: 450 }, (_, index) => `current-${index}`);
     const olderIds = Array.from({ length: 100 }, (_, index) => `older-${index}`);
     const initial = createOpenResult(
@@ -270,8 +270,8 @@ describe('SessionHistoryController', () => {
 
     const retained = controller.getState().messages;
     expect(retained).toHaveLength(500);
-    expect(retained[0]?.content).toBe('message older-50');
-    expect(retained.at(-1)?.content).toBe('message current-449');
+    expect(retained[0]?.content).toBe('message older-0');
+    expect(retained.at(-1)?.content).toBe('message current-399');
     await controller.close();
   });
 
