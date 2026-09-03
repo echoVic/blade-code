@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { readdir } from 'node:fs/promises';
+import { readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { Hono } from 'hono';
@@ -65,6 +65,52 @@ function requireLocalDirectory(directory: string): string {
   }
 }
 
+function isPathWithinDirectory(directory: string, candidate: string): boolean {
+  const relative = path.relative(directory, candidate);
+  return (
+    relative === '' ||
+    (relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+}
+
+async function resolveThroughExistingAncestor(value: string): Promise<string> {
+  let candidate = path.resolve(value);
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      return path.resolve(await realpath(candidate), ...suffix.reverse());
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+      const parent = path.dirname(candidate);
+      if (parent === candidate) return path.resolve(value);
+      suffix.push(path.basename(candidate));
+      candidate = parent;
+    }
+  }
+}
+
+async function resolveCanonicalLocalDescendant(
+  directory: string,
+  candidatePath: string
+): Promise<string | null> {
+  const targetPath = path.resolve(directory, candidatePath);
+  if (!isPathWithinDirectory(directory, targetPath)) return null;
+
+  const canonicalDirectory = await resolveThroughExistingAncestor(directory);
+  const canonicalTargetPath = await resolveThroughExistingAncestor(targetPath);
+  if (!isPathWithinDirectory(canonicalDirectory, canonicalTargetPath)) return null;
+
+  try {
+    requireLocalDirectory(canonicalTargetPath);
+  } catch {
+    return null;
+  }
+  return canonicalTargetPath;
+}
+
 export const SuggestionsRoutes = () => {
   const app = new Hono<{ Variables: Variables }>();
 
@@ -124,13 +170,8 @@ export const SuggestionsRoutes = () => {
     const directory = requireLocalDirectory(c.get('directory') || getCwd());
     try {
       const subPath = c.req.query('path') || '';
-      const targetDir = path.resolve(directory, subPath);
-      const relative = path.relative(directory, targetDir);
-      if (
-        relative === '..' ||
-        relative.startsWith(`..${path.sep}`) ||
-        path.isAbsolute(relative)
-      ) {
+      const targetDir = await resolveCanonicalLocalDescendant(directory, subPath);
+      if (!targetDir) {
         return c.json({ error: 'Invalid file path' }, 400);
       }
 
@@ -174,9 +215,8 @@ export const SuggestionsRoutes = () => {
         return c.json({ error: 'Missing file path' }, 400);
       }
 
-      const resolvedPath = path.resolve(directory, rawPath);
-      const relative = path.relative(directory, resolvedPath);
-      if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      const resolvedPath = await resolveCanonicalLocalDescendant(directory, rawPath);
+      if (!resolvedPath) {
         return c.json({ error: 'Invalid file path' }, 400);
       }
 

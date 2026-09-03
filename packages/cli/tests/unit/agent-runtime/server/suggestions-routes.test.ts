@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
@@ -113,7 +113,7 @@ describe('SuggestionsRoutes local path guard', () => {
   let previousStorageRoot: string | undefined;
   let storageRoot: string;
   let protectedRoot: string;
-  const localDirectory = '/tmp/blade-local-workspace';
+  let localDirectory: string;
 
   beforeEach(async () => {
     previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
@@ -122,6 +122,9 @@ describe('SuggestionsRoutes local path guard', () => {
     );
     process.env.BLADE_STORAGE_ROOT = storageRoot;
     protectedRoot = createProtectedHostStateRoot(storageRoot);
+    localDirectory = await mkdtemp(
+      path.join(os.tmpdir(), 'blade-suggestions-route-workspace-')
+    );
 
     mocks.resolveWorkspaceAgentResources.mockReset();
     mocks.fastGlob.mockReset();
@@ -173,6 +176,7 @@ describe('SuggestionsRoutes local path guard', () => {
     } else {
       process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
     }
+    await rm(localDirectory, { recursive: true, force: true });
     await rm(storageRoot, { recursive: true, force: true });
   });
 
@@ -243,6 +247,8 @@ describe('SuggestionsRoutes local path guard', () => {
 
   it('keeps local file tree directories whose names begin with two dots', async () => {
     const app = createSuggestionsApp();
+    const targetDirectory = path.join(localDirectory, '..notes');
+    await mkdir(targetDirectory);
 
     const response = await app.request(
       `/suggestions/files/tree?path=${encodeURIComponent('..notes')}`,
@@ -252,14 +258,70 @@ describe('SuggestionsRoutes local path guard', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.readdir).toHaveBeenCalledWith(
-      path.resolve(localDirectory, '..notes'),
-      { withFileTypes: true }
+    expect(mocks.readdir).toHaveBeenCalledWith(await realpath(targetDirectory), {
+      withFileTypes: true,
+    });
+  });
+
+  it('rejects file tree symlinks that resolve outside the local workspace', async () => {
+    const app = createSuggestionsApp();
+    const linkedDirectory = path.join(localDirectory, 'linked-private');
+    await mkdir(protectedRoot, { recursive: true });
+    await symlink(
+      protectedRoot,
+      linkedDirectory,
+      process.platform === 'win32' ? 'junction' : 'dir'
     );
+
+    const response = await app.request('/suggestions/files/tree?path=linked-private', {
+      headers: { 'x-blade-directory': localDirectory },
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'Invalid file path' });
+    expect(mocks.readdir).not.toHaveBeenCalled();
+  });
+
+  it('rejects file content symlinks that resolve outside the local workspace', async () => {
+    const app = createSuggestionsApp();
+    const privateFile = path.join(protectedRoot, 'private.txt');
+    const linkedFile = path.join(localDirectory, 'linked-private.txt');
+    await mkdir(protectedRoot, { recursive: true });
+    await writeFile(privateFile, 'private');
+    await symlink(privateFile, linkedFile, 'file');
+
+    const response = await app.request(
+      '/suggestions/files/content?path=linked-private.txt',
+      {
+        headers: { 'x-blade-directory': localDirectory },
+      }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'Invalid file path' });
+    expect(mocks.stat).not.toHaveBeenCalled();
+    expect(mocks.readTextFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps missing local file content responses at not found', async () => {
+    const app = createSuggestionsApp();
+    mocks.stat.mockResolvedValueOnce(null);
+
+    const response = await app.request('/suggestions/files/content?path=missing.txt', {
+      headers: { 'x-blade-directory': localDirectory },
+    });
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: 'File not found' });
+    expect(mocks.stat).toHaveBeenCalledWith(
+      path.join(await realpath(localDirectory), 'missing.txt')
+    );
+    expect(mocks.readTextFile).not.toHaveBeenCalled();
   });
 
   it('keeps ordinary local absolute paths working for suggestions routes', async () => {
     const app = createSuggestionsApp();
+    await writeFile(path.join(localDirectory, 'README.md'), 'hello world');
 
     const commandsResponse = await app.request('/suggestions/commands?q=he', {
       headers: { 'x-blade-directory': localDirectory },
@@ -271,7 +333,7 @@ describe('SuggestionsRoutes local path guard', () => {
     expect(mocks.resolveWorkspaceAgentResources).toHaveBeenCalledWith(localDirectory);
 
     const filesResponse = await app.request(
-      '/suggestions/files?directory=/tmp/blade-local-workspace'
+      `/suggestions/files?directory=${encodeURIComponent(localDirectory)}`
     );
     expect(filesResponse.status).toBe(200);
     await expect(filesResponse.json()).resolves.toEqual(['src/index.ts', 'README.md']);
@@ -288,7 +350,7 @@ describe('SuggestionsRoutes local path guard', () => {
       { name: 'src', path: 'src', type: 'dir' },
       { name: 'README.md', path: 'README.md', type: 'file' },
     ]);
-    expect(mocks.readdir).toHaveBeenCalledWith(localDirectory, {
+    expect(mocks.readdir).toHaveBeenCalledWith(await realpath(localDirectory), {
       withFileTypes: true,
     });
 
@@ -305,10 +367,9 @@ describe('SuggestionsRoutes local path guard', () => {
       truncated: false,
       size: 12,
     });
-    expect(mocks.stat).toHaveBeenCalledWith(path.resolve(localDirectory, 'README.md'));
-    expect(mocks.readTextFile).toHaveBeenCalledWith(
-      path.resolve(localDirectory, 'README.md')
-    );
+    const canonicalReadmePath = await realpath(path.join(localDirectory, 'README.md'));
+    expect(mocks.stat).toHaveBeenCalledWith(canonicalReadmePath);
+    expect(mocks.readTextFile).toHaveBeenCalledWith(canonicalReadmePath);
 
     const gitInfoResponse = await app.request('/suggestions/git-info', {
       headers: { 'x-blade-directory': localDirectory },
