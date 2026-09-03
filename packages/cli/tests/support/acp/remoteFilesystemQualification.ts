@@ -296,7 +296,7 @@ export interface PairedAcpFixtureSessionRef {
   readonly home: string;
   readonly storageRoot: string;
   readonly hostWorkspace: string;
-  readonly privateCanaries: readonly string[];
+  readonly forbiddenSurfaceValues: readonly string[];
   readMetadata(): Promise<SessionMetadata | undefined>;
   readTranscript(): Promise<string>;
   readActivityCounts(): PairedAcpFixtureActivityCounts;
@@ -543,7 +543,7 @@ function createRevocableSessionRef(input: {
   home: string;
   storageRoot: string;
   hostWorkspace: string;
-  privateCanaries: readonly string[];
+  forbiddenSurfaceValues: readonly string[];
   transcriptPath: string;
   credential: Readonly<{ name: string; value: string }>;
   activityCounts(): PairedAcpFixtureActivityCounts;
@@ -581,8 +581,8 @@ function createRevocableSessionRef(input: {
     get hostWorkspace() {
       return guarded(input.hostWorkspace);
     },
-    get privateCanaries() {
-      return guarded(input.privateCanaries);
+    get forbiddenSurfaceValues() {
+      return guarded(input.forbiddenSurfaceValues);
     },
     readMetadata: async () => {
       assertReferenceActive(active);
@@ -1188,12 +1188,10 @@ export async function createPairedAcpProductionFixture(
             home,
             storageRoot,
             hostWorkspace,
-            privateCanaries: Object.freeze([
-              options.fixtureRoot,
+            forbiddenSurfaceValues: Object.freeze([
               home,
               storageRoot,
               hostWorkspace,
-              remoteWorkspacePath,
               remoteSourcePath,
               result.projectPath,
               result.remoteWorkspace.exactIdentity,

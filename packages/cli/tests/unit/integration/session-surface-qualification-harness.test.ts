@@ -161,6 +161,12 @@ describe('session surface qualification harness', () => {
         if (!metadata?.remoteWorkspace) {
           throw new Error('Expected remote metadata in scoped access');
         }
+        for (const forbiddenValue of ref.forbiddenSurfaceValues) {
+          expect(ref.remoteWorkspacePath).not.toBe(forbiddenValue);
+          expect(ref.remoteWorkspacePath.startsWith(forbiddenValue + path.sep)).toBe(
+            false
+          );
+        }
         observedRef = {
           sessionId: ref.sessionId,
           projectPath: ref.projectPath,
