@@ -1,13 +1,39 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
 import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
+import {
+  normalizeLocalWorkspacePath,
   normalizeSessionRef,
+  type SessionRef,
   sameSessionRef,
   sessionRefKey,
-  type SessionRef,
 } from '../../../../src/server/sessionRef.js';
 
 describe('sessionRef helpers', () => {
+  let previousStorageRoot: string | undefined;
+  let storageRoot: string;
+
+  beforeEach(async () => {
+    previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+    storageRoot = await mkdtemp(path.join(os.tmpdir(), 'blade-session-ref-storage-'));
+    process.env.BLADE_STORAGE_ROOT = storageRoot;
+  });
+
+  afterEach(async () => {
+    if (previousStorageRoot === undefined) {
+      delete process.env.BLADE_STORAGE_ROOT;
+    } else {
+      process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+    }
+    await rm(storageRoot, { recursive: true, force: true });
+  });
+
   it('rejects invalid session ids before generating keys', () => {
     expect(() =>
       normalizeSessionRef({
@@ -24,6 +50,32 @@ describe('sessionRef helpers', () => {
         projectPath: './relative-workspace',
       })
     ).toThrow('projectPath must be absolute');
+  });
+
+  it('rejects protected ACP remote host-state roots at local path boundaries', () => {
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('/remote/workspace')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.collisionIdentity,
+      storageRoot
+    );
+
+    expect(() => normalizeLocalWorkspacePath(hostStateRoot)).toThrow(
+      'projectPath must reference a local workspace'
+    );
+    expect(() =>
+      normalizeLocalWorkspacePath(path.join(hostStateRoot, 'sessions'))
+    ).toThrow('projectPath must reference a local workspace');
+    expect(() => normalizeLocalWorkspacePath(path.dirname(hostStateRoot))).toThrow(
+      'projectPath must reference a local workspace'
+    );
+    expect(
+      normalizeLocalWorkspacePath(path.join(storageRoot, 'projects', 'local'))
+    ).toBe(path.join(storageRoot, 'projects', 'local'));
+    expect(
+      normalizeSessionRef({ sessionId: 'session-1', projectPath: hostStateRoot })
+    ).toEqual({ sessionId: 'session-1', projectPath: hostStateRoot });
   });
 
   it('normalizes absolute paths consistently', () => {

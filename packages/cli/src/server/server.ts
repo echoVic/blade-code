@@ -50,6 +50,7 @@ import {
   terminalWebSocket,
 } from './routes/terminal.js';
 import { WorkspaceTrustRoutes } from './routes/workspaceTrust.js';
+import { normalizeLocalWorkspacePath } from './sessionRef.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -723,8 +724,23 @@ function startWithNode(
 
     // Handle WebSocket upgrade requests
     server.on('upgrade', (request, socket, head) => {
-      const url = new URL(request.url || '/', `http://${request.headers.host}`);
+      let url: URL;
+      try {
+        url = new URL(request.url || '/', `http://${request.headers.host}`);
+      } catch {
+        socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+        return;
+      }
       if (url.pathname === '/terminal/ws') {
+        try {
+          normalizeLocalWorkspacePath(
+            url.searchParams.get('cwd') || currentDirectory,
+            'cwd'
+          );
+        } catch {
+          socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+          return;
+        }
         wss.handleUpgrade(request, socket, head, (ws) => {
           wss.emit('connection', ws, request);
         });

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getCwd } from '../../utils/cwd.js';
+import { normalizeLocalWorkspacePath } from '../sessionRef.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -32,6 +33,16 @@ type Variables = {
 
 function isBunRuntime(): boolean {
   return typeof (globalThis as Record<string, unknown>).Bun !== 'undefined';
+}
+
+function resolveTerminalCwd(
+  requestedCwd: string | undefined,
+  fallbackDirectory: string | undefined
+): string {
+  return normalizeLocalWorkspacePath(
+    requestedCwd || fallbackDirectory || getCwd(),
+    'cwd'
+  );
 }
 
 // Spawn PTY process - works with both bun-pty and node-pty
@@ -196,15 +207,16 @@ export function setupNodeWebSocket(
   getDirectory: () => string
 ): void {
   wss.on('connection', async (ws, req) => {
-    const url = new URL(req.url || '/', `http://${req.headers.host}`);
-    if (!url.pathname.endsWith('/terminal/ws')) {
-      ws.close();
-      return;
-    }
-
-    const cwd = url.searchParams.get('cwd') || getDirectory() || getCwd();
-
     try {
+      const url = new URL(req.url || '/', `http://${req.headers.host}`);
+      if (!url.pathname.endsWith('/terminal/ws')) {
+        ws.close();
+        return;
+      }
+      const cwd = resolveTerminalCwd(
+        url.searchParams.get('cwd') ?? undefined,
+        getDirectory()
+      );
       const { session, cleanup } = await handleTerminalConnection(cwd, {
         send: (data: string) => ws.send(data),
         close: () => ws.close(),
@@ -260,18 +272,25 @@ export const TerminalRoutes = () => {
 
   // Only register Hono WebSocket route in Bun runtime
   if (upgradeWebSocket) {
-    app.get(
-      '/ws',
-      upgradeWebSocket((c) => {
-        const cwd = c.req.query('cwd') || c.get('directory') || getCwd();
-        let sessionData:
-          | Awaited<ReturnType<typeof handleTerminalConnection>>
-          | undefined;
+    app.get('/ws', async (c, next) => {
+      const cwd = c.req.query('cwd') ?? undefined;
+      let resolvedCwd: string;
+      try {
+        resolvedCwd = resolveTerminalCwd(cwd, c.get('directory'));
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'cwd must reference a local workspace';
+        return c.text(message, 400);
+      }
 
+      let sessionData: Awaited<ReturnType<typeof handleTerminalConnection>> | undefined;
+      const upgradeHandler = upgradeWebSocket(() => {
         return {
           async onOpen(_event, ws) {
             try {
-              sessionData = await handleTerminalConnection(cwd, {
+              sessionData = await handleTerminalConnection(resolvedCwd, {
                 send: (data: string) =>
                   (ws as unknown as { send: (d: string) => void }).send(data),
                 close: () => (ws as unknown as { close: () => void }).close(),
@@ -295,8 +314,9 @@ export const TerminalRoutes = () => {
             sessionData?.cleanup();
           },
         };
-      })
-    );
+      });
+      return upgradeHandler(c, next);
+    });
   } else {
     // In Node.js, WebSocket is handled separately via setupNodeWebSocket
     // Return info about how to connect

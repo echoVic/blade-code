@@ -17,6 +17,7 @@ import {
 } from '../../../../src/api/attachmentLimits.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import type { ProjectedSessionInteraction } from '../../../../src/context/interactions.js';
+import { getBladeStorageRoot } from '../../../../src/context/storage/pathUtils.js';
 import type { SessionEvent } from '../../../../src/context/types.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import type {
@@ -957,6 +958,22 @@ describe('SessionRoutes runtime reuse', () => {
     });
     app.route('/sessions', SessionRoutes());
     app.route('/permissions', PermissionRoutes());
+    return app;
+  };
+
+  const createMountedSessionApp = async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const app = new Hono<{ Variables: { directory: string } }>();
+    app.use('*', async (context, next) => {
+      context.set(
+        'directory',
+        context.req.query('directory') ??
+          context.req.header('x-blade-directory') ??
+          DEFAULT_PROJECT_PATH
+      );
+      return next();
+    });
+    app.route('/sessions', SessionRoutes());
     return app;
   };
 
@@ -2400,6 +2417,48 @@ describe('SessionRoutes runtime reuse', () => {
       includeSubagents: false,
       limit: 10,
     });
+  });
+
+  it('rejects protected remote roots at V1 Session entry points before lookup or writes', async () => {
+    const app = await createMountedSessionApp();
+    const protectedRoot =
+      getBladeStorageRoot() + '/acp-remote-workspaces/' + 'a'.repeat(64);
+    const encodedRoot = encodeURIComponent(protectedRoot);
+
+    const responses = await Promise.all([
+      app.request('/sessions/catalog?projectPath=' + encodedRoot),
+      app.request('/sessions/local-session?projectPath=' + encodedRoot),
+      app.request('/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectPath: protectedRoot }),
+      }),
+      app.request('/sessions?directory=' + encodedRoot, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+      app.request('/sessions', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-blade-directory': protectedRoot,
+        },
+        body: JSON.stringify({}),
+      }),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([
+      400, 400, 400, 400, 400,
+    ]);
+    for (const response of responses) {
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'BAD_REQUEST' },
+      });
+    }
+    expect(SessionService.listSessionPage).not.toHaveBeenCalled();
+    expect(SessionService.findSessionMetadata).not.toHaveBeenCalled();
+    expect(SessionService.createSessionMetadata).not.toHaveBeenCalled();
   });
 
   it('preserves exact V1 local session lookup semantics beside the V2 mount', async () => {

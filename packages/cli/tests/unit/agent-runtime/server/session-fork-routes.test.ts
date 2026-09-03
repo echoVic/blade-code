@@ -2,6 +2,11 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
+import {
+  createAcpRemoteWorkspaceDescriptor,
+  deriveAcpRemoteHostStateRoot,
+} from '../../../../src/acp/AcpRemoteWorkspace.js';
 import { ForkSessionResponseSchema } from '../../../../src/api/schemas.js';
 import { JSONLStore } from '../../../../src/context/storage/JSONLStore.js';
 import { PersistentStore } from '../../../../src/context/storage/PersistentStore.js';
@@ -125,6 +130,23 @@ describe('BladeServer session fork route', () => {
         }
       );
       expect(relativePathResponse.status).toBe(400);
+
+      const descriptor = createAcpRemoteWorkspaceDescriptor(
+        createAcpRemotePathProfile('/remote/workspace')
+      );
+      const protectedRoot = deriveAcpRemoteHostStateRoot(
+        descriptor.collisionIdentity,
+        storageRoot
+      );
+      const protectedRootResponse = await fetch(
+        server.url + 'sessions/parent-session/fork',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ projectPath: protectedRoot }),
+        }
+      );
+      expect(protectedRootResponse.status).toBe(400);
 
       const missingBodyResponse = await fetch(
         `${server.url}sessions/parent-session/fork`,

@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -178,7 +177,12 @@ import {
   type SessionProjectionReservation,
   SessionProjectionResidency,
 } from '../SessionProjectionResidency.js';
-import { normalizeSessionRef, type SessionRef, sessionRefKey } from '../sessionRef.js';
+import {
+  normalizeLocalWorkspacePath,
+  normalizeSessionRef,
+  type SessionRef,
+  sessionRefKey,
+} from '../sessionRef.js';
 import { WebBrowserSessionRegistry } from '../WebBrowserSessionRegistry.js';
 import { BrowserRoutes } from './browser.js';
 
@@ -1216,10 +1220,13 @@ function normalizeProjectPathInput(
   projectPath: string,
   label: 'projectPath' | 'directory' = 'projectPath'
 ): string {
-  if (!path.isAbsolute(projectPath)) {
-    throw new BadRequestError(`${label} must be absolute`);
+  try {
+    return normalizeLocalWorkspacePath(projectPath, label);
+  } catch (error) {
+    throw new BadRequestError(
+      error instanceof Error ? error.message : `${label} is invalid`
+    );
   }
-  return path.resolve(projectPath);
 }
 
 function validateSessionIdOrThrow(sessionId: string): void {

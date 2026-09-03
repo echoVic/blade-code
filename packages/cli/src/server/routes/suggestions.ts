@@ -12,6 +12,8 @@ import {
   DEFAULT_EXCLUDE_DIRS,
   DEFAULT_EXCLUDE_FILE_PATTERNS,
 } from '../../utils/filePatterns.js';
+import { BadRequestError } from '../error.js';
+import { normalizeLocalWorkspacePath } from '../sessionRef.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -53,13 +55,23 @@ const WEB_EXCLUDED_COMMANDS = new Set([
   '/logout',
 ]);
 
+function requireLocalDirectory(directory: string): string {
+  try {
+    return normalizeLocalWorkspacePath(directory, 'directory');
+  } catch (error) {
+    throw new BadRequestError(
+      error instanceof Error ? error.message : 'directory is invalid'
+    );
+  }
+}
+
 export const SuggestionsRoutes = () => {
   const app = new Hono<{ Variables: Variables }>();
 
   app.get('/commands', async (c) => {
+    const directory = requireLocalDirectory(c.get('directory') || getCwd());
     try {
       const query = c.req.query('q') || '';
-      const directory = c.get('directory') || getCwd();
       const resources = await resolveWorkspaceAgentResources(directory);
       const suggestions = getFuzzyCommandSuggestions(
         query,
@@ -74,9 +86,9 @@ export const SuggestionsRoutes = () => {
   });
 
   app.get('/files', async (c) => {
+    const directory = requireLocalDirectory(c.get('directory') || getCwd());
     try {
       const query = c.req.query('q') || '';
-      const directory = c.get('directory') || getCwd();
       const limit = Math.min(Number(c.req.query('limit')) || 100, 1000);
       const filesOnly = c.req.query('type') === 'file';
 
@@ -109,8 +121,8 @@ export const SuggestionsRoutes = () => {
   });
 
   app.get('/files/tree', async (c) => {
+    const directory = requireLocalDirectory(c.get('directory') || getCwd());
     try {
-      const directory = c.get('directory') || getCwd();
       const subPath = c.req.query('path') || '';
       const targetDir = subPath ? path.join(directory, subPath) : directory;
 
@@ -147,13 +159,13 @@ export const SuggestionsRoutes = () => {
   });
 
   app.get('/files/content', async (c) => {
+    const directory = requireLocalDirectory(c.get('directory') || getCwd());
     try {
       const rawPath = c.req.query('path');
       if (!rawPath) {
         return c.json({ error: 'Missing file path' }, 400);
       }
 
-      const directory = c.get('directory') || getCwd();
       const resolvedPath = path.resolve(directory, rawPath);
       const relative = path.relative(directory, resolvedPath);
       if (relative.startsWith('..') || path.isAbsolute(relative)) {
@@ -183,8 +195,8 @@ export const SuggestionsRoutes = () => {
   });
 
   app.get('/git-info', async (c) => {
+    const directory = requireLocalDirectory(c.get('directory') || getCwd());
     try {
-      const directory = c.get('directory') || getCwd();
       const branch = getGitBranch(directory);
       return c.json({ branch });
     } catch (error) {
