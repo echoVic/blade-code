@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +9,10 @@ import {
   deriveAcpRemoteHostStateRoot,
   withValidatedAcpRemoteStateScope,
 } from '../../../src/acp/AcpRemoteWorkspace.js';
-import { __setAcpRemoteWorkspaceReferenceHooksForTesting } from '../../../src/acp/AcpRemoteWorkspaceReference.js';
+import {
+  __setAcpRemoteWorkspaceReferenceHooksForTesting,
+  getAcpRemoteWorkspaceReferenceFilePath,
+} from '../../../src/acp/AcpRemoteWorkspaceReference.js';
 import { AcpServiceContext } from '../../../src/acp/AcpServiceContext.js';
 import { Agent } from '../../../src/agent/Agent.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
@@ -196,6 +199,48 @@ describe('SessionSurfaceService', () => {
         message: expect.not.stringContaining('PRIVATE_CLOSE_REASON'),
       })
     );
+  });
+
+  it('returns not found for a remote locator after its public reference rotates', async () => {
+    const sessionId = 'rotated-surface-session';
+    const descriptor = createAcpRemoteWorkspaceDescriptor(
+      createAcpRemotePathProfile('C:\\Remote\\Rotated')
+    );
+    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
+    await SessionService.createRemoteSessionMetadata(
+      sessionId,
+      hostStateRoot,
+      descriptor,
+      { title: 'Rotated surface', taskStatus: 'completed' }
+    );
+    const firstCatalog = await service.listPage({
+      archived: false,
+      workspaceKind: 'acp-remote',
+    });
+    const oldLocator = firstCatalog.sessions.find(
+      (entry) => entry.locator.sessionId === sessionId
+    )?.locator;
+    expect(oldLocator?.workspace.kind).toBe('acp-remote');
+    if (!oldLocator || oldLocator.workspace.kind !== 'acp-remote') {
+      throw new Error('Expected the initial remote locator');
+    }
+
+    await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
+      await unlink(getAcpRemoteWorkspaceReferenceFilePath(scope, descriptor));
+    });
+    const replacementCatalog = await service.listPage({
+      archived: false,
+      workspaceKind: 'acp-remote',
+    });
+    const replacement = replacementCatalog.sessions.find(
+      (entry) => entry.locator.sessionId === sessionId
+    );
+    expect(replacement?.locator.workspace.kind).toBe('acp-remote');
+    expect(replacement?.locator).not.toEqual(oldLocator);
+
+    await expect(service.open(oldLocator)).rejects.toMatchObject({
+      code: 'session_surface_not_found',
+    });
   });
 
   it('opens bounded history and rejects stale or parameter-mismatched cursors', async () => {

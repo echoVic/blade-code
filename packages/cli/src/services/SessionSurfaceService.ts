@@ -897,6 +897,21 @@ export class SessionSurfaceService {
     locator: SessionLocatorV2,
     signal?: AbortSignal
   ): Promise<ResolvedSessionSurface> {
+    const candidates = readSessionSurfaceCandidates(database, locator.sessionId).filter(
+      (candidate) =>
+        locator.workspace.kind === 'local'
+          ? candidate.sourceKind === 'local' &&
+            candidate.projectPath === path.resolve(locator.workspace.projectPath)
+          : candidate.sourceKind === 'acp-remote' &&
+            candidate.publicWorkspaceRef === locator.workspace.workspaceRef
+    );
+    if (candidates.length !== 1) {
+      throw new SessionSurfaceServiceError(
+        candidates.length === 0
+          ? 'session_surface_not_found'
+          : 'workspace_binding_mismatch'
+      );
+    }
     let remoteMatches:
       | Awaited<ReturnType<typeof SessionService.listValidatedRemoteSurfaceCandidates>>
       | undefined;
@@ -915,21 +930,6 @@ export class SessionSurfaceService {
       if (remoteMatches.length > 1) {
         throw new SessionSurfaceServiceError('session_surface_state_invalid');
       }
-    }
-    const candidates = readSessionSurfaceCandidates(database, locator.sessionId).filter(
-      (candidate) =>
-        locator.workspace.kind === 'local'
-          ? candidate.sourceKind === 'local' &&
-            candidate.projectPath === path.resolve(locator.workspace.projectPath)
-          : candidate.sourceKind === 'acp-remote' &&
-            candidate.publicWorkspaceRef === locator.workspace.workspaceRef
-    );
-    if (candidates.length !== 1) {
-      throw new SessionSurfaceServiceError(
-        candidates.length === 0
-          ? 'session_surface_not_found'
-          : 'workspace_binding_mismatch'
-      );
     }
     return remoteMatches
       ? { candidate: candidates[0]!, remoteCandidate: remoteMatches[0]! }
