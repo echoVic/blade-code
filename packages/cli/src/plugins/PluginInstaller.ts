@@ -9,6 +9,7 @@ import { satisfies } from 'semver';
 import writeFileAtomic from 'write-file-atomic';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import type { PluginSourcePolicy } from '../config/types.js';
+import { normalizeLocalWorkspacePath } from '../context/storage/pathUtils.js';
 import { logger } from '../logging/Logger.js';
 import { assertBladeVersionCompatible } from './PluginCompatibility.js';
 import { parsePluginManifest } from './PluginManifest.js';
@@ -1205,6 +1206,7 @@ export class PluginInstaller {
           ? path.join(homedir(), source.slice(2))
           : source;
     const resolved = path.resolve(workspaceRoot ?? process.cwd(), expanded);
+    this.assertAllowedLocalSource(resolved);
     let realPath: string;
     try {
       realPath = await fs.realpath(resolved);
@@ -1221,7 +1223,19 @@ export class PluginInstaller {
         'Local plugin sources must be regular directories'
       );
     }
+    this.assertAllowedLocalSource(realPath);
     return realPath;
+  }
+
+  private assertAllowedLocalSource(sourcePath: string): void {
+    try {
+      normalizeLocalWorkspacePath(sourcePath, 'sourcePath');
+    } catch {
+      throw new PluginPackageError(
+        'INVALID_LOCAL_SOURCE',
+        'Local plugin source must reference a local workspace'
+      );
+    }
   }
 
   private async materializeSource(
@@ -1229,6 +1243,9 @@ export class PluginInstaller {
       | PluginMarketplaceSource
       | Exclude<PluginInstallSource, { type: 'marketplace' }>
   ): Promise<MaterializedSource> {
+    if (source.type === 'local') {
+      this.assertAllowedLocalSource(source.path);
+    }
     await this.ensureStoreDirectory();
     const stagingPath = path.join(this.stateRoot, 'staging', randomUUID());
     await fs.mkdir(path.dirname(stagingPath), { recursive: true, mode: 0o700 });

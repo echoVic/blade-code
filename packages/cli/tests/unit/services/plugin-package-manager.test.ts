@@ -2,7 +2,10 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createAcpRemotePathProfile } from '../../../src/acp/AcpRemotePath.js';
+import { deriveAcpRemoteHostStateRoot } from '../../../src/acp/AcpRemoteWorkspace.js';
 import { PluginInstaller } from '../../../src/plugins/PluginInstaller.js';
+import type { PluginPackageState } from '../../../src/plugins/types.js';
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -72,12 +75,26 @@ describe('PluginInstaller package store', () => {
     marketplaceRoot = path.join(root, 'marketplace');
     stateRoot = path.join(root, 'state');
     installer = new PluginInstaller(path.join(root, 'legacy-plugins'), stateRoot);
+    process.env.BLADE_STORAGE_ROOT = path.join(root, 'blade-storage');
     await writeMarketplace(marketplaceRoot, 'VERSION_ONE', '1.0.0');
   });
 
   afterEach(async () => {
+    delete process.env.BLADE_STORAGE_ROOT;
     await fs.rm(root, { recursive: true, force: true });
   });
+
+  async function overwritePackageState(
+    update: (state: PluginPackageState) => void
+  ): Promise<void> {
+    const statePath = path.join(stateRoot, 'state.json');
+    const state = JSON.parse(
+      await fs.readFile(statePath, 'utf8')
+    ) as PluginPackageState;
+    update(state);
+    await fs.writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    await fs.chmod(statePath, 0o600);
+  }
 
   it('requires explicit trust before materializing executable plugin resources', async () => {
     const marketplace = await installer.addMarketplace(marketplaceRoot);
@@ -168,6 +185,55 @@ describe('PluginInstaller package store', () => {
     await expect(installer.listInstalled()).resolves.toEqual([]);
     await expect(fs.access(firstPath)).resolves.toBeUndefined();
     await expect(fs.access(updated.pluginPath!)).resolves.toBeUndefined();
+  });
+
+  it('rejects a persisted local plugin source inside protected ACP state', async () => {
+    await installer.addMarketplace(marketplaceRoot);
+    await installer.install('managed-plugin@test-market', { trusted: true });
+    const descriptor = createAcpRemotePathProfile('/remote/persisted-plugin');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    const protectedPlugin = path.join(protectedRoot, 'plugin-source');
+    await writeJson(path.join(protectedPlugin, '.blade-plugin', 'plugin.json'), {
+      name: 'managed-plugin',
+      description: 'Protected managed fixture',
+      version: '2.0.0',
+    });
+    await overwritePackageState((state) => {
+      const installed = state.installed['managed-plugin'];
+      if (!installed) throw new Error('expected installed plugin fixture');
+      installed.source = { type: 'local', path: protectedPlugin };
+    });
+
+    await expect(
+      installer.update('managed-plugin', { trusted: true })
+    ).resolves.toMatchObject({
+      success: false,
+      code: 'INVALID_LOCAL_SOURCE',
+      error: expect.not.stringContaining(protectedRoot),
+    });
+  });
+
+  it('rejects a persisted local marketplace source inside protected ACP state', async () => {
+    await installer.addMarketplace(marketplaceRoot);
+    const descriptor = createAcpRemotePathProfile('/remote/persisted-marketplace');
+    const protectedRoot = deriveAcpRemoteHostStateRoot(
+      descriptor.workspace.collisionIdentity
+    );
+    const protectedMarketplace = path.join(protectedRoot, 'marketplace-source');
+    await writeMarketplace(protectedMarketplace, 'PROTECTED_UPDATE', '2.0.0');
+    await overwritePackageState((state) => {
+      const marketplace = state.marketplaces['test-market'];
+      if (!marketplace) throw new Error('expected marketplace fixture');
+      marketplace.source = { type: 'local', path: protectedMarketplace };
+    });
+
+    await expect(installer.refreshMarketplace('test-market')).resolves.toMatchObject({
+      success: false,
+      code: 'INVALID_LOCAL_SOURCE',
+      error: expect.not.stringContaining(protectedRoot),
+    });
   });
 
   it('fails closed when immutable package contents are modified after install', async () => {
