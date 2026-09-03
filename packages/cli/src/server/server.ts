@@ -36,6 +36,10 @@ import {
   createSessionRouteController,
   type SessionRouteController,
 } from './routes/session.js';
+import {
+  createSessionSurfaceRouteController,
+  type SessionSurfaceRouteController,
+} from './routes/sessionSurface.js';
 import { SkillsRoutes } from './routes/skills.js';
 import { SuggestionsRoutes } from './routes/suggestions.js';
 import { TaskRoutes } from './routes/task.js';
@@ -62,6 +66,7 @@ let recoverQueuedTasksOnStart: (() => Promise<unknown>) | undefined;
 let taskScheduler: TaskScheduler | undefined;
 let staleSessionGcTimer: ReturnType<typeof setInterval> | undefined;
 let activeSessionController: SessionRouteController | undefined;
+let activeSessionSurfaceController: SessionSurfaceRouteController | undefined;
 let activeEventController: EventRouteController | undefined;
 const staticAssetContentCache = new Map<string, Buffer>();
 const staticAssetCompressionCache = new Map<string, Buffer>();
@@ -310,33 +315,56 @@ function createApp(): Hono<{ Variables: Variables }> {
     return next();
   });
 
-  const sessionController = createSessionRouteController();
-  const eventController = createEventRouteController();
-  activeSessionController = sessionController;
-  activeEventController = eventController;
-  recoverQueuedTasksOnStart = sessionController.recoverQueuedTasks;
-  taskScheduler = new TaskScheduler({
-    dispatch: (input) => sessionController.dispatchTask(input),
-    store: scheduleStore,
-  });
-  app.route('/global', GlobalRoutes());
-  app.route('/events', eventController.app);
-  app.route('/sessions', sessionController.app);
-  app.route('/tasks', TaskRoutes(sessionController));
-  app.route('/teams', TeamRoutes());
-  app.route('/schedules', ScheduleRoutes(scheduleStore, taskScheduler));
-  app.route('/configs', ConfigRoutes());
-  app.route('/permissions', PermissionRoutes());
-  app.route('/plugins', PluginRoutes());
-  app.route('/hooks', HookRoutes());
-  app.route('/workspace-trust', WorkspaceTrustRoutes());
-  app.route('/providers', ProviderRoutes());
-  app.route('/models', ModelsRoutes());
-  app.route('/projects', ProjectRoutes());
-  app.route('/suggestions', SuggestionsRoutes());
-  app.route('/terminal', TerminalRoutes());
-  app.route('/mcp', McpRoutes());
-  app.route('/skills', SkillsRoutes());
+  let sessionController: SessionRouteController | undefined;
+  let sessionSurfaceController: SessionSurfaceRouteController | undefined;
+  let eventController: EventRouteController | undefined;
+  try {
+    sessionController = createSessionRouteController();
+    sessionSurfaceController = createSessionSurfaceRouteController();
+    eventController = createEventRouteController();
+    activeSessionController = sessionController;
+    activeSessionSurfaceController = sessionSurfaceController;
+    activeEventController = eventController;
+    recoverQueuedTasksOnStart = sessionController.recoverQueuedTasks;
+    taskScheduler = new TaskScheduler({
+      dispatch: (input) => sessionController!.dispatchTask(input),
+      store: scheduleStore,
+    });
+    app.route('/global', GlobalRoutes());
+    app.route('/events', eventController.app);
+    app.route('/sessions/v2', sessionSurfaceController.app);
+    app.route('/sessions', sessionController.app);
+    app.route('/tasks', TaskRoutes(sessionController));
+    app.route('/teams', TeamRoutes());
+    app.route('/schedules', ScheduleRoutes(scheduleStore, taskScheduler));
+    app.route('/configs', ConfigRoutes());
+    app.route('/permissions', PermissionRoutes());
+    app.route('/plugins', PluginRoutes());
+    app.route('/hooks', HookRoutes());
+    app.route('/workspace-trust', WorkspaceTrustRoutes());
+    app.route('/providers', ProviderRoutes());
+    app.route('/models', ModelsRoutes());
+    app.route('/projects', ProjectRoutes());
+    app.route('/suggestions', SuggestionsRoutes());
+    app.route('/terminal', TerminalRoutes());
+    app.route('/mcp', McpRoutes());
+    app.route('/skills', SkillsRoutes());
+  } catch (error) {
+    void closeRouteControllers(
+      sessionController,
+      sessionSurfaceController,
+      eventController,
+      'server-startup-failure'
+    ).catch((cleanupError) => {
+      logger.error('[Server] Failed to clean up route controllers:', cleanupError);
+    });
+    activeSessionController = undefined;
+    activeSessionSurfaceController = undefined;
+    activeEventController = undefined;
+    recoverQueuedTasksOnStart = undefined;
+    taskScheduler = undefined;
+    throw error;
+  }
 
   app.get('/health', (c) => {
     return c.json({ healthy: true, version: getVersion() });
@@ -461,6 +489,33 @@ function createApp(): Hono<{ Variables: Variables }> {
   }
 
   return app;
+}
+
+async function closeRouteControllers(
+  sessionController: SessionRouteController | undefined,
+  sessionSurfaceController: SessionSurfaceRouteController | undefined,
+  eventController: EventRouteController | undefined,
+  reason: string
+): Promise<void> {
+  const shutdowns: Promise<void>[] = [];
+  let firstError: unknown;
+  for (const controller of [
+    sessionController,
+    sessionSurfaceController,
+    eventController,
+  ]) {
+    try {
+      shutdowns.push(controller?.shutdown(reason) ?? Promise.resolve());
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  const results = await Promise.allSettled(shutdowns);
+  const rejected = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+  if (firstError !== undefined) throw firstError;
+  if (rejected) throw rejected.reason;
 }
 
 export function getNetworkIPs(): string[] {
@@ -738,24 +793,101 @@ export namespace BladeServer {
   let app: Hono<{ Variables: Variables }> | undefined;
   let stopPromise: Promise<void> | undefined;
 
+  const cleanupFailedStart = async (
+    sessionController: SessionRouteController | undefined,
+    sessionSurfaceController: SessionSurfaceRouteController | undefined,
+    eventController: EventRouteController | undefined,
+    handle?: ServerHandle
+  ): Promise<void> => {
+    const errors: unknown[] = [];
+    const ownedTaskScheduler = taskScheduler;
+    const asyncCleanup: Promise<void>[] = [];
+    app = undefined;
+    if (activeSessionController === sessionController) {
+      activeSessionController = undefined;
+    }
+    if (activeSessionSurfaceController === sessionSurfaceController) {
+      activeSessionSurfaceController = undefined;
+    }
+    if (activeEventController === eventController) {
+      activeEventController = undefined;
+    }
+    recoverQueuedTasksOnStart = undefined;
+    taskScheduler = undefined;
+    if (handle && serverHandle === handle) {
+      serverHandle = undefined;
+      stopPromise = undefined;
+    }
+    try {
+      asyncCleanup.push(
+        closeRouteControllers(
+          sessionController,
+          sessionSurfaceController,
+          eventController,
+          'server-startup-failure'
+        )
+      );
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      ownedTaskScheduler?.stop();
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      stopStaleSessionGc();
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      resetWorkspaceAgentResources();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (handle) {
+      try {
+        asyncCleanup.push(handle.stop());
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    const results = await Promise.allSettled(asyncCleanup);
+    for (const result of results) {
+      if (result.status === 'rejected') errors.push(result.reason);
+    }
+    for (const error of errors) {
+      logger.error('[Server] Startup cleanup failed:', error);
+    }
+  };
+
   const stopOwnedServer = (
     handle: ServerHandle,
     sessionController: SessionRouteController | undefined,
+    sessionSurfaceController: SessionSurfaceRouteController | undefined,
     eventController: EventRouteController | undefined
   ): Promise<void> => {
     if (serverHandle !== handle) return Promise.resolve();
     if (stopPromise) return stopPromise;
 
     let sessionRouteStartError: unknown;
+    let sessionSurfaceRouteStartError: unknown;
     let eventRouteStartError: unknown;
     let taskSchedulerStopError: unknown;
     let staleSessionGcStopError: unknown;
     let sessionRouteShutdown: Promise<void> | undefined;
+    let sessionSurfaceRouteShutdown: Promise<void> | undefined;
     let eventRouteShutdown: Promise<void> | undefined;
     try {
       sessionRouteShutdown = sessionController?.shutdown('server-shutdown');
     } catch (error) {
       sessionRouteStartError = error;
+    }
+    try {
+      sessionSurfaceRouteShutdown =
+        sessionSurfaceController?.shutdown('server-shutdown');
+    } catch (error) {
+      sessionSurfaceRouteStartError = error;
     }
     try {
       eventRouteShutdown = eventController?.shutdown('server-shutdown');
@@ -774,12 +906,17 @@ export namespace BladeServer {
     }
     stopPromise = (async () => {
       const transportStop = Promise.resolve().then(() => handle.stop());
-      const [sessionRouteResult, eventRouteResult, transportResult] =
-        await Promise.allSettled([
-          sessionRouteShutdown ?? Promise.resolve(),
-          eventRouteShutdown ?? Promise.resolve(),
-          transportStop,
-        ]);
+      const [
+        sessionRouteResult,
+        sessionSurfaceRouteResult,
+        eventRouteResult,
+        transportResult,
+      ] = await Promise.allSettled([
+        sessionRouteShutdown ?? Promise.resolve(),
+        sessionSurfaceRouteShutdown ?? Promise.resolve(),
+        eventRouteShutdown ?? Promise.resolve(),
+        transportStop,
+      ]);
       let resetError: unknown;
       try {
         resetWorkspaceAgentResources();
@@ -790,6 +927,10 @@ export namespace BladeServer {
         sessionRouteStartError,
         sessionRouteResult.status === 'rejected'
           ? sessionRouteResult.reason
+          : undefined,
+        sessionSurfaceRouteStartError,
+        sessionSurfaceRouteResult.status === 'rejected'
+          ? sessionSurfaceRouteResult.reason
           : undefined,
         eventRouteStartError,
         eventRouteResult.status === 'rejected' ? eventRouteResult.reason : undefined,
@@ -809,6 +950,9 @@ export namespace BladeServer {
         app = undefined;
         if (activeSessionController === sessionController) {
           activeSessionController = undefined;
+        }
+        if (activeSessionSurfaceController === sessionSurfaceController) {
+          activeSessionSurfaceController = undefined;
         }
         if (activeEventController === eventController) {
           activeEventController = undefined;
@@ -832,34 +976,53 @@ export namespace BladeServer {
     corsWhitelist = opts.cors ?? [];
 
     const honoApp = getApp();
+    const sessionController = activeSessionController;
+    const sessionSurfaceController = activeSessionSurfaceController;
+    const eventController = activeEventController;
+    let handle: ServerHandle | undefined;
 
-    if (isBunRuntime()) {
-      serverHandle = startWithBun(honoApp, opts);
-      stopPromise = undefined;
-      logger.info(
-        `[Server] Blade server listening on ${serverHandle.url} (Bun runtime)`
+    try {
+      if (isBunRuntime()) {
+        handle = startWithBun(honoApp, opts);
+        serverHandle = handle;
+        stopPromise = undefined;
+        logger.info(
+          `[Server] Blade server listening on ${serverHandle.url} (Bun runtime)`
+        );
+      } else {
+        throw new Error(
+          'Blade web server requires Bun runtime. ' +
+            'Please run with Bun: `bun run blade web` or install Bun from https://bun.sh'
+        );
+      }
+      void recoverQueuedTasksOnStart?.().catch((error) => {
+        logger.warn('[Server] Failed to recover queued tasks:', error);
+      });
+      taskScheduler?.start();
+      startStaleSessionGc();
+    } catch (error) {
+      void cleanupFailedStart(
+        sessionController,
+        sessionSurfaceController,
+        eventController,
+        handle
       );
-    } else {
-      throw new Error(
-        'Blade web server requires Bun runtime. ' +
-          'Please run with Bun: `bun run blade web` or install Bun from https://bun.sh'
-      );
+      throw error;
     }
 
-    const handle = serverHandle;
-    const sessionController = activeSessionController;
-    const eventController = activeEventController;
-    void recoverQueuedTasksOnStart?.().catch((error) => {
-      logger.warn('[Server] Failed to recover queued tasks:', error);
-    });
-    taskScheduler?.start();
-    startStaleSessionGc();
+    if (!handle) throw new Error('Server transport failed to initialize');
 
     return {
       url: handle.url,
       port: handle.port,
       hostname: handle.hostname,
-      stop: () => stopOwnedServer(handle, sessionController, eventController),
+      stop: () =>
+        stopOwnedServer(
+          handle,
+          sessionController,
+          sessionSurfaceController,
+          eventController
+        ),
     };
   }
 
@@ -867,36 +1030,54 @@ export namespace BladeServer {
     corsWhitelist = opts.cors ?? [];
 
     const honoApp = getApp();
-
-    if (isBunRuntime()) {
-      serverHandle = startWithBun(honoApp, opts);
-      logger.info(
-        `[Server] Blade server listening on ${serverHandle.url} (Bun runtime)`
-      );
-    } else {
-      serverHandle = await startWithNode(honoApp, opts);
-      logger.info(
-        `[Server] Blade server listening on ${serverHandle.url} (Node.js runtime)`
-      );
-    }
-    stopPromise = undefined;
-
-    const handle = serverHandle;
     const sessionController = activeSessionController;
+    const sessionSurfaceController = activeSessionSurfaceController;
     const eventController = activeEventController;
+    let handle: ServerHandle | undefined;
+
     try {
-      await recoverQueuedTasksOnStart?.();
+      if (isBunRuntime()) {
+        handle = startWithBun(honoApp, opts);
+        serverHandle = handle;
+        logger.info(`[Server] Blade server listening on ${handle.url} (Bun runtime)`);
+      } else {
+        handle = await startWithNode(honoApp, opts);
+        serverHandle = handle;
+        logger.info(
+          `[Server] Blade server listening on ${handle.url} (Node.js runtime)`
+        );
+      }
+      stopPromise = undefined;
+      try {
+        await recoverQueuedTasksOnStart?.();
+      } catch (error) {
+        logger.warn('[Server] Failed to recover queued tasks:', error);
+      }
+      taskScheduler?.start();
+      startStaleSessionGc();
     } catch (error) {
-      logger.warn('[Server] Failed to recover queued tasks:', error);
+      await cleanupFailedStart(
+        sessionController,
+        sessionSurfaceController,
+        eventController,
+        handle
+      );
+      throw error;
     }
-    taskScheduler?.start();
-    startStaleSessionGc();
+
+    if (!handle) throw new Error('Server transport failed to initialize');
 
     return {
       url: handle.url,
       port: handle.port,
       hostname: handle.hostname,
-      stop: () => stopOwnedServer(handle, sessionController, eventController),
+      stop: () =>
+        stopOwnedServer(
+          handle,
+          sessionController,
+          sessionSurfaceController,
+          eventController
+        ),
     };
   }
 
@@ -906,6 +1087,10 @@ export namespace BladeServer {
 
   export function getSessionCoordinationStatsForTests() {
     return activeSessionController?.getCoordinationStats();
+  }
+
+  export function getSessionSurfaceStatsForTests() {
+    return activeSessionSurfaceController?.getStats();
   }
 
   export function getSseConnectionStatsForTests() {

@@ -2402,6 +2402,29 @@ describe('SessionRoutes runtime reuse', () => {
     });
   });
 
+  it('preserves exact V1 local session lookup semantics beside the V2 mount', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const projectPath = '/tmp/v1-local-parity';
+    const metadata = metadataFor('v1-local-session', projectPath);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, requestedProjectPath) =>
+        sessionId === metadata.sessionId && requestedProjectPath === projectPath
+          ? metadata
+          : undefined
+    );
+
+    const response = await SessionRoutes().request(
+      '/' + metadata.sessionId + '?projectPath=' + encodeURIComponent(projectPath)
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(metadata);
+    expect(SessionService.findSessionMetadata).toHaveBeenCalledWith(
+      metadata.sessionId,
+      projectPath
+    );
+  });
+
   it('exports an exact active or archived session as non-cacheable Markdown', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const projectPath = '/tmp/export-workspace';
