@@ -149,7 +149,7 @@ describe('session surface schemas', () => {
       ).toThrow();
     });
 
-    it('retains the durable Session ID validation contract for locators', () => {
+    it('retains the durable Session ID validation contract for locators and lineage', () => {
       const invalidSessionIds = ['../private', 'a/b', '.', '..', 'a'.repeat(201)];
       for (const sessionId of invalidSessionIds) {
         expect(() =>
@@ -160,6 +160,20 @@ describe('session surface schemas', () => {
               kind: 'acp-remote',
               workspaceRef: `acp-remote-workspace:${'C'.repeat(43)}`,
             },
+          })
+        ).toThrow();
+      }
+      for (const lineageId of invalidSessionIds) {
+        expect(() =>
+          SessionSurfaceSummarySchema.parse({
+            ...summaryFixture,
+            rootId: lineageId,
+          })
+        ).toThrow();
+        expect(() =>
+          SessionSurfaceSummarySchema.parse({
+            ...summaryFixture,
+            parentId: lineageId,
           })
         ).toThrow();
       }
