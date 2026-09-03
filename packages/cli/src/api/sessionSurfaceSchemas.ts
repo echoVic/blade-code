@@ -19,12 +19,17 @@ const SessionSurfaceRemoteRefSchema = Type.String({
 const SessionSurfaceLimitSchema = Type.Optional(
   Type.Integer({ minimum: 1, maximum: 100 })
 );
+const SessionIdSchema = Type.String({
+  minLength: 1,
+  maxLength: 200,
+  pattern: '^[A-Za-z0-9_-][A-Za-z0-9._-]{0,199}$',
+});
 
 export const SessionLocatorV2Schema = Runtime(
   Type.Union([
     StrictObject({
       version: Type.Literal(2),
-      sessionId: Type.String({ minLength: 1 }),
+      sessionId: SessionIdSchema,
       workspace: StrictObject({
         kind: Type.Literal('local'),
         projectPath: Type.String({ minLength: 1 }),
@@ -32,7 +37,7 @@ export const SessionLocatorV2Schema = Runtime(
     }),
     StrictObject({
       version: Type.Literal(2),
-      sessionId: Type.String({ minLength: 1 }),
+      sessionId: SessionIdSchema,
       workspace: StrictObject({
         kind: Type.Literal('acp-remote'),
         workspaceRef: SessionSurfaceRemoteRefSchema,

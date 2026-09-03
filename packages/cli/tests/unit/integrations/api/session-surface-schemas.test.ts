@@ -148,6 +148,22 @@ describe('session surface schemas', () => {
         })
       ).toThrow();
     });
+
+    it('retains the durable Session ID validation contract for locators', () => {
+      const invalidSessionIds = ['../private', 'a/b', '.', '..', 'a'.repeat(201)];
+      for (const sessionId of invalidSessionIds) {
+        expect(() =>
+          SessionLocatorV2Schema.parse({
+            version: 2,
+            sessionId,
+            workspace: {
+              kind: 'acp-remote',
+              workspaceRef: `acp-remote-workspace:${'C'.repeat(43)}`,
+            },
+          })
+        ).toThrow();
+      }
+    });
   });
 
   describe('SessionSurfaceMessageSchema', () => {

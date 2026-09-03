@@ -333,9 +333,18 @@ describe('App bootstrap', () => {
 
   it('cleans an invalid remote history link without issuing an open request', async () => {
     window.history.replaceState(
-      { bladeSessionSurfaceLocator: 'invalid' },
+      {
+        bladeSessionSurfaceLocator: {
+          version: 2,
+          sessionId: '../private',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
+        },
+      },
       '',
-      '/?view=history&session=remote-session&workspaceKind=acp-remote'
+      `/?view=history&session=..%2Fprivate&workspaceKind=acp-remote&workspaceRef=acp-remote-workspace%3A${'A'.repeat(43)}`
     );
 
     await act(async () => {
@@ -347,7 +356,7 @@ describe('App bootstrap', () => {
     expect(window.location.search).not.toContain('view=history');
     expect(window.location.search).not.toContain('workspaceKind');
     expect(window.location.search).not.toContain('workspaceRef');
-    expect(window.location.search).not.toContain('session=remote-session');
+    expect(window.location.search).not.toContain('session=');
     expect(window.history.state).toBeNull();
   });
 
