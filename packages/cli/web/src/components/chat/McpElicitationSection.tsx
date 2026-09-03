@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { sessionService } from '@/services';
 import type { AgentResponseContent } from '@/store/session';
 import { useSessionStore } from '@/store/session';
+import { rejectHistorySurfaceAction } from '@/store/session/historySurfaceGuard';
 
 interface McpElicitationSectionProps {
   elicitation: NonNullable<AgentResponseContent['elicitation']>;
@@ -62,6 +63,7 @@ export function McpElicitationSection({
     action: 'accept' | 'decline' | 'cancel',
     content?: FormContent
   ) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (!currentSessionRef || submitting) return;
     setSubmitting(true);
     setError(undefined);
@@ -102,6 +104,7 @@ export function McpElicitationSection({
   };
 
   const openUrl = () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     const url = elicitation.details.url;
     if (!url) {
       setError('MCP URL is unavailable');

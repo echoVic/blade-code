@@ -30,6 +30,10 @@ import {
 import { type TranslationKey, useLocale, useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { type Goal, useSessionStore } from '@/store/session';
+import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
 
 const STATUS_PRESENTATION: Record<
   Goal['status'],
@@ -95,6 +99,9 @@ export function GoalControlBar() {
   const resumeGoal = useSessionStore((state) => state.resumeGoal);
   const editGoal = useSessionStore((state) => state.editGoal);
   const clearGoal = useSessionStore((state) => state.clearGoal);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -108,7 +115,7 @@ export function GoalControlBar() {
     setDeleteOpen(false);
   }, [goal?.goalId]);
 
-  if (!goal) return null;
+  if (historyOnly || !goal) return null;
 
   const presentation = STATUS_PRESENTATION[goal.status];
   const canEdit = ['active', 'verifying', 'paused', 'blocked'].includes(goal.status);
@@ -120,6 +127,7 @@ export function GoalControlBar() {
     action: Exclude<PendingAction, null>,
     operation: () => Promise<void>
   ) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     setPendingAction(action);
     try {
       await operation();

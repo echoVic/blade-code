@@ -27,6 +27,11 @@ const KanbanBoard = lazy(() =>
     default: module.KanbanBoard,
   }))
 );
+const SessionHistorySurface = lazy(() =>
+  import('@/components/history/SessionHistorySurface').then((module) => ({
+    default: module.SessionHistorySurface,
+  }))
+);
 
 function App() {
   const t = useT();
@@ -88,6 +93,15 @@ function App() {
       if (historyIntent.locator) {
         await openHistorySurface(historyIntent.locator);
         if (cancelled) return;
+        if (!useSessionStore.getState().historySurfaceSelection) {
+          syncHistorySurfaceNavigation(null, {
+            href: window.location.href,
+            historyState: window.history.state,
+          });
+          if (!useSessionStore.getState().currentSessionRef) {
+            startTemporarySession();
+          }
+        }
         setMainView('workspace');
         setBoardProjectPath(null);
         setIsBootstrapped(true);
@@ -215,6 +229,16 @@ function App() {
           <div className="flex h-full items-center justify-center font-mono text-[12px] text-[hsl(var(--deck-ink-faint))]">
             {t('app.restoring')}
           </div>
+        ) : historySurfaceSelection ? (
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center font-mono text-[12px] text-[hsl(var(--deck-ink-faint))]">
+                {t('app.restoring')}
+              </div>
+            }
+          >
+            <SessionHistorySurface />
+          </Suspense>
         ) : mainView === 'board' ? (
           <Suspense
             fallback={

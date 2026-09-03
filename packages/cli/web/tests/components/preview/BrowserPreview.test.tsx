@@ -17,6 +17,8 @@ import {
 import { setLocale } from '../../../src/i18n';
 import { clearComposerDraft, readComposerDraft } from '../../../src/lib/composerDraft';
 import { useBrowserActivityStore } from '../../../src/store/BrowserActivityStore';
+import { useSessionStore } from '../../../src/store/session';
+import type { SessionSurfaceSelection } from '../../../src/store/session/types';
 
 const browserService = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -39,6 +41,43 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   setter?.call(input, value);
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function historySelection(): SessionSurfaceSelection {
+  return {
+    locator: {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+    },
+    displayCwd: '/remote/project',
+    mode: 'history-only',
+    capabilities: {
+      connection: 'online',
+      history: { read: true, fork: true },
+      turn: { start: false, reason: 'history-only' },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none',
+        reason: 'history-only',
+      },
+      terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+    },
+  };
 }
 
 describe('preview browser URL boundary', () => {
@@ -120,6 +159,7 @@ describe('BrowserPanel', () => {
     setLocale('en');
     vi.clearAllMocks();
     useBrowserActivityStore.getState().clearAgentActivity();
+    useSessionStore.setState({ historySurfaceSelection: null, error: null });
     clearComposerDraft('session:["/project","session-1"]');
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
@@ -435,6 +475,109 @@ describe('BrowserPanel', () => {
     );
     await act(async () => reset?.click());
     await vi.waitFor(() => expect(browserService.reset).toHaveBeenCalled());
+  });
+
+  it('rejects a stale browser navigation after entering history-only mode', async () => {
+    await act(async () => {
+      root.render(
+        <BrowserPanel
+          sessionRef={{ sessionId: 'session-1', projectPath: '/project' }}
+        />
+      );
+    });
+    const testTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    ).find((button) => button.textContent?.includes('Test'));
+    await act(async () => testTab?.click());
+    const address = container.querySelector<HTMLInputElement>(
+      '[data-browser-panel-address]'
+    );
+    const form = address?.closest('form');
+    if (!address || !form) throw new Error('Browser address form was not rendered');
+    setInputValue(address, 'example.com');
+
+    await act(async () => {
+      useSessionStore.setState({ historySurfaceSelection: historySelection() });
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(browserService.navigate).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
+  });
+
+  it('does not issue a follow-up snapshot when an interaction resolves after history-only selection', async () => {
+    const observation = {
+      pageId: 'browser_page_1',
+      snapshotId: 'browser_snapshot_1',
+      url: 'https://example.com/',
+      origin: 'https://example.com:443',
+      title: 'Example',
+      viewport: { width: 1440, height: 900 },
+      tabs: [],
+      snapshot: '- button "Save" [ref=e1]',
+      truncated: false,
+    };
+    const interactionGate = deferred<{
+      outcome: 'applied_observation_failed';
+      pageId: string;
+      actionApplied: true;
+      sideEffectsUncertain: false;
+      observationError: 'browser_observation_failed';
+    }>();
+    browserService.navigate.mockResolvedValue(observation);
+    browserService.screenshot.mockResolvedValue(
+      new Blob(['png'], { type: 'image/png' })
+    );
+    browserService.interact.mockReturnValue(interactionGate.promise);
+
+    await act(async () => {
+      root.render(
+        <BrowserPanel
+          sessionRef={{ sessionId: 'session-1', projectPath: '/project' }}
+        />
+      );
+    });
+    const testTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    ).find((button) => button.textContent?.includes('Test'));
+    await act(async () => testTab?.click());
+    const address = container.querySelector<HTMLInputElement>(
+      '[data-browser-panel-address]'
+    );
+    const form = address?.closest('form');
+    if (!address || !form) throw new Error('Browser address form was not rendered');
+    await act(async () => {
+      setInputValue(address, 'example.com');
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-browser-ref="e1"]')).not.toBeNull()
+    );
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-browser-ref="e1"]')?.click();
+    });
+    browserService.snapshot.mockClear();
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Click selected element"]')
+        ?.click();
+    });
+    await vi.waitFor(() => expect(browserService.interact).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      useSessionStore.setState({ historySurfaceSelection: historySelection() });
+      interactionGate.resolve({
+        outcome: 'applied_observation_failed',
+        pageId: observation.pageId,
+        actionApplied: true,
+        sideEffectsUncertain: false,
+        observationError: 'browser_observation_failed',
+      });
+      await Promise.resolve();
+    });
+
+    expect(browserService.snapshot).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
   });
 
   it('switches to the read-only Agent browser and renders its pointer activity', async () => {

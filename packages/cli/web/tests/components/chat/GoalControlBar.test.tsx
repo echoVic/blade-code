@@ -78,12 +78,17 @@ const sessionState = vi.hoisted(() => ({
   resumeGoal: vi.fn().mockResolvedValue(undefined),
   editGoal: vi.fn().mockResolvedValue(undefined),
   clearGoal: vi.fn().mockResolvedValue(undefined),
+  historySurfaceSelection: null as null | { mode: 'history-only' },
+  setError: vi.fn(),
 }));
 
-vi.mock('@/store/session', () => ({
-  useSessionStore: (selector: (state: typeof sessionState) => unknown) =>
-    selector(sessionState),
-}));
+vi.mock('@/store/session', () => {
+  const useSessionStore = Object.assign(
+    (selector: (state: typeof sessionState) => unknown) => selector(sessionState),
+    { getState: () => sessionState }
+  );
+  return { useSessionStore };
+});
 
 import { GoalControlBar } from '../../../src/components/chat/GoalControlBar';
 
@@ -93,6 +98,7 @@ describe('GoalControlBar', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionState.historySurfaceSelection = null;
     (sessionState.goal as { status: string }).status = 'paused';
     sessionState.goal.statusReason = 'paused by user';
     sessionState.goal.completionVerification = undefined;
@@ -151,6 +157,21 @@ describe('GoalControlBar', () => {
       await Promise.resolve();
     });
     expect(sessionState.pauseGoal).toHaveBeenCalledOnce();
+  });
+
+  it('fails a stale goal action closed after entering history-only mode', async () => {
+    (sessionState.goal as { status: string }).status = 'active';
+    act(() => root.render(<GoalControlBar />));
+    const stalePause = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Pause goal"]'
+    );
+    expect(stalePause).toBeTruthy();
+    sessionState.historySurfaceSelection = { mode: 'history-only' };
+
+    await act(async () => stalePause?.click());
+
+    expect(sessionState.pauseGoal).not.toHaveBeenCalled();
+    expect(sessionState.setError).toHaveBeenCalledWith('session_surface_read_only');
   });
 
   it('projects durable premature-stop recovery state for automation', async () => {

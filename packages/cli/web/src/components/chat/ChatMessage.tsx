@@ -21,6 +21,10 @@ import type {
 } from '@/store/session';
 import { useSessionStore } from '@/store/session';
 import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
+import {
   getAgentTimeline,
   getSubagents,
   getTimelineText,
@@ -569,6 +573,9 @@ function TaskSection({ tasks }: { tasks: AgentResponseContent['tasks'] }) {
 
 function ChangedFilesSection({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
   const openFilePreview = useAppStore((state) => state.openFilePreview);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
 
   const changedFiles = useMemo(() => {
     const files = new Map<string, { path: string; toolName: string }>();
@@ -600,7 +607,12 @@ function ChangedFilesSection({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
     return Array.from(files.values());
   }, [toolCalls]);
 
-  if (changedFiles.length === 0) return null;
+  if (historyOnly || changedFiles.length === 0) return null;
+
+  const handleOpenFile = (path: string) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
+    openFilePreview({ tab: 'diff', targetPath: path });
+  };
 
   return (
     <div className="bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-lg px-3 py-2">
@@ -613,7 +625,7 @@ function ChangedFilesSection({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
           return (
             <button
               key={path}
-              onClick={() => openFilePreview({ tab: 'diff', targetPath: path })}
+              onClick={() => handleOpenFile(path)}
               className="flex items-center gap-1 px-2 py-1 text-[11px] font-mono bg-[#E5E7EB] dark:bg-[#27272a] text-[hsl(var(--deck-ink))] rounded hover:bg-[#D1D5DB] dark:hover:bg-[#3f3f46] transition-colors"
               title={path}
             >
@@ -641,6 +653,9 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const isTemporarySession = useSessionStore((state) => state.isTemporarySession);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
 
   if (!subagent) return null;
 
@@ -657,12 +672,14 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
     !isRunning &&
     !isStreaming &&
     !isTemporarySession &&
+    !historyOnly &&
     !recoveryFailed &&
     resumedChild?.status !== 'running' &&
     Boolean(resumeTarget && currentSessionRef);
 
   useEffect(() => {
     if (
+      historyOnly ||
       !expanded ||
       isRunning ||
       !subagent.sessionId ||
@@ -701,6 +718,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
     };
   }, [
     expanded,
+    historyOnly,
     isRunning,
     subagent.sessionId,
     subagent.toolCalls,
@@ -709,7 +727,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   ]);
 
   useEffect(() => {
-    if (!subagent.sessionId || !currentSessionRef) return;
+    if (historyOnly || !subagent.sessionId || !currentSessionRef) return;
     let mounted = true;
     const lineageRoot = subagent.rootAgentId ?? subagent.sessionId;
     const currentDepth = subagent.resumeDepth ?? 0;
@@ -741,13 +759,19 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   }, [
     currentSessionRef?.sessionId,
     currentSessionRef?.projectPath,
+    historyOnly,
     subagent.sessionId,
     subagent.rootAgentId,
     subagent.resumeDepth,
   ]);
 
   useEffect(() => {
-    if (!resumedChild || resumedChild.status !== 'running' || !currentSessionRef) {
+    if (
+      historyOnly ||
+      !resumedChild ||
+      resumedChild.status !== 'running' ||
+      !currentSessionRef
+    ) {
       return;
     }
     let mounted = true;
@@ -767,9 +791,10 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
       mounted = false;
       window.clearInterval(timer);
     };
-  }, [currentSessionRef, resumedChild?.id, resumedChild?.status]);
+  }, [currentSessionRef, historyOnly, resumedChild?.id, resumedChild?.status]);
 
   const handleResume = async () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (
       !currentSessionRef ||
       !resumeTarget ||
@@ -992,6 +1017,7 @@ function ConfirmationSection({
     approved: boolean,
     scope?: 'once' | 'session' | 'project'
   ) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (!currentSessionRef || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
@@ -1130,6 +1156,7 @@ function QuestionSection({
   if (!question) return null;
 
   const handleSubmit = async () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (!currentSessionRef || submitting || !allAnswered) return;
     setSubmitting(true);
     setSubmitError(null);

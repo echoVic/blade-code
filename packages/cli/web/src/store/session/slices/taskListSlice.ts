@@ -10,6 +10,10 @@ import { useConfigStore } from '@/store/ConfigStore';
 import { useScheduleStore } from '@/store/ScheduleStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import {
+  HISTORY_SURFACE_READ_ONLY_ERROR,
+  isHistorySurfaceActive,
+} from '../historySurfaceGuard';
+import {
   sameSessionRef,
   sessionRefFromSession,
   sessionRefKey,
@@ -844,6 +848,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     },
 
     bindProject: async (projectPath) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       set({ isBindingProject: true, error: null });
       try {
         const project = await sessionService.bindProject(projectPath);
@@ -869,6 +877,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     },
 
     unbindProject: async (projectPath) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       try {
         await sessionService.unbindProject(projectPath);
         set((state) => {
@@ -916,6 +928,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     },
 
     setTaskAdmissionPaused: async (paused) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       if (get().isUpdatingTaskAdmission) return;
       set({ isUpdatingTaskAdmission: true, error: null, errorContext: null });
       try {
@@ -938,6 +954,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     },
 
     updateTask: async (ref, input) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const key = sessionRefKey(ref);
       if (get().updatingTaskKeys.includes(key)) return;
       set((state) => ({
@@ -966,6 +986,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     },
 
     cancelTask: async (ref) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const key = sessionRefKey(ref);
       if (get().cancellingTaskKeys.includes(key)) return;
       set((state) => ({
@@ -1032,13 +1056,18 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     },
 
     retryTask: async (ref) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const key = sessionRefKey(ref);
       if (get().retryingTaskKeys.includes(key)) return;
       const navigationVersion = get().getNavigationVersion();
       const selectedProjectPath = get().selectedProjectPath;
       const ownsNavigation = (): boolean =>
         get().getNavigationVersion() === navigationVersion &&
-        get().selectedProjectPath === selectedProjectPath;
+        get().selectedProjectPath === selectedProjectPath &&
+        !isHistorySurfaceActive(get().historySurfaceSelection);
       set((state) => ({
         retryingTaskKeys: [...state.retryingTaskKeys, key],
         error: null,
@@ -1071,6 +1100,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     },
 
     deliverTask: async (ref, action) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const key = sessionRefKey(ref);
       if (get().taskDeliveryActions[key]) return;
       set((state) => ({
@@ -1104,12 +1137,17 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     },
 
     dispatchTask: async (input, options) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const navigationVersion = get().getNavigationVersion();
       const selectedProjectPath = get().selectedProjectPath;
       const projectPath = input.projectPath ?? selectedProjectPath ?? undefined;
       const ownsNavigation = (): boolean =>
         get().getNavigationVersion() === navigationVersion &&
-        get().selectedProjectPath === selectedProjectPath;
+        get().selectedProjectPath === selectedProjectPath &&
+        !isHistorySurfaceActive(get().historySurfaceSelection);
       set({
         isDispatchingTask: true,
         error: null,
@@ -1142,12 +1180,17 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     },
 
     startCodeReview: async (input) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const navigationVersion = get().getNavigationVersion();
       const selectedProjectPath = get().selectedProjectPath;
       const projectPath = input.projectPath ?? selectedProjectPath ?? undefined;
       const ownsNavigation = (): boolean =>
         get().getNavigationVersion() === navigationVersion &&
-        get().selectedProjectPath === selectedProjectPath;
+        get().selectedProjectPath === selectedProjectPath &&
+        !isHistorySurfaceActive(get().historySurfaceSelection);
       set({
         isDispatchingTask: true,
         error: null,
@@ -1159,6 +1202,11 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
       try {
         created = await sessionService.createSession(projectPath, 'Code Review');
         const ref = sessionRefFromSession(created);
+        if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+          await sessionService.deleteSession(ref).catch(() => undefined);
+          set({ isDispatchingTask: false });
+          return;
+        }
         await sessionService.startCodeReview(ref, {
           kind: input.kind,
           ...(input.ref ? { ref: input.ref } : {}),

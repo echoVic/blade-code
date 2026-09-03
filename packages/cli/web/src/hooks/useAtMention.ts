@@ -63,9 +63,17 @@ export const useAtMention = (
     debounceDelay?: number;
     maxSuggestions?: number;
     workspacePath?: string | null;
+    disabled?: boolean;
+    canRequest?: () => boolean;
   } = {}
 ): UseAtMentionResult => {
-  const { debounceDelay = 200, maxSuggestions = 15, workspacePath } = options;
+  const {
+    debounceDelay = 200,
+    maxSuggestions = 15,
+    workspacePath,
+    disabled = false,
+    canRequest,
+  } = options;
 
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -85,7 +93,7 @@ export const useAtMention = (
   }, [input, cursorPosition]);
 
   useEffect(() => {
-    if (!match.hasQuery) {
+    if (disabled || !match.hasQuery) {
       setSuggestions([]);
       setLoading(false);
       return;
@@ -95,6 +103,7 @@ export const useAtMention = (
     setLoading(true);
 
     const fetchSuggestions = async () => {
+      if (disabled || canRequest?.() === false) return;
       try {
         const response = await fetch(
           `/suggestions/files?q=${encodeURIComponent(match.query)}&limit=${maxSuggestions}`,
@@ -125,7 +134,15 @@ export const useAtMention = (
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [match.hasQuery, match.query, debounceDelay, maxSuggestions, workspacePath]);
+  }, [
+    disabled,
+    match.hasQuery,
+    match.query,
+    debounceDelay,
+    maxSuggestions,
+    workspacePath,
+    canRequest,
+  ]);
 
   useEffect(() => {
     setSelectedIndex(0);

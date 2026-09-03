@@ -9,8 +9,8 @@ import { cn } from '@/lib/utils';
 import { sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
+import { isHistorySurfaceActive } from '@/store/session/historySurfaceGuard';
 import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
-import { Sidebar } from './Sidebar';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -42,6 +42,9 @@ const TerminalPanel = lazy(() =>
     default: module.TerminalPanel,
   }))
 );
+const Sidebar = lazy(() =>
+  import('./Sidebar').then((module) => ({ default: module.Sidebar }))
+);
 const formatPath = (path: string): string => {
   if (path.startsWith('/Users/')) {
     const parts = path.split('/');
@@ -72,7 +75,10 @@ export function Layout({ children }: LayoutProps) {
     isTerminalOpen,
     isTaskSwitcherOpen,
     toggleFilePreview,
+    toggleTerminal,
     openFilePreview,
+    setFilePreviewOpen,
+    setTaskSwitcherOpen,
     previewRequestId,
     setSidebarOpen,
     mainView,
@@ -86,6 +92,9 @@ export function Layout({ children }: LayoutProps) {
   }, []);
   const currentSessionId = useSessionStore((state) => state.currentSessionId);
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const historySurfaceSelection = useSessionStore(
+    (state) => state.historySurfaceSelection
+  );
   const sessions = useSessionStore((state) => state.sessions);
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const isTemporarySession = useSessionStore((state) => state.isTemporarySession);
@@ -127,6 +136,7 @@ export function Layout({ children }: LayoutProps) {
       currentSession.taskDelivery?.status === 'discarded')
       ? currentSession.taskSourceProjectPath
       : currentSessionRef?.projectPath;
+  const historyOnly = isHistorySurfaceActive(historySurfaceSelection);
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
@@ -194,6 +204,7 @@ export function Layout({ children }: LayoutProps) {
   };
 
   const currentPath = useMemo(() => {
+    if (historyOnly) return null;
     if (mainView === 'board' || !currentSessionId || isTemporarySession) {
       return selectedProjectPath ? formatPath(selectedProjectPath) : null;
     }
@@ -204,6 +215,7 @@ export function Layout({ children }: LayoutProps) {
   }, [
     currentSessionId,
     currentSession,
+    historyOnly,
     isTemporarySession,
     mainView,
     selectedProjectPath,
@@ -215,6 +227,10 @@ export function Layout({ children }: LayoutProps) {
   }, [currentPath]);
 
   useEffect(() => {
+    if (historyOnly) {
+      setGitBranch(null);
+      return;
+    }
     if (!currentSessionRef) {
       setGitBranch(
         boundProjects.find((project) => project.path === selectedProjectPath)
@@ -234,7 +250,13 @@ export function Layout({ children }: LayoutProps) {
       }
     };
     fetchGitInfo();
-  }, [boundProjects, currentSessionRef, currentWorkspacePath, selectedProjectPath]);
+  }, [
+    boundProjects,
+    currentSessionRef,
+    currentWorkspacePath,
+    historyOnly,
+    selectedProjectPath,
+  ]);
 
   const admission = taskWorkspaceInfo?.taskAdmission;
   const executionWorkspacePath =
@@ -247,6 +269,20 @@ export function Layout({ children }: LayoutProps) {
       : `project:${selectedProjectPath ?? 'none'}`;
   const previewModalOpen = isFilePreviewOpen && isPreviewModalViewport;
   const previewWorkspaceMaximized = isFilePreviewOpen && isFilePreviewMaximized;
+  useEffect(() => {
+    if (!historyOnly) return;
+    if (isFilePreviewOpen) setFilePreviewOpen(false);
+    if (isTerminalOpen) toggleTerminal();
+    if (isTaskSwitcherOpen) setTaskSwitcherOpen(false);
+  }, [
+    historyOnly,
+    isFilePreviewOpen,
+    isTerminalOpen,
+    isTaskSwitcherOpen,
+    setFilePreviewOpen,
+    setTaskSwitcherOpen,
+    toggleTerminal,
+  ]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-[hsl(var(--deck-canvas))]">
@@ -284,11 +320,13 @@ export function Layout({ children }: LayoutProps) {
             isSidebarOpen ? 'w-[260px]' : 'w-[64px]'
           )}
         >
-          <Sidebar
-            onNavigate={() => {
-              if (isMobile) setSidebarOpen(false);
-            }}
-          />
+          <Suspense fallback={null}>
+            <Sidebar
+              onNavigate={() => {
+                if (isMobile) setSidebarOpen(false);
+              }}
+            />
+          </Suspense>
         </div>
       </div>
 
@@ -313,7 +351,11 @@ export function Layout({ children }: LayoutProps) {
           )}
           {/* Breadcrumb / path */}
           <div className="flex gap-2 items-center min-w-0">
-            {pathSegments.length > 0 ? (
+            {historyOnly ? (
+              <span className="font-mono text-[12px] font-medium text-[hsl(var(--deck-ink))]">
+                {t('history.badge.remote')} · {t('history.badge.historyOnly')}
+              </span>
+            ) : pathSegments.length > 0 ? (
               <nav
                 aria-label={t('layout.workspace.pathAria')}
                 title={currentPath ?? undefined}
@@ -382,6 +424,7 @@ export function Layout({ children }: LayoutProps) {
                 aria-label={t('layout.action.rewind')}
                 title={t('layout.action.rewind')}
                 disabled={
+                  historyOnly ||
                   mainView === 'board' ||
                   !currentSessionRef ||
                   isTemporarySession ||
@@ -397,7 +440,7 @@ export function Layout({ children }: LayoutProps) {
                   ref={previewButtonRef}
                   open={isFilePreviewOpen}
                   maximized={isFilePreviewMaximized}
-                  disabled={mainView === 'board'}
+                  disabled={historyOnly || mainView === 'board'}
                   onToggleMaximized={() =>
                     setIsFilePreviewMaximized((current) => !current)
                   }
@@ -434,7 +477,7 @@ export function Layout({ children }: LayoutProps) {
               children
             )}
           </div>
-          {isFilePreviewOpen && (
+          {isFilePreviewOpen && !historyOnly && (
             <Suspense fallback={null}>
               <FilePreview
                 key={previewWorkspaceKey}
@@ -445,7 +488,7 @@ export function Layout({ children }: LayoutProps) {
           )}
         </main>
       </div>
-      {isTerminalOpen && (
+      {isTerminalOpen && !historyOnly && (
         <Suspense fallback={null}>
           <TerminalPanel
             key={executionWorkspacePath ?? 'default-workspace'}
@@ -453,12 +496,15 @@ export function Layout({ children }: LayoutProps) {
           />
         </Suspense>
       )}
-      {isTaskSwitcherOpen && (
+      {isTaskSwitcherOpen && !historyOnly && (
         <Suspense fallback={null}>
           <TaskSwitcher />
         </Suspense>
       )}
-      <RewindDialog open={isRewindOpen} onOpenChange={setIsRewindOpen} />
+      <RewindDialog
+        open={!historyOnly && isRewindOpen}
+        onOpenChange={setIsRewindOpen}
+      />
     </div>
   );
 }

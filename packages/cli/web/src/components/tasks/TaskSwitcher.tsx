@@ -38,6 +38,10 @@ import type { Session } from '@/services';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
 import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
+import {
   sameSessionRef,
   sessionRefFromSession,
   sessionRefKey,
@@ -77,6 +81,10 @@ export function TaskSwitcher() {
   const catalogLoading =
     catalogLoadState === 'loading' || catalogLoadState === 'hydrating';
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
+  const closeHistorySurface = useSessionStore((state) => state.closeHistorySurface);
   const isTemporarySession = useSessionStore((state) => state.isTemporarySession);
   const startTemporarySession = useSessionStore((state) => state.startTemporarySession);
   const unreadTaskKeys = useSessionStore((state) => state.unreadTaskKeys);
@@ -107,6 +115,7 @@ export function TaskSwitcher() {
         icon: Plus,
         shortcut: shortcutHint('newTask'),
         run: () => {
+          closeHistorySurface();
           setMainView('workspace');
           startTemporarySession();
           requestAnimationFrame(() => focusBladeComposer());
@@ -119,6 +128,7 @@ export function TaskSwitcher() {
         keywords: 'diff files logs artifact review',
         icon: FileCode2,
         run: () => {
+          if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
           if (isFilePreviewOpen) {
             setFilePreviewOpen(false);
           } else {
@@ -137,7 +147,10 @@ export function TaskSwitcher() {
         description: t('commandCenter.action.terminalDescription'),
         keywords: 'shell console command line',
         icon: Terminal,
-        run: toggleTerminal,
+        run: () => {
+          if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
+          toggleTerminal();
+        },
       },
       {
         id: 'open-settings',
@@ -192,6 +205,7 @@ export function TaskSwitcher() {
     ],
     [
       currentSessionRef,
+      closeHistorySurface,
       isFilePreviewOpen,
       isTemporarySession,
       openFilePreview,
@@ -230,6 +244,10 @@ export function TaskSwitcher() {
   }, [mode, open]);
 
   useEffect(() => {
+    if (historyOnly && open) setOpen(false);
+  }, [historyOnly, open, setOpen]);
+
+  useEffect(() => {
     setSelectedIndex(0);
   }, [query]);
 
@@ -265,6 +283,7 @@ export function TaskSwitcher() {
     action: 'cancel' | 'retry',
     session: Session
   ): Promise<void> => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     setActionError(null);
     try {
       const ref = sessionRefFromSession(session);
@@ -310,6 +329,8 @@ export function TaskSwitcher() {
       setOpen(false);
     }
   };
+
+  if (historyOnly) return null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

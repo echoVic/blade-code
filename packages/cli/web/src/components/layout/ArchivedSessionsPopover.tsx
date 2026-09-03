@@ -7,6 +7,10 @@ import { sessionDisplayTitle } from '@/lib/sessionDisplayTitle';
 import { downloadSessionMarkdown } from '@/lib/sessionExport';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/store/session';
+import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
 import { sessionRefFromSession, sessionRefKey } from '@/store/session/sessionIdentity';
 
 export function ArchivedSessionsPopover() {
@@ -17,14 +21,24 @@ export function ArchivedSessionsPopover() {
   const loadArchivedSessions = useSessionStore((state) => state.loadArchivedSessions);
   const unarchiveSession = useSessionStore((state) => state.unarchiveSession);
   const setError = useSessionStore((state) => state.setError);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
   const [open, setOpen] = useState(false);
   const [restoringKey, setRestoringKey] = useState<string | null>(null);
   const [exportingKey, setExportingKey] = useState<string | null>(null);
 
   const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen && rejectHistorySurfaceAction(useSessionStore.getState())) return;
     setOpen(nextOpen);
     if (nextOpen) void loadArchivedSessions();
   };
+  const refreshArchivedSessions = () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
+    void loadArchivedSessions();
+  };
+
+  if (historyOnly) return null;
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
@@ -64,7 +78,7 @@ export function ArchivedSessionsPopover() {
           </div>
           <button
             type="button"
-            onClick={() => void loadArchivedSessions()}
+            onClick={refreshArchivedSessions}
             aria-label={t('archive.refresh')}
             className="flex h-6 w-6 items-center justify-center rounded text-[hsl(var(--deck-ink-faint))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
           >
@@ -82,7 +96,7 @@ export function ArchivedSessionsPopover() {
             <div>{loadError}</div>
             <button
               type="button"
-              onClick={() => void loadArchivedSessions()}
+              onClick={refreshArchivedSessions}
               className="mt-2 font-mono text-[10px] text-[hsl(var(--deck-accent))] focus-visible:outline-none focus-visible:underline"
             >
               {t('archive.retry')}
@@ -139,6 +153,8 @@ export function ArchivedSessionsPopover() {
                         type="button"
                         disabled={exportingKey !== null}
                         onClick={async () => {
+                          if (rejectHistorySurfaceAction(useSessionStore.getState()))
+                            return;
                           setExportingKey(key);
                           try {
                             await downloadSessionMarkdown(ref);
@@ -170,6 +186,8 @@ export function ArchivedSessionsPopover() {
                           restoring || session.archivedBySessionId !== session.sessionId
                         }
                         onClick={async () => {
+                          if (rejectHistorySurfaceAction(useSessionStore.getState()))
+                            return;
                           setRestoringKey(key);
                           try {
                             await unarchiveSession(ref);

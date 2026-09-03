@@ -18,6 +18,10 @@ import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/AppStore';
 import { useConfigStore } from '@/store/ConfigStore';
 import { useSessionStore } from '@/store/session';
+import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
 import { sessionRefFromSession, sessionRefKey } from '@/store/session/sessionIdentity';
 import { KanbanColumn } from './KanbanColumn';
 import { type CreateTaskValues, KanbanTaskDialog } from './KanbanTaskDialog';
@@ -42,6 +46,9 @@ export function KanbanBoard() {
   const updatingTaskKeys = useSessionStore((state) => state.updatingTaskKeys);
   const unreadTaskKeys = useSessionStore((state) => state.unreadTaskKeys);
   const error = useSessionStore((state) => state.error);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
   const selectProject = useSessionStore((state) => state.selectProject);
   const selectSession = useSessionStore((state) => state.selectSession);
   const dispatchTask = useSessionStore((state) => state.dispatchTask);
@@ -128,6 +135,7 @@ export function KanbanBoard() {
   };
 
   const handleCreate = async (values: CreateTaskValues) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     selectProject(values.projectPath);
     await dispatchTask(
       {
@@ -138,6 +146,8 @@ export function KanbanBoard() {
       { selectSession: false }
     );
   };
+
+  if (historyOnly) return null;
 
   return (
     <main
@@ -178,6 +188,7 @@ export function KanbanBoard() {
               aria-checked={autoClaimEnabled}
               disabled={!admission || isUpdatingTaskAdmission}
               onClick={() => {
+                if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
                 void setTaskAdmissionPaused(autoClaimEnabled).catch(() => undefined);
               }}
               className={cn(
@@ -325,12 +336,15 @@ export function KanbanBoard() {
                 setDialogOpen(true);
               }}
               onCancel={(session) => {
+                if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
                 void cancelTask(sessionRefFromSession(session)).catch(() => undefined);
               }}
               onRetry={(session) => {
+                if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
                 void retryTask(sessionRefFromSession(session)).catch(() => undefined);
               }}
               onArchive={(session) => {
+                if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
                 void archiveSession(sessionRefFromSession(session));
               }}
             />
@@ -351,6 +365,7 @@ export function KanbanBoard() {
         canCreate={availableProjects.length > 0}
         onCreate={handleCreate}
         onUpdate={async (values) => {
+          if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
           if (!editingSession) return;
           await updateTask(sessionRefFromSession(editingSession), values);
         }}

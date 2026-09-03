@@ -2,6 +2,7 @@ import { AlertCircle, ArrowDown } from 'lucide-react';
 import { useMemo } from 'react';
 import { useT } from '@/i18n';
 import { useSessionStore } from '@/store/session';
+import { isHistorySurfaceActive } from '@/store/session/historySurfaceGuard';
 import { findSessionByRef } from '@/store/session/sessionIdentity';
 
 export function PendingInteractionBar() {
@@ -9,6 +10,9 @@ export function PendingInteractionBar() {
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
   const sessions = useSessionStore((state) => state.sessions);
   const messages = useSessionStore((state) => state.messages);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
   const interaction = useMemo(() => {
     const projected = currentSessionRef
       ? findSessionByRef(sessions, currentSessionRef)?.pendingInteraction
@@ -24,7 +28,7 @@ export function PendingInteractionBar() {
     return null;
   }, [currentSessionRef, messages, sessions]);
 
-  if (!interaction) return null;
+  if (historyOnly || !interaction) return null;
 
   const reviewRequest = () => {
     const target = document.querySelector<HTMLElement>(

@@ -5,6 +5,34 @@ import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PendingInteractionBar } from '../../../src/components/chat/PendingInteractionBar';
 import { useSessionStore } from '../../../src/store/session';
+import type { SessionSurfaceSelection } from '../../../src/store/session/types';
+
+function historySelection(): SessionSurfaceSelection {
+  return {
+    locator: {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+    },
+    displayCwd: '/remote/project',
+    mode: 'history-only',
+    capabilities: {
+      connection: 'online',
+      history: { read: true, fork: true },
+      turn: { start: false, reason: 'history-only' },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none',
+        reason: 'history-only',
+      },
+      terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+    },
+  };
+}
 
 describe('PendingInteractionBar', () => {
   let container: HTMLDivElement;
@@ -15,6 +43,7 @@ describe('PendingInteractionBar', () => {
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
     useSessionStore.setState({
+      historySurfaceSelection: null,
       currentSessionId: 'session-1',
       currentSessionRef: {
         sessionId: 'session-1',
@@ -70,5 +99,13 @@ describe('PendingInteractionBar', () => {
     });
 
     request.remove();
+  });
+
+  it('hides retained local interactions while history-only is selected', async () => {
+    useSessionStore.setState({ historySurfaceSelection: historySelection() });
+
+    await act(async () => root.render(<PendingInteractionBar />));
+
+    expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 });

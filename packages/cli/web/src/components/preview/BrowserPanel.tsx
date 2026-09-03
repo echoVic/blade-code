@@ -27,6 +27,11 @@ import {
   webBrowserService,
 } from '@/services/webBrowserService';
 import { useBrowserActivityStore } from '@/store/BrowserActivityStore';
+import { useSessionStore } from '@/store/session';
+import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
 import { sessionRefKey } from '@/store/session/sessionIdentity';
 import { type BrowserLoadState, BrowserPreview } from './BrowserPreview';
 import { BrowserTest, type BrowserTestSource } from './BrowserTest';
@@ -122,6 +127,9 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
   const { locale } = useLocale();
   const copy = COPY[locale];
   const agentActivity = useBrowserActivityStore((state) => state.agentActivity);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
   const agentAvailable =
     sessionRef !== null &&
     agentActivity !== null &&
@@ -240,7 +248,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
         generation.current += 1;
       }
     };
-  }, [sessionRef?.projectPath, sessionRef?.sessionId]);
+  }, [historyOnly, sessionRef?.projectPath, sessionRef?.sessionId]);
 
   useEffect(
     () => () => {
@@ -255,15 +263,15 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
   );
 
   useEffect(() => {
-    if (!sessionRef || !agentAvailable || !agentActivity) return;
+    if (historyOnly || !sessionRef || !agentAvailable || !agentActivity) return;
     setMode('test');
     setTestSource('agent');
     setValidationError(null);
     if (agentActivity.url) setAddress(agentActivity.url);
-  }, [agentActivity?.revision, agentAvailable, sessionRef]);
+  }, [agentActivity?.revision, agentAvailable, historyOnly, sessionRef]);
 
   useEffect(() => {
-    if (!sessionRef || !agentAvailable || !agentActivity) return;
+    if (historyOnly || !sessionRef || !agentAvailable || !agentActivity) return;
     if (
       !agentActivity.pageId ||
       !agentActivity.origin ||
@@ -318,6 +326,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
     agentActivity?.origin,
     agentActivity?.pageId,
     agentAvailable,
+    historyOnly,
     sessionRef,
   ]);
 
@@ -326,6 +335,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
     observation: BrowserObservation,
     requestGeneration: number
   ) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     const blob = await webBrowserService.screenshot(ref, {
       pageId: observation.pageId,
       expectedOrigin: observation.origin,
@@ -347,6 +357,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
   };
 
   const runTestNavigation = async (request: WebBrowserNavigateRequest) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (!sessionRef) {
       setTestError(copy.noSession);
       return;
@@ -377,6 +388,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
 
   const submitAddress = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
     event.preventDefault();
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     const resolved =
       mode === 'preview'
         ? normalizePreviewBrowserUrl(address)
@@ -413,6 +425,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
   };
 
   const navigateRelative = (action: 'back' | 'forward' | 'reload') => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (mode === 'preview') {
       if (action === 'back') {
         movePreviewHistory(-1);
@@ -461,6 +474,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
   };
 
   const interact = async (action: BrowserAction, ref?: string) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (!sessionRef || !testObservation) return;
     const activeObservation = testObservation;
     const requestGeneration = generation.current;
@@ -478,6 +492,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
       if (result.outcome === 'applied') {
         await applyTestObservation(sessionRef, result.observation, requestGeneration);
       } else if (result.outcome === 'applied_observation_failed') {
+        if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
         const observation = await webBrowserService.snapshot(sessionRef, {
           pageId: result.pageId,
         });
@@ -490,6 +505,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
         const message = error instanceof Error ? error.message : String(error);
         if (/snapshot is stale/i.test(message)) {
           try {
+            if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
             const observation = await webBrowserService.snapshot(sessionRef, {
               pageId: activeObservation.pageId,
             });
@@ -516,6 +532,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
   };
 
   const refreshSnapshot = async (includeBoxes = false): Promise<boolean> => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return false;
     if (!sessionRef || !testObservation) return false;
     const requestGeneration = generation.current;
     setTestBusy(true);
@@ -538,6 +555,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
   };
 
   const inspect = async (target: BrowserInspectKind) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (!sessionRef || !testObservation) return;
     const requestGeneration = generation.current;
     setDiagnosticsLoading(target);
@@ -573,6 +591,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
   };
 
   const addElementToConversation = (context: string) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     const draftKey = sessionRef
       ? `session:${sessionRefKey(sessionRef)}`
       : 'session:temporary';
@@ -583,6 +602,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
   };
 
   const resetTestBrowser = async () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (!sessionRef) return;
     const requestGeneration = generation.current;
     setElementPickerActive(false);
@@ -605,6 +625,7 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
   };
 
   const openExternal = () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     const candidate = currentUrl ?? address;
     const resolved = normalizeBrowserPanelUrl(candidate);
     if (!resolved.ok) {
@@ -629,6 +650,8 @@ export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanel
     testSource === 'agent'
       ? agentScreenshotLoading || agentActivity?.phase === 'running'
       : testBusy;
+
+  if (historyOnly) return null;
 
   return (
     <section

@@ -35,6 +35,10 @@ import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/AppStore';
 import { useConfigStore } from '@/store/ConfigStore';
 import { useSessionStore } from '@/store/session';
+import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
 import { sessionRefFromSession } from '@/store/session/sessionIdentity';
 import { CapacityMeter } from './CapacityMeter';
 import { RecentTasksStrip } from './RecentTasksStrip';
@@ -93,6 +97,7 @@ export function TaskHome() {
   const t = useT();
   const {
     taskWorkspaceInfo,
+    historySurfaceSelection,
     isTaskWorkspaceLoading,
     taskWorkspaceError,
     isDispatchingTask,
@@ -118,6 +123,7 @@ export function TaskHome() {
     loadTaskWorkspaceInfo,
     loadBoundProjects,
   } = useSessionStore();
+  const historyOnly = isHistorySurfaceActive(historySurfaceSelection);
   const openSettings = useAppStore((state) => state.openSettings);
   const isSettingsOpen = useAppStore((state) => state.isSettingsOpen);
   const currentMode = useConfigStore((state) => state.currentMode);
@@ -207,6 +213,7 @@ export function TaskHome() {
       attachments: ComposerImageAttachment[];
       outputSchema?: Record<string, unknown>;
     }) => {
+      if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
       const trimmed = payload.content.trim();
       if (trimmed === '/review' || trimmed.startsWith('/review ')) {
         if (payload.attachments.length > 0) {
@@ -642,7 +649,7 @@ export function TaskHome() {
                   return false;
                 }
               }}
-              disabled={isDispatchingTask}
+              disabled={historyOnly || isDispatchingTask}
               submitDisabled={!canDispatch}
               shellSubmitDisabled={!canDispatch}
               workspacePath={targetProjectPath}
@@ -695,9 +702,11 @@ export function TaskHome() {
             void selectSession(sessionRefFromSession(session));
           }}
           onCancel={(session) => {
+            if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
             void cancelTask(sessionRefFromSession(session)).catch(() => undefined);
           }}
           onRetry={(session) => {
+            if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
             void retryTask(sessionRefFromSession(session)).catch(() => undefined);
           }}
         />

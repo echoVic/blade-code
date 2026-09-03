@@ -6,6 +6,7 @@ import {
   isBrowserToolName,
   useBrowserActivityStore,
 } from '@/store/BrowserActivityStore';
+import { isHistorySurfaceActive } from '../historySurfaceGuard';
 import type {
   ActionStationarityInfo,
   Message,
@@ -1831,7 +1832,9 @@ const handleTurnRecovery: EventHandler = (props, get, set) => {
   const assessment = parseTurnRecoveryAssessment(props.assessment);
   if (!assessment) return;
   set({ turnRecovery: assessment });
-  void state.resyncSessionMessages(ref);
+  if (!isHistorySurfaceActive(state.historySurfaceSelection)) {
+    void state.resyncSessionMessages(ref);
+  }
 };
 
 const handleCompactionStarted: EventHandler = (props, get, set) => {
@@ -2102,6 +2105,7 @@ const handleInteractionResolved: EventHandler = (props, get, set) => {
 };
 
 const resyncTerminalSession = (props: Record<string, unknown>, get: GetState): void => {
+  if (isHistorySurfaceActive(get().historySurfaceSelection)) return;
   const ref = interactiveEventTarget(get());
   if (
     ref &&
@@ -2442,7 +2446,7 @@ const handleReviewCompleted: EventHandler = (props, get, set) => {
         : session
     ),
   }));
-  if (get().historySurfaceSelection) return;
+  if (isHistorySurfaceActive(get().historySurfaceSelection)) return;
   void get().selectSession(ref);
 };
 
@@ -2467,7 +2471,9 @@ const handleReviewToolCompleted: EventHandler = (props, get, set) => {
 };
 
 const handleTeamEvent: EventHandler = (_props, get) => {
-  const ref = get().currentSessionRef;
+  const state = get();
+  if (isHistorySurfaceActive(state.historySurfaceSelection)) return;
+  const ref = state.currentSessionRef;
   if (ref) queueMicrotask(() => void get().loadTeams(ref));
 };
 
@@ -2598,7 +2604,9 @@ function projectLiveBrowserActivity(event: StreamEvent, get: GetState): void {
       metadata: event.properties.metadata,
     });
   }
-  useAppStore.getState().openFilePreview({ tab: 'browser' });
+  if (!isHistorySurfaceActive(get().historySurfaceSelection)) {
+    useAppStore.getState().openFilePreview({ tab: 'browser' });
+  }
 }
 
 export const createEventDispatcher = (get: GetState, set: SetState) => {

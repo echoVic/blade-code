@@ -19,14 +19,21 @@ import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
 import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
+import {
   sameSessionRef,
+  sameSurfaceLocator,
   sessionRefFromSession,
   sessionRefKey,
+  surfaceLocatorKey,
 } from '@/store/session/sessionIdentity';
 import { ArchivedSessionsPopover } from './ArchivedSessionsPopover';
 import { BladeMark } from './BladeMark';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ProjectBindingDialog } from './ProjectBindingDialog';
+import { RemoteSessionRow } from './RemoteSessionRow';
 import { SessionRow } from './SessionRow';
 import { SidebarCollapsed } from './SidebarCollapsed';
 import { SidebarSessionList } from './SidebarSessionList';
@@ -53,17 +60,25 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
     setFilePreviewOpen,
   } = useAppStore();
   const sessions = useSessionStore((state) => state.sessions);
-  const catalogLoadState = useSessionStore((state) => state.catalogLoadState);
-  const catalogError = useSessionStore((state) => state.catalogError);
+  const surfaceCatalog = useSessionStore((state) => state.surfaceCatalog);
+  const surfaceCatalogLoadState = useSessionStore(
+    (state) => state.surfaceCatalogLoadState
+  );
+  const historySurfaceSelection = useSessionStore(
+    (state) => state.historySurfaceSelection
+  );
+  const historyOnly = isHistorySurfaceActive(historySurfaceSelection);
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
   const forkingSessionRef = useSessionStore((state) => state.forkingSessionRef);
   const selectSession = useSessionStore((state) => state.selectSession);
+  const openHistorySurface = useSessionStore((state) => state.openHistorySurface);
   const startTemporarySession = useSessionStore((state) => state.startTemporarySession);
   const deleteSession = useSessionStore((state) => state.deleteSession);
   const archiveSession = useSessionStore((state) => state.archiveSession);
   const forkSession = useSessionStore((state) => state.forkSession);
   const updateSession = useSessionStore((state) => state.updateSession);
   const loadSessions = useSessionStore((state) => state.loadSessions);
+  const loadSurfaceCatalog = useSessionStore((state) => state.loadSurfaceCatalog);
   const setError = useSessionStore((state) => state.setError);
   const taskEventsConnected = useSessionStore((state) => state.taskEventsConnected);
   const taskWorkspaceInfo = useSessionStore((state) => state.taskWorkspaceInfo);
@@ -114,6 +129,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
   };
 
   const handleOpenBoard = () => {
+    useSessionStore.getState().closeHistorySurface();
     setFilePreviewOpen(false);
     setBoardProjectPath(activeProjectPath);
     setMainView('board');
@@ -147,15 +163,22 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
     onNavigate?.();
   };
 
+  const handleToggleTerminal = () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
+    runSidebarAction(toggleTerminal);
+  };
+
   const handleDeleteSession = async (
     e: React.MouseEvent,
     session: (typeof sessions)[0]
   ) => {
     e.stopPropagation();
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     await deleteSession(sessionRefFromSession(session));
   };
 
   const handleExportSession = async (session: (typeof sessions)[0]) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     const ref = sessionRefFromSession(session);
     const key = sessionRefKey(ref);
     if (exportingSessionKey) return;
@@ -171,11 +194,13 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
 
   const handleStartRename = (e: React.MouseEvent, session: (typeof sessions)[0]) => {
     e.stopPropagation();
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     setEditingSessionKey(sessionRefKey(sessionRefFromSession(session)));
     setEditingTitle(getSessionTitle(session));
   };
 
   const handleSaveRename = async (session: (typeof sessions)[0]) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (!editingTitle.trim()) {
       setEditingSessionKey(null);
       return;
@@ -202,12 +227,14 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
         onNewChat={handleNewChat}
         onOpenBoard={handleOpenBoard}
         onOpenTaskSwitcher={() => runSidebarAction(() => setTaskSwitcherOpen(true))}
-        onToggleTerminal={() => runSidebarAction(toggleTerminal)}
+        onToggleTerminal={handleToggleTerminal}
         onToggleSettings={() => runSidebarAction(toggleSettings)}
         isTerminalOpen={isTerminalOpen}
         taskEventsConnected={taskEventsConnected}
         unreadCount={unreadTaskKeys.length}
         boardActive={mainView === 'board'}
+        terminalDisabled={historyOnly}
+        taskSwitcherDisabled={historyOnly}
       />
     );
   }
@@ -269,7 +296,8 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
           </button>
 
           <button
-            onClick={() => runSidebarAction(toggleTerminal)}
+            onClick={handleToggleTerminal}
+            disabled={historyOnly}
             className={cn(
               'flex h-9 w-full items-center gap-2 rounded-md border px-3 font-mono text-[12.5px] transition-colors',
               isTerminalOpen
@@ -281,21 +309,23 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
             {t('sidebar.action.terminal')}
           </button>
 
-          <button
-            type="button"
-            onClick={() => runSidebarAction(() => setTaskSwitcherOpen(true))}
-            className="flex h-9 w-full items-center justify-between rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-3 font-mono text-[12.5px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:border-[hsl(var(--deck-border-strong))] hover:text-[hsl(var(--deck-ink))]"
-          >
-            <span className="flex items-center gap-2">
-              <Search className="h-3.5 w-3.5" />
-              {t('sidebar.action.searchTasks')}
-            </span>
-            <span className="rounded-sm border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas))] px-1.5 py-[1px] font-mono text-[9px] text-[hsl(var(--deck-ink-faint))]">
-              {unreadTaskKeys.length > 0
-                ? unreadTaskKeys.length
-                : shortcutHint('searchTasks')}
-            </span>
-          </button>
+          {!historyOnly && (
+            <button
+              type="button"
+              onClick={() => runSidebarAction(() => setTaskSwitcherOpen(true))}
+              className="flex h-9 w-full items-center justify-between rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-3 font-mono text-[12.5px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:border-[hsl(var(--deck-border-strong))] hover:text-[hsl(var(--deck-ink))]"
+            >
+              <span className="flex items-center gap-2">
+                <Search className="h-3.5 w-3.5" />
+                {t('sidebar.action.searchTasks')}
+              </span>
+              <span className="rounded-sm border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas))] px-1.5 py-[1px] font-mono text-[9px] text-[hsl(var(--deck-ink-faint))]">
+                {unreadTaskKeys.length > 0
+                  ? unreadTaskKeys.length
+                  : shortcutHint('searchTasks')}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* View switcher: project-first vs. status buckets */}
@@ -326,6 +356,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
           <button
             type="button"
             onClick={() => setIsProjectDialogOpen(true)}
+            disabled={historyOnly}
             title={t('projects.bind.action')}
             aria-label={t('projects.bind.action')}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] text-[hsl(var(--deck-ink-faint))] transition-colors hover:border-[hsl(var(--deck-border-strong))] hover:text-[hsl(var(--deck-accent))]"
@@ -338,27 +369,31 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
       <ScrollArea className="flex-1 px-0">
         <div className="flex flex-col">
           {(sessions.length > 0 ||
+            surfaceCatalog.length > 0 ||
             boundProjects.length > 0 ||
-            catalogLoadState === 'loading' ||
-            catalogLoadState === 'hydrating' ||
-            catalogLoadState === 'error') && (
+            surfaceCatalogLoadState === 'loading' ||
+            surfaceCatalogLoadState === 'hydrating' ||
+            surfaceCatalogLoadState === 'error') && (
             <SidebarSessionList
               view={sidebarView}
               sessions={sessions}
+              surfaceCatalog={surfaceCatalog}
               activeProjectPath={activeProjectPath}
               boundProjects={boundProjects}
               currentSessionRef={currentSessionRef}
+              historySurfaceSelection={historySurfaceSelection}
               unreadTaskKeys={unreadTaskKeys}
-              catalogLoadState={catalogLoadState}
-              catalogError={catalogError}
-              onRetryCatalog={loadSessions}
+              catalogLoadState={surfaceCatalogLoadState}
+              onRetryCatalog={() => {
+                void loadSurfaceCatalog();
+              }}
               onSelectProject={(projectPath) =>
                 void handleSelectProject(projectPath).catch(() => undefined)
               }
               onCreateTask={(projectPath) =>
                 void handleCreateTask(projectPath).catch(() => undefined)
               }
-              renderRow={(session) => {
+              renderLocalRow={(session) => {
                 const sessionRef = sessionRefFromSession(session);
                 const sessionKey = sessionRefKey(sessionRef);
                 const isActive = sameSessionRef(sessionRef, currentSessionRef);
@@ -389,13 +424,25 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
                       return selectSession(sessionRef);
                     }}
                     onCancelTask={() => {
+                      if (rejectHistorySurfaceAction(useSessionStore.getState()))
+                        return;
                       void cancelTask(sessionRef).catch(() => undefined);
                     }}
                     onRetryTask={() => {
+                      if (rejectHistorySurfaceAction(useSessionStore.getState()))
+                        return;
                       void retryTask(sessionRef).catch(() => undefined);
                     }}
-                    onFork={() => void forkSession(session)}
-                    onArchive={() => void archiveSession(sessionRef)}
+                    onFork={() => {
+                      if (rejectHistorySurfaceAction(useSessionStore.getState()))
+                        return;
+                      void forkSession(session);
+                    }}
+                    onArchive={() => {
+                      if (rejectHistorySurfaceAction(useSessionStore.getState()))
+                        return;
+                      void archiveSession(sessionRef);
+                    }}
                     onExport={() => void handleExportSession(session)}
                     onStartRename={(e) => handleStartRename(e, session)}
                     onDelete={(e) => handleDeleteSession(e, session)}
@@ -405,10 +452,25 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
                   />
                 );
               }}
+              renderRemoteRow={(summary) => (
+                <RemoteSessionRow
+                  key={surfaceLocatorKey(summary.locator)}
+                  summary={summary}
+                  isActive={sameSurfaceLocator(
+                    summary.locator,
+                    historySurfaceSelection?.locator
+                  )}
+                  onSelect={() => {
+                    onNavigate?.();
+                    setMainView('workspace');
+                    return openHistorySurface(summary.locator);
+                  }}
+                />
+              )}
             />
           )}
 
-          {sessions.length === 0 && (
+          {surfaceCatalog.length === 0 && sessions.length === 0 && (
             <div className="px-5 mt-6">
               <div className="rounded-md border border-dashed border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))]/60 px-4 py-6 text-center">
                 <div className="mx-auto mb-2 inline-flex h-8 w-8 items-center justify-center rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas))]">
@@ -428,7 +490,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
 
       <div className="flex flex-col gap-3 px-5 pt-3 pb-5">
         <div className="flex flex-col gap-0.5 border-t border-[hsl(var(--deck-hairline))] pt-3">
-          <ArchivedSessionsPopover />
+          {!historyOnly && <ArchivedSessionsPopover />}
           {[
             {
               icon: Settings,
@@ -486,10 +548,12 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
           </div>
         </div>
       </div>
-      <ProjectBindingDialog
-        open={isProjectDialogOpen}
-        onOpenChange={setIsProjectDialogOpen}
-      />
+      {!historyOnly && (
+        <ProjectBindingDialog
+          open={isProjectDialogOpen}
+          onOpenChange={setIsProjectDialogOpen}
+        />
+      )}
     </div>
   );
 }

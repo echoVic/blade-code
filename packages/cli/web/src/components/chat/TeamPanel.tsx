@@ -12,12 +12,19 @@ import { teamText } from '@/i18n/team';
 import { teamService } from '@/services/teamService';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { useSessionStore } from '@/store/session';
+import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
 
 export function TeamPanel() {
   const { locale } = useLocale();
   const agentTeamsEnabled = useSettingsStore((state) => state.agentTeamsEnabled);
   const teams = useSessionStore((state) => state.teams);
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
   const loadTeams = useSessionStore((state) => state.loadTeams);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [recipient, setRecipient] = useState<Record<string, string>>({});
@@ -27,12 +34,15 @@ export function TeamPanel() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (historyOnly) return;
     void loadTeams(currentSessionRef ?? undefined);
-  }, [agentTeamsEnabled, currentSessionRef, loadTeams]);
+  }, [agentTeamsEnabled, currentSessionRef, historyOnly, loadTeams]);
 
-  if (!agentTeamsEnabled || !currentSessionRef || teams.length === 0) return null;
+  if (historyOnly || !agentTeamsEnabled || !currentSessionRef || teams.length === 0)
+    return null;
 
   const send = async (teamName: string) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     const message = draft[teamName]?.trim();
     if (!message || sending) return;
     setSending(teamName);
@@ -56,6 +66,7 @@ export function TeamPanel() {
   };
 
   const remove = async (teamName: string) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (deleting) return;
     setDeleting(teamName);
     setError(null);

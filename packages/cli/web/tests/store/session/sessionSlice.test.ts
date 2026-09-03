@@ -34,6 +34,9 @@ vi.mock('../../../src/services', () => ({
     unarchiveSession: vi.fn(),
     deleteSession: vi.fn(),
     updateSession: vi.fn(),
+    updateTask: vi.fn(),
+    retryTask: vi.fn(),
+    deliverTask: vi.fn(),
     getSession: vi.fn(),
     getMessages: vi.fn(),
     getGoal: vi.fn(),
@@ -51,6 +54,8 @@ vi.mock('../../../src/services', () => ({
     openSurface: vi.fn(),
     loadSurfaceHistoryPage: vi.fn(),
     forkSurface: vi.fn(),
+    startCodeReview: vi.fn(),
+    createTask: vi.fn(),
     subscribeEvents: vi.fn(() => () => {
       /* noop */
     }),
@@ -2064,6 +2069,172 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
   });
 
+  it('fails closed before invoking live actions while a history surface is selected', async () => {
+    const remote = createSurfaceOpenResult();
+    const local = createSession({ sessionId: 'local-session' });
+    useSessionStore.setState({
+      sessions: [local],
+      currentSessionId: local.sessionId,
+      currentSessionRef: createRef(local.sessionId, local.projectPath),
+      isTemporarySession: false,
+      historySurfaceSelection: {
+        locator: remote.session.locator,
+        displayCwd: remote.session.displayCwd,
+        capabilities: remote.session.capabilities,
+        mode: 'history-only',
+      },
+    });
+
+    await expect(
+      useSessionStore.getState().sendMessage({ content: 'blocked' })
+    ).resolves.toBe(false);
+    await expect(
+      useSessionStore.getState().rewindSession('surface-message:1:abc', 'conversation')
+    ).resolves.toBe(false);
+    await expect(useSessionStore.getState().abortSession()).resolves.toBe(false);
+    await useSessionStore.getState().startCodeReview({ kind: 'uncommitted' });
+    await useSessionStore.getState().pauseGoal();
+    await useSessionStore.getState().resumeGoal();
+    await useSessionStore.getState().editGoal('blocked');
+    await useSessionStore.getState().clearGoal();
+    await useSessionStore.getState().dispatchTask({
+      prompt: 'blocked',
+      isolation: 'local',
+    });
+    const localRef = createRef(local.sessionId, local.projectPath);
+    await useSessionStore.getState().updateTask(localRef, { taskPriority: 'high' });
+    await useSessionStore.getState().cancelTask(localRef);
+    await useSessionStore.getState().retryTask(localRef);
+    await useSessionStore.getState().deliverTask(localRef, 'apply');
+    await useSessionStore.getState().archiveSession(localRef);
+    await useSessionStore.getState().unarchiveSession(localRef);
+    await useSessionStore.getState().deleteSession(localRef);
+    await useSessionStore.getState().updateSession(localRef, 'blocked');
+    await useSessionStore.getState().forkSession(local);
+
+    expect(sessionService.sendMessage).not.toHaveBeenCalled();
+    expect(sessionService.rewindSession).not.toHaveBeenCalled();
+    expect(sessionService.abortSession).not.toHaveBeenCalled();
+    expect(sessionService.startCodeReview).not.toHaveBeenCalled();
+    expect(sessionService.createSession).not.toHaveBeenCalled();
+    expect(sessionService.createTask).not.toHaveBeenCalled();
+    expect(sessionService.updateTask).not.toHaveBeenCalled();
+    expect(sessionService.retryTask).not.toHaveBeenCalled();
+    expect(sessionService.deliverTask).not.toHaveBeenCalled();
+    expect(sessionService.updateGoal).not.toHaveBeenCalled();
+    expect(sessionService.clearGoal).not.toHaveBeenCalled();
+    expect(sessionService.archiveSession).not.toHaveBeenCalled();
+    expect(sessionService.unarchiveSession).not.toHaveBeenCalled();
+    expect(sessionService.deleteSession).not.toHaveBeenCalled();
+    expect(sessionService.updateSession).not.toHaveBeenCalled();
+    expect(sessionService.forkSession).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
+  });
+
+  it('rejects new event subscriptions and retained-local reads while history is selected', async () => {
+    const remote = createSurfaceOpenResult();
+    const local = createSession({ sessionId: 'local-session' });
+    const localRef = createRef(local.sessionId, local.projectPath);
+    vi.mocked(sessionService.openEventSubscription).mockResolvedValue(vi.fn());
+    useSessionStore.setState({
+      sessions: [local],
+      currentSessionId: local.sessionId,
+      currentSessionRef: localRef,
+      isTemporarySession: false,
+      historySurfaceSelection: {
+        locator: remote.session.locator,
+        displayCwd: remote.session.displayCwd,
+        capabilities: remote.session.capabilities,
+        mode: 'history-only',
+      },
+      prepareEventSubscription: actualPrepareEventSubscription,
+      subscribeToEvents: actualSubscribeToEvents,
+    });
+
+    await expect(
+      useSessionStore.getState().prepareEventSubscription(localRef)
+    ).rejects.toThrow('session_surface_read_only');
+    await expect(
+      useSessionStore.getState().subscribeToEvents(localRef)
+    ).rejects.toThrow('session_surface_read_only');
+    await useSessionStore.getState().resyncSessionMessages(localRef);
+    await useSessionStore.getState().loadTeams(localRef);
+
+    expect(sessionService.openEventSubscription).not.toHaveBeenCalled();
+    expect(sessionService.getMessages).not.toHaveBeenCalled();
+    expect(teamService.list).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
+  });
+
+  it('closes a subscription that resolves after history-only selection', async () => {
+    const remote = createSurfaceOpenResult();
+    const localRef = createRef('local-session', '/tmp/project-a');
+    const subscriptionGate = deferred<() => void>();
+    const closeSubscription = vi.fn();
+    vi.mocked(sessionService.openEventSubscription).mockReturnValue(
+      subscriptionGate.promise
+    );
+    useSessionStore.setState({
+      currentSessionId: localRef.sessionId,
+      currentSessionRef: localRef,
+      isTemporarySession: false,
+      eventUnsubscribe: null,
+      prepareEventSubscription: actualPrepareEventSubscription,
+      subscribeToEvents: actualSubscribeToEvents,
+    });
+
+    const subscribing = useSessionStore.getState().subscribeToEvents(localRef);
+    await vi.waitFor(() =>
+      expect(sessionService.openEventSubscription).toHaveBeenCalledOnce()
+    );
+    useSessionStore.setState({
+      historySurfaceSelection: {
+        locator: remote.session.locator,
+        displayCwd: remote.session.displayCwd,
+        capabilities: remote.session.capabilities,
+        mode: 'history-only',
+      },
+    });
+    subscriptionGate.resolve(closeSubscription);
+
+    await expect(subscribing).rejects.toThrow('session_surface_read_only');
+    expect(closeSubscription).toHaveBeenCalledOnce();
+    expect(useSessionStore.getState().eventUnsubscribe).toBeNull();
+  });
+
+  it('does not send after subscription preparation crosses into history-only mode', async () => {
+    const remote = createSurfaceOpenResult();
+    const local = createSession({ sessionId: 'local-session' });
+    const localRef = createRef(local.sessionId, local.projectPath);
+    const subscriptionGate = deferred<() => void>();
+    const closeSubscription = vi.fn();
+    const prepareEventSubscription = vi.fn(() => subscriptionGate.promise);
+    useSessionStore.setState({
+      sessions: [local],
+      currentSessionId: local.sessionId,
+      currentSessionRef: localRef,
+      isTemporarySession: false,
+      isStreaming: false,
+      prepareEventSubscription,
+    });
+
+    const sending = useSessionStore.getState().sendMessage({ content: 'blocked late' });
+    await vi.waitFor(() => expect(prepareEventSubscription).toHaveBeenCalledOnce());
+    useSessionStore.setState({
+      historySurfaceSelection: {
+        locator: remote.session.locator,
+        displayCwd: remote.session.displayCwd,
+        capabilities: remote.session.capabilities,
+        mode: 'history-only',
+      },
+    });
+    subscriptionGate.resolve(closeSubscription);
+
+    await expect(sending).resolves.toBe(false);
+    expect(closeSubscription).toHaveBeenCalledOnce();
+    expect(sessionService.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('does not invalidate retained local navigation or side work when opening history', async () => {
     const remote = createSurfaceOpenResult();
     const localVersion = useSessionStore.getState().getNavigationVersion();
@@ -2222,6 +2393,21 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState().historySurfaceOlderCursor).toBeNull();
   });
 
+  it('rejects a crafted older-page read when the selected surface cannot read history', async () => {
+    const remote = createSurfaceOpenResult();
+    remote.session.capabilities.history.read = false;
+    vi.mocked(sessionService.openSurface).mockResolvedValue(remote);
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+
+    await useSessionStore.getState().loadOlderSurfaceHistory();
+
+    expect(sessionService.loadSurfaceHistoryPage).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().historySurfaceError).toEqual({
+      code: 'session_surface_capability_unavailable',
+      message: 'Session history read is unavailable',
+    });
+  });
+
   it('starts a fresh same-locator page request after close and reopen', async () => {
     const remote = createSurfaceOpenResult();
     const firstPage = deferred<SessionSurfaceHistoryPage>();
@@ -2340,6 +2526,21 @@ describe('sessionSlice multimodal sendMessage', () => {
       historySurfaceLoadState: 'ready',
     });
     expect(sessionService.openEventSubscription).not.toHaveBeenCalled();
+  });
+
+  it('rejects a crafted history fork when the selected surface cannot fork', async () => {
+    const parent = createSurfaceOpenResult();
+    parent.session.capabilities.history.fork = false;
+    vi.mocked(sessionService.openSurface).mockResolvedValue(parent);
+    await useSessionStore.getState().openHistorySurface(parent.session.locator);
+
+    await useSessionStore.getState().forkHistorySurface();
+
+    expect(sessionService.forkSurface).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().historySurfaceError).toEqual({
+      code: 'session_surface_capability_unavailable',
+      message: 'Session history fork is unavailable',
+    });
   });
 
   it('loads the complete V2 catalog with locator-key deduplication', async () => {

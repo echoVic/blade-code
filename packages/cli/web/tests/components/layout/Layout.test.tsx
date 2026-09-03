@@ -114,6 +114,7 @@ describe('Layout', () => {
       currentSessionId: null,
       currentSessionRef: null,
       forkingSessionRef: null,
+      historySurfaceSelection: null,
     }));
 
     serviceMocks.getGitInfo.mockReset();
@@ -225,6 +226,70 @@ describe('Layout', () => {
       await Promise.resolve();
     });
     expect(rewind?.disabled).toBe(true);
+  });
+
+  test('disables local file, rewind, and terminal surfaces for remote history', async () => {
+    const { Layout } = await import('../../../src/components/layout/Layout');
+    const { useAppStore } = await import('../../../src/store/AppStore');
+    const { useSessionStore } = await import('../../../src/store/session');
+    useSessionStore.setState({
+      currentSessionId: 'local-session',
+      currentSessionRef: createRef('local-session', '/workspace/a'),
+      historySurfaceSelection: {
+        locator: {
+          version: 2,
+          sessionId: 'remote-session',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
+        },
+        displayCwd: 'C:\\Remote\\Repo',
+        mode: 'history-only',
+        capabilities: {
+          connection: 'offline',
+          history: { read: true, fork: false },
+          turn: { start: false, reason: 'owner-offline' },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'surface-not-supported',
+          },
+          terminal: {
+            mode: 'none',
+            owner: 'none',
+            reason: 'surface-not-supported',
+          },
+        },
+      },
+    });
+    useAppStore.setState({ isTerminalOpen: true, isFilePreviewOpen: true });
+
+    await act(async () => {
+      root.render(
+        <Layout>
+          <div>history</div>
+        </Layout>
+      );
+    });
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Rewind session"]')
+        ?.disabled
+    ).toBe(true);
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Toggle preview panel"]')
+        ?.disabled
+    ).toBe(true);
+    expect(container.querySelector('[data-testid="mock-file-preview"]')).toBeNull();
+    expect(useAppStore.getState().isFilePreviewOpen).toBe(false);
+    expect(useAppStore.getState().isTerminalOpen).toBe(false);
+    expect(serviceMocks.getGitInfo).not.toHaveBeenCalled();
+    expect(container.querySelector('header')?.textContent).not.toContain(
+      'C:\\Remote\\Repo'
+    );
+    expect(container.querySelector('header')?.textContent).toContain('History only');
   });
 
   test('maximizes preview within the workspace and restores the split view', async () => {

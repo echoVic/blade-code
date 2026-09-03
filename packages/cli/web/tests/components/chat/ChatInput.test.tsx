@@ -77,6 +77,7 @@ describe('ChatInput', () => {
     useSessionStore.setState((state) => ({
       ...state,
       sessions: [],
+      historySurfaceSelection: null,
       currentSessionId: null,
       currentSessionRef: null,
       isTemporarySession: true,
@@ -642,6 +643,197 @@ describe('ChatInput', () => {
     expect(textarea.value).toBe('Draft while configuring');
     expect(sendButton?.disabled).toBe(true);
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  test('fails closed before invoking onSend while a history surface is active', async () => {
+    const onSend = vi.fn();
+    useSessionStore.setState({
+      historySurfaceSelection: {
+        locator: {
+          version: 2,
+          sessionId: 'remote-session',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
+        },
+        displayCwd: '/remote/project',
+        mode: 'history-only',
+        capabilities: {
+          connection: 'online',
+          history: { read: true, fork: true },
+          turn: { start: false, reason: 'history-only' },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'history-only',
+          },
+          terminal: {
+            mode: 'none',
+            owner: 'none',
+            reason: 'history-only',
+          },
+        },
+      },
+    });
+    act(() => root.render(<ChatInput onSend={onSend} />));
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(true);
+    textarea.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+    );
+    container.querySelector<HTMLButtonElement>('button[data-blade-submit]')?.click();
+    await act(async () => Promise.resolve());
+
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  test('fails a stale submit handler closed after entering history-only mode', async () => {
+    const onSend = vi.fn();
+    act(() => root.render(<ChatInput onSend={onSend} />));
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    act(() => {
+      valueSetter?.call(textarea, 'Do not dispatch remotely');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const staleSendButton = container.querySelector<HTMLButtonElement>(
+      'button[data-blade-submit]'
+    );
+    expect(staleSendButton?.disabled).toBe(false);
+
+    useSessionStore.setState({
+      historySurfaceSelection: {
+        locator: {
+          version: 2,
+          sessionId: 'remote-session',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
+        },
+        displayCwd: '/remote/project',
+        mode: 'history-only',
+        capabilities: {
+          connection: 'online',
+          history: { read: true, fork: true },
+          turn: { start: false, reason: 'history-only' },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'history-only',
+          },
+          terminal: {
+            mode: 'none',
+            owner: 'none',
+            reason: 'history-only',
+          },
+        },
+      },
+    });
+    await act(async () => staleSendButton?.click());
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
+  });
+
+  test('cancels a pending file suggestion lookup after entering history-only mode', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    act(() => root.render(<ChatInput onSend={vi.fn()} workspacePath="/workspace/a" />));
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    act(() => {
+      valueSetter?.call(textarea, '@src');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.setSelectionRange(4, 4);
+      textarea.dispatchEvent(new Event('select', { bubbles: true }));
+    });
+
+    act(() => {
+      useSessionStore.setState({
+        historySurfaceSelection: {
+          locator: {
+            version: 2,
+            sessionId: 'remote-session',
+            workspace: {
+              kind: 'acp-remote',
+              workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+            },
+          },
+          displayCwd: '/remote/project',
+          mode: 'history-only',
+          capabilities: {
+            connection: 'online',
+            history: { read: true, fork: true },
+            turn: { start: false, reason: 'history-only' },
+            files: {
+              readText: false,
+              writeText: false,
+              browse: 'none',
+              reason: 'history-only',
+            },
+            terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+          },
+        },
+      });
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  test('fails a stale stop handler closed after entering history-only mode', async () => {
+    const onAbort = vi.fn();
+    act(() =>
+      root.render(<ChatInput onSend={vi.fn()} onAbort={onAbort} isStreaming />)
+    );
+    const staleStop = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Stop active turn"]'
+    );
+    expect(staleStop).toBeTruthy();
+
+    useSessionStore.setState({
+      historySurfaceSelection: {
+        locator: {
+          version: 2,
+          sessionId: 'remote-session',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
+        },
+        displayCwd: '/remote/project',
+        mode: 'history-only',
+        capabilities: {
+          connection: 'online',
+          history: { read: true, fork: true },
+          turn: { start: false, reason: 'history-only' },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'history-only',
+          },
+          terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+        },
+      },
+    });
+    await act(async () => staleStop?.click());
+
+    expect(onAbort).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
   });
 
   test('isolates and restores drafts by compound composer key', () => {

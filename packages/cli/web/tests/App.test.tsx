@@ -84,6 +84,10 @@ vi.mock('@/components/kanban/KanbanBoard', () => ({
   KanbanBoard: () => <div>Kanban ready</div>,
 }));
 
+vi.mock('@/components/history/SessionHistorySurface', () => ({
+  SessionHistorySurface: () => <div>Remote history ready</div>,
+}));
+
 import App from '../src/App';
 
 describe('App bootstrap', () => {
@@ -269,6 +273,12 @@ describe('App bootstrap', () => {
       '',
       `/?view=history&session=remote-session&workspaceKind=acp-remote&workspaceRef=${locator.workspace.workspaceRef}`
     );
+    sessionState.openHistorySurface.mockImplementation(async () => {
+      sessionState.historySurfaceSelection = {
+        locator,
+        mode: 'history-only',
+      };
+    });
 
     await act(async () => {
       root.render(<App />);
@@ -281,6 +291,44 @@ describe('App bootstrap', () => {
     expect(sessionState.selectSession).not.toHaveBeenCalled();
     expect(sessionState.startTemporarySession).not.toHaveBeenCalled();
     expect(sessionState.loadSurfaceCatalog).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Remote history ready');
+    });
+  });
+
+  it('does not activate a stored local session while restoring remote history', async () => {
+    const locator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+    };
+    const localRef = { sessionId: 'stored-local', projectPath: '/workspace/blade' };
+    window.localStorage.setItem('blade.sessions.last', JSON.stringify(localRef));
+    window.history.replaceState(
+      { bladeSessionSurfaceLocator: locator },
+      '',
+      `/?view=history&session=remote-session&workspaceKind=acp-remote&workspaceRef=${locator.workspace.workspaceRef}`
+    );
+    sessionState.openHistorySurface.mockImplementation(async () => {
+      sessionState.historySurfaceSelection = { locator, mode: 'history-only' };
+    });
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(sessionState.openHistorySurface).toHaveBeenCalledWith(locator);
+    });
+
+    expect(sessionState.loadTaskWorkspaceInfo).not.toHaveBeenCalled();
+    expect(sessionState.loadBoundProjects).not.toHaveBeenCalled();
+    expect(sessionState.selectSession).not.toHaveBeenCalled();
+    expect(sessionState.currentSessionRef).toBeNull();
+    expect(container.textContent).toContain('Remote history ready');
   });
 
   it('cleans an invalid remote history link without issuing an open request', async () => {
@@ -329,9 +377,17 @@ describe('App bootstrap', () => {
       `/?view=history&session=remote-session&workspaceKind=acp-remote&workspaceRef=${locator.workspace.workspaceRef}`
     );
     sessionState.openHistorySurface.mockImplementation(async () => {
-      sessionState.historySurfaceSelection = null;
+      sessionState.historySurfaceSelection = { locator, mode: 'history-only' };
     });
 
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Remote history ready');
+    });
+    sessionState.historySurfaceSelection = null;
     await act(async () => {
       root.render(<App />);
       await Promise.resolve();

@@ -23,6 +23,8 @@ interface SidebarCollapsedProps {
   taskEventsConnected: boolean;
   unreadCount: number;
   boardActive: boolean;
+  terminalDisabled?: boolean;
+  taskSwitcherDisabled?: boolean;
   className?: string;
 }
 
@@ -41,6 +43,8 @@ export function SidebarCollapsed({
   taskEventsConnected,
   unreadCount,
   boardActive,
+  terminalDisabled = false,
+  taskSwitcherDisabled = false,
   className,
 }: SidebarCollapsedProps) {
   const t = useT();
@@ -94,10 +98,12 @@ export function SidebarCollapsed({
 
       <button
         onClick={onToggleTerminal}
+        disabled={terminalDisabled}
         aria-label={t('sidebar.action.terminalToggle')}
         title={t('sidebar.action.terminal')}
         className={cn(
           'flex h-10 w-10 items-center justify-center rounded-md border transition-colors',
+          terminalDisabled && 'cursor-not-allowed opacity-35',
           isTerminalOpen
             ? 'border-[hsl(var(--deck-accent)/0.55)] bg-[hsl(var(--deck-accent-soft))] text-[hsl(var(--deck-accent))]'
             : 'border-transparent text-[hsl(var(--deck-ink-muted))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]'
@@ -108,9 +114,13 @@ export function SidebarCollapsed({
 
       <button
         onClick={onOpenTaskSwitcher}
+        disabled={taskSwitcherDisabled}
         aria-label={t('sidebar.action.searchTasks')}
         title={`${t('sidebar.action.searchTasks')} (${shortcutHint('searchTasks')})`}
-        className="relative flex h-10 w-10 items-center justify-center rounded-md border border-transparent text-[hsl(var(--deck-ink-muted))] transition-colors hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]"
+        className={cn(
+          'relative flex h-10 w-10 items-center justify-center rounded-md border border-transparent text-[hsl(var(--deck-ink-muted))] transition-colors hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]',
+          taskSwitcherDisabled && 'cursor-not-allowed opacity-35'
+        )}
       >
         <Search className="h-4 w-4" />
         {unreadCount > 0 && (

@@ -490,6 +490,88 @@ describe('eventHandlers', () => {
     expect(state.closeHistorySurface).not.toHaveBeenCalled();
   });
 
+  test('does not derive retained-local HTTP reads from SSE while history is selected', async () => {
+    const state = createState({
+      historySurfaceSelection: {
+        locator: {
+          version: 2,
+          sessionId: 'remote-session',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
+        },
+        displayCwd: '/remote/project',
+        mode: 'history-only',
+        capabilities: {
+          connection: 'online',
+          history: { read: true, fork: true },
+          turn: { start: false, reason: 'history-only' },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'history-only',
+          },
+          terminal: {
+            mode: 'none',
+            owner: 'none',
+            reason: 'history-only',
+          },
+        },
+      },
+    });
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'team.message.received',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        teamName: 'review-team',
+      },
+    });
+    dispatch({
+      type: 'turn.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        assessment: {
+          state: 'requires_attention',
+          turnId: 'turn-1',
+          inputMessageCount: 1,
+          reason: 'interrupted_tool_call',
+        },
+      },
+    });
+    dispatch({
+      type: 'session.completed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+      },
+    });
+    dispatch({
+      type: 'tool.start',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        toolCallId: 'browser-call',
+        toolName: 'BrowserNavigate',
+        arguments: '{}',
+      },
+    });
+    await Promise.resolve();
+
+    expect(state.loadTeams).not.toHaveBeenCalled();
+    expect(state.resyncSessionMessages).not.toHaveBeenCalled();
+    expect(useBrowserActivityStore.getState().agentActivity).toMatchObject({
+      sessionRef: { sessionId: 'session-1', projectPath: '/workspace/a' },
+      toolCallId: 'browser-call',
+    });
+    expect(useAppStore.getState().isFilePreviewOpen).toBe(false);
+  });
+
   test('forwards cache usage and exact cost from token events', () => {
     const state = createState();
     const dispatch = createEventDispatcher(() => state, vi.fn());

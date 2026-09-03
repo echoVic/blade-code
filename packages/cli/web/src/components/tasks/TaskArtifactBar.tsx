@@ -22,6 +22,10 @@ import { useT } from '@/i18n';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
 import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
+import {
   sameSessionRef,
   sessionRefFromSession,
   sessionRefKey,
@@ -35,6 +39,9 @@ export function TaskArtifactBar() {
   const t = useT();
   const sessions = useSessionStore((state) => state.sessions);
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const historySurfaceSelection = useSessionStore(
+    (state) => state.historySurfaceSelection
+  );
   const taskDeliveryActions = useSessionStore((state) => state.taskDeliveryActions);
   const deliverTask = useSessionStore((state) => state.deliverTask);
   const openFilePreview = useAppStore((state) => state.openFilePreview);
@@ -48,7 +55,8 @@ export function TaskArtifactBar() {
       currentSessionRef
     )
   );
-  if (!session?.taskIsolation) return null;
+  if (isHistorySurfaceActive(historySurfaceSelection) || !session?.taskIsolation)
+    return null;
 
   const diff = session.taskDiffStat;
   const isWorktree = session.taskIsolation === 'worktree';
@@ -67,7 +75,13 @@ export function TaskArtifactBar() {
   const addRatio = totalChanges > 0 && diff ? (diff.additions / totalChanges) * 100 : 0;
 
   const runDelivery = (action: 'apply' | 'discard') => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     void deliverTask(sessionRef, action).catch(() => undefined);
+  };
+
+  const reviewChanges = () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
+    openFilePreview({ tab: 'diff' });
   };
 
   return (
@@ -139,7 +153,7 @@ export function TaskArtifactBar() {
             {hasChanges && delivery?.status !== 'discarded' && (
               <button
                 type="button"
-                onClick={() => openFilePreview({ tab: 'diff' })}
+                onClick={reviewChanges}
                 className="inline-flex items-center gap-1 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-2 py-1 text-[hsl(var(--deck-ink))] transition hover:border-[hsl(var(--deck-accent)/0.55)] hover:text-[hsl(var(--deck-accent))]"
               >
                 {t('artifact.review')}

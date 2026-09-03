@@ -6,6 +6,9 @@ const serviceMocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   getWorkspaceInfo: vi.fn(),
   createTask: vi.fn(),
+  createSession: vi.fn(),
+  startCodeReview: vi.fn(),
+  deleteSession: vi.fn(),
   updateTask: vi.fn(),
   setTaskAdmissionPaused: vi.fn(),
   listProjects: vi.fn(),
@@ -23,6 +26,7 @@ vi.mock('../../../src/services', () => ({
 import { useConfigStore } from '../../../src/store/ConfigStore';
 import { useScheduleStore } from '../../../src/store/ScheduleStore';
 import { useSessionStore } from '../../../src/store/session';
+import type { SessionSurfaceSelection } from '../../../src/store/session/types';
 
 const actualSelectSession = useSessionStore.getState().selectSession;
 const actualSetCurrentSession = useSessionStore.getState().setCurrentSession;
@@ -39,6 +43,37 @@ function createSession(projectPath: string): Session {
     firstMessageTime: '2026-08-05T09:00:00.000Z',
     lastMessageTime: '2026-08-05T10:00:00.000Z',
     hasErrors: false,
+  };
+}
+
+function createHistorySelection(): SessionSurfaceSelection {
+  return {
+    locator: {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+    },
+    displayCwd: '/remote/project',
+    mode: 'history-only',
+    capabilities: {
+      connection: 'online',
+      history: { read: true, fork: true },
+      turn: { start: false, reason: 'history-only' },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none',
+        reason: 'history-only',
+      },
+      terminal: {
+        mode: 'none',
+        owner: 'none',
+        reason: 'history-only',
+      },
+    },
   };
 }
 
@@ -65,6 +100,9 @@ describe('taskListSlice', () => {
     serviceMocks.getSession.mockReset();
     serviceMocks.getWorkspaceInfo.mockReset();
     serviceMocks.createTask.mockReset();
+    serviceMocks.createSession.mockReset();
+    serviceMocks.startCodeReview.mockReset();
+    serviceMocks.deleteSession.mockReset();
     serviceMocks.updateTask.mockReset();
     serviceMocks.setTaskAdmissionPaused.mockReset();
     serviceMocks.listProjects.mockReset();
@@ -83,6 +121,7 @@ describe('taskListSlice', () => {
     useSessionStore.getState().unsubscribeFromTaskEvents();
     useSessionStore.setState({
       sessions: [createSession('/workspace/a'), createSession('/workspace/b')],
+      historySurfaceSelection: null,
       currentSessionId: null,
       currentSessionRef: null,
       isTemporarySession: true,
@@ -632,6 +671,29 @@ describe('taskListSlice', () => {
     expect(useSessionStore.getState().isUpdatingTaskAdmission).toBe(false);
   });
 
+  it('rejects task admission mutations while a history surface is selected', async () => {
+    useSessionStore.setState({
+      historySurfaceSelection: createHistorySelection(),
+    });
+
+    await useSessionStore.getState().setTaskAdmissionPaused(true);
+
+    expect(serviceMocks.setTaskAdmissionPaused).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
+    expect(useSessionStore.getState().isUpdatingTaskAdmission).toBe(false);
+  });
+
+  it('rejects project binding mutations while a history surface is selected', async () => {
+    useSessionStore.setState({ historySurfaceSelection: createHistorySelection() });
+
+    await useSessionStore.getState().bindProject('/workspace/new');
+    await useSessionStore.getState().unbindProject('/workspace/a');
+
+    expect(serviceMocks.bindProject).not.toHaveBeenCalled();
+    expect(serviceMocks.unbindProject).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
+  });
+
   it('retries the exact compound task and selects the new session', async () => {
     const source = {
       ...createSession('/workspace/a'),
@@ -740,6 +802,48 @@ describe('taskListSlice', () => {
       sessionId: 'newer-session',
       projectPath: '/workspace/b',
     });
+  });
+
+  it('does not select a retried task after history-only selection starts', async () => {
+    const source = {
+      ...createSession('/workspace/a'),
+      taskStatus: 'failed' as const,
+      taskRetryAvailable: true,
+    };
+    const retried = {
+      ...createSession('/workspace/retry'),
+      sessionId: 'retry-after-history',
+      taskStatus: 'running' as const,
+    };
+    const retryGate = deferred<{
+      session: Session;
+      runId: string;
+      messageId: string;
+      status: 'running';
+    }>();
+    serviceMocks.retryTask.mockReturnValueOnce(retryGate.promise);
+    const selectSession = vi.fn(async () => undefined);
+    useSessionStore.setState({
+      sessions: [source],
+      selectedProjectPath: '/workspace/a',
+      selectSession,
+    });
+
+    const retry = useSessionStore.getState().retryTask({
+      sessionId: source.sessionId,
+      projectPath: source.projectPath,
+    });
+    useSessionStore.setState({ historySurfaceSelection: createHistorySelection() });
+    retryGate.resolve({
+      session: retried,
+      runId: 'run-retry',
+      messageId: 'message-retry',
+      status: 'running',
+    });
+    await retry;
+
+    expect(selectSession).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().historySurfaceSelection).not.toBeNull();
   });
 
   it('scopes retry failures to the exact task', async () => {
@@ -1130,6 +1234,70 @@ describe('taskListSlice', () => {
         .getState()
         .sessions.some((session) => session.sessionId === dispatched.sessionId)
     ).toBe(true);
+  });
+
+  it('does not select a dispatched task after history-only selection starts', async () => {
+    const dispatched = {
+      ...createSession('/workspace/task-worktree'),
+      sessionId: 'task-after-history',
+      taskStatus: 'queued' as const,
+    };
+    const dispatchGate = deferred<{
+      session: Session;
+      runId: string;
+      messageId: string;
+      status: 'queued';
+    }>();
+    serviceMocks.createTask.mockReturnValueOnce(dispatchGate.promise);
+    const selectSession = vi.fn(async () => undefined);
+    useSessionStore.setState({
+      selectedProjectPath: '/workspace/a',
+      selectSession,
+    });
+
+    const dispatch = useSessionStore.getState().dispatchTask({
+      prompt: 'Dispatch before history',
+      isolation: 'worktree',
+      permissionMode: 'default',
+    });
+    useSessionStore.setState({ historySurfaceSelection: createHistorySelection() });
+    dispatchGate.resolve({
+      session: dispatched,
+      runId: 'run-background',
+      messageId: 'message-background',
+      status: 'queued',
+    });
+    await dispatch;
+
+    expect(selectSession).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().historySurfaceSelection).not.toBeNull();
+  });
+
+  it('does not start review execution when session creation resolves after history-only selection', async () => {
+    const created = {
+      ...createSession('/workspace/a'),
+      sessionId: 'review-after-history',
+    };
+    const createGate = deferred<Session>();
+    serviceMocks.createSession.mockReturnValueOnce(createGate.promise);
+    serviceMocks.deleteSession.mockResolvedValueOnce(undefined);
+    serviceMocks.startCodeReview.mockResolvedValueOnce(undefined);
+    useSessionStore.setState({ selectedProjectPath: '/workspace/a' });
+
+    const review = useSessionStore.getState().startCodeReview({
+      kind: 'uncommitted',
+    });
+    await vi.waitFor(() => expect(serviceMocks.createSession).toHaveBeenCalledOnce());
+    useSessionStore.setState({ historySurfaceSelection: createHistorySelection() });
+    createGate.resolve(created);
+    await review;
+
+    expect(serviceMocks.startCodeReview).not.toHaveBeenCalled();
+    expect(serviceMocks.deleteSession).toHaveBeenCalledWith({
+      sessionId: created.sessionId,
+      projectPath: created.projectPath,
+    });
+    expect(useSessionStore.getState().historySurfaceSelection).not.toBeNull();
   });
 
   it('does not surface a stale dispatch failure in the newly opened session', async () => {

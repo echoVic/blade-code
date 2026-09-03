@@ -5,6 +5,11 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/AppStore';
 import { useIsDark } from '@/store/SettingsStore';
+import { useSessionStore } from '@/store/session';
+import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
 import '@xterm/xterm/css/xterm.css';
 import { Minus, Terminal as TerminalIcon, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -15,6 +20,9 @@ interface TerminalPanelProps {
 
 export const TerminalPanel = ({ workspacePath }: TerminalPanelProps) => {
   const t = useT();
+  const historySurfaceSelection = useSessionStore(
+    (state) => state.historySurfaceSelection
+  );
   const { isTerminalOpen, toggleTerminal } = useAppStore();
   const [isMinimized, setIsMinimized] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -26,6 +34,7 @@ export const TerminalPanel = ({ workspacePath }: TerminalPanelProps) => {
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const connect = useCallback(() => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     const baseUrl = import.meta.env.DEV
@@ -64,6 +73,8 @@ export const TerminalPanel = ({ workspacePath }: TerminalPanelProps) => {
   }, []);
 
   const sendInput = useCallback((data: string) => {
+    if (isHistorySurfaceActive(useSessionStore.getState().historySurfaceSelection))
+      return;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(data);
     }
@@ -163,7 +174,7 @@ export const TerminalPanel = ({ workspacePath }: TerminalPanelProps) => {
       fitAddonRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTerminalOpen, connect, disconnect, sendInput]);
+  }, [historySurfaceSelection, isTerminalOpen, connect, disconnect, sendInput]);
 
   useEffect(() => {
     if (!xtermRef.current) return;
@@ -232,7 +243,7 @@ export const TerminalPanel = ({ workspacePath }: TerminalPanelProps) => {
     };
   }, [isTerminalOpen, isMinimized]);
 
-  if (!isTerminalOpen) return null;
+  if (!isTerminalOpen || isHistorySurfaceActive(historySurfaceSelection)) return null;
 
   return (
     <div

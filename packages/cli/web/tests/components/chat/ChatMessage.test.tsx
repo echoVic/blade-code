@@ -5,7 +5,11 @@ import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { useAppStore } from '../../../src/store/AppStore';
-import { type Message, useSessionStore } from '../../../src/store/session';
+import {
+  type Message,
+  type SessionSurfaceSelection,
+  useSessionStore,
+} from '../../../src/store/session';
 import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
 
 vi.mock('../../../src/components/chat/MarkdownRenderer', () => ({
@@ -48,6 +52,39 @@ async function setInput(input: HTMLInputElement, value: string) {
     setter?.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+function selectRemoteHistorySurface(): void {
+  useSessionStore.setState({
+    historySurfaceSelection: {
+      locator: {
+        version: 2,
+        sessionId: 'remote-session',
+        workspace: {
+          kind: 'acp-remote',
+          workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+        },
+      },
+      displayCwd: '/remote/project',
+      mode: 'history-only',
+      capabilities: {
+        connection: 'online',
+        history: { read: true, fork: true },
+        turn: { start: false, reason: 'history-only' },
+        files: {
+          readText: false,
+          writeText: false,
+          browse: 'none',
+          reason: 'history-only',
+        },
+        terminal: {
+          mode: 'none',
+          owner: 'none',
+          reason: 'history-only',
+        },
+      },
+    } satisfies SessionSurfaceSelection,
   });
 }
 
@@ -115,6 +152,7 @@ describe('ChatMessage', () => {
         sessionId: 'session-1',
         projectPath: '/workspace/a',
       } satisfies SessionRef,
+      historySurfaceSelection: null,
       forkingSessionRef: null,
       isTemporarySession: false,
       isLoading: false,
@@ -504,6 +542,41 @@ describe('ChatMessage', () => {
     );
   });
 
+  test('fails a stale permission handler closed after entering history-only mode', async () => {
+    const message: Message = {
+      id: 'assistant-stale-confirmation',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000002,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: {
+          toolCallId: 'permission-stale',
+          toolName: 'Write',
+          description: 'Allow write',
+          status: 'pending',
+        },
+        question: null,
+      },
+    };
+    await act(async () => root.render(<ChatMessage message={message} />));
+    const onceButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Allow once')
+    );
+    expect(onceButton).toBeTruthy();
+
+    selectRemoteHistorySurface();
+    await act(async () => onceButton?.click());
+
+    expect(serviceMocks.respondPermission).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
+  });
+
   test('renders MCP sampling as one-shot approval without remember actions', async () => {
     const message: Message = {
       id: 'assistant-sampling',
@@ -648,6 +721,49 @@ describe('ChatMessage', () => {
       'question-1',
       { mode: 'A' }
     );
+  });
+
+  test('fails a stale question handler closed after entering history-only mode', async () => {
+    const message: Message = {
+      id: 'assistant-stale-question',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000003,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: {
+          toolCallId: 'question-stale',
+          status: 'pending',
+          questions: [
+            {
+              question: 'Choose one',
+              header: 'mode',
+              options: [{ label: 'A', description: 'Option A' }],
+              multiSelect: false,
+            },
+          ],
+        },
+      },
+    };
+    await act(async () => root.render(<ChatMessage message={message} />));
+    const optionButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('Option A')
+    );
+    const submitButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('Submit')
+    );
+    await act(async () => optionButton?.click());
+    selectRemoteHistorySurface();
+    await act(async () => submitButton?.click());
+
+    expect(serviceMocks.respondToQuestion).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
   });
 
   test('submits typed MCP form content without projecting answers into the message', async () => {
@@ -801,6 +917,49 @@ describe('ChatMessage', () => {
       'elicitation-url-1',
       { action: 'accept' }
     );
+    open.mockRestore();
+  });
+
+  test('fails a stale MCP URL handler closed after entering history-only mode', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(window);
+    const message: Message = {
+      id: 'assistant-stale-url-elicitation',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000005,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: null,
+        elicitation: {
+          toolCallId: 'elicitation-stale',
+          status: 'pending',
+          details: {
+            serverName: 'deploy',
+            mode: 'url',
+            message: 'Authorize release',
+            url: 'https://deploy.example.test/authorize?state=opaque',
+            domain: 'deploy.example.test',
+            elicitationId: 'auth-stale',
+          },
+        },
+      },
+    };
+    await act(async () => root.render(<ChatMessage message={message} />));
+    const openButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Open external URL')
+    );
+    selectRemoteHistorySurface();
+    await act(async () => openButton?.click());
+
+    expect(open).not.toHaveBeenCalled();
+    expect(serviceMocks.respondToElicitation).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
     open.mockRestore();
   });
 
@@ -1000,6 +1159,42 @@ describe('ChatMessage', () => {
       'Resumed as agent-child · completed · depth 2'
     );
     expect(container.textContent).toContain('Follow-up complete');
+  });
+
+  test('does not hydrate or resume a subagent while history-only mode is active', async () => {
+    selectRemoteHistorySurface();
+    const message: Message = {
+      id: 'assistant-history-subagent',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000004,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: {
+          id: 'subagent-history-card',
+          type: 'Explore',
+          description: 'Inspect code',
+          status: 'completed',
+          startTime: 1,
+          sessionId: 'agent-history-source',
+        },
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+      await Promise.resolve();
+    });
+
+    expect(serviceMocks.listSubagents).not.toHaveBeenCalled();
+    expect(serviceMocks.resumeSubagent).not.toHaveBeenCalled();
+    expect(container.querySelector('button[aria-label="Resume subagent"]')).toBeNull();
   });
 
   test('keeps a failed GUI resume recoverable', async () => {
@@ -1222,6 +1417,44 @@ describe('ChatMessage', () => {
       previewTargetPath: '/workspace/a/src/target.ts',
       previewRequestId: 1,
     });
+  });
+
+  test('fails a stale changed-file action closed after entering history-only mode', async () => {
+    const message: Message = {
+      id: 'assistant-stale-changed-file',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000007,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [
+          {
+            toolCallId: 'edit-stale',
+            toolName: 'Edit',
+            status: 'success',
+            startTime: 1,
+            metadata: { file_path: '/workspace/a/src/stale.ts' },
+          },
+        ],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: null,
+      },
+    };
+    await act(async () => root.render(<ChatMessage message={message} />));
+    const fileButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'stale.ts'
+    );
+    expect(fileButton).toBeTruthy();
+
+    selectRemoteHistorySurface();
+    await act(async () => fileButton?.click());
+
+    expect(useAppStore.getState().isFilePreviewOpen).toBe(false);
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
   });
 
   test('lists every changed file from an ApplyPatch result', async () => {

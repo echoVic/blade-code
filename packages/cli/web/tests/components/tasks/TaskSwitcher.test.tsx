@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TaskSwitcher } from '../../../src/components/tasks/TaskSwitcher';
 import { useAppStore } from '../../../src/store/AppStore';
 import { useSessionStore } from '../../../src/store/session';
+import type { SessionSurfaceSelection } from '../../../src/store/session/types';
 
 function createSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -22,6 +23,33 @@ function createSession(overrides: Partial<Session> = {}): Session {
     lastMessageTime: '2026-08-07T10:00:00.000Z',
     hasErrors: false,
     ...overrides,
+  };
+}
+
+function historySelection(): SessionSurfaceSelection {
+  return {
+    locator: {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+    },
+    displayCwd: '/remote/project',
+    mode: 'history-only',
+    capabilities: {
+      connection: 'online',
+      history: { read: true, fork: true },
+      turn: { start: false, reason: 'history-only' },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none',
+        reason: 'history-only',
+      },
+      terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+    },
   };
 }
 
@@ -45,6 +73,7 @@ describe('TaskSwitcher', () => {
     });
     useSessionStore.setState({
       sessions: [createSession()],
+      historySurfaceSelection: null,
       isLoading: false,
       catalogLoadState: 'ready',
       catalogError: null,
@@ -97,6 +126,15 @@ describe('TaskSwitcher', () => {
       projectPath: '/workspace/blade',
     });
     expect(useAppStore.getState().isTaskSwitcherOpen).toBe(true);
+  });
+
+  it('closes and hides the task switcher while history-only is selected', async () => {
+    useSessionStore.setState({ historySurfaceSelection: historySelection() });
+
+    await renderSwitcher();
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(useAppStore.getState().isTaskSwitcherOpen).toBe(false);
   });
 
   it('keeps action failures visible inside the switcher', async () => {

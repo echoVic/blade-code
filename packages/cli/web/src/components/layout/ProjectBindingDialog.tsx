@@ -19,6 +19,10 @@ import { restoreFocusToSelector } from '@/lib/mobileNavigationFocus';
 import { cn } from '@/lib/utils';
 import { sessionService } from '@/services';
 import { useSessionStore } from '@/store/session';
+import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
 
 interface ProjectBindingDialogProps {
   open: boolean;
@@ -40,21 +44,25 @@ export function ProjectBindingDialog({
     selectProject,
     startTemporarySession,
   } = useSessionStore();
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
   const [projectPath, setProjectPath] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   const [isPickingDirectory, setIsPickingDirectory] = useState(false);
   const pickerRequestRef = useRef(0);
 
   useEffect(() => {
-    if (open) {
+    if (open && !historyOnly) {
       void loadBoundProjects();
       return;
     }
     pickerRequestRef.current += 1;
     setIsPickingDirectory(false);
-  }, [loadBoundProjects, open]);
+  }, [historyOnly, loadBoundProjects, open]);
 
   const bindAndOpenProject = async (path: string) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     await bindProject(path);
     setProjectPath('');
     startTemporarySession();
@@ -73,6 +81,7 @@ export function ProjectBindingDialog({
   };
 
   const handlePickDirectory = async () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (isPickingDirectory || isBindingProject) return;
     const requestId = ++pickerRequestRef.current;
     setLocalError(null);
@@ -94,12 +103,13 @@ export function ProjectBindingDialog({
   };
 
   const handleSelect = (path: string) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     selectProject(path);
     startTemporarySession();
     onOpenChange(false);
   };
 
-  if (!open) return null;
+  if (!open || historyOnly) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -222,7 +232,9 @@ export function ProjectBindingDialog({
                   <button
                     type="button"
                     onClick={() =>
-                      void unbindProject(project.path).catch(() => undefined)
+                      rejectHistorySurfaceAction(useSessionStore.getState())
+                        ? undefined
+                        : void unbindProject(project.path).catch(() => undefined)
                     }
                     title={t('projects.unbind.action')}
                     aria-label={t('projects.unbind.action')}

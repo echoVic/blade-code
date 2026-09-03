@@ -7,6 +7,10 @@ import { DEFAULT_WEB_PERMISSION_MODE, useConfigStore } from '@/store/ConfigStore
 import { useSettingsStore } from '@/store/SettingsStore';
 import { initialTokenUsage, TEMP_SESSION_ID } from '../constants';
 import {
+  HISTORY_SURFACE_READ_ONLY_ERROR,
+  isHistorySurfaceActive,
+} from '../historySurfaceGuard';
+import {
   findSessionByRef,
   removeSessionByRef,
   sameSessionRef,
@@ -539,6 +543,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     resyncSessionMessages: async (ref) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const key = sessionRefKey(ref);
       const existing = messageResyncs.get(key);
       if (existing) return existing;
@@ -578,6 +586,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     archiveSession: async (ref) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       try {
         const result = await sessionService.archiveSession(ref);
         const archivedIds = new Set(result.archivedSessionIds);
@@ -614,6 +626,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             ...(archivesCurrent ? resetStreamingState() : {}),
           };
         });
+        if (isHistorySurfaceActive(get().historySurfaceSelection)) return;
         await get().loadArchivedSessions();
       } catch (err) {
         set({
@@ -624,6 +637,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     unarchiveSession: async (ref) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       try {
         const result = await sessionService.unarchiveSession(ref);
         const restoredIds = new Set(result.restoredSessionIds);
@@ -635,6 +652,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           ),
           sessions: upsertSessionByRef(state.sessions, result.session),
         }));
+        if (isHistorySurfaceActive(get().historySurfaceSelection)) return;
         await Promise.all([get().loadSessions(), get().loadArchivedSessions()]);
       } catch (err) {
         set({
@@ -645,6 +663,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     deleteSession: async (ref) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const initialState = get();
       const wasCurrent = sameSessionRef(initialState.currentSessionRef, ref);
       const cancelsFork = sameSessionRef(initialState.forkingSessionRef, ref);
@@ -686,6 +708,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     updateSession: async (ref, title) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       try {
         await sessionService.updateSession(ref, title);
         set((state) => ({
@@ -702,6 +728,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     forkSession: async (session) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const generation = beginNavigation();
       const viewSelection = get().claimViewSelection();
       get().closeHistorySurface();
@@ -761,6 +791,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     rewindSession: async (targetMessageId, mode) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return false;
+      }
       const { currentSessionRef, isTemporarySession, isStreaming } = get();
       if (!currentSessionRef || isTemporarySession) {
         set({ error: 'No persisted session is available for rewind' });
@@ -824,6 +858,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     sendMessage: async (payload: SendMessagePayload) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return false;
+      }
       const {
         currentSessionId,
         currentSessionRef,
@@ -847,7 +885,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       let optimisticMessageId: string | null = null;
       const isCurrentSend = (): boolean =>
         isCurrentNavigation(generation) &&
-        sameSessionRef(get().currentSessionRef, expectedRef);
+        sameSessionRef(get().currentSessionRef, expectedRef) &&
+        !isHistorySurfaceActive(get().historySurfaceSelection);
       const sideCommand = parseSideConversationCommand(payload.content);
 
       if (sideCommand) {
@@ -1212,6 +1251,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     loadTeams: async (ref) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const target = ref ?? get().currentSessionRef;
       if (!target || !useSettingsStore.getState().agentTeamsEnabled) {
         set({ teams: [] });
@@ -1237,6 +1280,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     abortSession: async () => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return false;
+      }
       const { currentSessionRef, isStopping } = get();
       if (!currentSessionRef || isStopping) return false;
 
@@ -1279,6 +1326,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     pauseGoal: async () => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const { currentSessionRef, isTemporarySession } = get();
       if (!currentSessionRef || isTemporarySession) {
         set({ error: 'No persisted session is available for this goal' });
@@ -1297,6 +1348,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     resumeGoal: async () => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const { currentSessionRef, isTemporarySession } = get();
       if (!currentSessionRef || isTemporarySession) {
         set({ error: 'No persisted session is available for this goal' });
@@ -1325,6 +1380,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     editGoal: async (objective: string) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const { currentSessionRef, isTemporarySession } = get();
       if (!currentSessionRef || isTemporarySession) {
         set({ error: 'No persisted session is available for this goal' });
@@ -1354,6 +1413,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     },
 
     clearGoal: async () => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const { currentSessionRef, isTemporarySession } = get();
       if (!currentSessionRef || isTemporarySession) {
         set({ error: 'No persisted session is available for this goal' });

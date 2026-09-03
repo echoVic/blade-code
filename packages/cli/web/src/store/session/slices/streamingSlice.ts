@@ -1,6 +1,10 @@
 import { sessionService } from '@/services';
 import { createEventDispatcher } from '../handlers/eventHandlers';
 import { globalStreamingBuffer } from '../handlers/streamingBuffer';
+import {
+  HISTORY_SURFACE_READ_ONLY_ERROR,
+  isHistorySurfaceActive,
+} from '../historySurfaceGuard';
 import type { SliceCreator, StreamingSlice, TaskEventConnectionState } from '../types';
 
 export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => {
@@ -35,6 +39,10 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
     setRunId: (runId) => set({ currentRunId: runId }),
 
     prepareEventSubscription: async (ref, onEvent) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        throw new Error(HISTORY_SURFACE_READ_ONLY_ERROR);
+      }
       const dispatch = onEvent ?? createEventDispatcher(get, set);
       let connection: (() => void) | null = null;
       let connectionState: TaskEventConnectionState = 'connecting';
@@ -46,6 +54,11 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
           }
         },
       });
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        connection();
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        throw new Error(HISTORY_SURFACE_READ_ONLY_ERROR);
+      }
       connectionStates.set(connection, connectionState);
       return connection;
     },
@@ -109,11 +122,24 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
     },
 
     subscribeToEvents: async (ref) => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        throw new Error(HISTORY_SURFACE_READ_ONLY_ERROR);
+      }
       const unsubscribe = await get().prepareEventSubscription(ref);
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        unsubscribe();
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        throw new Error(HISTORY_SURFACE_READ_ONLY_ERROR);
+      }
       get().replaceEventSubscription(unsubscribe);
     },
 
     reconnectSessionEvents: async () => {
+      if (isHistorySurfaceActive(get().historySurfaceSelection)) {
+        set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
+        return;
+      }
       const ref = get().currentSessionRef;
       if (!ref) return;
       get().unsubscribeFromEvents();

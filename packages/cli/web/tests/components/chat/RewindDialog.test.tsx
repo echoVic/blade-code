@@ -17,6 +17,8 @@ const sessionState = vi.hoisted(() => ({
   },
   isStreaming: false,
   isTemporarySession: false,
+  historySurfaceSelection: null as null | { mode: 'history-only' },
+  setError: vi.fn(),
   rewindSession: mocks.rewindSession,
 }));
 
@@ -26,10 +28,13 @@ vi.mock('@/services', () => ({
   },
 }));
 
-vi.mock('@/store/session', () => ({
-  useSessionStore: (selector: (state: typeof sessionState) => unknown) =>
-    selector(sessionState),
-}));
+vi.mock('@/store/session', () => {
+  const useSessionStore = Object.assign(
+    (selector: (state: typeof sessionState) => unknown) => selector(sessionState),
+    { getState: () => sessionState }
+  );
+  return { useSessionStore };
+});
 
 import { RewindDialog } from '../../../src/components/chat/RewindDialog';
 
@@ -58,6 +63,7 @@ describe('RewindDialog', () => {
     mocks.rewindSession.mockResolvedValue(true);
     sessionState.isStreaming = false;
     sessionState.isTemporarySession = false;
+    sessionState.historySurfaceSelection = null;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -92,6 +98,14 @@ describe('RewindDialog', () => {
     ).toContain('Replace the parser implementation');
   });
 
+  it('does not load checkpoints when opened in history-only mode', async () => {
+    sessionState.historySurfaceSelection = { mode: 'history-only' };
+
+    await renderDialog();
+
+    expect(mocks.listRewindCheckpoints).not.toHaveBeenCalled();
+  });
+
   it('selects a checkpoint and rewinds conversation plus code', async () => {
     await renderDialog();
     await vi.waitFor(() => {
@@ -120,6 +134,22 @@ describe('RewindDialog', () => {
 
     expect(mocks.rewindSession).toHaveBeenCalledWith('user-earlier', 'both');
     expect(mocks.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('fails a stale rewind submit closed after entering history-only mode', async () => {
+    await renderDialog();
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain('Replace the parser implementation');
+    });
+    const rewind = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Rewind');
+    sessionState.historySurfaceSelection = { mode: 'history-only' };
+
+    await act(async () => rewind?.click());
+
+    expect(mocks.rewindSession).not.toHaveBeenCalled();
+    expect(sessionState.setError).toHaveBeenCalledWith('session_surface_read_only');
   });
 
   it('renders an empty state when no checkpoint exists', async () => {

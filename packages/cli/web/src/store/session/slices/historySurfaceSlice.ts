@@ -221,6 +221,18 @@ export const createHistorySurfaceSlice: SliceCreator<HistorySurfaceSlice> = (
 
     loadOlderSurfaceHistory: async (limit = HISTORY_PAGE_LIMIT) => {
       const state = get();
+      if (
+        state.historySurfaceSelection &&
+        !state.historySurfaceSelection.capabilities.history.read
+      ) {
+        set({
+          historySurfaceError: {
+            code: 'session_surface_capability_unavailable',
+            message: 'Session history read is unavailable',
+          },
+        });
+        return;
+      }
       const locator = state.historySurfaceSelection?.locator;
       const cursor = state.historySurfaceOlderCursor;
       const snapshot = state.historySurfaceSnapshot;
@@ -307,8 +319,18 @@ export const createHistorySurfaceSlice: SliceCreator<HistorySurfaceSlice> = (
     },
 
     forkHistorySurface: async () => {
-      const locator = get().historySurfaceSelection?.locator;
+      const selection = get().historySurfaceSelection;
+      const locator = selection?.locator;
       if (!locator) return;
+      if (!selection.capabilities.history.fork) {
+        set({
+          historySurfaceError: {
+            code: 'session_surface_capability_unavailable',
+            message: 'Session history fork is unavailable',
+          },
+        });
+        return;
+      }
       const { generation, controller } = beginNavigation();
       set({
         historySurfaceGeneration: generation,

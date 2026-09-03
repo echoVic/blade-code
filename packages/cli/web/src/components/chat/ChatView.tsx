@@ -20,6 +20,7 @@ import { focusBladeComposer } from '@/lib/composerFocus';
 import { taskFailureIsRetryable, taskFailureMessageKey } from '@/lib/taskFailure';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
+import { rejectHistorySurfaceAction } from '@/store/session/historySurfaceGuard';
 import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
 import type { ComposerImageAttachment } from './ChatInput';
 import { ChatInput } from './ChatInput';
@@ -218,6 +219,7 @@ export function ChatView() {
     attachments: ComposerImageAttachment[];
     outputSchema?: Record<string, unknown>;
   }) => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return false;
     return sendMessage({
       content: payload.content,
       modelId: payload.modelId,
@@ -235,8 +237,12 @@ export function ChatView() {
     });
   };
 
-  const handleAbort = () => abortSession();
+  const handleAbort = () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
+    return abortSession();
+  };
   const recoverFromError = async () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (shouldConfigureModel) {
       clearError();
       openSettings('models');
@@ -342,7 +348,10 @@ export function ChatView() {
             {sessionEventConnectionState === 'offline' && (
               <button
                 type="button"
-                onClick={() => void reconnectSessionEvents().catch(() => undefined)}
+                onClick={() => {
+                  if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
+                  void reconnectSessionEvents().catch(() => undefined);
+                }}
                 className="inline-flex min-h-7 items-center gap-1.5 rounded-md border border-amber-400/70 bg-white/60 px-2.5 font-medium transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-700 dark:bg-amber-950/50 dark:hover:bg-amber-900/50"
               >
                 <RefreshCw className="h-3 w-3" />

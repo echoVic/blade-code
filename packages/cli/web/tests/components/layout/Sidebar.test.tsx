@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { Session, SessionRef } from '@api/schemas';
+import type { Session, SessionRef, SessionSurfaceSummary } from '@api/schemas';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -8,6 +8,8 @@ import type { SessionStoreState } from '../../../src/store/session';
 
 const sessionActionMocks = vi.hoisted(() => ({
   selectSession: vi.fn(),
+  openHistorySurface: vi.fn(),
+  loadSurfaceCatalog: vi.fn(),
   startTemporarySession: vi.fn(),
   archiveSession: vi.fn(),
   unarchiveSession: vi.fn(),
@@ -75,6 +77,91 @@ function createSession(overrides: Partial<Session> = {}): Session {
 
 function createRef(sessionId: string, projectPath: string): SessionRef {
   return { sessionId, projectPath };
+}
+
+function createLocalSurfaceSummary(
+  session: Session,
+  overrides: Partial<SessionSurfaceSummary> = {}
+): SessionSurfaceSummary {
+  return {
+    locator: {
+      version: 2,
+      sessionId: session.sessionId,
+      workspace: {
+        kind: 'local',
+        projectPath: session.projectPath,
+      },
+    },
+    displayCwd: session.projectPath,
+    pathStyle: 'posix',
+    title: session.title,
+    rootId: session.rootId,
+    parentId: session.parentId,
+    relationType: session.relationType,
+    taskStatus: session.taskStatus,
+    messageCount: session.messageCount,
+    firstMessageTime: session.firstMessageTime,
+    lastMessageTime: session.lastMessageTime,
+    hasErrors: session.hasErrors,
+    capabilities: {
+      connection: 'local',
+      history: { read: true, fork: true },
+      turn: { start: true },
+      files: {
+        readText: true,
+        writeText: true,
+        browse: 'tree',
+      },
+      terminal: {
+        mode: 'interactive',
+        owner: 'local',
+      },
+    },
+    ...overrides,
+  };
+}
+
+function createRemoteSurfaceSummary(
+  sessionId: string,
+  overrides: Partial<SessionSurfaceSummary> = {}
+): SessionSurfaceSummary {
+  const workspaceRef = `acp-remote-workspace:${'A'.repeat(43)}`;
+  return {
+    locator: {
+      version: 2,
+      sessionId,
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef,
+      },
+    },
+    displayCwd: '/remote/project',
+    pathStyle: 'posix',
+    title: 'Remote Session',
+    rootId: `${sessionId}-root`,
+    taskStatus: 'completed',
+    messageCount: 3,
+    firstMessageTime: '2026-09-02T00:00:00.000Z',
+    lastMessageTime: '2026-09-02T01:00:00.000Z',
+    hasErrors: false,
+    capabilities: {
+      connection: 'online',
+      history: { read: true, fork: true },
+      turn: { start: false, reason: 'history-only' },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none',
+        reason: 'history-only',
+      },
+      terminal: {
+        mode: 'none',
+        owner: 'none',
+        reason: 'history-only',
+      },
+    },
+    ...overrides,
+  };
 }
 
 function findSessionRow(
@@ -173,6 +260,10 @@ describe('Sidebar', () => {
       archivedSessions: [],
       catalogLoadState: 'ready',
       catalogError: null,
+      surfaceCatalog: [],
+      surfaceCatalogLoadState: 'idle',
+      surfaceCatalogError: null,
+      historySurfaceSelection: null,
       archivedCatalogLoadState: 'idle',
       archivedCatalogError: null,
       currentSessionId: null,
@@ -222,6 +313,291 @@ describe('Sidebar', () => {
     expect(container.textContent).toContain('Session A');
     expect(container.textContent).toContain('Session B');
     expect(container.querySelectorAll('[aria-current="true"]').length).toBe(1);
+  });
+
+  test('renders unified local and remote V2 history rows in status view and routes selection by locator kind', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
+    const local = createSession({
+      sessionId: 'shared-id',
+      projectPath: '/workspace/a',
+      title: 'Local Shared Session',
+      rootId: 'local-root',
+    });
+    const remote = createRemoteSurfaceSummary('shared-id', {
+      title: 'Remote Shared Session',
+      displayCwd: '/canonical/remote/repo',
+    });
+    useSessionStore.setState({
+      sessions: [local],
+      surfaceCatalog: [createLocalSurfaceSummary(local), remote],
+      surfaceCatalogLoadState: 'ready',
+      currentSessionRef: createRef(local.sessionId, local.projectPath),
+    });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    const localRow = findSessionRow(container, 'Local Shared Session');
+    const remoteRow = findSessionRow(container, 'Remote Shared Session');
+    const remoteWorkspaceRef =
+      remote.locator.workspace.kind === 'acp-remote'
+        ? remote.locator.workspace.workspaceRef
+        : null;
+    expect(localRow).toBeInstanceOf(HTMLButtonElement);
+    expect(remoteRow).toBeInstanceOf(HTMLButtonElement);
+    expect(container.textContent).toContain('Remote');
+    expect(container.textContent).toContain('Online');
+    expect(container.textContent).toContain('History only');
+    expect(container.textContent).toContain('/canonical/remote/repo');
+    if (!remoteWorkspaceRef) throw new Error('Expected remote workspace ref');
+    expect(container.textContent).not.toContain(remoteWorkspaceRef);
+    expect(
+      container.querySelector(
+        'button[aria-label="More actions for Remote Shared Session"]'
+      )
+    ).toBe(null);
+
+    await act(async () => localRow?.click());
+    await act(async () => remoteRow?.click());
+
+    expect(sessionActionMocks.selectSession).toHaveBeenCalledWith(
+      createRef(local.sessionId, local.projectPath)
+    );
+    expect(sessionActionMocks.openHistorySurface).toHaveBeenCalledWith(remote.locator);
+  });
+
+  test('treats a ready empty V2 catalog as authoritative over stale legacy sessions', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          sessionId: 'stale-legacy-session',
+          title: 'Stale Legacy Session',
+        }),
+      ],
+      surfaceCatalog: [],
+      surfaceCatalogLoadState: 'ready',
+    });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    expect(container.textContent).not.toContain('Stale Legacy Session');
+    expect(findSessionRow(container, 'Stale Legacy Session')).toBeUndefined();
+  });
+
+  test('renders and selects a local V2 summary before the legacy catalog catches up', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
+    const localSummary = createLocalSurfaceSummary(
+      createSession({
+        sessionId: 'v2-local-session',
+        projectPath: '/workspace/v2-only',
+        title: 'V2 Local Session',
+        rootId: 'v2-local-root',
+      })
+    );
+    useSessionStore.setState({
+      sessions: [],
+      surfaceCatalog: [localSummary],
+      surfaceCatalogLoadState: 'ready',
+    });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    const row = findSessionRow(container, 'V2 Local Session');
+    expect(row).toBeInstanceOf(HTMLButtonElement);
+
+    await act(async () => row?.click());
+
+    expect(sessionActionMocks.selectSession).toHaveBeenCalledWith({
+      sessionId: 'v2-local-session',
+      projectPath: '/workspace/v2-only',
+    });
+  });
+
+  test('preserves authoritative V2 chronology instead of legacy attention ordering', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
+    const olderPending = createSession({
+      sessionId: 'older-pending',
+      projectPath: '/workspace/a',
+      title: 'Older Pending Session',
+      pendingInteraction: { type: 'question', requestId: 'question-1' },
+      lastMessageTime: '2026-09-02T01:00:00.000Z',
+    });
+    const newer = createSession({
+      sessionId: 'newer-session',
+      projectPath: '/workspace/a',
+      title: 'Newer Session',
+      rootId: 'newer-root',
+      lastMessageTime: '2026-09-02T02:00:00.000Z',
+    });
+    useSessionStore.setState({
+      sessions: [olderPending, newer],
+      surfaceCatalog: [
+        createLocalSurfaceSummary(newer),
+        createLocalSurfaceSummary(olderPending),
+      ],
+      surfaceCatalogLoadState: 'ready',
+    });
+
+    await act(async () => root.render(<Sidebar />));
+
+    const content = container.textContent ?? '';
+    expect(content.indexOf('Newer Session')).toBeLessThan(
+      content.indexOf('Older Pending Session')
+    );
+  });
+
+  test('renders remote project rows from V2 catalog with canonical cwd and without local action leakage', async () => {
+    useAppStore.setState({ sidebarView: 'project' });
+    const remote = createRemoteSurfaceSummary('remote-project-session', {
+      title: 'Remote Project Session',
+      displayCwd: 'C:\\Remote\\Repo',
+      pathStyle: 'win32',
+      capabilities: {
+        connection: 'offline',
+        history: { read: true, fork: false },
+        turn: { start: false, reason: 'owner-offline' },
+        files: {
+          readText: false,
+          writeText: false,
+          browse: 'none',
+          reason: 'owner-offline',
+        },
+        terminal: {
+          mode: 'none',
+          owner: 'none',
+          reason: 'owner-offline',
+        },
+      },
+      locator: {
+        version: 2,
+        sessionId: 'remote-project-session',
+        workspace: {
+          kind: 'acp-remote',
+          workspaceRef: `acp-remote-workspace:${'B'.repeat(43)}`,
+        },
+      },
+    });
+    useSessionStore.setState({
+      surfaceCatalog: [remote],
+      surfaceCatalogLoadState: 'ready',
+    });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    const remoteWorkspaceRef =
+      remote.locator.workspace.kind === 'acp-remote'
+        ? remote.locator.workspace.workspaceRef
+        : null;
+    expect(container.textContent).toContain('Remote Project Session');
+    expect(container.textContent).toContain('Remote');
+    expect(container.textContent).toContain('Offline');
+    expect(container.textContent).toContain('History only');
+    expect(container.textContent).toContain('C:\\Remote\\Repo');
+    if (!remoteWorkspaceRef) throw new Error('Expected remote workspace ref');
+    expect(container.textContent).not.toContain(remoteWorkspaceRef);
+    expect(container.textContent).not.toContain('/private/host/state');
+    expect(
+      container.querySelector(
+        'button[aria-label="More actions for Remote Project Session"]'
+      )
+    ).toBe(null);
+    expect(
+      document.querySelector('button[aria-label="Fork Remote Project Session"]')
+    ).toBe(null);
+    expect(
+      document.querySelector('button[aria-label="Rename Remote Project Session"]')
+    ).toBe(null);
+  });
+
+  test('never uses a colliding remote display cwd as a local project grouping key', async () => {
+    useAppStore.setState({ sidebarView: 'project' });
+    const local = createSession({
+      sessionId: 'local-session',
+      projectPath: '/workspace/a',
+      title: 'Local Session',
+    });
+    const remote = createRemoteSurfaceSummary('remote-session', {
+      title: 'Remote Collision',
+      displayCwd: '/workspace/a',
+    });
+    useSessionStore.setState({
+      sessions: [local],
+      surfaceCatalog: [createLocalSurfaceSummary(local), remote],
+      surfaceCatalogLoadState: 'ready',
+      boundProjects: [
+        {
+          path: '/workspace/a',
+          name: 'a',
+          available: true,
+          isCurrent: true,
+          boundAt: '2026-09-02T00:00:00.000Z',
+        },
+      ],
+    });
+
+    await act(async () => root.render(<Sidebar />));
+
+    const remoteRow = findSessionRow(container, 'Remote Collision');
+    expect(remoteRow).toBeInstanceOf(HTMLButtonElement);
+    expect(remoteRow?.closest('[data-remote-session-group]')).not.toBeNull();
+    expect(remoteRow?.closest('[data-project-group]')).toBeNull();
+  });
+
+  test('disables terminal entry points while remote history is selected', async () => {
+    const remote = createRemoteSurfaceSummary('remote-history');
+    useSessionStore.setState({
+      surfaceCatalog: [remote],
+      surfaceCatalogLoadState: 'ready',
+      historySurfaceSelection: {
+        locator: remote.locator,
+        displayCwd: remote.displayCwd,
+        capabilities: remote.capabilities,
+        mode: 'history-only',
+      },
+    });
+
+    await act(async () => root.render(<Sidebar />));
+
+    const terminal = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Terminal'
+    );
+    expect(terminal?.disabled).toBe(true);
+    expect(useAppStore.getState().isTerminalOpen).toBe(false);
+  });
+
+  test('hides archived sessions and rejects a stale archive opener in history-only mode', async () => {
+    await act(async () => root.render(<Sidebar />));
+    const archive = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open session archive"]'
+    );
+    expect(archive).not.toBeNull();
+
+    const remote = createRemoteSurfaceSummary('remote-history');
+    await act(async () => {
+      useSessionStore.setState({
+        historySurfaceSelection: {
+          locator: remote.locator,
+          displayCwd: remote.displayCwd,
+          capabilities: remote.capabilities,
+          mode: 'history-only',
+        },
+      });
+      archive?.click();
+    });
+
+    expect(sessionActionMocks.loadArchivedSessions).not.toHaveBeenCalled();
+    await act(async () => root.render(<Sidebar />));
+    expect(
+      container.querySelector('button[aria-label="Open session archive"]')
+    ).toBeNull();
   });
 
   test('groups sessions as tasks by durable status and exposes feed health', () => {
@@ -292,7 +668,22 @@ describe('Sidebar', () => {
         },
       ],
       selectedProjectPath: '/workspace/blade',
-      catalogLoadState: 'hydrating',
+      surfaceCatalog: [
+        createLocalSurfaceSummary(
+          createSession({
+            sessionId: 'task-a',
+            projectPath: '/workspace/blade',
+          })
+        ),
+        createLocalSurfaceSummary(
+          createSession({
+            sessionId: 'task-b',
+            projectPath: '/workspace/blade',
+            rootId: 'root-b',
+          })
+        ),
+      ],
+      surfaceCatalogLoadState: 'hydrating',
     });
 
     act(() => {
@@ -478,8 +869,14 @@ describe('Sidebar', () => {
   test('keeps partial history visible and retries a failed catalog hydration', () => {
     useSessionStore.setState({
       sessions: [createSession({ sessionId: 'partial-task' })],
-      catalogLoadState: 'error',
-      catalogError: 'history unavailable',
+      surfaceCatalog: [
+        createLocalSurfaceSummary(createSession({ sessionId: 'partial-task' })),
+      ],
+      surfaceCatalogLoadState: 'error',
+      surfaceCatalogError: {
+        code: null,
+        message: 'history unavailable',
+      },
     });
 
     act(() => {
@@ -493,7 +890,7 @@ describe('Sidebar', () => {
     act(() => {
       retry?.click();
     });
-    expect(sessionActionMocks.loadSessions).toHaveBeenCalledOnce();
+    expect(sessionActionMocks.loadSurfaceCatalog).toHaveBeenCalledOnce();
   });
 
   test('renders discovered projects at the same level and binds them on selection', async () => {

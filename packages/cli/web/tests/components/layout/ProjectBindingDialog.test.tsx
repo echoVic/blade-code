@@ -24,6 +24,34 @@ vi.mock('../../../src/services', async () => {
 import { ProjectBindingDialog } from '../../../src/components/layout/ProjectBindingDialog';
 import { setLocale } from '../../../src/i18n';
 import { useSessionStore } from '../../../src/store/session';
+import type { SessionSurfaceSelection } from '../../../src/store/session/types';
+
+function historySelection(): SessionSurfaceSelection {
+  return {
+    locator: {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+    },
+    displayCwd: '/remote/project',
+    mode: 'history-only',
+    capabilities: {
+      connection: 'online',
+      history: { read: true, fork: true },
+      turn: { start: false, reason: 'history-only' },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none',
+        reason: 'history-only',
+      },
+      terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+    },
+  };
+}
 
 describe('ProjectBindingDialog folder picker', () => {
   let container: HTMLDivElement;
@@ -42,6 +70,7 @@ describe('ProjectBindingDialog folder picker', () => {
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
     useSessionStore.setState({
+      historySurfaceSelection: null,
       boundProjects: [],
       selectedProjectPath: null,
       isBindingProject: false,
@@ -64,6 +93,22 @@ describe('ProjectBindingDialog folder picker', () => {
     });
 
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('does not load or render project binding while history-only is selected', async () => {
+    const loadBoundProjects = vi.fn(async () => undefined);
+    useSessionStore.setState({
+      historySurfaceSelection: historySelection(),
+      loadBoundProjects,
+    });
+
+    await act(async () => {
+      root.render(<ProjectBindingDialog open onOpenChange={onOpenChange} />);
+    });
+
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(loadBoundProjects).not.toHaveBeenCalled();
+    expect(serviceMocks.pickProjectDirectory).not.toHaveBeenCalled();
   });
 
   it('opens the native picker and binds the selected folder', async () => {

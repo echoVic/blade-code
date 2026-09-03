@@ -32,6 +32,7 @@ describe('TaskHome', () => {
       settingsSection: 'general',
     });
     useSessionStore.setState({
+      historySurfaceSelection: null,
       taskWorkspaceInfo: {
         cwd: '/workspace/blade',
         gitBranch: 'main',

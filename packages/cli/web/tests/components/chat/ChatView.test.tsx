@@ -22,20 +22,30 @@ vi.mock('../../../src/components/chat/ChatInput', () => ({
     disabled,
     draft,
     draftAttachments,
+    onSend,
+    onAbort,
   }: {
     disabled?: boolean;
     draft?: string;
     draftAttachments?: Array<{ dataUrl: string }>;
+    onSend?: (input: { content: string; attachments: [] }) => Promise<boolean>;
+    onAbort?: () => void;
   }) => (
-    <button
-      type="button"
-      data-testid="chat-input"
-      data-draft={draft}
-      data-attachments={draftAttachments?.length ?? 0}
-      disabled={disabled}
-    >
-      Composer
-    </button>
+    <>
+      <button
+        type="button"
+        data-testid="chat-input"
+        data-draft={draft}
+        data-attachments={draftAttachments?.length ?? 0}
+        disabled={disabled}
+        onClick={() => void onSend?.({ content: 'stale send', attachments: [] })}
+      >
+        Composer
+      </button>
+      <button type="button" data-testid="chat-abort" onClick={onAbort}>
+        Stop
+      </button>
+    </>
   ),
 }));
 
@@ -74,6 +84,7 @@ describe('ChatView session event recovery', () => {
     useSessionStore.setState({
       currentSessionId: ref.sessionId,
       currentSessionRef: ref,
+      historySurfaceSelection: null,
       isTemporarySession: false,
       messages: [],
       isLoading: false,
@@ -162,6 +173,60 @@ describe('ChatView session event recovery', () => {
     });
 
     expect(unsubscribeFromEvents).not.toHaveBeenCalled();
+  });
+
+  it('fails stale send and abort handlers closed after history-only selection', async () => {
+    const sendMessage = vi.fn(async () => true);
+    const abortSession = vi.fn(async () => true);
+    useSessionStore.setState({
+      sendMessage,
+      abortSession,
+      isStreaming: false,
+      sessionEventConnectionState: 'connected',
+    });
+    await act(async () => root.render(<ChatView />));
+    const staleSend = container.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-input"]'
+    );
+    const staleAbort = container.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-abort"]'
+    );
+    useSessionStore.setState({
+      historySurfaceSelection: {
+        locator: {
+          version: 2,
+          sessionId: 'remote-session',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
+        },
+        displayCwd: '/remote/project',
+        mode: 'history-only',
+        capabilities: {
+          connection: 'online',
+          history: { read: true, fork: true },
+          turn: { start: false, reason: 'history-only' },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'history-only',
+          },
+          terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+        },
+      },
+    });
+
+    await act(async () => {
+      staleSend?.click();
+      staleAbort?.click();
+      await Promise.resolve();
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(abortSession).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
   });
 
   it('announces an in-progress reconnect without exposing duplicate retry actions', async () => {
@@ -300,6 +365,69 @@ describe('ChatView session event recovery', () => {
     });
 
     expect(retryTask).toHaveBeenCalledWith(ref);
+  });
+
+  it('fails a stale retry action closed after history-only selection', async () => {
+    useSessionStore.setState({
+      isStreaming: false,
+      sessionEventConnectionState: 'connected',
+      sessions: [
+        {
+          sessionId: ref.sessionId,
+          projectPath: ref.projectPath,
+          rootId: ref.sessionId,
+          taskStatus: 'failed',
+          taskRetryAvailable: true,
+          taskFailure: {
+            code: 'runtime',
+            message: 'Task failed',
+            retryable: true,
+          },
+          messageCount: 1,
+          firstMessageTime: '2026-08-07T00:00:00.000Z',
+          lastMessageTime: '2026-08-07T00:01:00.000Z',
+          hasErrors: true,
+        },
+      ],
+      error: 'Task failed',
+      errorContext: { kind: 'task_action', sessionRef: ref },
+    });
+    await act(async () => root.render(<ChatView />));
+    const staleRetry = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Retry task')
+    );
+    expect(staleRetry).toBeTruthy();
+    useSessionStore.setState({
+      historySurfaceSelection: {
+        locator: {
+          version: 2,
+          sessionId: 'remote-session',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
+        },
+        displayCwd: '/remote/project',
+        mode: 'history-only',
+        capabilities: {
+          connection: 'online',
+          history: { read: true, fork: true },
+          turn: { start: false, reason: 'history-only' },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'history-only',
+          },
+          terminal: { mode: 'none', owner: 'none', reason: 'history-only' },
+        },
+      },
+    });
+
+    await act(async () => staleRetry?.click());
+
+    expect(retryTask).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().error).toBe('session_surface_read_only');
   });
 
   it('routes non-retryable authentication failures to model settings', async () => {

@@ -9,11 +9,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import type { SessionRewindCheckpoint } from '@/services';
 import { sessionService } from '@/services';
 import { useSessionStore } from '@/store/session';
+import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
 
 interface RewindDialogProps {
   open: boolean;
@@ -34,6 +38,9 @@ function formatCheckpointTime(value: string): string {
 export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
   const t = useT();
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const isTemporarySession = useSessionStore((state) => state.isTemporarySession);
   const rewindSession = useSessionStore((state) => state.rewindSession);
@@ -45,7 +52,7 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || !currentSessionRef) return;
+    if (historyOnly || !open || !currentSessionRef) return;
     let cancelled = false;
     setIsLoading(true);
     setError(null);
@@ -74,7 +81,7 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
     return () => {
       cancelled = true;
     };
-  }, [currentSessionRef, open]);
+  }, [currentSessionRef, historyOnly, open]);
 
   const selected = useMemo(
     () => checkpoints.find((checkpoint) => checkpoint.messageId === selectedId) ?? null,
@@ -82,12 +89,14 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
   );
   const canSubmit =
     Boolean(selected) &&
+    !historyOnly &&
     !isLoading &&
     !isSubmitting &&
     !isStreaming &&
     !isTemporarySession;
 
   const handleSubmit = async () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (!selected || !canSubmit) return;
     setIsSubmitting(true);
     setError(null);

@@ -80,6 +80,7 @@ describe('FilePreview', () => {
       ...state,
       currentSessionId: 'shared-id',
       currentSessionRef: { sessionId: 'shared-id', projectPath: '/workspace/a' },
+      historySurfaceSelection: null,
       selectedProjectPath: null,
       sessions: [],
       messages: [],
@@ -122,6 +123,69 @@ describe('FilePreview', () => {
       );
     });
   }
+
+  test('renders nothing and performs no file request in history-only mode', async () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          sessionId: 'shared-id',
+          projectPath: '/workspace/a',
+          rootId: 'shared-id',
+          title: 'Retained local task',
+          taskStatus: 'completed',
+          taskIsolation: 'worktree',
+          taskSourceProjectPath: '/source',
+          taskDiffStat: {
+            changedFiles: 1,
+            additions: 1,
+            deletions: 0,
+            commits: 0,
+          },
+          messageCount: 1,
+          firstMessageTime: '2026-08-06T00:00:00.000Z',
+          lastMessageTime: '2026-08-06T00:01:00.000Z',
+          hasErrors: false,
+        },
+      ],
+      historySurfaceSelection: {
+        locator: {
+          version: 2,
+          sessionId: 'remote-session',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
+        },
+        displayCwd: '/remote/project',
+        mode: 'history-only',
+        capabilities: {
+          connection: 'online',
+          history: { read: true, fork: true },
+          turn: { start: false, reason: 'history-only' },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'history-only',
+          },
+          terminal: {
+            mode: 'none',
+            owner: 'none',
+            reason: 'history-only',
+          },
+        },
+      },
+    });
+
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    await act(async () => {
+      root.render(<FilePreview />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toBe('');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
   async function clickTreeEntry(label: string): Promise<void> {
     const button = await vi.waitFor(() => {

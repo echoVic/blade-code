@@ -57,7 +57,14 @@ import {
 } from '@/store/ConfigStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { useSessionStore } from '@/store/session';
+import {
+  isHistorySurfaceActive,
+  rejectHistorySurfaceAction,
+} from '@/store/session/historySurfaceGuard';
 import { SuggestionPopover } from './SuggestionPopover';
+
+const canRequestFileSuggestions = (): boolean =>
+  !isHistorySurfaceActive(useSessionStore.getState().historySurfaceSelection);
 
 export interface ComposerImageAttachment {
   id: string;
@@ -223,6 +230,9 @@ export function ChatInput({
     (state) => state.communicationStyle
   );
   const setMaxContextTokens = useSessionStore((state) => state.setMaxContextTokens);
+  const historyOnly = useSessionStore((state) =>
+    isHistorySurfaceActive(state.historySurfaceSelection)
+  );
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
   const persistedSessionModelId = useSessionStore(
     (state) =>
@@ -322,7 +332,11 @@ export function ChatInput({
   const attachmentsIncompatible = attachments.length > 0 && !imageInputSupported;
 
   const slashCommand = useSlashCommand(input, cursorPosition, { workspacePath });
-  const atMention = useAtMention(input, cursorPosition, { workspacePath });
+  const atMention = useAtMention(input, cursorPosition, {
+    workspacePath,
+    disabled: historyOnly,
+    canRequest: canRequestFileSuggestions,
+  });
   const inputHistory = useInputHistory();
 
   const showSlashSuggestions =
@@ -443,6 +457,7 @@ export function ChatInput({
   }, [imageInputSupported]);
 
   const handleSend = useCallback(async () => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
     if (
       (!input.trim() && attachments.length === 0) ||
       disabled ||
@@ -525,6 +540,11 @@ export function ChatInput({
     inputHistory,
     t,
   ]);
+
+  const handleAbort = useCallback(() => {
+    if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
+    void onAbort?.();
+  }, [onAbort]);
 
   const removeAttachment = useCallback(
     (id: string) => {
@@ -871,7 +891,8 @@ export function ChatInput({
   const visibleAttachmentError =
     attachmentError || (attachmentsIncompatible ? imageCapabilityMessage : null);
   const visibleAttachmentNotice = visibleAttachmentError ? null : attachmentNotice;
-  const attachmentInteractionBlocked = Boolean(disabled) || isSubmitting;
+  const interactionDisabled = Boolean(disabled) || historyOnly;
+  const attachmentInteractionBlocked = interactionDisabled || isSubmitting;
   const attachmentControlDisabled =
     attachmentInteractionBlocked || attachmentLimitReached || !imageInputSupported;
   const attachmentControlLabel = !imageInputSupported
@@ -961,7 +982,7 @@ export function ChatInput({
                 ? 'min-h-[84px] py-4 text-[15px]'
                 : 'py-2.5 text-[14px]'
             }`}
-            disabled={disabled || isSubmitting}
+            disabled={interactionDisabled || isSubmitting}
             aria-busy={isSubmitting}
           />
 
@@ -1119,7 +1140,7 @@ export function ChatInput({
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    disabled={isStreaming || isSubmitting}
+                    disabled={interactionDisabled || isStreaming || isSubmitting}
                     title={
                       isStreaming
                         ? t('chat.input.model.locked')
@@ -1208,7 +1229,7 @@ export function ChatInput({
                   <PopoverTrigger asChild>
                     <button
                       type="button"
-                      disabled={isStreaming || isSubmitting}
+                      disabled={interactionDisabled || isStreaming || isSubmitting}
                       aria-label={t('chat.input.effort.change')}
                       title={
                         isStreaming
@@ -1264,7 +1285,7 @@ export function ChatInput({
                   <PopoverTrigger asChild>
                     <button
                       type="button"
-                      disabled={isStreaming || isSubmitting}
+                      disabled={interactionDisabled || isStreaming || isSubmitting}
                       aria-label={t('chat.input.serviceTier.change')}
                       title={
                         isStreaming
@@ -1332,7 +1353,7 @@ export function ChatInput({
                   <PopoverTrigger asChild>
                     <button
                       type="button"
-                      disabled={isStreaming || isSubmitting}
+                      disabled={interactionDisabled || isStreaming || isSubmitting}
                       aria-label={t('chat.input.responseVerbosity.change')}
                       title={
                         isStreaming
@@ -1396,7 +1417,7 @@ export function ChatInput({
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    disabled={isStreaming || isSubmitting}
+                    disabled={interactionDisabled || isStreaming || isSubmitting}
                     aria-label={t('chat.input.outputSchema.change')}
                     title={
                       isStreaming
@@ -1592,10 +1613,8 @@ export function ChatInput({
               {isStreaming && (
                 <Button
                   size="icon"
-                  onClick={() => {
-                    void onAbort?.();
-                  }}
-                  disabled={isStopping}
+                  onClick={handleAbort}
+                  disabled={historyOnly || isStopping}
                   title={
                     isStopping
                       ? t('chat.input.action.stopping')
@@ -1621,7 +1640,7 @@ export function ChatInput({
                 onClick={handleSend}
                 disabled={
                   !canSend ||
-                  disabled ||
+                  interactionDisabled ||
                   effectiveSubmitDisabled ||
                   attachmentsIncompatible ||
                   isSubmitting ||

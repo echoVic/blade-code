@@ -29,6 +29,7 @@ import {
 import { type PreviewTab, useAppStore } from '@/store/AppStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { type Session, useSessionStore } from '@/store/session';
+import { isHistorySurfaceActive } from '@/store/session/historySurfaceGuard';
 import { sameSessionRef } from '@/store/session/sessionIdentity';
 import { BrowserPanel } from './BrowserPanel';
 import { type PreviewDiffData, PreviewDiffList } from './PreviewDiffList';
@@ -166,6 +167,7 @@ function previewWorkspaceRef(
 
 function currentPreviewWorkspaceRef(): SessionRef | null {
   const state = useSessionStore.getState();
+  if (isHistorySurfaceActive(state.historySurfaceSelection)) return null;
   const currentSession = state.sessions.find((session) =>
     sameSessionRef(
       { sessionId: session.sessionId, projectPath: session.projectPath },
@@ -220,6 +222,9 @@ export function FilePreview({
   } = useAppStore();
   const messages = useSessionStore((state) => state.messages);
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const historySurfaceSelection = useSessionStore(
+    (state) => state.historySurfaceSelection
+  );
   const sessions = useSessionStore((state) => state.sessions);
   const selectedProjectPath = useSessionStore((state) => state.selectedProjectPath);
   const currentSession = useMemo(
@@ -233,8 +238,11 @@ export function FilePreview({
     [currentSessionRef, sessions]
   );
   const workspaceRef = useMemo(
-    () => previewWorkspaceRef(currentSessionRef, selectedProjectPath, currentSession),
-    [currentSession, currentSessionRef, selectedProjectPath]
+    () =>
+      isHistorySurfaceActive(historySurfaceSelection)
+        ? null
+        : previewWorkspaceRef(currentSessionRef, selectedProjectPath, currentSession),
+    [currentSession, currentSessionRef, historySurfaceSelection, selectedProjectPath]
   );
   const [activeTab, setActiveTab] = useState<PreviewTab>(previewTab);
   const [isCompact, setIsCompact] = useState(
@@ -574,7 +582,11 @@ export function FilePreview({
     setTaskDiffs(null);
     setTaskDiffError(null);
     setTaskDiffLoading(false);
-    if (!currentSessionRef || !taskArtifactExpected) {
+    if (
+      isHistorySurfaceActive(historySurfaceSelection) ||
+      !currentSessionRef ||
+      !taskArtifactExpected
+    ) {
       return;
     }
 
@@ -626,6 +638,7 @@ export function FilePreview({
     currentSession?.taskDiffStat,
     currentSession?.taskIsolation,
     currentSessionRef,
+    historySurfaceSelection,
     taskArtifactExpected,
     taskDiffRetryToken,
   ]);
@@ -814,6 +827,7 @@ export function FilePreview({
   );
 
   const displayedWidth = clampPanelWidth(dragWidth ?? previewWidth);
+  if (isHistorySurfaceActive(historySurfaceSelection)) return null;
 
   return (
     <div

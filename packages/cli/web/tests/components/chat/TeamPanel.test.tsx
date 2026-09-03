@@ -49,6 +49,7 @@ describe('TeamPanel', () => {
     useSessionStore.setState({
       currentSessionId: ref.sessionId,
       currentSessionRef: ref,
+      historySurfaceSelection: null,
       loadTeams,
       teams: [
         {
@@ -103,7 +104,11 @@ describe('TeamPanel', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
-    useSessionStore.setState({ teams: [], currentSessionRef: null });
+    useSessionStore.setState({
+      teams: [],
+      currentSessionRef: null,
+      historySurfaceSelection: null,
+    });
   });
 
   it('renders live members, tasks, and worktree state', async () => {
