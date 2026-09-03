@@ -1,4 +1,4 @@
-import type { SessionRef } from '@api/schemas';
+import type { SessionLocatorV2, SessionRef } from '@api/schemas';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import type { Message as ServiceMessage, StreamEvent } from '../../../src/services';
@@ -62,6 +62,18 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     catalogError: null,
     archivedCatalogLoadState: 'idle' as const,
     archivedCatalogError: null,
+    surfaceCatalog: [],
+    surfaceCatalogLoadState: 'idle',
+    surfaceCatalogError: null,
+    historySurfaceSelection: null,
+    historySurfaceMessages: [],
+    historySurfaceOlderCursor: null,
+    historySurfaceSnapshot: null,
+    historySurfaceGeneration: 0,
+    historySurfaceLoadState: 'idle',
+    historySurfaceError: null,
+    historySurfaceRecoveryCode: null,
+    historySurfaceTruncated: false,
     error: null,
     errorContext: null,
     goal: null,
@@ -301,6 +313,13 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     unbindProject: vi.fn(async () => undefined),
     selectProject: vi.fn(),
     getNavigationVersion: vi.fn(() => 0),
+    getViewSelectionVersion: vi.fn(() => 0),
+    claimViewSelection: vi.fn(() => 0),
+    loadSurfaceCatalog: vi.fn(async () => undefined),
+    openHistorySurface: vi.fn(async () => undefined),
+    loadOlderSurfaceHistory: vi.fn(async () => undefined),
+    forkHistorySurface: vi.fn(async () => undefined),
+    closeHistorySurface: vi.fn(),
     cancelTask: vi.fn(async () => undefined),
     retryTask: vi.fn(async () => undefined),
     updateTask: vi.fn(async () => undefined),
@@ -345,6 +364,130 @@ describe('eventHandlers', () => {
       previewTab: 'diff',
       previewTargetPath: null,
     });
+  });
+
+  test('does not treat a remote history selection as an SSE target', () => {
+    const locator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'shared-id',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+    };
+    const historySurfaceMessages = [
+      {
+        id: 'surface-message:1:remote',
+        role: 'assistant' as const,
+        content: 'stable remote history',
+        timestamp: '2026-09-02T00:00:00.000Z',
+      },
+    ];
+    const state = createState({
+      currentSessionId: 'shared-id',
+      currentSessionRef: {
+        sessionId: 'shared-id',
+        projectPath: '/workspace/local',
+      },
+      historySurfaceSelection: {
+        locator,
+        displayCwd: '/remote/project',
+        mode: 'history-only',
+        capabilities: {
+          connection: 'online',
+          history: { read: true, fork: true },
+          turn: { start: false, reason: 'history-only' },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'history-only',
+          },
+          terminal: {
+            mode: 'none',
+            owner: 'none',
+            reason: 'history-only',
+          },
+        },
+      },
+      historySurfaceMessages,
+    });
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'message.created',
+      properties: {
+        sessionId: locator.sessionId,
+        projectPath: '/private/host/state',
+        message: {
+          id: 'live-message',
+          role: 'assistant',
+          content: 'must not enter history',
+          timestamp: Date.now(),
+        },
+      },
+    });
+    dispatch({
+      type: 'tool.start',
+      properties: {
+        sessionId: locator.sessionId,
+        projectPath: '/private/host/state',
+        toolCallId: 'browser-call',
+        toolName: 'BrowserNavigate',
+      },
+    });
+
+    expect(state.historySurfaceMessages).toEqual(historySurfaceMessages);
+    expect(state.addMessage).not.toHaveBeenCalled();
+    expect(useBrowserActivityStore.getState().agentActivity).toBeNull();
+    expect(useAppStore.getState().isFilePreviewOpen).toBe(false);
+  });
+
+  test('does not close a history surface when the retained local review completes', () => {
+    const state = createState({
+      historySurfaceSelection: {
+        locator: {
+          version: 2,
+          sessionId: 'remote-session',
+          workspace: {
+            kind: 'acp-remote',
+            workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+          },
+        },
+        displayCwd: '/remote/project',
+        mode: 'history-only',
+        capabilities: {
+          connection: 'online',
+          history: { read: true, fork: true },
+          turn: { start: false, reason: 'history-only' },
+          files: {
+            readText: false,
+            writeText: false,
+            browse: 'none',
+            reason: 'history-only',
+          },
+          terminal: {
+            mode: 'none',
+            owner: 'none',
+            reason: 'history-only',
+          },
+        },
+      },
+    });
+    const set = vi.fn();
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'review.completed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        status: 'completed',
+      },
+    });
+
+    expect(state.selectSession).not.toHaveBeenCalled();
+    expect(state.closeHistorySurface).not.toHaveBeenCalled();
   });
 
   test('forwards cache usage and exact cost from token events', () => {

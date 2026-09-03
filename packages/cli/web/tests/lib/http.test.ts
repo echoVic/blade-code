@@ -68,4 +68,34 @@ describe('requestJson', () => {
       })
     );
   });
+
+  it('surfaces session surface fixed error codes from nested envelopes', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'session_surface_cursor_invalid',
+              message: 'The requested history cursor is no longer valid.',
+              retryable: false,
+            },
+          }),
+          {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      )
+    );
+
+    await expect(requestJson('/sessions/v2/history')).rejects.toEqual(
+      expect.objectContaining<HttpResponseError>({
+        code: 'session_surface_cursor_invalid',
+        message: 'The requested history cursor is no longer valid.',
+        name: 'HttpResponseError',
+        status: 400,
+      })
+    );
+  });
 });

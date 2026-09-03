@@ -10,8 +10,10 @@ import { useSettingsStore } from '@/store/SettingsStore';
 import { useSessionStore } from '@/store/session';
 import { findSessionByRef, sameSessionRef } from '@/store/session/sessionIdentity';
 import {
+  parseHistorySurfaceNavigation,
   parseSessionNavigation,
   readStoredSessionRef,
+  syncHistorySurfaceNavigation,
   syncSessionNavigation,
 } from '@/store/session/sessionNavigation';
 
@@ -34,10 +36,16 @@ function App() {
     (state) => state.unsubscribeFromTaskEvents
   );
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const historySurfaceSelection = useSessionStore(
+    (state) => state.historySurfaceSelection
+  );
   const isTemporarySession = useSessionStore((state) => state.isTemporarySession);
   const loadTaskWorkspaceInfo = useSessionStore((state) => state.loadTaskWorkspaceInfo);
   const loadBoundProjects = useSessionStore((state) => state.loadBoundProjects);
   const loadSessions = useSessionStore((state) => state.loadSessions);
+  const loadSurfaceCatalog = useSessionStore((state) => state.loadSurfaceCatalog);
+  const openHistorySurface = useSessionStore((state) => state.openHistorySurface);
+  const closeHistorySurface = useSessionStore((state) => state.closeHistorySurface);
   const selectSession = useSessionStore((state) => state.selectSession);
   const selectProject = useSessionStore((state) => state.selectProject);
   const startTemporarySession = useSessionStore((state) => state.startTemporarySession);
@@ -58,12 +66,33 @@ function App() {
     return unsubscribeFromTaskEvents;
   }, [subscribeToTaskEvents, unsubscribeFromTaskEvents]);
 
+  useEffect(() => closeHistorySurface, [closeHistorySurface]);
+
   useEffect(() => {
     let cancelled = false;
     const bootstrap = async () => {
       void loadSessions();
+      void loadSurfaceCatalog();
       void loadSettings();
       void loadModels();
+      const historyIntent = parseHistorySurfaceNavigation(
+        window.location.search,
+        window.history.state
+      );
+      if (historyIntent.shouldCleanup) {
+        syncHistorySurfaceNavigation(null, {
+          href: window.location.href,
+          historyState: window.history.state,
+        });
+      }
+      if (historyIntent.locator) {
+        await openHistorySurface(historyIntent.locator);
+        if (cancelled) return;
+        setMainView('workspace');
+        setBoardProjectPath(null);
+        setIsBootstrapped(true);
+        return;
+      }
       const intent = parseSessionNavigation(window.location.search);
       setMainView(intent.view);
       setBoardProjectPath(intent.view === 'board' ? intent.projectPath : null);
@@ -121,8 +150,10 @@ function App() {
     loadBoundProjects,
     loadModels,
     loadSessions,
+    loadSurfaceCatalog,
     loadSettings,
     loadTaskWorkspaceInfo,
+    openHistorySurface,
     selectProject,
     selectSession,
     setError,
@@ -133,6 +164,23 @@ function App() {
 
   useEffect(() => {
     if (!isBootstrapped) return;
+    if (historySurfaceSelection) {
+      syncHistorySurfaceNavigation(historySurfaceSelection.locator, {
+        href: window.location.href,
+        historyState: window.history.state,
+      });
+      return;
+    }
+    const historyIntent = parseHistorySurfaceNavigation(
+      window.location.search,
+      window.history.state
+    );
+    if (historyIntent.locator || historyIntent.shouldCleanup) {
+      syncHistorySurfaceNavigation(null, {
+        href: window.location.href,
+        historyState: window.history.state,
+      });
+    }
     const currentSession = currentSessionRef
       ? findSessionByRef(sessions, currentSessionRef)
       : undefined;
@@ -152,6 +200,7 @@ function App() {
   }, [
     boardProjectPath,
     currentSessionRef,
+    historySurfaceSelection,
     isBootstrapped,
     mainView,
     selectedProjectPath,

@@ -55,6 +55,12 @@ type EventHandler = (
   set: SetState
 ) => void;
 
+function interactiveEventTarget(state: SessionStoreState) {
+  // A history-only locator is deliberately a sibling state branch. SSE events
+  // can target only the retained local interactive SessionRef.
+  return state.currentSessionRef;
+}
+
 const MAX_PENDING_SUBAGENT_COMPLETIONS = 100;
 
 const findSubagentTarget = (
@@ -2096,7 +2102,7 @@ const handleInteractionResolved: EventHandler = (props, get, set) => {
 };
 
 const resyncTerminalSession = (props: Record<string, unknown>, get: GetState): void => {
-  const ref = get().currentSessionRef;
+  const ref = interactiveEventTarget(get());
   if (
     ref &&
     props.sessionId === ref.sessionId &&
@@ -2436,6 +2442,7 @@ const handleReviewCompleted: EventHandler = (props, get, set) => {
         : session
     ),
   }));
+  if (get().historySurfaceSelection) return;
   void get().selectSession(ref);
 };
 
@@ -2596,7 +2603,7 @@ function projectLiveBrowserActivity(event: StreamEvent, get: GetState): void {
 
 export const createEventDispatcher = (get: GetState, set: SetState) => {
   return (event: StreamEvent) => {
-    const ref = get().currentSessionRef;
+    const ref = interactiveEventTarget(get());
     const props = event.properties;
     if (
       !ref ||

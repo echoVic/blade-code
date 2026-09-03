@@ -1,17 +1,189 @@
-import type { Session, SessionRef } from '@api/schemas';
-import { findSessionByRef } from './sessionIdentity';
+import {
+  type Session,
+  type SessionLocatorV2,
+  SessionLocatorV2Schema,
+  type SessionRef,
+} from '@api/schemas';
+import { findSessionByRef, sameSurfaceLocator } from './sessionIdentity';
 
 const LAST_SESSION_KEY = 'blade.sessions.last';
 const SESSION_PARAM = 'session';
 const PROJECT_PARAM = 'project';
 const WORKSPACE_PARAM = 'workspace';
 const VIEW_PARAM = 'view';
+const WORKSPACE_KIND_PARAM = 'workspaceKind';
+const WORKSPACE_REF_PARAM = 'workspaceRef';
+const HISTORY_VIEW = 'history';
+const HISTORY_STATE_KEY = 'bladeSessionSurfaceLocator';
+const HISTORY_QUERY_PARAMS = [
+  VIEW_PARAM,
+  SESSION_PARAM,
+  WORKSPACE_KIND_PARAM,
+  WORKSPACE_REF_PARAM,
+] as const;
+const LOCAL_PATH_QUERY_PARAMS = [
+  PROJECT_PARAM,
+  WORKSPACE_PARAM,
+  'cwd',
+  'displayCwd',
+] as const;
 
 export interface SessionNavigationIntent {
   sessionRef: SessionRef | null;
   projectPath: string | null;
   hasSessionParam: boolean;
   view: 'workspace' | 'board';
+}
+
+export interface HistorySurfaceNavigationIntent {
+  locator: SessionLocatorV2 | null;
+  shouldCleanup: boolean;
+}
+
+function validSurfaceLocator(value: unknown): SessionLocatorV2 | null {
+  try {
+    return SessionLocatorV2Schema.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function locatorFromHistoryState(value: unknown): SessionLocatorV2 | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return validSurfaceLocator((value as Record<string, unknown>)[HISTORY_STATE_KEY]);
+}
+
+function hasHistoryLocatorState(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.hasOwn(value, HISTORY_STATE_KEY)
+  );
+}
+
+function remoteLocatorFromQuery(params: URLSearchParams): SessionLocatorV2 | null {
+  const sessionId = params.get(SESSION_PARAM);
+  const workspaceKind = params.get(WORKSPACE_KIND_PARAM);
+  const workspaceRef = params.get(WORKSPACE_REF_PARAM);
+  if (!sessionId || workspaceKind !== 'acp-remote' || !workspaceRef) return null;
+  return validSurfaceLocator({
+    version: 2,
+    sessionId,
+    workspace: {
+      kind: 'acp-remote',
+      workspaceRef,
+    },
+  });
+}
+
+export function parseHistorySurfaceNavigation(
+  search: string,
+  historyState: unknown
+): HistorySurfaceNavigationIntent {
+  const params = new URLSearchParams(search);
+  const isHistoryView = params.get(VIEW_PARAM) === HISTORY_VIEW;
+  const hasHistoryParams =
+    params.has(WORKSPACE_KIND_PARAM) || params.has(WORKSPACE_REF_PARAM);
+  const stateLocator = locatorFromHistoryState(historyState);
+  const hasStateLocator = hasHistoryLocatorState(historyState);
+
+  if (!isHistoryView) {
+    return {
+      locator: null,
+      shouldCleanup: hasHistoryParams || hasStateLocator,
+    };
+  }
+  const seen = new Set<string>();
+  for (const [key] of params) {
+    if (!(HISTORY_QUERY_PARAMS as readonly string[]).includes(key) || seen.has(key)) {
+      return { locator: null, shouldCleanup: true };
+    }
+    seen.add(key);
+  }
+
+  const queryLocator = remoteLocatorFromQuery(params);
+  if (!queryLocator) {
+    return { locator: null, shouldCleanup: true };
+  }
+  if (hasStateLocator && !stateLocator) {
+    return { locator: null, shouldCleanup: true };
+  }
+  if (stateLocator && !sameSurfaceLocator(stateLocator, queryLocator)) {
+    return { locator: null, shouldCleanup: true };
+  }
+
+  return {
+    locator: queryLocator,
+    shouldCleanup: false,
+  };
+}
+
+export function syncHistorySurfaceNavigation(
+  locator: SessionLocatorV2 | null,
+  options: {
+    href?: string;
+    historyState?: unknown;
+    push?: boolean;
+    replaceState?: (state: Record<string, unknown> | null, url: string) => void;
+    pushState?: (state: Record<string, unknown>, url: string) => void;
+  } = {}
+): string {
+  const href =
+    options.href ??
+    (typeof window === 'undefined' ? 'http://localhost/' : window.location.href);
+  const url = new URL(href);
+
+  const parsedLocator = locator ? validSurfaceLocator(locator) : null;
+  const validLocator =
+    parsedLocator?.workspace.kind === 'acp-remote' ? parsedLocator : null;
+  if (validLocator) {
+    url.search = '';
+  } else {
+    for (const key of [...HISTORY_QUERY_PARAMS, ...LOCAL_PATH_QUERY_PARAMS]) {
+      url.searchParams.delete(key);
+    }
+  }
+  const priorState =
+    options.historyState &&
+    typeof options.historyState === 'object' &&
+    !Array.isArray(options.historyState)
+      ? { ...(options.historyState as Record<string, unknown>) }
+      : {};
+  delete priorState[HISTORY_STATE_KEY];
+  const state = validLocator
+    ? { ...priorState, [HISTORY_STATE_KEY]: validLocator }
+    : Object.keys(priorState).length > 0
+      ? priorState
+      : null;
+
+  if (validLocator?.workspace.kind === 'acp-remote') {
+    url.searchParams.set(VIEW_PARAM, HISTORY_VIEW);
+    url.searchParams.set(SESSION_PARAM, validLocator.sessionId);
+    url.searchParams.set(WORKSPACE_KIND_PARAM, validLocator.workspace.kind);
+    url.searchParams.set(WORKSPACE_REF_PARAM, validLocator.workspace.workspaceRef);
+  }
+
+  const relativeUrl = `${url.pathname}${url.search}${url.hash}`;
+  const replaceState =
+    options.replaceState ??
+    (typeof window === 'undefined'
+      ? undefined
+      : (nextState: Record<string, unknown> | null, nextUrl: string) =>
+          window.history.replaceState(nextState, '', nextUrl));
+  const pushState =
+    options.pushState ??
+    (typeof window === 'undefined'
+      ? undefined
+      : (nextState: Record<string, unknown>, nextUrl: string) =>
+          window.history.pushState(nextState, '', nextUrl));
+
+  if (state && options.push) {
+    pushState?.(state, relativeUrl);
+  } else {
+    replaceState?.(state, relativeUrl);
+  }
+  return relativeUrl;
 }
 
 function validRef(value: unknown): SessionRef | null {

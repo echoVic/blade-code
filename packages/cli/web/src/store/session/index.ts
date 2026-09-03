@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import {
+  createHistorySurfaceSlice,
   createMessageSlice,
   createSessionSlice,
   createStreamingSlice,
@@ -10,6 +11,7 @@ import type { SessionStoreState } from './types';
 
 export const useSessionStore = create<SessionStoreState>()((...a) => ({
   ...createSessionSlice(...a),
+  ...createHistorySurfaceSlice(...a),
   ...createTaskListSlice(...a),
   ...createMessageSlice(...a),
   ...createStreamingSlice(...a),
@@ -24,6 +26,9 @@ export type {
   CatalogLoadState,
   ConfirmationInfo,
   Goal,
+  HistorySurfaceError,
+  HistorySurfaceLoadState,
+  HistorySurfaceSlice,
   ImageAttachmentInput,
   Message,
   MessageContent,
@@ -36,6 +41,7 @@ export type {
   SessionErrorKind,
   SessionSlice,
   SessionStoreState,
+  SessionSurfaceSelection,
   StreamEvent,
   SubagentProgress,
   TaskItem,

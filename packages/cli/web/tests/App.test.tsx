@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { SessionLocatorV2 } from '@api/schemas';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +13,10 @@ const sessionState = vi.hoisted(() => ({
     taskSourceProjectPath?: string;
   }>,
   currentSessionRef: null as { sessionId: string; projectPath: string } | null,
+  historySurfaceSelection: null as {
+    locator: SessionLocatorV2;
+    mode: 'history-only';
+  } | null,
   isTemporarySession: true,
   selectedProjectPath: null as string | null,
   boundProjects: [] as Array<{
@@ -24,6 +29,9 @@ const sessionState = vi.hoisted(() => ({
   loadTaskWorkspaceInfo: vi.fn().mockResolvedValue(undefined),
   loadBoundProjects: vi.fn(),
   loadSessions: vi.fn(),
+  loadSurfaceCatalog: vi.fn().mockResolvedValue(undefined),
+  openHistorySurface: vi.fn().mockResolvedValue(undefined),
+  closeHistorySurface: vi.fn(),
   selectSession: vi.fn(),
   selectProject: vi.fn(),
   startTemporarySession: vi.fn(),
@@ -89,6 +97,7 @@ describe('App bootstrap', () => {
     window.localStorage.clear();
     window.history.replaceState(null, '', '/');
     sessionState.currentSessionRef = null;
+    sessionState.historySurfaceSelection = null;
     sessionState.sessions = [];
     sessionState.isTemporarySession = true;
     sessionState.selectedProjectPath = null;
@@ -244,5 +253,95 @@ describe('App bootstrap', () => {
     });
     expect(sessionState.selectSession).not.toHaveBeenCalled();
     expect(useAppStore.getState().mainView).toBe('board');
+  });
+
+  it('restores an opaque remote history link without activating a local session', async () => {
+    const locator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+    };
+    window.history.replaceState(
+      { bladeSessionSurfaceLocator: locator },
+      '',
+      `/?view=history&session=remote-session&workspaceKind=acp-remote&workspaceRef=${locator.workspace.workspaceRef}`
+    );
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(sessionState.openHistorySurface).toHaveBeenCalledWith(locator);
+    });
+
+    expect(sessionState.selectSession).not.toHaveBeenCalled();
+    expect(sessionState.startTemporarySession).not.toHaveBeenCalled();
+    expect(sessionState.loadSurfaceCatalog).toHaveBeenCalledOnce();
+  });
+
+  it('cleans an invalid remote history link without issuing an open request', async () => {
+    window.history.replaceState(
+      { bladeSessionSurfaceLocator: 'invalid' },
+      '',
+      '/?view=history&session=remote-session&workspaceKind=acp-remote'
+    );
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    expect(sessionState.openHistorySurface).not.toHaveBeenCalled();
+    expect(window.location.search).not.toContain('view=history');
+    expect(window.location.search).not.toContain('workspaceKind');
+    expect(window.location.search).not.toContain('workspaceRef');
+    expect(window.location.search).not.toContain('session=remote-session');
+    expect(window.history.state).toBeNull();
+  });
+
+  it('removes remote locator parameters when returning to local navigation', async () => {
+    const locator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+    };
+    sessionState.currentSessionRef = {
+      sessionId: 'local-session',
+      projectPath: '/workspace/blade',
+    };
+    sessionState.sessions = [
+      {
+        sessionId: 'local-session',
+        projectPath: '/workspace/blade',
+      },
+    ];
+    sessionState.isTemporarySession = false;
+    window.history.replaceState(
+      { bladeSessionSurfaceLocator: locator },
+      '',
+      `/?view=history&session=remote-session&workspaceKind=acp-remote&workspaceRef=${locator.workspace.workspaceRef}`
+    );
+    sessionState.openHistorySurface.mockImplementation(async () => {
+      sessionState.historySurfaceSelection = null;
+    });
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(window.location.search).toContain('session=local-session');
+    });
+
+    expect(window.location.search).not.toContain('workspaceKind');
+    expect(window.location.search).not.toContain('workspaceRef');
+    expect(window.history.state).toBeNull();
   });
 });

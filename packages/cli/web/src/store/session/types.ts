@@ -1,4 +1,12 @@
-import type { McpElicitationDetails, SessionRef } from '@api/schemas';
+import type {
+  McpElicitationDetails,
+  SessionLocatorV2,
+  SessionRef,
+  SessionSurfaceCapabilities,
+  SessionSurfaceErrorCode,
+  SessionSurfaceMessage,
+  SessionSurfaceSummary,
+} from '@api/schemas';
 import type { StateCreator } from 'zustand';
 import type {
   Message as BaseMessage,
@@ -281,6 +289,53 @@ export interface Message extends Omit<BaseMessage, 'metadata'> {
 
 export type CatalogLoadState = 'idle' | 'loading' | 'hydrating' | 'ready' | 'error';
 
+export type HistorySurfaceLoadState =
+  | 'idle'
+  | 'loading'
+  | 'loading-older'
+  | 'forking'
+  | 'ready'
+  | 'error';
+
+export interface SessionSurfaceSelection {
+  locator: SessionLocatorV2;
+  displayCwd: string;
+  capabilities: SessionSurfaceCapabilities;
+  mode: 'interactive' | 'history-only';
+}
+
+export interface HistorySurfaceError {
+  code: SessionSurfaceErrorCode | null;
+  message: string;
+}
+
+export interface HistorySurfaceSlice {
+  surfaceCatalog: SessionSurfaceSummary[];
+  surfaceCatalogLoadState: CatalogLoadState;
+  surfaceCatalogError: HistorySurfaceError | null;
+  historySurfaceSelection: SessionSurfaceSelection | null;
+  historySurfaceMessages: SessionSurfaceMessage[];
+  historySurfaceOlderCursor: string | null;
+  historySurfaceSnapshot: string | null;
+  historySurfaceGeneration: number;
+  historySurfaceLoadState: HistorySurfaceLoadState;
+  historySurfaceError: HistorySurfaceError | null;
+  historySurfaceRecoveryCode:
+    | 'session_surface_cursor_invalid'
+    | 'session_surface_snapshot_changed'
+    | null;
+  historySurfaceTruncated: boolean;
+
+  loadSurfaceCatalog: (options?: {
+    archived?: boolean;
+    workspaceKind?: SessionLocatorV2['workspace']['kind'];
+  }) => Promise<void>;
+  openHistorySurface: (locator: SessionLocatorV2, limit?: number) => Promise<void>;
+  loadOlderSurfaceHistory: (limit?: number) => Promise<void>;
+  forkHistorySurface: () => Promise<void>;
+  closeHistorySurface: () => void;
+}
+
 export type SessionErrorKind =
   | 'submission'
   | 'execution'
@@ -332,6 +387,8 @@ export interface SessionSlice {
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   getNavigationVersion: () => number;
+  getViewSelectionVersion: () => number;
+  claimViewSelection: () => number;
   startTemporarySession: (projectPath?: string) => void;
   clearError: () => void;
   setGoal: (goal: Goal | null) => void;
@@ -473,6 +530,7 @@ export interface UiSlice {
 }
 
 export type SessionStoreState = SessionSlice &
+  HistorySurfaceSlice &
   TaskListSlice &
   MessageSlice &
   StreamingSlice &

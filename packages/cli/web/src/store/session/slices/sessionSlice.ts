@@ -163,6 +163,7 @@ const fetchTeams = async (ref: SessionRef) =>
 
 export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
   let navigationGeneration = 0;
+  let viewSelectionGeneration = 0;
   let catalogGeneration = 0;
   let archivedCatalogGeneration = 0;
   const messageResyncs = new Map<string, Promise<void>>();
@@ -240,6 +241,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
     setCurrentSession: (ref) => {
       beginNavigation();
+      get().claimViewSelection();
+      get().closeHistorySurface();
       set({
         currentSessionId: ref?.sessionId ?? null,
         currentSessionRef: ref,
@@ -258,12 +261,21 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
     getNavigationVersion: () => navigationGeneration,
 
+    getViewSelectionVersion: () => viewSelectionGeneration,
+
+    claimViewSelection: () => {
+      viewSelectionGeneration += 1;
+      return viewSelectionGeneration;
+    },
+
     clearError: () => set({ error: null, errorContext: null }),
 
     setGoal: (goal) => set({ goal }),
 
     startTemporarySession: (projectPath) => {
       beginNavigation();
+      get().claimViewSelection();
+      get().closeHistorySurface();
       get().unsubscribeFromEvents();
       useConfigStore.getState().resetMode();
       if (projectPath) {
@@ -401,6 +413,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
     selectSession: async (ref) => {
       const generation = beginNavigation();
+      const viewSelection = get().claimViewSelection();
+      get().closeHistorySurface();
       set({
         isLoading: true,
         error: null,
@@ -419,7 +433,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             pendingEvents.push(event);
           }
         });
-        if (!isCurrentNavigation(generation)) {
+        if (
+          !isCurrentNavigation(generation) ||
+          viewSelection !== get().getViewSelectionVersion()
+        ) {
           closePreparedSubscription(preparedUnsubscribe);
           preparedUnsubscribe = null;
           return;
@@ -434,7 +451,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             ? fetchTeams(ref).catch(() => [])
             : Promise.resolve([]),
         ]);
-        if (!isCurrentNavigation(generation)) {
+        if (
+          !isCurrentNavigation(generation) ||
+          viewSelection !== get().getViewSelectionVersion()
+        ) {
           closePreparedSubscription(preparedUnsubscribe);
           preparedUnsubscribe = null;
           return;
@@ -505,7 +525,11 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         if (preparedUnsubscribe) {
           closePreparedSubscription(preparedUnsubscribe);
         }
-        if (!isCurrentNavigation(generation)) return;
+        if (
+          !isCurrentNavigation(generation) ||
+          viewSelection !== get().getViewSelectionVersion()
+        )
+          return;
         set({
           error: (err as Error).message,
           errorContext: { kind: 'navigation', sessionRef: ref },
@@ -679,6 +703,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
     forkSession: async (session) => {
       const generation = beginNavigation();
+      const viewSelection = get().claimViewSelection();
+      get().closeHistorySurface();
       const sourceRef = sessionRefFromSession(session);
       set({ forkingSessionRef: sourceRef, isLoading: false, error: null });
 
@@ -690,10 +716,17 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         set((state) => ({
           sessions: upsertSessionByRef(state.sessions, forked.session),
         }));
-        if (!isCurrentNavigation(generation)) return;
+        if (
+          !isCurrentNavigation(generation) ||
+          viewSelection !== get().getViewSelectionVersion()
+        )
+          return;
 
         preparedUnsubscribe = await get().prepareEventSubscription(childRef);
-        if (!isCurrentNavigation(generation)) {
+        if (
+          !isCurrentNavigation(generation) ||
+          viewSelection !== get().getViewSelectionVersion()
+        ) {
           closePreparedSubscription(preparedUnsubscribe);
           preparedUnsubscribe = null;
           return;
@@ -715,7 +748,11 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         if (preparedUnsubscribe) {
           closePreparedSubscription(preparedUnsubscribe);
         }
-        if (!isCurrentNavigation(generation)) return;
+        if (
+          !isCurrentNavigation(generation) ||
+          viewSelection !== get().getViewSelectionVersion()
+        )
+          return;
         set({
           error: (err as Error).message,
           forkingSessionRef: null,

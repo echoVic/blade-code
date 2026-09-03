@@ -1,9 +1,27 @@
-import type { Goal, Session, SessionRef } from '@api/schemas';
+import type {
+  Goal,
+  Session,
+  SessionLocatorV2,
+  SessionRef,
+  SessionSurfaceCatalogPage,
+  SessionSurfaceHistoryPage,
+  SessionSurfaceOpenResult,
+} from '@api/schemas';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createStore } from 'zustand/vanilla';
 import { HttpResponseError } from '../../../src/lib/http';
+import {
+  createHistorySurfaceSlice,
+  createMessageSlice,
+  createSessionSlice,
+  createStreamingSlice,
+  createTaskListSlice,
+  createUiSlice,
+} from '../../../src/store/session/slices';
 import type {
   AgentPhase,
   SendMessagePayload,
+  SessionStoreState,
   StreamEvent,
 } from '../../../src/store/session/types';
 
@@ -29,6 +47,10 @@ vi.mock('../../../src/services', () => ({
     executeUserShellCommand: vi.fn(),
     abortSession: vi.fn(),
     forkSession: vi.fn(),
+    listSurfaceCatalog: vi.fn(),
+    openSurface: vi.fn(),
+    loadSurfaceHistoryPage: vi.fn(),
+    forkSurface: vi.fn(),
     subscribeEvents: vi.fn(() => () => {
       /* noop */
     }),
@@ -60,6 +82,7 @@ const actualPrepareEventSubscription =
 const actualSubscribeToEvents = useSessionStore.getState().subscribeToEvents;
 const actualReconnectSessionEvents = useSessionStore.getState().reconnectSessionEvents;
 const actualUnsubscribeFromEvents = useSessionStore.getState().unsubscribeFromEvents;
+const actualSelectSession = useSessionStore.getState().selectSession;
 
 function createSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -96,6 +119,65 @@ function createGoal(overrides: Partial<Goal> = {}): Goal {
     createdAt: '2026-08-05T00:00:00.000Z',
     updatedAt: '2026-08-05T00:00:00.000Z',
     ...overrides,
+  };
+}
+
+const remoteWorkspaceRef = `acp-remote-workspace:${'A'.repeat(43)}`;
+
+function createRemoteLocator(sessionId = 'remote-session'): SessionLocatorV2 {
+  return {
+    version: 2,
+    sessionId,
+    workspace: { kind: 'acp-remote', workspaceRef: remoteWorkspaceRef },
+  };
+}
+
+function createSurfaceOpenResult(
+  locator = createRemoteLocator(),
+  overrides: Partial<SessionSurfaceOpenResult['history']> = {}
+): SessionSurfaceOpenResult {
+  return {
+    session: {
+      locator,
+      displayCwd: '/remote/project',
+      pathStyle: 'posix',
+      rootId: locator.sessionId,
+      taskStatus: 'completed',
+      messageCount: 1,
+      firstMessageTime: '2026-09-02T00:00:00.000Z',
+      lastMessageTime: '2026-09-02T00:00:00.000Z',
+      hasErrors: false,
+      capabilities: {
+        connection: 'online',
+        history: { read: true, fork: true },
+        turn: { start: false, reason: 'history-only' },
+        files: {
+          readText: false,
+          writeText: false,
+          browse: 'none',
+          reason: 'history-only',
+        },
+        terminal: {
+          mode: 'none',
+          owner: 'none',
+          reason: 'history-only',
+        },
+      },
+    },
+    history: {
+      messages: [
+        {
+          id: 'surface-message:1:abc',
+          role: 'user',
+          content: locator.sessionId,
+          timestamp: '2026-09-02T00:00:00.000Z',
+        },
+      ],
+      olderCursor: 'older-1',
+      snapshot: 'snapshot-1',
+      truncated: false,
+      ...overrides,
+    },
   };
 }
 
@@ -207,6 +289,18 @@ describe('sessionSlice multimodal sendMessage', () => {
       catalogError: null,
       archivedCatalogLoadState: 'idle',
       archivedCatalogError: null,
+      surfaceCatalog: [],
+      surfaceCatalogLoadState: 'idle',
+      surfaceCatalogError: null,
+      historySurfaceSelection: null,
+      historySurfaceMessages: [],
+      historySurfaceOlderCursor: null,
+      historySurfaceSnapshot: null,
+      historySurfaceGeneration: 0,
+      historySurfaceLoadState: 'idle',
+      historySurfaceError: null,
+      historySurfaceRecoveryCode: null,
+      historySurfaceTruncated: false,
       error: null,
       errorContext: null,
       sideConversation: null,
@@ -237,6 +331,7 @@ describe('sessionSlice multimodal sendMessage', () => {
         estimatedCostUsd: 0,
       },
       eventUnsubscribe: null,
+      selectSession: actualSelectSession,
       prepareEventSubscription: vi.fn().mockResolvedValue(() => undefined),
       replaceEventSubscription: vi.fn(),
       subscribeToEvents: vi.fn(),
@@ -1765,6 +1860,589 @@ describe('sessionSlice multimodal sendMessage', () => {
     >('../../../src/services/sessionService');
 
     await expect(actualSessionService.listSessions()).rejects.toThrow();
+  });
+
+  it('calls all V2 surface routes with opaque locators and validates responses', async () => {
+    const locator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+      },
+    };
+    const capabilities = {
+      connection: 'online' as const,
+      history: { read: true, fork: true },
+      turn: { start: false, reason: 'history-only' as const },
+      files: {
+        readText: false,
+        writeText: false,
+        browse: 'none' as const,
+        reason: 'history-only' as const,
+      },
+      terminal: {
+        mode: 'none' as const,
+        owner: 'none' as const,
+        reason: 'history-only' as const,
+      },
+    };
+    const history: SessionSurfaceHistoryPage = {
+      messages: [
+        {
+          id: 'surface-message:1:abc',
+          role: 'user',
+          content: 'hello',
+          timestamp: '2026-09-02T00:00:00.000Z',
+        },
+      ],
+      olderCursor: 'older-1',
+      snapshot: 'snapshot-1',
+      truncated: false,
+    };
+    const opened: SessionSurfaceOpenResult = {
+      session: {
+        locator,
+        displayCwd: '/remote/project',
+        pathStyle: 'posix',
+        rootId: 'remote-session',
+        taskStatus: 'completed',
+        messageCount: 1,
+        firstMessageTime: '2026-09-02T00:00:00.000Z',
+        lastMessageTime: '2026-09-02T00:00:00.000Z',
+        hasErrors: false,
+        capabilities,
+      },
+      history,
+    };
+    const catalog: SessionSurfaceCatalogPage = {
+      sessions: [opened.session],
+      nextCursor: 'catalog-next',
+    };
+    const responses = [catalog, opened, history, opened];
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(responses.shift()), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { sessionService: actualSessionService } = await vi.importActual<
+      typeof import('../../../src/services/sessionService')
+    >('../../../src/services/sessionService');
+
+    await expect(
+      actualSessionService.listSurfaceCatalog({
+        cursor: 'catalog-cursor',
+        limit: 25,
+        archived: true,
+        workspaceKind: 'acp-remote',
+      })
+    ).resolves.toEqual(catalog);
+    await expect(actualSessionService.openSurface(locator, 20)).resolves.toEqual(
+      opened
+    );
+    await expect(
+      actualSessionService.loadSurfaceHistoryPage(locator, 'older-1', 'snapshot-1', 10)
+    ).resolves.toEqual(history);
+    await expect(actualSessionService.forkSurface(locator)).resolves.toEqual(opened);
+
+    expect(fetchMock.mock.calls).toEqual([
+      [
+        '/sessions/v2/catalog?cursor=catalog-cursor&limit=25&archived=true&workspaceKind=acp-remote',
+        undefined,
+      ],
+      [
+        '/sessions/v2/open',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ locator, limit: 20 }),
+        },
+      ],
+      [
+        '/sessions/v2/history',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            locator,
+            cursor: 'older-1',
+            expectedSnapshot: 'snapshot-1',
+            limit: 10,
+          }),
+        },
+      ],
+      [
+        '/sessions/v2/fork',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ locator }),
+        },
+      ],
+    ]);
+    expect(JSON.stringify(fetchMock.mock.calls)).not.toContain('x-blade-directory');
+    expect(JSON.stringify(fetchMock.mock.calls)).not.toContain('projectPath');
+  });
+
+  it('rejects malformed V2 surface responses instead of casting them into state', async () => {
+    const validSummary = createSurfaceOpenResult().session;
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          sessions: [
+            {
+              ...validSummary,
+              locator: {
+                ...validSummary.locator,
+                workspace: {
+                  ...validSummary.locator.workspace,
+                  kind: 'acp-remote',
+                  projectPath: '/private/host/state',
+                },
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { sessionService: actualSessionService } = await vi.importActual<
+      typeof import('../../../src/services/sessionService')
+    >('../../../src/services/sessionService');
+
+    await expect(actualSessionService.listSurfaceCatalog()).rejects.toThrow();
+  });
+
+  it('keeps remote history as sibling state and closes back to the unchanged local session', async () => {
+    const local = createSession({ sessionId: 'local-session' });
+    const localRef = createRef(local.sessionId, local.projectPath);
+    const liveMessages = [createMessage({ role: 'user', content: 'local' })];
+    const remote = createSurfaceOpenResult();
+    useSessionStore.setState({
+      sessions: [local],
+      currentSessionId: local.sessionId,
+      currentSessionRef: localRef,
+      isTemporarySession: false,
+      messages: liveMessages,
+    });
+    vi.mocked(sessionService.openSurface).mockResolvedValue(remote);
+
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionId: local.sessionId,
+      currentSessionRef: localRef,
+      messages: liveMessages,
+      historySurfaceSelection: {
+        locator: remote.session.locator,
+        displayCwd: remote.session.displayCwd,
+        capabilities: remote.session.capabilities,
+        mode: 'history-only',
+      },
+      historySurfaceMessages: remote.history.messages,
+      historySurfaceOlderCursor: 'older-1',
+      historySurfaceSnapshot: 'snapshot-1',
+      historySurfaceLoadState: 'ready',
+    });
+    expect(sessionService.openEventSubscription).not.toHaveBeenCalled();
+
+    useSessionStore.getState().closeHistorySurface();
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionId: local.sessionId,
+      currentSessionRef: localRef,
+      messages: liveMessages,
+      historySurfaceSelection: null,
+      historySurfaceMessages: [],
+      historySurfaceOlderCursor: null,
+      historySurfaceSnapshot: null,
+      historySurfaceLoadState: 'idle',
+    });
+  });
+
+  it('does not invalidate retained local navigation or side work when opening history', async () => {
+    const remote = createSurfaceOpenResult();
+    const localVersion = useSessionStore.getState().getNavigationVersion();
+    const sideConversation = {
+      requestId: 'side-request',
+      sessionRef: createRef('local-session', '/tmp/project-a'),
+      question: 'keep working',
+      status: 'loading' as const,
+    };
+    useSessionStore.setState({ sideConversation });
+    vi.mocked(sessionService.openSurface).mockResolvedValue(remote);
+
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+
+    expect(useSessionStore.getState().getNavigationVersion()).toBe(localVersion);
+    expect(useSessionStore.getState().sideConversation).toEqual(sideConversation);
+  });
+
+  it('delegates local V2 locators to the existing interactive activation path', async () => {
+    const locator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'local-v2',
+      workspace: { kind: 'local', projectPath: '/tmp/local-v2' },
+    };
+    const selectSession = vi.fn(async () => undefined);
+    useSessionStore.setState({ selectSession });
+
+    await useSessionStore.getState().openHistorySurface(locator);
+
+    expect(selectSession).toHaveBeenCalledWith({
+      sessionId: 'local-v2',
+      projectPath: '/tmp/local-v2',
+    });
+    expect(sessionService.openSurface).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().historySurfaceSelection).toBeNull();
+  });
+
+  it('generation-fences a slow remote open after closing the history view', async () => {
+    const remote = createSurfaceOpenResult();
+    const openGate = deferred<SessionSurfaceOpenResult>();
+    vi.mocked(sessionService.openSurface).mockReturnValue(openGate.promise);
+
+    const open = useSessionStore.getState().openHistorySurface(remote.session.locator);
+    useSessionStore.getState().closeHistorySurface();
+    openGate.resolve(remote);
+    await open;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      historySurfaceSelection: null,
+      historySurfaceMessages: [],
+      historySurfaceLoadState: 'idle',
+      historySurfaceError: null,
+    });
+  });
+
+  it('lets a local navigation invalidate a pending remote open without clearing local state', async () => {
+    const remote = createSurfaceOpenResult();
+    const openGate = deferred<SessionSurfaceOpenResult>();
+    vi.mocked(sessionService.openSurface).mockReturnValue(openGate.promise);
+    const open = useSessionStore.getState().openHistorySurface(remote.session.locator);
+
+    const localRef = createRef('local-after-remote', '/tmp/local-after-remote');
+    useSessionStore.getState().setCurrentSession(localRef);
+    openGate.resolve(remote);
+    await open;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionId: localRef.sessionId,
+      currentSessionRef: localRef,
+      historySurfaceSelection: null,
+      historySurfaceMessages: [],
+      historySurfaceLoadState: 'idle',
+    });
+  });
+
+  it('keeps a remote selection when an older local selection finishes later', async () => {
+    const local = createSession({
+      sessionId: 'slow-local',
+      projectPath: '/tmp/slow-local',
+    });
+    const localRef = createRef(local.sessionId, local.projectPath);
+    const remote = createSurfaceOpenResult();
+    const subscriptionGate = deferred<() => void>();
+    const prepareEventSubscription = vi.fn(() => subscriptionGate.promise);
+    useSessionStore.setState({ prepareEventSubscription });
+    vi.mocked(sessionService.openSurface).mockResolvedValue(remote);
+
+    const select = useSessionStore.getState().selectSession(localRef);
+    await vi.waitFor(() => expect(prepareEventSubscription).toHaveBeenCalledOnce());
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+    subscriptionGate.resolve(vi.fn());
+    await select;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      historySurfaceSelection: { locator: remote.session.locator },
+      currentSessionRef: null,
+    });
+    expect(sessionService.getMessages).not.toHaveBeenCalledWith(localRef);
+  });
+
+  it('closes an active history surface when selecting a local session', async () => {
+    const remote = createSurfaceOpenResult();
+    const local = createSession({
+      sessionId: 'local-target',
+      projectPath: '/tmp/local-target',
+    });
+    const localRef = createRef(local.sessionId, local.projectPath);
+    vi.mocked(sessionService.openSurface).mockResolvedValue(remote);
+    vi.mocked(sessionService.getMessages).mockResolvedValue([]);
+    vi.mocked(sessionService.getSession).mockResolvedValue(local);
+    vi.mocked(teamService.list).mockResolvedValue([]);
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+
+    await useSessionStore.getState().selectSession(localRef);
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: localRef,
+      historySurfaceSelection: null,
+      historySurfaceMessages: [],
+      historySurfaceLoadState: 'idle',
+    });
+  });
+
+  it('single-flights older pages per locator and prepends each page once', async () => {
+    const remote = createSurfaceOpenResult();
+    vi.mocked(sessionService.openSurface).mockResolvedValue(remote);
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+
+    const historyGate = deferred<SessionSurfaceHistoryPage>();
+    vi.mocked(sessionService.loadSurfaceHistoryPage).mockReturnValue(
+      historyGate.promise
+    );
+    const first = useSessionStore.getState().loadOlderSurfaceHistory();
+    const second = useSessionStore.getState().loadOlderSurfaceHistory();
+    await vi.waitFor(() =>
+      expect(sessionService.loadSurfaceHistoryPage).toHaveBeenCalledTimes(1)
+    );
+
+    historyGate.resolve({
+      messages: [
+        {
+          id: 'surface-message:0:older',
+          role: 'assistant',
+          content: 'older',
+          timestamp: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+      snapshot: 'snapshot-1',
+      truncated: false,
+    });
+    await Promise.all([first, second]);
+
+    expect(
+      useSessionStore.getState().historySurfaceMessages.map(({ id }) => id)
+    ).toEqual(['surface-message:0:older', 'surface-message:1:abc']);
+    expect(useSessionStore.getState().historySurfaceOlderCursor).toBeNull();
+  });
+
+  it('starts a fresh same-locator page request after close and reopen', async () => {
+    const remote = createSurfaceOpenResult();
+    const firstPage = deferred<SessionSurfaceHistoryPage>();
+    vi.mocked(sessionService.openSurface).mockResolvedValue(remote);
+    vi.mocked(sessionService.loadSurfaceHistoryPage)
+      .mockReturnValueOnce(firstPage.promise)
+      .mockResolvedValueOnce({
+        messages: [],
+        snapshot: 'snapshot-1',
+        truncated: false,
+      });
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+    const staleLoad = useSessionStore.getState().loadOlderSurfaceHistory();
+    await vi.waitFor(() =>
+      expect(sessionService.loadSurfaceHistoryPage).toHaveBeenCalledTimes(1)
+    );
+
+    useSessionStore.getState().closeHistorySurface();
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+    await useSessionStore.getState().loadOlderSurfaceHistory();
+
+    expect(sessionService.loadSurfaceHistoryPage).toHaveBeenCalledTimes(2);
+    firstPage.resolve({
+      messages: [],
+      snapshot: 'snapshot-1',
+      truncated: false,
+    });
+    await staleLoad;
+  });
+
+  it('reopens and discards accumulated pages when a cursor snapshot becomes invalid', async () => {
+    const remote = createSurfaceOpenResult();
+    const refreshed = createSurfaceOpenResult(remote.session.locator, {
+      messages: [
+        {
+          id: 'surface-message:2:fresh',
+          role: 'assistant',
+          content: 'fresh',
+          timestamp: '2026-09-03T00:00:00.000Z',
+        },
+      ],
+      olderCursor: 'fresh-older',
+      snapshot: 'snapshot-2',
+    });
+    vi.mocked(sessionService.openSurface)
+      .mockResolvedValueOnce(remote)
+      .mockResolvedValueOnce(refreshed);
+    vi.mocked(sessionService.loadSurfaceHistoryPage).mockRejectedValue(
+      new HttpResponseError('snapshot changed', 409, 'session_surface_snapshot_changed')
+    );
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+
+    await useSessionStore.getState().loadOlderSurfaceHistory();
+
+    expect(sessionService.openSurface).toHaveBeenCalledTimes(2);
+    expect(useSessionStore.getState()).toMatchObject({
+      historySurfaceMessages: refreshed.history.messages,
+      historySurfaceOlderCursor: 'fresh-older',
+      historySurfaceSnapshot: 'snapshot-2',
+      historySurfaceLoadState: 'ready',
+      historySurfaceError: null,
+    });
+  });
+
+  it('does not let a cursor-recovery reopen repopulate history after close', async () => {
+    const remote = createSurfaceOpenResult();
+    const reopenGate = deferred<SessionSurfaceOpenResult>();
+    vi.mocked(sessionService.openSurface)
+      .mockResolvedValueOnce(remote)
+      .mockReturnValueOnce(reopenGate.promise);
+    vi.mocked(sessionService.loadSurfaceHistoryPage).mockRejectedValue(
+      new HttpResponseError('cursor invalid', 400, 'session_surface_cursor_invalid')
+    );
+    await useSessionStore.getState().openHistorySurface(remote.session.locator);
+
+    const load = useSessionStore.getState().loadOlderSurfaceHistory();
+    await vi.waitFor(() => expect(sessionService.openSurface).toHaveBeenCalledTimes(2));
+    useSessionStore.getState().closeHistorySurface();
+    reopenGate.resolve(
+      createSurfaceOpenResult(remote.session.locator, {
+        snapshot: 'snapshot-after-close',
+      })
+    );
+    await load;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      historySurfaceSelection: null,
+      historySurfaceMessages: [],
+      historySurfaceSnapshot: null,
+      historySurfaceLoadState: 'idle',
+    });
+  });
+
+  it('forks a remote surface into another history-only selection', async () => {
+    const parent = createSurfaceOpenResult();
+    const child = createSurfaceOpenResult(createRemoteLocator('remote-child'), {
+      snapshot: 'child-snapshot',
+    });
+    vi.mocked(sessionService.openSurface).mockResolvedValue(parent);
+    vi.mocked(sessionService.forkSurface).mockResolvedValue(child);
+    await useSessionStore.getState().openHistorySurface(parent.session.locator);
+
+    await useSessionStore.getState().forkHistorySurface();
+
+    expect(sessionService.forkSurface).toHaveBeenCalledWith(
+      parent.session.locator,
+      expect.any(AbortSignal)
+    );
+    expect(useSessionStore.getState()).toMatchObject({
+      historySurfaceSelection: {
+        locator: child.session.locator,
+        mode: 'history-only',
+      },
+      historySurfaceMessages: child.history.messages,
+      historySurfaceSnapshot: 'child-snapshot',
+      historySurfaceLoadState: 'ready',
+    });
+    expect(sessionService.openEventSubscription).not.toHaveBeenCalled();
+  });
+
+  it('loads the complete V2 catalog with locator-key deduplication', async () => {
+    const first = createSurfaceOpenResult(createRemoteLocator('shared-id')).session;
+    const secondLocator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'shared-id',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: `acp-remote-workspace:${'B'.repeat(43)}`,
+      },
+    };
+    const second = createSurfaceOpenResult(secondLocator).session;
+    vi.mocked(sessionService.listSurfaceCatalog)
+      .mockResolvedValueOnce({ sessions: [first], nextCursor: 'page-2' })
+      .mockResolvedValueOnce({ sessions: [first, second] });
+
+    await useSessionStore.getState().loadSurfaceCatalog({
+      workspaceKind: 'acp-remote',
+    });
+
+    expect(sessionService.listSurfaceCatalog).toHaveBeenNthCalledWith(1, {
+      workspaceKind: 'acp-remote',
+      cursor: undefined,
+      limit: 50,
+    });
+    expect(sessionService.listSurfaceCatalog).toHaveBeenNthCalledWith(2, {
+      workspaceKind: 'acp-remote',
+      cursor: 'page-2',
+      limit: 50,
+    });
+    expect(useSessionStore.getState()).toMatchObject({
+      surfaceCatalog: [first, second],
+      surfaceCatalogLoadState: 'ready',
+      surfaceCatalogError: null,
+    });
+  });
+
+  it('keeps at most four history reads globally across distinct locators', async () => {
+    const inFlight: Array<{
+      locator: SessionLocatorV2;
+      gate: ReturnType<typeof deferred<SessionSurfaceHistoryPage>>;
+    }> = [];
+    let active = 0;
+    let maxActive = 0;
+    vi.mocked(sessionService.openSurface).mockImplementation(async (locator) =>
+      createSurfaceOpenResult(locator)
+    );
+    vi.mocked(sessionService.loadSurfaceHistoryPage).mockImplementation(
+      async (locator) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        const gate = deferred<SessionSurfaceHistoryPage>();
+        inFlight.push({ locator, gate });
+        try {
+          return await gate.promise;
+        } finally {
+          active -= 1;
+        }
+      }
+    );
+
+    const stores = Array.from({ length: 5 }, (_, index) => {
+      const locator = {
+        ...createRemoteLocator(`remote-${index}`),
+        workspace: {
+          kind: 'acp-remote' as const,
+          workspaceRef: `acp-remote-workspace:${String(index).repeat(43)}`,
+        },
+      };
+      const store = createStore<SessionStoreState>()((...args) => ({
+        ...createSessionSlice(...args),
+        ...createHistorySurfaceSlice(...args),
+        ...createTaskListSlice(...args),
+        ...createMessageSlice(...args),
+        ...createStreamingSlice(...args),
+        ...createUiSlice(...args),
+      }));
+      return {
+        locator,
+        store,
+        open: store.getState().openHistorySurface(locator),
+      };
+    });
+    await Promise.all(stores.map(({ open }) => open));
+    const loads = stores.map(({ store }) => store.getState().loadOlderSurfaceHistory());
+    await vi.waitFor(() => expect(inFlight).toHaveLength(4));
+    expect(maxActive).toBe(4);
+    inFlight[0]?.gate.resolve({
+      messages: [],
+      snapshot: 'snapshot-1',
+      truncated: false,
+    });
+    await vi.waitFor(() => expect(inFlight).toHaveLength(5));
+    for (const entry of inFlight.slice(1)) {
+      entry.gate.resolve({
+        messages: [],
+        snapshot: 'snapshot-1',
+        truncated: false,
+      });
+    }
+    await Promise.all(loads);
+    expect(maxActive).toBe(4);
   });
 
   it('loads one exact session with its compound workspace identity', async () => {

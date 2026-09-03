@@ -1,4 +1,4 @@
-import type { Session, SessionRef } from '@api/schemas';
+import type { Session, SessionLocatorV2, SessionRef } from '@api/schemas';
 import { describe, expect, it } from 'vitest';
 
 function createSession(overrides: Partial<Session> = {}): Session {
@@ -20,6 +20,9 @@ function createSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('sessionIdentity', () => {
+  const remoteWorkspaceRefA = `acp-remote-workspace:${'A'.repeat(43)}`;
+  const remoteWorkspaceRefB = `acp-remote-workspace:${'B'.repeat(43)}`;
+
   it('derives session refs from full sessions', async () => {
     const session = createSession({
       sessionId: 'session-derive',
@@ -108,5 +111,76 @@ describe('sessionIdentity', () => {
     expect(removed).toEqual([sameIdOtherWorkspace]);
     expect(findSessionByRef(removed, refA)).toBeUndefined();
     expect(findSessionByRef(removed, refB)).toEqual(sameIdOtherWorkspace);
+  });
+
+  it('builds compound surface locator keys for local and remote workspaces', async () => {
+    const localLocator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'shared-id',
+      workspace: {
+        kind: 'local',
+        projectPath: '/workspace/a',
+      },
+    };
+    const remoteLocatorA: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'shared-id',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: remoteWorkspaceRefA,
+      },
+    };
+    const remoteLocatorB: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'shared-id',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: remoteWorkspaceRefB,
+      },
+    };
+    const { sameSurfaceLocator, surfaceLocatorKey } = await import(
+      '../../../src/store/session/sessionIdentity'
+    );
+
+    expect(surfaceLocatorKey(localLocator)).toBe(
+      JSON.stringify([2, 'shared-id', 'local', '/workspace/a'])
+    );
+    expect(surfaceLocatorKey(remoteLocatorA)).toBe(
+      JSON.stringify([2, 'shared-id', 'acp-remote', remoteWorkspaceRefA])
+    );
+    expect(surfaceLocatorKey(remoteLocatorA)).not.toBe(
+      surfaceLocatorKey(remoteLocatorB)
+    );
+    expect(sameSurfaceLocator(remoteLocatorA, remoteLocatorA)).toBe(true);
+    expect(sameSurfaceLocator(remoteLocatorA, remoteLocatorB)).toBe(false);
+    expect(sameSurfaceLocator(localLocator, remoteLocatorA)).toBe(false);
+  });
+
+  it('only converts local V2 locators into V1 session refs', async () => {
+    const localLocator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'local-session',
+      workspace: {
+        kind: 'local',
+        projectPath: '/workspace/local',
+      },
+    };
+    const remoteLocator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: remoteWorkspaceRefA,
+      },
+    };
+    const { sessionRefFromSurfaceLocator } = await import(
+      '../../../src/store/session/sessionIdentity'
+    );
+
+    expect(sessionRefFromSurfaceLocator(localLocator)).toEqual({
+      sessionId: 'local-session',
+      projectPath: '/workspace/local',
+    } satisfies SessionRef);
+    expect(sessionRefFromSurfaceLocator(remoteLocator)).toBeNull();
   });
 });

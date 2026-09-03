@@ -1,10 +1,12 @@
-import type { SessionRef } from '@api/schemas';
+import type { SessionLocatorV2, SessionRef } from '@api/schemas';
 import { describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/services';
 import {
+  parseHistorySurfaceNavigation,
   parseSessionNavigation,
   readStoredSessionRef,
   resolveRestorableSession,
+  syncHistorySurfaceNavigation,
   syncSessionNavigation,
 } from '@/store/session/sessionNavigation';
 
@@ -22,6 +24,7 @@ function session(sessionId: string, projectPath: string): Session {
 }
 
 describe('session navigation', () => {
+  const remoteWorkspaceRef = `acp-remote-workspace:${'A'.repeat(43)}`;
   const refA: SessionRef = {
     sessionId: 'shared-id',
     projectPath: '/workspace/a',
@@ -153,5 +156,149 @@ describe('session navigation', () => {
 
   it('fails open when stored navigation data is malformed', () => {
     expect(readStoredSessionRef({ getItem: () => '{not-json' })).toBeNull();
+  });
+
+  it('parses and writes the exact remote history URL without local path fields', () => {
+    const locator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: remoteWorkspaceRef,
+      },
+    };
+    const replaceState = vi.fn();
+    const pushState = vi.fn();
+
+    const parsed = parseHistorySurfaceNavigation(
+      `?view=history&session=remote-session&workspaceKind=acp-remote&workspaceRef=${remoteWorkspaceRef}`,
+      null
+    );
+    expect(parsed.locator).toEqual(locator);
+    expect(parsed.shouldCleanup).toBe(false);
+
+    const url = syncHistorySurfaceNavigation(locator, {
+      href: 'http://localhost/?debug=1&project=%2Fworkspace%2Fa&workspace=%2Fworkspace%2Fb&cwd=%2Ftmp',
+      historyState: null,
+      replaceState,
+      pushState,
+    });
+
+    expect(url).toBe(
+      '/?view=history&session=remote-session&workspaceKind=acp-remote&workspaceRef=acp-remote-workspace%3AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    );
+    expect(replaceState).toHaveBeenCalledWith(
+      { bladeSessionSurfaceLocator: locator },
+      url
+    );
+    expect(pushState).not.toHaveBeenCalled();
+    expect(url).not.toContain('project=');
+    expect(url).not.toContain('workspace=');
+    expect(url).not.toContain('cwd=');
+    expect(url).not.toContain('displayCwd');
+  });
+
+  it('cleans invalid remote history query combinations without producing a locator', () => {
+    const replaceState = vi.fn();
+    const parsed = parseHistorySurfaceNavigation(
+      '?view=history&session=remote-session&workspaceKind=acp-remote',
+      null
+    );
+
+    expect(parsed.locator).toBeNull();
+    expect(parsed.shouldCleanup).toBe(true);
+
+    const url = syncHistorySurfaceNavigation(null, {
+      href: 'http://localhost/?view=history&session=remote-session&workspaceKind=acp-remote',
+      historyState: { bladeSessionSurfaceLocator: 'invalid' },
+      replaceState,
+    });
+
+    expect(url).toBe('/');
+    expect(replaceState).toHaveBeenCalledWith(null, '/');
+  });
+
+  it('keeps local session URLs outside the remote cleanup path and rejects polluted remote URLs', () => {
+    expect(
+      parseHistorySurfaceNavigation(
+        '?session=local-session&project=%2Fworkspace%2Flocal',
+        null
+      )
+    ).toEqual({ locator: null, shouldCleanup: false });
+
+    expect(
+      parseHistorySurfaceNavigation(
+        `?view=history&session=remote-session&workspaceKind=acp-remote&workspaceRef=${remoteWorkspaceRef}&project=%2Fprivate%2Fstate`,
+        null
+      )
+    ).toEqual({ locator: null, shouldCleanup: true });
+    expect(
+      parseHistorySurfaceNavigation(
+        `?view=history&session=remote-session&workspaceKind=acp-remote&workspaceRef=${remoteWorkspaceRef}&debug=1`,
+        null
+      )
+    ).toEqual({ locator: null, shouldCleanup: true });
+    expect(
+      parseHistorySurfaceNavigation(
+        `?view=history&session=remote-session&session=duplicate&workspaceKind=acp-remote&workspaceRef=${remoteWorkspaceRef}`,
+        null
+      )
+    ).toEqual({ locator: null, shouldCleanup: true });
+  });
+
+  it('fails closed when a versioned history state disagrees with the remote URL', () => {
+    const locator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: remoteWorkspaceRef,
+      },
+    };
+    const otherLocator: SessionLocatorV2 = {
+      ...locator,
+      sessionId: 'other-session',
+    };
+    const search = `?view=history&session=remote-session&workspaceKind=acp-remote&workspaceRef=${remoteWorkspaceRef}`;
+
+    expect(
+      parseHistorySurfaceNavigation(search, {
+        bladeSessionSurfaceLocator: locator,
+      })
+    ).toEqual({ locator, shouldCleanup: false });
+    expect(
+      parseHistorySurfaceNavigation(search, {
+        bladeSessionSurfaceLocator: otherLocator,
+      })
+    ).toEqual({ locator: null, shouldCleanup: true });
+  });
+
+  it('preserves unrelated history state while adding or removing the opaque locator', () => {
+    const locator: SessionLocatorV2 = {
+      version: 2,
+      sessionId: 'remote-session',
+      workspace: {
+        kind: 'acp-remote',
+        workspaceRef: remoteWorkspaceRef,
+      },
+    };
+    const replaceState = vi.fn();
+
+    syncHistorySurfaceNavigation(locator, {
+      href: 'http://localhost/',
+      historyState: { preserved: true },
+      replaceState,
+    });
+    expect(replaceState).toHaveBeenLastCalledWith(
+      { preserved: true, bladeSessionSurfaceLocator: locator },
+      expect.stringContaining('view=history')
+    );
+
+    syncHistorySurfaceNavigation(null, {
+      href: 'http://localhost/?view=history',
+      historyState: { preserved: true, bladeSessionSurfaceLocator: locator },
+      replaceState,
+    });
+    expect(replaceState).toHaveBeenLastCalledWith({ preserved: true }, '/');
   });
 });

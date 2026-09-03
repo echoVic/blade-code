@@ -34,6 +34,7 @@ import {
   SessionCatalogPageSchema,
   type SessionHistoryMessage,
   SessionHistoryMessageSchema,
+  type SessionLocatorV2,
   type SessionRef,
   SessionRefSchema,
   type SessionRewindCheckpoint,
@@ -42,6 +43,15 @@ import {
   type SessionRewindResponse,
   SessionRewindResponseSchema,
   SessionSchema,
+  type SessionSurfaceCatalogPage,
+  SessionSurfaceCatalogPageSchema,
+  SessionSurfaceForkRequestSchema,
+  type SessionSurfaceHistoryPage,
+  SessionSurfaceHistoryPageSchema,
+  SessionSurfaceHistoryRequestSchema,
+  SessionSurfaceOpenRequestSchema,
+  type SessionSurfaceOpenResult,
+  SessionSurfaceOpenResultSchema,
   type SessionTaskDiffArtifact,
   SessionTaskDiffArtifactSchema,
   type SessionTaskIsolation,
@@ -299,6 +309,86 @@ export const sessionService = {
     if (!res.ok) throw new Error('Failed to load session catalog');
     return SessionCatalogPageSchema.parse(await res.json());
   },
+
+  listSurfaceCatalog: async (
+    options: {
+      archived?: boolean;
+      cursor?: string;
+      limit?: number;
+      workspaceKind?: SessionLocatorV2['workspace']['kind'];
+    } = {}
+  ): Promise<SessionSurfaceCatalogPage> => {
+    const params = new URLSearchParams();
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    if (options.archived !== undefined) {
+      params.set('archived', String(options.archived));
+    }
+    if (options.workspaceKind) {
+      params.set('workspaceKind', options.workspaceKind);
+    }
+    const query = params.toString();
+    return SessionSurfaceCatalogPageSchema.parse(
+      await requestJson<unknown>(
+        `${API_BASE}/sessions/v2/catalog${query ? `?${query}` : ''}`
+      )
+    );
+  },
+
+  openSurface: async (
+    locator: SessionLocatorV2,
+    limit?: number,
+    signal?: AbortSignal
+  ): Promise<SessionSurfaceOpenResult> =>
+    SessionSurfaceOpenResultSchema.parse(
+      await requestJson<unknown>(`${API_BASE}/sessions/v2/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          SessionSurfaceOpenRequestSchema.parse({
+            locator,
+            ...(limit === undefined ? {} : { limit }),
+          })
+        ),
+        signal,
+      })
+    ),
+
+  loadSurfaceHistoryPage: async (
+    locator: SessionLocatorV2,
+    cursor: string,
+    expectedSnapshot: string,
+    limit?: number,
+    signal?: AbortSignal
+  ): Promise<SessionSurfaceHistoryPage> =>
+    SessionSurfaceHistoryPageSchema.parse(
+      await requestJson<unknown>(`${API_BASE}/sessions/v2/history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          SessionSurfaceHistoryRequestSchema.parse({
+            locator,
+            cursor,
+            expectedSnapshot,
+            ...(limit === undefined ? {} : { limit }),
+          })
+        ),
+        signal,
+      })
+    ),
+
+  forkSurface: async (
+    locator: SessionLocatorV2,
+    signal?: AbortSignal
+  ): Promise<SessionSurfaceOpenResult> =>
+    SessionSurfaceOpenResultSchema.parse(
+      await requestJson<unknown>(`${API_BASE}/sessions/v2/fork`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(SessionSurfaceForkRequestSchema.parse({ locator })),
+        signal,
+      })
+    ),
 
   getSession: async (ref: SessionRef): Promise<Session> => {
     return SessionSchema.parse(
