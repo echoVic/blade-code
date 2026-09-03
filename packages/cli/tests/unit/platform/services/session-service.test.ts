@@ -29,6 +29,7 @@ vi.mock('../../../../src/context/storage/pathUtils.js', () => ({
     `${projectPath}/sessions/${sessionId}.jsonl`,
   getSessionInboxFilePath: (projectPath: string, sessionId: string) =>
     `${projectPath}/${sessionId}.inbox.json`,
+  normalizeLocalWorkspacePath: (projectPath: string) => projectPath,
 }));
 
 beforeEach(() => {

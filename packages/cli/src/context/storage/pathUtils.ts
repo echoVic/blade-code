@@ -246,19 +246,11 @@ export async function listSessionStorageScopes(): Promise<
   const storageRoot = path.resolve(getBladeStorageRoot());
   const localScopes = await listProjectDirectories()
     .then((directories) =>
-      directories.flatMap((directory) => {
-        try {
-          return [
-            {
-              storagePath: path.join(storageRoot, 'projects', directory),
-              projectPath: normalizeLocalWorkspacePath(unescapeProjectPath(directory)),
-              kind: 'local' as const,
-            },
-          ];
-        } catch {
-          return [];
-        }
-      })
+      directories.map((directory) => ({
+        storagePath: path.join(storageRoot, 'projects', directory),
+        projectPath: unescapeProjectPath(directory),
+        kind: 'local' as const,
+      }))
     )
     .catch(() => []);
 
