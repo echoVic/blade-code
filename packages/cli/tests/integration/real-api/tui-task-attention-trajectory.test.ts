@@ -28,6 +28,8 @@ import {
 
 const enabled = isRealApiTestEnabled();
 const models = enabled ? resolveRequiredDeepSeekQualificationModels() : [];
+const HEALTH_REQUEST_TIMEOUT_MS = 2_000;
+const TASK_DISPATCH_TIMEOUT_MS = 15_000;
 if (enabled && process.env.REAL_API_RELEASE_MATRIX !== '1') {
   throw new Error(
     'TUI task attention qualification requires REAL_API_RELEASE_MATRIX=1'
@@ -162,7 +164,9 @@ async function startProductionServer(input: {
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
       try {
-        const response = await fetch(`${origin}/health`);
+        const response = await fetch(`${origin}/health`, {
+          signal: AbortSignal.timeout(HEALTH_REQUEST_TIMEOUT_MS),
+        });
         if (response.ok) {
           const leakedSecrets = capture.leakedSecretLabels();
           if (leakedSecrets.length > 0) {
@@ -325,6 +329,7 @@ describeTrajectory('TUI durable task attention raw PTY trajectory (real API)', (
         const response = await fetch(`${startedServer.origin}/tasks`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
+          signal: AbortSignal.timeout(TASK_DISPATCH_TIMEOUT_MS),
           body: JSON.stringify({
             prompt: `Do not use tools. Reply with exactly ${marker}`,
             title,

@@ -199,7 +199,9 @@ describe('production qualification contract', () => {
     expect(runner).toContain("import { spawn } from 'bun-pty'");
     expect(runner).toContain('input.nodeExecutable');
     expect(runner).toContain('ArmedPtyMarkerLatch');
-    expect(trajectory).toContain('AbortSignal.timeout');
+    expect(trajectory.match(/AbortSignal\.timeout/g)).toHaveLength(3);
+    expect(trajectory).toContain('HEALTH_REQUEST_TIMEOUT_MS = 2_000');
+    expect(trajectory).toContain('TASK_DISPATCH_TIMEOUT_MS = 15_000');
     expect(trajectory).toContain('completionTimeoutMs: 190_000');
     expect(deterministic).toContain('productionCliReady ??=');
     expect(deterministic).toContain('beforeAll(async () =>');
