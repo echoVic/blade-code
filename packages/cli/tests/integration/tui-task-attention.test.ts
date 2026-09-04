@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.unmock('node:child_process');
 
@@ -19,107 +19,6 @@ import { runTuiTaskAttentionPtyDriver } from '../support/tuiTaskAttentionPtyDriv
 const roots: string[] = [];
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 const cliEntry = path.resolve(import.meta.dirname, '../../dist/blade.js');
-let productionCliReady: Promise<void> | undefined;
-const BUILD_DEADLINE_MS = 120_000;
-const BUILD_HOOK_TIMEOUT_MS = 180_000;
-
-function childExited(child: import('node:child_process').ChildProcess): boolean {
-  return child.exitCode !== null || child.signalCode !== null;
-}
-
-function waitForChildExit(
-  child: import('node:child_process').ChildProcess,
-  timeoutMs: number
-): Promise<boolean> {
-  if (childExited(child)) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const onClose = () => {
-      clearTimeout(timer);
-      resolve(true);
-    };
-    const timer = setTimeout(() => {
-      child.off('close', onClose);
-      resolve(false);
-    }, timeoutMs);
-    child.once('close', onClose);
-  });
-}
-
-function signalBuildTree(
-  child: import('node:child_process').ChildProcess,
-  signal: NodeJS.Signals
-): void {
-  if (process.platform !== 'win32' && child.pid) {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // Fall back to the direct child when its detached group is already gone.
-    }
-  }
-  child.kill(signal);
-}
-
-async function stopBuildTree(
-  child: import('node:child_process').ChildProcess
-): Promise<void> {
-  if (childExited(child)) return;
-  signalBuildTree(child, 'SIGTERM');
-  if (await waitForChildExit(child, 5_000)) return;
-  signalBuildTree(child, 'SIGKILL');
-  if (!(await waitForChildExit(child, 5_000))) {
-    throw new Error('Production CLI build process tree remained alive after SIGKILL');
-  }
-}
-
-function ensureProductionCli(): Promise<void> {
-  productionCliReady ??= buildProductionCli();
-  return productionCliReady;
-}
-
-async function buildProductionCli(): Promise<void> {
-  const { spawn } = await import('node:child_process');
-  const child = spawn(
-    process.execPath,
-    ['scripts/run-bun.js', 'run', 'scripts/build.ts'],
-    {
-      cwd: path.resolve(import.meta.dirname, '../..'),
-      detached: process.platform !== 'win32',
-      stdio: ['ignore', 'ignore', 'pipe'],
-    }
-  );
-  let stderr = '';
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk: string) => {
-    stderr = `${stderr}${chunk}`.slice(-4_000);
-  });
-  const completion = new Promise<{
-    code: number | null;
-    signal: NodeJS.Signals | null;
-  }>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('close', (code, signal) => resolve({ code, signal }));
-  });
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const result = await Promise.race([
-    completion,
-    new Promise<undefined>((resolve) => {
-      timeout = setTimeout(() => resolve(undefined), BUILD_DEADLINE_MS);
-    }),
-  ]);
-  if (timeout) clearTimeout(timeout);
-  if (!result) {
-    await stopBuildTree(child);
-    await completion.catch(() => undefined);
-    throw new Error(`Production CLI build timed out: ${stderr}`);
-  }
-  if (result.code !== 0) {
-    throw new Error(
-      `Production CLI build failed (${result.code ?? result.signal}): ${stderr}`
-    );
-  }
-  await access(cliEntry);
-}
 
 afterEach(async () => {
   resetProjectionDbCache();
@@ -133,11 +32,10 @@ afterEach(async () => {
 describe.skipIf(process.platform === 'win32')(
   'TUI durable task attention raw PTY lifecycle',
   () => {
-    beforeAll(async () => {
-      await ensureProductionCli();
-    }, BUILD_HOOK_TIMEOUT_MS);
+    const requireProductionCli = () => access(cliEntry);
 
     it('marks a missed terminal transition NEW until the exact Session opens', async () => {
+      await requireProductionCli();
       const root = await mkdtemp(path.join(os.tmpdir(), 'blade-tui-attention-pty-'));
       roots.push(root);
       const workspace = path.join(root, 'workspace');
@@ -226,6 +124,7 @@ describe.skipIf(process.platform === 'win32')(
     }, 120_000);
 
     it('terminates its runner promptly when task completion fails', async () => {
+      await requireProductionCli();
       const root = await mkdtemp(path.join(os.tmpdir(), 'blade-tui-attention-fail-'));
       roots.push(root);
       const workspace = path.join(root, 'workspace');
@@ -281,6 +180,7 @@ describe.skipIf(process.platform === 'win32')(
     }, 30_000);
 
     it('bounds a task completion callback that never settles', async () => {
+      await requireProductionCli();
       const root = await mkdtemp(path.join(os.tmpdir(), 'blade-tui-attention-hang-'));
       roots.push(root);
       const workspace = path.join(root, 'workspace');

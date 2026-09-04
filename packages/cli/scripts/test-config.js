@@ -8,11 +8,13 @@ export const testTypes = {
     name: '集成测试',
     project: 'integration',
     timeout: 600_000,
+    requiresProductionBuild: true,
   },
   realApi: {
     name: '真实 API 集成测试',
     project: 'real-api',
     timeout: 60 * 60 * 1_000,
+    requiresProductionBuild: true,
     env: {
       REAL_API_TEST: '1',
     },
@@ -21,6 +23,7 @@ export const testTypes = {
     name: '发布阻断真实 API 集成测试',
     project: 'real-api',
     timeout: 90 * 60 * 1_000,
+    requiresProductionBuild: true,
     files: [
       'tests/integration/real-api/agent-trajectory.test.ts',
       'tests/integration/real-api/structured-output-trajectory.test.ts',
@@ -73,11 +76,13 @@ export const testTypes = {
     name: 'CLI 测试',
     project: 'cli',
     timeout: 60_000,
+    requiresProductionBuild: true,
   },
   headlessCore: {
     name: 'Headless 核心回归测试',
     project: null,
     timeout: 120_000,
+    requiresProductionBuild: true,
     files: [
       'tests/unit/cli/headless.test.ts',
       'tests/unit/cli/headless-events.test.ts',
@@ -94,11 +99,13 @@ export const testTypes = {
     name: 'E2E 测试',
     project: 'e2e',
     timeout: 180_000,
+    requiresProductionBuild: true,
   },
   performance: {
     name: '性能测试',
     project: 'performance',
     timeout: 300_000,
+    requiresProductionBuild: true,
   },
   snapshot: {
     name: '快照测试',
@@ -114,8 +121,10 @@ export const testTypes = {
     name: '所有测试',
     project: null,
     timeout: 600_000,
+    requiresProductionBuild: true,
     coverageTimeout: 900_000,
     coverageExcludedProjects: ['performance'],
+    projectSequence: ['!performance', 'performance'],
   },
 };
 
@@ -123,4 +132,18 @@ export function resolveTestTimeout(config, options) {
   return options.coverage
     ? (config.coverageTimeout ?? config.timeout)
     : config.timeout;
+}
+
+export function createTestExecutionStages(config, options = {}) {
+  const projects =
+    options.coverage && config.coverageExcludedProjects
+      ? config.coverageExcludedProjects.map(project => `!${project}`)
+      : (config.projectSequence ?? [config.project]);
+  return [
+    ...(config.requiresProductionBuild ? [{ kind: 'production-build' }] : []),
+    ...projects.map(project => ({
+      kind: 'vitest',
+      project,
+    })),
+  ];
 }

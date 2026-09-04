@@ -18,7 +18,7 @@
     "build": "rm -rf dist && node scripts/run-bun.js run scripts/build.ts",
     "start": "node scripts/run-bun.js run dist/blade.js",
     "test": "node scripts/test.js",
-    "test:all": "vitest run --config vitest.config.ts --project='!performance' && vitest run --config vitest.config.ts --project=performance",
+    "test:all": "node scripts/test.js all",
     "test:unit": "node scripts/test.js unit",
     "test:integration": "node scripts/test.js integration",
     "test:real-api": "node scripts/test.js realApi",

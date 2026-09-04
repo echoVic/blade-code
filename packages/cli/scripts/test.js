@@ -4,7 +4,11 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { resolveTestTimeout, testTypes } from './test-config.js';
+import {
+  createTestExecutionStages,
+  resolveTestTimeout,
+  testTypes,
+} from './test-config.js';
 import {
   createTestProcessEnvironment,
   removeOwnedTestTemporaryRoot,
@@ -15,6 +19,26 @@ import { resolveVitestCli } from './vitest-cli.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const BUILD_TIMEOUT_MS = 180_000;
+
+async function buildProductionDist({ cwd, env, signal }) {
+  console.log('📝 执行命令: bun run build');
+  const result = await runOwnedCommand({
+    command: process.execPath,
+    args: [path.join(__dirname, 'run-bun.js'), 'run', 'build'],
+    cwd,
+    env,
+    timeoutMs: BUILD_TIMEOUT_MS,
+    signal,
+  });
+  if (result.timedOut) {
+    throw new Error(`生产构建超过 ${BUILD_TIMEOUT_MS}ms，已终止完整进程树`);
+  }
+  if (result.signal) throw new Error(`生产构建进程被 ${result.signal} 终止`);
+  if (result.exitCode !== 0) {
+    throw new Error(`生产构建进程退出码: ${result.exitCode ?? 1}`);
+  }
+}
 
 function printUsage() {
   console.log(`
@@ -74,6 +98,11 @@ async function runTest(testType, options = {}) {
     options.coverage = false;
   }
 
+  if (options.watch && config.requiresProductionBuild) {
+    console.error('❌ 依赖 production dist 的测试不支持 --watch');
+    process.exit(1);
+  }
+
   const baseArgs = [];
   if (options.watch) {
     baseArgs.push('--watch');
@@ -82,16 +111,6 @@ async function runTest(testType, options = {}) {
   }
 
   baseArgs.push('--config', path.join(__dirname, '..', 'vitest.config.ts'));
-
-  if (config.project) {
-    baseArgs.push('--project', config.project);
-  }
-
-  if (options.coverage && config.coverageExcludedProjects) {
-    baseArgs.push(
-      ...config.coverageExcludedProjects.map(project => `--project=!${project}`)
-    );
-  }
 
   if (config.files) {
     baseArgs.push(...config.files.map(f => path.resolve(__dirname, '..', f)));
@@ -113,8 +132,6 @@ async function runTest(testType, options = {}) {
     process.env.VERBOSE_TESTS = 'true';
   }
 
-  const vitestPath = resolveVitestCli();
-  const displayCommand = ['vitest', ...baseArgs].join(' ');
   const controller = new AbortController();
   let interruptedBy;
   const interrupt = (signal) => {
@@ -131,34 +148,44 @@ async function runTest(testType, options = {}) {
   let runError;
 
   try {
-    console.log(`📝 执行命令: ${displayCommand}`);
-
     const startTime = Date.now();
     const testEnvironment = createTestProcessEnvironment(
       process.env,
       testTemporaryRoot
     );
-    const timeoutMs = resolveTestTimeout(config, options);
-    const result = await runOwnedCommand({
-      command: process.execPath,
-      args: [vitestPath, ...baseArgs],
-      cwd: process.cwd(),
-      env: testEnvironment,
-      timeoutMs,
-      signal: controller.signal,
-    });
+    const stages = createTestExecutionStages(config, options);
+    for (const stage of stages) {
+      if (stage.kind === 'production-build') {
+        await buildProductionDist({
+          cwd: process.cwd(),
+          env: testEnvironment,
+          signal: controller.signal,
+        });
+        continue;
+      }
+      const vitestPath = resolveVitestCli();
+      const runArgs = [...baseArgs];
+      if (stage.project) runArgs.push('--project', stage.project);
+      const displayCommand = ['vitest', ...runArgs].join(' ');
+      console.log(`📝 执行命令: ${displayCommand}`);
+      const timeoutMs = resolveTestTimeout(config, options);
+      const result = await runOwnedCommand({
+        command: process.execPath,
+        args: [vitestPath, ...runArgs],
+        cwd: process.cwd(),
+        env: testEnvironment,
+        timeoutMs,
+        signal: controller.signal,
+      });
 
-    if (interruptedBy) {
-      throw new Error(`测试运行被 ${interruptedBy} 中断`);
-    }
-    if (result.timedOut) {
-      throw new Error(`测试运行超过 ${timeoutMs}ms，已终止完整进程树`);
-    }
-    if (result.signal) {
-      throw new Error(`测试进程被 ${result.signal} 终止`);
-    }
-    if (result.exitCode !== 0) {
-      throw new Error(`测试进程退出码: ${result.exitCode ?? 1}`);
+      if (interruptedBy) throw new Error(`测试运行被 ${interruptedBy} 中断`);
+      if (result.timedOut) {
+        throw new Error(`测试运行超过 ${timeoutMs}ms，已终止完整进程树`);
+      }
+      if (result.signal) throw new Error(`测试进程被 ${result.signal} 终止`);
+      if (result.exitCode !== 0) {
+        throw new Error(`测试进程退出码: ${result.exitCode ?? 1}`);
+      }
     }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);

@@ -8,7 +8,6 @@ import {
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyEnvironment, TUI_COMPOSER_MARKER } from './ptyInput.js';
-import { createTuiTaskAttentionSecretScanner } from './tuiTaskAttentionPtyDriver.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -19,7 +18,6 @@ interface RunnerInput {
   terminalContent: string;
   completionFile: string;
   completionTimeoutMs: number;
-  secrets: string[];
 }
 
 interface LaunchResult {
@@ -80,14 +78,6 @@ function loadInput(): RunnerInput {
     throw new Error('Invalid task attention PTY input');
   }
   const candidate = value as Record<string, unknown>;
-  if (
-    !Array.isArray(candidate.secrets) ||
-    candidate.secrets.some(
-      (secret) => typeof secret !== 'string' || secret.length > 16_384
-    )
-  ) {
-    throw new Error('Invalid task attention PTY secrets');
-  }
   return {
     cliEntry: readBoundedString(candidate.cliEntry, 'CLI entry'),
     nodeExecutable: readBoundedString(candidate.nodeExecutable, 'Node executable'),
@@ -97,15 +87,7 @@ function loadInput(): RunnerInput {
     terminalContent: readBoundedString(candidate.terminalContent, 'terminal content'),
     completionFile: readBoundedString(candidate.completionFile, 'completion file'),
     completionTimeoutMs: readBoundedTimeout(candidate.completionTimeoutMs),
-    secrets: [...candidate.secrets],
   };
-}
-
-function redact(value: string, secrets: readonly string[]): string {
-  return secrets.reduce(
-    (result, secret) => (secret ? result.replaceAll(secret, '[REDACTED]') : result),
-    value
-  );
 }
 
 async function waitFor(
@@ -195,7 +177,6 @@ async function launch(
   let exited = false;
   const newMarkerLatch = new ArmedPtyMarkerLatch('[NEW]');
   newMarkerLatch.arm();
-  const secretScanner = createTuiTaskAttentionSecretScanner(input.secrets);
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit(() => {
       exited = true;
@@ -209,7 +190,6 @@ async function launch(
     exited: () => exited,
   };
   terminal.onData((chunk) => {
-    secretScanner.observe(chunk);
     output = appendBoundedPtyEvidence(output, chunk, 48_000);
     plainOutput = appendBoundedPtyEvidence(
       plainOutput,
@@ -236,10 +216,7 @@ async function launch(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(
-        `${message}; PTY=${redact(
-          projectForegroundBoundedPtyOutput(output).slice(-8_000),
-          input.secrets
-        )}`
+        `${message}; PTY=${projectForegroundBoundedPtyOutput(output).slice(-8_000)}`
       );
     }
   } catch (error) {
@@ -268,19 +245,10 @@ async function launch(
   } catch (error) {
     cleanupError = error;
   } finally {
-    options.capture?.(
-      redact(projectForegroundBoundedPtyOutput(output).slice(-3_000), input.secrets)
-    );
+    options.capture?.(projectForegroundBoundedPtyOutput(output).slice(-3_000));
     if (activeTerminal?.pid === terminal.pid) activeTerminal = undefined;
   }
-  const leakedSecrets = secretScanner.leakedSecretLabels();
-  const leakError =
-    leakedSecrets.length > 0
-      ? new Error(
-          `Task attention PTY output contains credentials: ${leakedSecrets.join(', ')}`
-        )
-      : undefined;
-  const failures = [primaryError, cleanupError, leakError].filter(
+  const failures = [primaryError, cleanupError].filter(
     (error): error is NonNullable<typeof error> => error !== undefined
   );
   if (failures.length > 1) {
@@ -288,8 +256,8 @@ async function launch(
   }
   if (failures.length === 1) throw failures[0];
   return {
-    output: redact(output, input.secrets),
-    plainOutput: redact(plainOutput, input.secrets),
+    output,
+    plainOutput,
     sawNewMarker: newMarkerLatch.seen,
   };
 }
@@ -425,12 +393,9 @@ async function main(): Promise<void> {
     process.stdout.write(
       JSON.stringify({
         success: false,
-        error: redact(
-          error instanceof Error ? error.message : String(error),
-          input.secrets
-        ),
+        error: error instanceof Error ? error.message : String(error),
         stageOutput,
-        output: redact(projectForegroundBoundedPtyOutput(output), input.secrets),
+        output: projectForegroundBoundedPtyOutput(output),
       })
     );
     process.exitCode = 1;

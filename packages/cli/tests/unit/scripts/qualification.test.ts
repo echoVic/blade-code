@@ -8,6 +8,7 @@ import {
   resolveQualificationRoot,
   runQualification,
 } from '../../../scripts/qualification.js';
+import { createTestExecutionStages, testTypes } from '../../../scripts/test-config.js';
 import {
   assertTuiTaskAttentionRunnerOutputSafe,
   awaitTuiTaskAttentionSettlement,
@@ -53,6 +54,49 @@ describe('production qualification contract', () => {
       'node scripts/run-bun.js run scripts/qualify.ts production'
     );
     expect(fs.existsSync(qualificationScript)).toBe(true);
+  });
+
+  it('builds production dist once before Vitest for every dependent test entry', () => {
+    const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as {
+      scripts?: Record<string, string>;
+    };
+    const testRunner = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/test.js'),
+      'utf8'
+    );
+    const testConfig = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/test-config.js'),
+      'utf8'
+    );
+    const deterministic = fs.readFileSync(
+      path.resolve(__dirname, '../../integration/tui-task-attention.test.ts'),
+      'utf8'
+    );
+
+    expect(packageJson.scripts?.['test:all']).toBe('node scripts/test.js all');
+    expect(testConfig).toContain('requiresProductionBuild: true');
+    expect(testRunner.indexOf('await buildProductionDist')).toBeLessThan(
+      testRunner.indexOf('const vitestPath = resolveVitestCli()')
+    );
+    expect(testRunner).toContain("path.join(__dirname, 'run-bun.js')");
+    expect(testRunner).toContain("'run', 'build'");
+    expect(testRunner).toContain('runOwnedCommand');
+    expect(deterministic).toContain('access(cliEntry)');
+    expect(deterministic).not.toContain('buildProductionCli');
+    expect(deterministic).not.toContain('beforeAll');
+    expect(createTestExecutionStages(testTypes.all)).toEqual([
+      { kind: 'production-build' },
+      { kind: 'vitest', project: '!performance' },
+      { kind: 'vitest', project: 'performance' },
+    ]);
+    expect(createTestExecutionStages(testTypes.integration)).toEqual([
+      { kind: 'production-build' },
+      { kind: 'vitest', project: 'integration' },
+    ]);
+    expect(createTestExecutionStages(testTypes.all, { coverage: true })).toEqual([
+      { kind: 'production-build' },
+      { kind: 'vitest', project: '!performance' },
+    ]);
   });
 
   it('installs the pinned Chromium runtime before coverage integration tests', () => {
@@ -203,10 +247,6 @@ describe('production qualification contract', () => {
     expect(trajectory).toContain('HEALTH_REQUEST_TIMEOUT_MS = 2_000');
     expect(trajectory).toContain('TASK_DISPATCH_TIMEOUT_MS = 15_000');
     expect(trajectory).toContain('completionTimeoutMs: 190_000');
-    expect(deterministic).toContain('productionCliReady ??=');
-    expect(deterministic).toContain('beforeAll(async () =>');
-    expect(deterministic).toContain('BUILD_DEADLINE_MS = 120_000');
-    expect(deterministic).toContain('BUILD_HOOK_TIMEOUT_MS = 180_000');
     expect(deterministic).toContain("describe.skipIf(process.platform === 'win32')");
   });
 

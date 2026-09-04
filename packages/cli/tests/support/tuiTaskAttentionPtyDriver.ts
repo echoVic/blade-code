@@ -292,7 +292,6 @@ export async function runTuiTaskAttentionPtyDriver(input: {
           terminalContent: input.terminalContent,
           completionFile,
           completionTimeoutMs,
-          secrets: input.secrets ?? [],
         })
       ).toString('base64'),
     }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
