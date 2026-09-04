@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.132] - 2026-09-04
+
+### 修复
+- 稳定 ACP remote workspace-reference 容量协调：在协商 SQLite WAL 前先安装 busy waiting，并移除容量事务外每个连接的 WAL-to-DELETE 切换。
+- 从数据库初始化阶段开始使用 coordinator 的 30 秒等待预算，并在初始化 PRAGMA 失败时关闭连接；同时保留 `BEGIN IMMEDIATE`、identity 校验、1,024 条 binding 上限与固定脱敏错误。
+
+### 测试
+- 新增初始化顺序契约、真实 Node / `better-sqlite3` 排他锁测试，以及真实 Bun 跨进程容量与 killed-owner 的重复回归覆盖。
+
 ## [0.10.131] - 2026-09-04
 
 ### 修复

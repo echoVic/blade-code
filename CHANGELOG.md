@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.132] - 2026-09-04
+
+### Fixed
+- Stabilized ACP remote workspace-reference capacity coordination by installing SQLite busy waiting before WAL negotiation and removing the per-connection WAL-to-DELETE transition outside the capacity transaction.
+- Applied the coordinator's 30-second wait budget from database initialization onward and closed connections whose initialization PRAGMAs fail, while preserving `BEGIN IMMEDIATE`, identity validation, the 1,024-binding limit, and fixed redacted errors.
+
+### Tests
+- Added initialization-order contracts, a real Node/`better-sqlite3` exclusive-lock test, and repeated real Bun cross-process capacity and killed-owner regression coverage.
+
 ## [0.10.131] - 2026-09-04
 
 ### Fixed
