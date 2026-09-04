@@ -208,6 +208,26 @@ describe('sessionSelectorModel', () => {
     setVisibleLocator.mockClear();
     await withoutLocal.endRemote();
     expect(setVisibleLocator).toHaveBeenCalledWith(undefined);
+    setVisibleLocator.mockClear();
+    await withoutLocal.endRemote();
+    expect(setVisibleLocator).not.toHaveBeenCalled();
+  });
+
+  it('does not write visibility when remote cleanup runs before any remote view', async () => {
+    const { TuiTaskAttentionVisibilityCoordinator } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+    const setVisibleLocator = vi.fn(
+      async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
+    );
+    const coordinator = new TuiTaskAttentionVisibilityCoordinator({
+      acknowledge: vi.fn(async (_summary: SessionSurfaceSummary) => undefined),
+      setVisibleLocator,
+    });
+
+    await coordinator.endRemote();
+
+    expect(setVisibleLocator).not.toHaveBeenCalled();
   });
 
   it('does not publish stale remote visibility when acknowledgement finishes after another view begins', async () => {

@@ -104,6 +104,7 @@ export class TuiTaskAttentionVisibilityCoordinator {
   }
 
   async endRemote(): Promise<void> {
+    if (!this.remoteActive) return;
     this.remoteActive = false;
     this.remoteEpoch += 1;
     this.remote.reset();
