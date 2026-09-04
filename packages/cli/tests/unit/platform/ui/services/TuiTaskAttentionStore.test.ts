@@ -516,7 +516,7 @@ describe('TuiTaskAttentionStore', () => {
     expect(secondKeys).not.toContain(digestLocator(newestFirst[1_024]!.locator));
   });
 
-  it('silently baselines a newly discovered terminal without creating unread', async () => {
+  it('retains a newly discovered recent terminal as a silent baseline', async () => {
     const root = await temporaryRoot();
     const target = filePath(root);
     const store = new TuiTaskAttentionStore({ filePath: target });
@@ -552,6 +552,8 @@ describe('TuiTaskAttentionStore', () => {
     const keys = (await readStoredFile(target)).entries.map((entry) => entry.key);
     expect(snapshot.unreadKeys).toEqual([]);
     expect(keys).toHaveLength(1_024);
+    expect(keys).toContain(digestLocator(recent.locator));
+    expect(keys).not.toContain(digestLocator(existingNewestFirst.at(-1)!.locator));
     expect(store.snapshot().unreadKeys).toEqual([]);
   });
 

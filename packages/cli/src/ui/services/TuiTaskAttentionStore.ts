@@ -138,12 +138,11 @@ function reconcileEntries(
   sessions: readonly SessionSurfaceSummary[],
   visibleLocator: SessionLocatorV2 | undefined
 ): AttentionEntry[] {
-  const activeKeys = new Set(sessions.map((session) => digestLocator(session.locator)));
-  let entries = current.filter((entry) => activeKeys.has(entry.key));
+  const currentByKey = new Map(current.map((entry) => [entry.key, entry]));
   const visibleKey = visibleLocator ? digestLocator(visibleLocator) : undefined;
   let visibleSummary: SessionSurfaceSummary | undefined;
-  const missingTerminals: AttentionEntry[] = [];
-  const missingNonTerminals: AttentionEntry[] = [];
+  const protectedEntries: AttentionEntry[] = [];
+  const acknowledgedTerminals: AttentionEntry[] = [];
 
   for (const session of sessions) {
     const key = digestLocator(session.locator);
@@ -152,27 +151,28 @@ function reconcileEntries(
       visibleSummary = session;
       continue;
     }
-    const index = entries.findIndex((entry) => entry.key === key);
-    const previous = entries[index];
+    const previous = currentByKey.get(key);
 
     if (!previous) {
       const baseline = { key, signature, unread: false };
-      if (signature === null) missingNonTerminals.push(baseline);
-      else missingTerminals.push(baseline);
+      if (signature === null) protectedEntries.push(baseline);
+      else acknowledgedTerminals.push(baseline);
       continue;
     }
     if (signature === null) {
-      entries[index] = { key, signature: null, unread: previous.unread };
+      protectedEntries.push({ key, signature: null, unread: previous.unread });
       continue;
     }
     if (previous.signature !== signature) {
-      entries[index] = { ...previous, unread: true };
+      protectedEntries.push({ ...previous, unread: true });
+      continue;
     }
+    if (previous.unread) protectedEntries.push(previous);
+    else acknowledgedTerminals.push(previous);
   }
-  entries = [
-    ...missingTerminals.reverse(),
-    ...entries,
-    ...missingNonTerminals.reverse(),
+  let entries = [
+    ...acknowledgedTerminals.slice(0, MAX_ACKNOWLEDGED_TERMINAL_ENTRIES).reverse(),
+    ...protectedEntries.reverse(),
   ];
   if (visibleSummary) {
     entries = moveToMru(entries, {
