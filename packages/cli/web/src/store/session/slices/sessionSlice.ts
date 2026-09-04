@@ -634,13 +634,9 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         let nextLedger = taskTerminalReadLedger(state.taskTerminalReadLedger);
         set((currentState) => {
           const archivedKeys = new Set(
-            currentState.sessions
-              .filter(
-                (session) =>
-                  session.projectPath === ref.projectPath &&
-                  archivedIds.has(session.sessionId)
-              )
-              .map((session) => sessionRefKey(sessionRefFromSession(session)))
+            result.archivedSessionIds.map((sessionId) =>
+              sessionRefKey({ sessionId, projectPath: ref.projectPath })
+            )
           );
           const sessions = currentState.sessions.filter(
             (session) =>

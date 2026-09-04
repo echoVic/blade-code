@@ -3221,6 +3221,58 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
   });
 
+  it('prunes attention for cascaded archive members missing from the loaded catalog', async () => {
+    const archived = createSession({
+      sessionId: 'archive-root',
+      projectPath: '/tmp/project-a',
+    });
+    const sibling = createSession({
+      sessionId: 'archive-root',
+      projectPath: '/tmp/project-b',
+    });
+    const archivedRef = createRef(archived.sessionId, archived.projectPath);
+    const archivedKey = sessionRefKey(archivedRef);
+    const unloadedChildKey = sessionRefKey(
+      createRef('unloaded-archive-child', archived.projectPath)
+    );
+    const siblingKey = sessionRefKey(createRef(sibling.sessionId, sibling.projectPath));
+    useSessionStore.setState({
+      sessions: [archived, sibling],
+      unreadTaskKeys: [archivedKey, unloadedChildKey, siblingKey],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [
+          { key: archivedKey, signature: taskTerminalSignature(archived) },
+          { key: unloadedChildKey, signature: null },
+          { key: siblingKey, signature: taskTerminalSignature(sibling) },
+        ],
+      },
+      catalogOverlayRevision: 7,
+      sessionCatalogOverlays: {},
+    });
+    vi.mocked(sessionService.archiveSession).mockResolvedValue({
+      session: {
+        ...archived,
+        archivedAt: '2026-09-04T12:00:00.000Z',
+        archivedBySessionId: archived.sessionId,
+      },
+      archivedSessionIds: [archived.sessionId, 'unloaded-archive-child'],
+    });
+    vi.mocked(sessionService.listSessionPage).mockResolvedValue({ sessions: [] });
+
+    await useSessionStore.getState().archiveSession(archivedRef);
+
+    expect(useSessionStore.getState().sessions).toEqual([sibling]);
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([siblingKey]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key: siblingKey, signature: taskTerminalSignature(sibling) },
+    ]);
+    expect(useSessionStore.getState().sessionCatalogOverlays).toEqual({
+      [archivedKey]: { revision: 8, kind: 'remove' },
+      [unloadedChildKey]: { revision: 8, kind: 'remove' },
+    });
+  });
+
   it('restores an archive root to the active catalog', async () => {
     const archived = createSession({
       sessionId: 'archive-root',
