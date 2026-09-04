@@ -12,6 +12,7 @@ import { createTestExecutionStages, testTypes } from '../../../scripts/test-conf
 import {
   assertTuiTaskAttentionRunnerOutputSafe,
   awaitTuiTaskAttentionSettlement,
+  createTuiTaskAttentionRunnerEnvironment,
   createTuiTaskAttentionSecretScanner,
   createTuiTaskAttentionStreamCapture,
   sanitizeTuiTaskAttentionError,
@@ -267,6 +268,45 @@ describe('production qualification contract', () => {
         [secret]
       )
     ).toThrow('credentials');
+  });
+
+  it('removes credentials from the raw PTY runner environment', () => {
+    const env = createTuiTaskAttentionRunnerEnvironment(
+      {
+        PATH: '/usr/bin',
+        HTTPS_PROXY: 'http://proxy.test',
+        HOME: '/real-home',
+        DEEPSEEK_API_KEY: 'deepseek-secret',
+        CLAUDE_API_KEY: 'claude-secret',
+        GPT_API_KEY: 'gpt-secret',
+        DOMESTIC_API_KEY: 'domestic-secret',
+        BLADE_API_KEY: 'blade-secret',
+        BLADE_MODEL_API_KEY_123: 'model-secret',
+        ANTHROPIC_API_KEY: 'anthropic-secret',
+        OPENAI_API_KEY: 'openai-secret',
+        GITHUB_TOKEN: 'github-secret',
+        NPM_TOKEN: 'npm-secret',
+        LEGACY_APIKEY: 'legacy-secret',
+        SSH_PRIVATE_KEY: 'private-secret',
+        AWS_SECRET_ACCESS_KEY: 'aws-secret',
+        SERVICE_AUTH_TOKEN: 'auth-secret',
+        SERVICE_ACCESS_TOKEN: 'access-secret',
+        CLIENT_SECRET: 'client-secret',
+        DB_PASSWORD: 'password-secret',
+      },
+      {
+        HOME: '/fixture-home',
+        BLADE_TUI_ATTENTION_INPUT: 'non-secret-control',
+        BLADE_API_KEY: 'override-secret',
+      }
+    );
+
+    expect(env).toEqual({
+      PATH: '/usr/bin',
+      HTTPS_PROXY: 'http://proxy.test',
+      HOME: '/fixture-home',
+      BLADE_TUI_ATTENTION_INPUT: 'non-secret-control',
+    });
   });
 
   it('retains an early secret leak after bounded output rolls forward', () => {

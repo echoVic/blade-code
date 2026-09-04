@@ -162,6 +162,21 @@ export function createTuiTaskAttentionStreamCapture(
   };
 }
 
+const CREDENTIAL_ENV_NAME =
+  /(?:^|_)(?:API_?KEY|PRIVATE_KEY|AUTH_TOKEN|ACCESS_TOKEN|TOKEN|SECRET|PASSWORD|CREDENTIALS?)(?:_|$)/i;
+
+export function createTuiTaskAttentionRunnerEnvironment(
+  sourceEnvironment: Readonly<NodeJS.ProcessEnv>,
+  overrides: Readonly<NodeJS.ProcessEnv>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries({ ...sourceEnvironment, ...overrides }).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[1] === 'string' && !CREDENTIAL_ENV_NAME.test(entry[0])
+    )
+  );
+}
+
 export function assertTuiTaskAttentionRunnerOutputSafe(
   stdout: string,
   stderr: string,
@@ -274,28 +289,25 @@ export async function runTuiTaskAttentionPtyDriver(input: {
     input.storageRoot,
     `tui-task-attention-complete-${process.pid}-${Date.now()}`
   );
-  const env = Object.fromEntries(
-    Object.entries({
-      ...process.env,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '0',
-      BLADE_TELEMETRY_DISABLED: '1',
-      TERM: 'xterm-256color',
-      BLADE_TUI_ATTENTION_INPUT: Buffer.from(
-        JSON.stringify({
-          cliEntry,
-          nodeExecutable: process.execPath,
-          workspace: input.workspace,
-          sessionId: input.sessionId,
-          title: input.title,
-          terminalContent: input.terminalContent,
-          completionFile,
-          completionTimeoutMs,
-        })
-      ).toString('base64'),
-    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-  );
+  const env = createTuiTaskAttentionRunnerEnvironment(process.env, {
+    HOME: input.home,
+    BLADE_STORAGE_ROOT: input.storageRoot,
+    BLADE_AUTO_MEMORY: '0',
+    BLADE_TELEMETRY_DISABLED: '1',
+    TERM: 'xterm-256color',
+    BLADE_TUI_ATTENTION_INPUT: Buffer.from(
+      JSON.stringify({
+        cliEntry,
+        nodeExecutable: process.execPath,
+        workspace: input.workspace,
+        sessionId: input.sessionId,
+        title: input.title,
+        terminalContent: input.terminalContent,
+        completionFile,
+        completionTimeoutMs,
+      })
+    ).toString('base64'),
+  });
   let runnerChild: ChildProcess | undefined;
   const secretScanner = createTuiTaskAttentionSecretScanner(input.secrets ?? []);
   const runnerResult = new Promise<RunnerResult>((resolve, reject) => {
