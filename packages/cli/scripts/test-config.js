@@ -40,6 +40,7 @@ export const testTypes = {
       'tests/integration/real-api/subagent-result-adoption-trajectory.test.ts',
       'tests/integration/real-api/background-subagent-completion-trajectory.test.ts',
       'tests/integration/real-api/durable-task-unread-trajectory.test.ts',
+      'tests/integration/real-api/tui-task-attention-trajectory.test.ts',
       'tests/integration/real-api/foreground-bounded-output-trajectory.test.ts',
       'tests/integration/real-api/foreground-command-handoff-trajectory.test.ts',
       'tests/integration/real-api/token-budget-handoff-trajectory.test.ts',

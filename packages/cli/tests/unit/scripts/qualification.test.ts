@@ -151,6 +151,32 @@ describe('production qualification contract', () => {
     expect(driver).toContain('await chromium.launch({ headless: true })');
   });
 
+  it('registers the production raw PTY durable task attention trajectory', () => {
+    const testConfig = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/test-config.js'),
+      'utf8'
+    );
+    const trajectoryPath = path.resolve(
+      __dirname,
+      '../../integration/real-api/tui-task-attention-trajectory.test.ts'
+    );
+    const driverPath = path.resolve(
+      __dirname,
+      '../../support/tuiTaskAttentionPtyDriver.ts'
+    );
+    const runnerPath = path.resolve(
+      __dirname,
+      '../../support/tuiTaskAttentionPtyRunner.ts'
+    );
+
+    expect(testConfig).toContain(
+      "'tests/integration/real-api/tui-task-attention-trajectory.test.ts'"
+    );
+    expect(fs.existsSync(trajectoryPath)).toBe(true);
+    expect(fs.existsSync(driverPath)).toBe(true);
+    expect(fs.existsSync(runnerPath)).toBe(true);
+  });
+
   it('resolves the monorepo root from the CLI scripts directory', () => {
     const scriptsDirectory = path.resolve(__dirname, '../../../scripts');
 
