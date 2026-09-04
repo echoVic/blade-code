@@ -61,7 +61,7 @@ export interface TuiTaskAttentionState {
   readonly unreadKeys: readonly string[];
 }
 
-type TuiTaskAttentionListener = (state: TuiTaskAttentionState) => void;
+type TuiTaskAttentionListener = (state: TuiTaskAttentionState) => void | Promise<void>;
 
 class NodeTimerApi implements TuiTaskAttentionTimerApi {
   private readonly timers = new WeakMap<TuiTaskAttentionTimer, NodeJS.Timeout>();
@@ -89,6 +89,8 @@ export class TuiTaskAttentionController {
   private readonly bus: TuiTaskAttentionBus;
   private readonly timerApi: TuiTaskAttentionTimerApi;
   private readonly listeners = new Set<TuiTaskAttentionListener>();
+  private readonly ownedOperations = new Set<Promise<unknown>>();
+  private mutationTail: Promise<void> = Promise.resolve();
   private state: TuiTaskAttentionState;
   private visibleLocator?: SessionLocatorV2;
   private hasCompleteCatalog = false;
@@ -123,10 +125,12 @@ export class TuiTaskAttentionController {
     if (!this.started) {
       this.started = true;
       this.unsubscribeBus = this.bus.subscribe((event) => {
-        if (REFRESH_EVENT_TYPES.has(event.type)) void this.requestRefresh(true);
+        if (REFRESH_EVENT_TYPES.has(event.type)) {
+          this.consume(this.requestRefresh(true));
+        }
       });
       this.pollTimer = this.timerApi.setInterval(() => {
-        void this.requestRefresh(true);
+        this.consume(this.requestRefresh(true));
       }, POLL_INTERVAL_MS);
       this.pollTimer.unref();
     }
@@ -143,36 +147,70 @@ export class TuiTaskAttentionController {
       if (markDirty) this.dirty = true;
       return this.activeRefresh;
     }
-    const refresh = Promise.resolve()
-      .then(() => this.runRefreshLoop())
-      .finally(() => {
-        if (this.activeRefresh !== refresh) return;
-        this.activeRefresh = null;
-        if (!this.disposed && this.dirty) void this.requestRefresh(false);
-      });
+    let resolveRefresh!: (sessions: SessionSurfaceSummary[]) => void;
+    let rejectRefresh!: (reason?: unknown) => void;
+    const refresh = new Promise<SessionSurfaceSummary[]>((resolve, reject) => {
+      resolveRefresh = resolve;
+      rejectRefresh = reject;
+    });
     this.activeRefresh = refresh;
+    this.trackOperation(refresh);
+    this.consume(this.drainRefresh(refresh, resolveRefresh, rejectRefresh));
     return refresh;
   }
 
-  async acknowledge(summary: SessionSurfaceSummary): Promise<void> {
-    if (this.disposed) return;
-    const snapshot = await this.store.acknowledge(summary);
-    if (this.disposed) return;
-    this.publish(this.state.status, this.state.sessions, snapshot.unreadKeys);
+  acknowledge(summary: SessionSurfaceSummary): Promise<void> {
+    return this.trackOperation(this.acknowledgeInternal(summary));
   }
 
-  async setVisibleLocator(locator?: SessionLocatorV2): Promise<void> {
+  private async acknowledgeInternal(summary: SessionSurfaceSummary): Promise<void> {
+    if (this.disposed) return;
+    return this.enqueueMutation(async () => {
+      if (this.disposed) return;
+      const snapshot = await this.store.acknowledge(summary);
+      if (this.disposed) return;
+      this.publish(this.state.status, this.state.sessions, snapshot.unreadKeys);
+    });
+  }
+
+  private async drainRefresh(
+    refresh: Promise<SessionSurfaceSummary[]>,
+    resolve: (sessions: SessionSurfaceSummary[]) => void,
+    reject: (reason?: unknown) => void
+  ): Promise<void> {
+    try {
+      let latest = copySessions(this.state.sessions);
+      do {
+        this.dirty = false;
+        latest = await this.refreshOnce();
+      } while (!this.disposed && this.dirty);
+      if (this.activeRefresh === refresh) this.activeRefresh = null;
+      resolve(latest);
+    } catch (error) {
+      if (this.activeRefresh === refresh) this.activeRefresh = null;
+      reject(error);
+    }
+  }
+
+  setVisibleLocator(locator?: SessionLocatorV2): Promise<void> {
+    return this.trackOperation(this.setVisibleLocatorInternal(locator));
+  }
+
+  private async setVisibleLocatorInternal(locator?: SessionLocatorV2): Promise<void> {
     if (this.disposed) return;
     this.visibleLocator = locator ? copyLocator(locator) : undefined;
     await this.waitForActiveRefresh();
     if (this.disposed) return;
     if (!this.hasCompleteCatalog) return;
-    const snapshot = await this.store.reconcile(
-      this.state.sessions,
-      this.visibleLocator
-    );
-    if (this.disposed) return;
-    this.publish(this.state.status, this.state.sessions, snapshot.unreadKeys);
+    await this.enqueueMutation(async () => {
+      if (this.disposed) return;
+      const snapshot = await this.store.reconcile(
+        this.state.sessions,
+        this.visibleLocator
+      );
+      if (this.disposed) return;
+      this.publish(this.state.status, this.state.sessions, snapshot.unreadKeys);
+    });
   }
 
   private async waitForActiveRefresh(): Promise<void> {
@@ -195,17 +233,40 @@ export class TuiTaskAttentionController {
       this.pollTimer = undefined;
     }
     this.listeners.clear();
-    this.closePromise = this.service.close('tui-task-attention-controller-closed');
+    const serviceClose = this.service.close('tui-task-attention-controller-closed');
+    this.closePromise = this.drainOwnedOperations(serviceClose);
     return this.closePromise;
   }
 
-  private async runRefreshLoop(): Promise<SessionSurfaceSummary[]> {
-    let latest = copySessions(this.state.sessions);
-    do {
-      this.dirty = false;
-      latest = await this.refreshOnce();
-    } while (!this.disposed && this.dirty);
-    return latest;
+  private async drainOwnedOperations(serviceClose: Promise<void>): Promise<void> {
+    const serviceResult = Promise.allSettled([serviceClose]);
+    while (this.ownedOperations.size > 0) {
+      await Promise.allSettled([...this.ownedOperations]);
+    }
+    const [result] = await serviceResult;
+    if (result?.status === 'rejected') throw result.reason;
+  }
+
+  private enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(mutation, mutation);
+    this.mutationTail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
+  private trackOperation<T>(operation: Promise<T>): Promise<T> {
+    this.ownedOperations.add(operation);
+    void operation.then(
+      () => this.ownedOperations.delete(operation),
+      () => this.ownedOperations.delete(operation)
+    );
+    return operation;
+  }
+
+  private consume(operation: Promise<unknown>): void {
+    void operation.catch(() => undefined);
   }
 
   private async refreshOnce(): Promise<SessionSurfaceSummary[]> {
@@ -213,11 +274,15 @@ export class TuiTaskAttentionController {
     try {
       const sessions = await this.readCompleteCatalog();
       if (this.disposed) return copySessions(this.state.sessions);
-      const snapshot = await this.store.reconcile(sessions, this.visibleLocator);
-      if (this.disposed) return copySessions(this.state.sessions);
-      this.hasCompleteCatalog = true;
-      this.publish('ready', sessions, snapshot.unreadKeys);
-      return copySessions(sessions);
+      const committed = await this.enqueueMutation(async () => {
+        if (this.disposed) return false;
+        const snapshot = await this.store.reconcile(sessions, this.visibleLocator);
+        if (this.disposed) return false;
+        this.hasCompleteCatalog = true;
+        this.publish('ready', sessions, snapshot.unreadKeys);
+        return true;
+      });
+      return committed ? copySessions(sessions) : copySessions(this.state.sessions);
     } catch {
       if (!this.disposed) {
         this.publish('error', this.state.sessions, this.state.unreadKeys);
@@ -248,7 +313,14 @@ export class TuiTaskAttentionController {
   ): void {
     if (this.disposed) return;
     this.state = immutableState(status, sessions, unreadKeys);
-    for (const listener of this.listeners) listener(this.state);
+    for (const listener of this.listeners) {
+      try {
+        const completion = listener(this.state);
+        if (completion) this.consume(completion);
+      } catch {
+        // Listener failures must not change attention state or block other listeners.
+      }
+    }
   }
 }
 

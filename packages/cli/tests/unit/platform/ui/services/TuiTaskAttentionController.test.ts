@@ -75,7 +75,11 @@ class FakeAttentionStore implements TuiTaskAttentionStoreClient {
   readonly reconcileRequests: Array<
     ReturnType<typeof deferred<TuiTaskAttentionSnapshot>>
   > = [];
+  readonly acknowledgeRequests: Array<
+    ReturnType<typeof deferred<TuiTaskAttentionSnapshot>>
+  > = [];
   deferReconcile = false;
+  deferAcknowledge = false;
 
   async reconcile(
     sessions: readonly SessionSurfaceSummary[],
@@ -97,6 +101,11 @@ class FakeAttentionStore implements TuiTaskAttentionStoreClient {
     summaryToAcknowledge: SessionSurfaceSummary
   ): Promise<TuiTaskAttentionSnapshot> {
     this.acknowledgements.push(summaryToAcknowledge);
+    if (this.deferAcknowledge) {
+      const request = deferred<TuiTaskAttentionSnapshot>();
+      this.acknowledgeRequests.push(request);
+      return request.promise;
+    }
     return { unreadKeys: [...this.unreadKeys] };
   }
 
@@ -179,7 +188,9 @@ describe('TuiTaskAttentionController', () => {
     store.unreadKeys = ['digest-a'];
     const controller = new TuiTaskAttentionController({ service, store });
     const states: Parameters<Parameters<typeof controller.subscribe>[0]>[0][] = [];
-    controller.subscribe((state) => states.push(state));
+    controller.subscribe((state) => {
+      states.push(state);
+    });
 
     const listed = controller.listAll();
     await waitForRequest(service, 1);
@@ -211,6 +222,41 @@ describe('TuiTaskAttentionController', () => {
     );
     expect(states.at(-1)?.sessions).not.toBe(store.reconciliations[0]?.sessions);
 
+    await controller.close();
+  });
+
+  it('isolates throwing listeners without changing ready state or rejecting refresh', async () => {
+    const service = new DeferredCatalogClient();
+    const controller = new TuiTaskAttentionController({
+      service,
+      store: new FakeAttentionStore(),
+    });
+    const observed: string[] = [];
+    controller.subscribe(() => {
+      throw new Error('private listener data must not escape');
+    });
+    controller.subscribe(async () => {
+      throw new Error('private async listener data must not escape');
+    });
+    controller.subscribe((state) => {
+      observed.push(state.status);
+    });
+    let unhandled: unknown;
+    const onUnhandled = (reason: unknown) => {
+      unhandled = reason;
+    };
+    process.once('unhandledRejection', onUnhandled);
+
+    const refresh = controller.listAll();
+    await waitForRequest(service, 1);
+    service.requests[0]?.request.resolve(page([summary('ready')]));
+    await expect(refresh).resolves.toEqual([summary('ready')]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    process.removeListener('unhandledRejection', onUnhandled);
+    expect(unhandled).toBeUndefined();
+    expect(observed).toEqual(['loading', 'ready']);
+    expect(controller.getState().status).toBe('ready');
     await controller.close();
   });
 
@@ -345,17 +391,25 @@ describe('TuiTaskAttentionController', () => {
       timerApi: new FakeTimerApi(),
     });
     let emitted = false;
+    let readyResolve!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      readyResolve = resolve;
+    });
     controller.subscribe((state) => {
       if (state.status !== 'ready' || emitted) return;
       emitted = true;
-      queueMicrotask(() => {
-        queueMicrotask(() => bus.emit('task.status'));
-      });
+      readyResolve();
     });
 
     const started = controller.start();
     await waitForRequest(service, 1);
     service.requests[0]?.request.resolve(page([summary('first')]));
+    await ready;
+    queueMicrotask(() => {
+      queueMicrotask(() => {
+        queueMicrotask(() => bus.emit('task.status'));
+      });
+    });
     await started;
     await waitForRequest(service, 2);
     service.requests[1]?.request.resolve(page([summary('follow-up')]));
@@ -384,6 +438,28 @@ describe('TuiTaskAttentionController', () => {
       [summary('shared')],
     ]);
     expect(service.requests).toHaveLength(1);
+    await controller.close();
+  });
+
+  it('starts a fresh listAll request after the previous refresh finalizes', async () => {
+    const service = new DeferredCatalogClient();
+    const controller = new TuiTaskAttentionController({
+      service,
+      store: new FakeAttentionStore(),
+    });
+
+    const first = controller.listAll();
+    await waitForRequest(service, 1);
+    service.requests[0]?.request.resolve(page([summary('first')]));
+    await first;
+
+    const second = controller.listAll();
+    await waitForRequest(service, 2);
+    service.requests[1]?.request.resolve(page([summary('second')]));
+    await second;
+
+    expect(service.maxActiveRequests).toBe(1);
+    expect(controller.getState().sessions).toEqual([summary('second')]);
     await controller.close();
   });
 
@@ -429,6 +505,98 @@ describe('TuiTaskAttentionController', () => {
       unreadKeys: [],
     });
     expect(listener).toHaveBeenCalledTimes(callsBeforeClose);
+  });
+
+  it('waits for an active store reconciliation before close resolves', async () => {
+    const service = new DeferredCatalogClient();
+    const store = new FakeAttentionStore();
+    store.deferReconcile = true;
+    const controller = new TuiTaskAttentionController({ service, store });
+    const refresh = controller.listAll();
+    await waitForRequest(service, 1);
+    service.requests[0]?.request.resolve(page([summary('reconcile')]));
+    await vi.waitFor(() => expect(store.reconcileRequests).toHaveLength(1));
+
+    let closed = false;
+    const closing = controller.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+
+    store.reconcileRequests[0]?.resolve({ unreadKeys: ['late'] });
+    await Promise.all([refresh, closing]);
+    expect(closed).toBe(true);
+  });
+
+  it('waits for an active acknowledgement before close resolves', async () => {
+    const service = new DeferredCatalogClient();
+    const store = new FakeAttentionStore();
+    store.deferAcknowledge = true;
+    const controller = new TuiTaskAttentionController({ service, store });
+    const acknowledgement = controller.acknowledge(summary('ack'));
+    await vi.waitFor(() => expect(store.acknowledgeRequests).toHaveLength(1));
+
+    let closed = false;
+    const closing = controller.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+
+    store.acknowledgeRequests[0]?.resolve({ unreadKeys: [] });
+    await Promise.all([acknowledgement, closing]);
+    expect(closed).toBe(true);
+  });
+
+  it('waits for an active visibility mutation before close resolves', async () => {
+    const service = new DeferredCatalogClient();
+    const store = new FakeAttentionStore();
+    const controller = new TuiTaskAttentionController({ service, store });
+    const exact = summary('visible');
+    const first = controller.listAll();
+    await waitForRequest(service, 1);
+    service.requests[0]?.request.resolve(page([exact]));
+    await first;
+
+    store.deferReconcile = true;
+    const visibility = controller.setVisibleLocator(exact.locator);
+    await vi.waitFor(() => expect(store.reconcileRequests).toHaveLength(1));
+    let closed = false;
+    const closing = controller.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+
+    store.reconcileRequests[0]?.resolve({ unreadKeys: [] });
+    await Promise.all([visibility, closing]);
+    expect(closed).toBe(true);
+  });
+
+  it('serializes refresh reconciliation before a newer acknowledgement publish', async () => {
+    const service = new DeferredCatalogClient();
+    const store = new FakeAttentionStore();
+    store.deferReconcile = true;
+    const controller = new TuiTaskAttentionController({ service, store });
+    const exact = summary('exact');
+
+    const refresh = controller.listAll();
+    await waitForRequest(service, 1);
+    service.requests[0]?.request.resolve(page([exact]));
+    await vi.waitFor(() => expect(store.reconcileRequests).toHaveLength(1));
+    const acknowledgement = controller.acknowledge(exact);
+    await Promise.resolve();
+    expect(store.acknowledgements).toHaveLength(0);
+
+    store.reconcileRequests[0]?.resolve({ unreadKeys: ['exact'] });
+    await vi.waitFor(() => expect(store.acknowledgements).toHaveLength(1));
+    store.unreadKeys = [];
+    await Promise.all([refresh, acknowledgement]);
+
+    expect(controller.getState().unreadKeys).toEqual([]);
+    expect(controller.getState().sessions).toEqual([exact]);
+    await controller.close();
   });
 
   it('awaits the owned service shutdown while an active scan drains', async () => {
