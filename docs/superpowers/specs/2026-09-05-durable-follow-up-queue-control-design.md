@@ -167,8 +167,9 @@ Public snapshots use an opaque token rather than exposing an integer revision:
 interface FollowUpQueueSnapshot {
   version: string;
   pending: number;
+  mutable: number;
   locked: number;
-  hiddenSystem: number;
+  internal: number;
   items: FollowUpQueueItem[];
 }
 
@@ -176,10 +177,11 @@ interface FollowUpQueueItem {
   id: string;
   position: number;
   queuedAt: string;
+  kind: 'user' | 'internal';
   state: 'pending' | 'locked';
   delivery: 'current_turn' | 'next_turn' | 'recovery';
   mutable: boolean;
-  preview: string;
+  preview?: string;
   previewTruncated: boolean;
   attachmentCount: number;
 }
@@ -188,8 +190,10 @@ interface FollowUpQueueItem {
 The token is a SHA-256 digest over a canonical tuple containing the durable inbox
 generation, a random Runtime owner epoch, a monotonic in-owner claim revision, and the
 ordered protected-ID set. It is not a credential and contains no reversible Session or
-content data. Owner replacement, enqueue, acknowledgement, mutation, reservation, claim,
-or recovery-protection change invalidates an older token.
+content data. Internal items remain visible as generic, content-free barrier rows so the
+user can understand why two user items cannot cross each other; their previews, metadata,
+and origin details are never exposed. Owner replacement, enqueue, acknowledgement,
+mutation, reservation, claim, or recovery-protection change invalidates an older token.
 
 All mutations carry the exact expected token:
 
@@ -338,7 +342,7 @@ standard queue-mutation request. This release therefore remains standards-compat
   "pending": 3,
   "mutable": 2,
   "locked": 1,
-  "hiddenSystem": 0
+  "internal": 0
 }
 ~~~
 
