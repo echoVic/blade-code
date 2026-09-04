@@ -139,7 +139,8 @@ Each item is projected as one of:
 - `system`: internal input whose content and ordering are not user-mutable.
 
 Only `origin=user`, non-persisted, inline, `pending` items without an output schema are
-mutable. Background-subagent completion, team message, interaction recovery, user-shell
+mutable. Add the explicit `interaction_recovery` origin to recovered interaction input;
+background-subagent completion, team message, interaction recovery, user-shell
 reference, artifact-backed prompt, and any item with an output schema are immutable.
 Unknown origins fail closed as system items.
 
@@ -248,8 +249,11 @@ surface callers must hold the normal Runtime residency lease. They may not insta
 an inbox directly for mutation.
 
 Successful enqueue, mutation, reservation, claim, acknowledgement, and recovery reload
-produce a fresh snapshot for interested surfaces. Notifications occur only after the
-corresponding state transition reaches its commit point.
+produce a fresh snapshot for interested surfaces. Internal LoopEvents may carry the
+newly applied messages so the owning TUI or Web run can promote them into canonical
+transcript rows, but public queue snapshots and ACP metadata never carry full content.
+Notifications occur only after the corresponding state transition reaches its commit
+point.
 
 ## HTTP API And SSE
 
@@ -261,9 +265,11 @@ POST /api/sessions/:sessionId/follow-ups/mutate
 ~~~
 
 Both routes use the existing exact `sessionId + projectPath` resolver and writable
-Session projection guard. They acquire the current Runtime residency lease and reject
-archived Sessions, ambiguous identity, mismatched workspace, and ACP-remote history-only
-surfaces.
+Session projection guard. A non-empty inbox or existing Runtime is read through the
+current Runtime residency lease. An idle Session with no inbox returns a canonical empty
+snapshot without initializing model, MCP, LSP, or browser resources. Mutation always
+requires the current Runtime owner. The routes reject archived Sessions, ambiguous
+identity, mismatched workspace, and ACP-remote history-only surfaces.
 
 The mutation response is either the new complete snapshot or a typed error containing
 the latest snapshot. Stable error codes are:
@@ -281,9 +287,11 @@ TypeBox schemas bound IDs, version tokens, indices, item count, preview bytes, a
 response bytes.
 
 Session SSE adds `follow_up.queue.changed`. A new stream sends the current snapshot in
-its initial `connected` payload. Successful mutations and runtime transitions publish a
-replacement snapshot; the Web client never patches an unknown base revision. EventSource
-reconnect loads an authoritative snapshot before consuming newer ephemeral changes.
+its initial `connected` payload. The active-turn enqueue HTTP response also carries the
+committed replacement snapshot, so the submitting client does not depend on an SSE race.
+Successful mutations and runtime transitions publish a replacement snapshot; the Web
+client never patches an unknown base revision. EventSource reconnect loads an
+authoritative snapshot before consuming newer ephemeral changes.
 
 Queue mutation events are ephemeral because the versioned inbox record is the durable
 truth. They do not receive transcript sequence IDs and never advance `Last-Event-ID`.
@@ -307,9 +315,12 @@ content. The status bar becomes `Queued N · /queue`. The overlay remains usable
 the Agent loop is active, and a stale mutation refreshes the view while retaining the
 selection by message ID when possible.
 
-The durable snapshot replaces `pendingCommands` as the source of truth. Any temporary
-optimistic projection must reconcile by durable message ID and may not survive a failed
-enqueue. Queue rows are visually distinct from committed conversation messages.
+The durable snapshot replaces `pendingCommands` as the source of truth. The TUI may keep
+the accepted item's original `ResolvedInput` in a bounded message-ID keyed presentation
+cache until `steering_applied`, then promote that exact item to the transcript; recovered
+items use the applied message carried by the internal LoopEvent. The cache never decides
+ordering or mutability and is cleared on rejection, acknowledgement, Session replacement,
+or shutdown. Queue rows are visually distinct from committed conversation messages.
 
 ## Web GUI
 
@@ -351,7 +362,9 @@ standard queue-mutation request. This release therefore remains standards-compat
 
 ACP metadata never includes prompt previews, image data, artifact references, paths,
 output schemas, or internal message contents. It is sent after load, enqueue, claim,
-acknowledgement, recovery reload, and any mutation performed through another surface.
+acknowledgement, and recovery reload. A Session remains controlled by its current owner;
+this feature does not introduce simultaneous cross-surface mutation of an ACP-owned
+Session.
 
 Blade does not advertise an ACP queue-mutation capability in this release. A later
 vendor extension must use explicit bilateral capability negotiation before introducing
