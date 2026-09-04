@@ -119,10 +119,10 @@ bun run test:all
 ```text
 Main test projects: 474 files passed, 94 skipped
 Main tests:         5481 passed, 84 skipped
-Duration:           318.36s
+Duration:           319.43s
 Performance:        4 files passed, 1 skipped
 Performance tests:  9 passed, 1 skipped
-Duration:           5.21s
+Duration:           5.46s
 ```
 
 ## 真实 API 与 Surface 非干扰
