@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.130] - 2026-09-04
+
+### 修复
+- 收紧 ACP remote 工具执行边界，在 hook、调度、锁、工具调用或远端文件系统 I/O 前校验 `file_path`、`notebook_path`、写工具 `path` 及全部显式声明的 affected path。
+- 保留内置 `ApplyPatch` 由事务层处理相对路径的专用 preflight，同时阻止同名动态工具绕过通用校验。
+- 将 affected-path 推导异常脱敏为固定 `acp_remote_path_invalid` 结果，并保持 local 与 ACP-local 执行语义不变。
+
+### 测试
+- 新增通用路径、多路径、hook 改写、双固定字段、内置身份、推导异常脱敏、local 兼容与 readonly 业务路径的因果覆盖。
+- 使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 在 framework retry `0` 下重新验证 paired ACP remote filesystem、raw PTY TUI 与 production Chromium Web 路径。
+
 ## [0.10.129] - 2026-09-02
 
 ### 新增

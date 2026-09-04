@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.130] - 2026-09-04
+
+### Fixed
+- Hardened ACP remote tool execution by validating `file_path`, `notebook_path`, write-tool `path`, and every explicitly declared affected path before hooks, scheduling, locking, tool invocation, or remote filesystem I/O.
+- Kept the builtin `ApplyPatch` relative-path contract on its dedicated transactional preflight while preventing dynamic tools with the same name from bypassing generic validation.
+- Redacted failures raised while deriving affected paths into the fixed `acp_remote_path_invalid` result without changing local or ACP-local execution semantics.
+
+### Tests
+- Added causal coverage for generic and multiple remote paths, hook rewrites, dual fixed fields, builtin identity, derivation-error redaction, local compatibility, and readonly business paths.
+- Re-qualified paired ACP remote filesystem execution plus raw PTY TUI and production Chromium Web paths with `deepseek-v4-flash` and `deepseek-v4-pro` at framework retry `0`.
+
 ## [0.10.129] - 2026-09-02
 
 ### Added
