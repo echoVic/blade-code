@@ -78,6 +78,8 @@ import { useConfigStore } from '../../../src/store/ConfigStore';
 import { useSettingsStore } from '../../../src/store/SettingsStore';
 import { TEMP_SESSION_ID, useSessionStore } from '../../../src/store/session';
 import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer';
+import { sessionRefKey } from '../../../src/store/session/sessionIdentity';
+import { taskTerminalSignature } from '../../../src/store/session/taskAttention';
 import type { Message } from '../../../src/store/session/types';
 
 const actualReplaceEventSubscription =
@@ -309,6 +311,10 @@ describe('sessionSlice multimodal sendMessage', () => {
       error: null,
       errorContext: null,
       sideConversation: null,
+      unreadTaskKeys: [],
+      taskTerminalReadLedger: { version: 1, entries: [] },
+      catalogOverlayRevision: 0,
+      sessionCatalogOverlays: {},
       messages: [],
       isStreaming: false,
       isStopping: false,
@@ -1417,6 +1423,51 @@ describe('sessionSlice multimodal sendMessage', () => {
     );
   });
 
+  it('deletes only the exact unread ledger entry and records an exact tombstone', async () => {
+    const sessionA = createSession({
+      sessionId: 'shared-delete',
+      projectPath: '/tmp/project-a',
+      taskCompletedAt: '2026-09-04T10:00:00.000Z',
+    });
+    const sessionB = createSession({
+      sessionId: 'shared-delete',
+      projectPath: '/tmp/project-b',
+      taskCompletedAt: '2026-09-04T10:01:00.000Z',
+    });
+    const refA = createRef(sessionA.sessionId, sessionA.projectPath);
+    const refB = createRef(sessionB.sessionId, sessionB.projectPath);
+    const keyA = sessionRefKey(refA);
+    const keyB = sessionRefKey(refB);
+    useSessionStore.setState({
+      sessions: [sessionA, sessionB],
+      unreadTaskKeys: [keyA, keyB],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [
+          { key: keyA, signature: taskTerminalSignature(sessionA) },
+          { key: keyB, signature: taskTerminalSignature(sessionB) },
+        ],
+      },
+      catalogOverlayRevision: 4,
+      sessionCatalogOverlays: {
+        [keyA]: { revision: 3, kind: 'upsert', session: sessionA },
+        [keyB]: { revision: 4, kind: 'upsert', session: sessionB },
+      },
+    });
+
+    await useSessionStore.getState().deleteSession(refA);
+
+    expect(useSessionStore.getState().sessions).toEqual([sessionB]);
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([keyB]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key: keyB, signature: taskTerminalSignature(sessionB) },
+    ]);
+    expect(useSessionStore.getState().sessionCatalogOverlays).toEqual({
+      [keyA]: { revision: 5, kind: 'remove' },
+      [keyB]: { revision: 4, kind: 'upsert', session: sessionB },
+    });
+  });
+
   it('starts temporary sessions without preserving a durable current session ref and create sets both ref and id', async () => {
     vi.mocked(sessionService.createSession).mockResolvedValue(
       createSession({ sessionId: 'created-1', projectPath: '/tmp/project-created' })
@@ -1810,6 +1861,49 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
     expect(prepareEventSubscription).not.toHaveBeenCalled();
     expect(replaceEventSubscription).not.toHaveBeenCalled();
+  });
+
+  it('synchronously removes only the exact unread ledger and overlay state', () => {
+    const sessionA = createSession({
+      sessionId: 'shared-remove',
+      projectPath: '/tmp/project-a',
+    });
+    const sessionB = createSession({
+      sessionId: 'shared-remove',
+      projectPath: '/tmp/project-b',
+    });
+    const refA = createRef(sessionA.sessionId, sessionA.projectPath);
+    const refB = createRef(sessionB.sessionId, sessionB.projectPath);
+    const keyA = sessionRefKey(refA);
+    const keyB = sessionRefKey(refB);
+    useSessionStore.setState({
+      sessions: [sessionA, sessionB],
+      unreadTaskKeys: [keyA, keyB],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [
+          { key: keyA, signature: taskTerminalSignature(sessionA) },
+          { key: keyB, signature: taskTerminalSignature(sessionB) },
+        ],
+      },
+      catalogOverlayRevision: 8,
+      sessionCatalogOverlays: {
+        [keyA]: { revision: 7, kind: 'upsert', session: sessionA },
+        [keyB]: { revision: 8, kind: 'upsert', session: sessionB },
+      },
+    });
+
+    useSessionStore.getState().removeSession(refA);
+
+    expect(useSessionStore.getState().sessions).toEqual([sessionB]);
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([keyB]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key: keyB, signature: taskTerminalSignature(sessionB) },
+    ]);
+    expect(useSessionStore.getState().sessionCatalogOverlays).toEqual({
+      [keyB]: { revision: 8, kind: 'upsert', session: sessionB },
+    });
+    expect(useSessionStore.getState().catalogOverlayRevision).toBe(8);
   });
 
   it('resets the active subscription and streaming state when synchronously removing the current session', () => {
@@ -3076,6 +3170,54 @@ describe('sessionSlice multimodal sendMessage', () => {
       currentSessionId: null,
       currentSessionRef: null,
       messages: [],
+    });
+  });
+
+  it('archives exact session refs by pruning their attention state and writing tombstones', async () => {
+    const archived = createSession({
+      sessionId: 'shared-archive',
+      projectPath: '/tmp/project-a',
+    });
+    const sibling = createSession({
+      sessionId: 'shared-archive',
+      projectPath: '/tmp/project-b',
+    });
+    const archivedRef = createRef(archived.sessionId, archived.projectPath);
+    const siblingRef = createRef(sibling.sessionId, sibling.projectPath);
+    const archivedKey = sessionRefKey(archivedRef);
+    const siblingKey = sessionRefKey(siblingRef);
+    useSessionStore.setState({
+      sessions: [archived, sibling],
+      unreadTaskKeys: [archivedKey, siblingKey],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [
+          { key: archivedKey, signature: taskTerminalSignature(archived) },
+          { key: siblingKey, signature: taskTerminalSignature(sibling) },
+        ],
+      },
+      catalogOverlayRevision: 2,
+      sessionCatalogOverlays: {},
+    });
+    vi.mocked(sessionService.archiveSession).mockResolvedValue({
+      session: {
+        ...archived,
+        archivedAt: '2026-09-04T12:00:00.000Z',
+        archivedBySessionId: archived.sessionId,
+      },
+      archivedSessionIds: [archived.sessionId],
+    });
+    vi.mocked(sessionService.listSessionPage).mockResolvedValue({ sessions: [] });
+
+    await useSessionStore.getState().archiveSession(archivedRef);
+
+    expect(useSessionStore.getState().sessions).toEqual([sibling]);
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([siblingKey]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key: siblingKey, signature: taskTerminalSignature(sibling) },
+    ]);
+    expect(useSessionStore.getState().sessionCatalogOverlays).toEqual({
+      [archivedKey]: { revision: 3, kind: 'remove' },
     });
   });
 

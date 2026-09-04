@@ -18,7 +18,12 @@ import {
   sessionRefKey,
   upsertSessionByRef,
 } from '../sessionIdentity';
-import { persistUnreadTaskKeys, pruneUnreadTaskKeys } from '../taskAttention';
+import {
+  persistTaskTerminalReadLedger,
+  persistUnreadTaskKeys,
+  pruneUnreadTaskKeys,
+  type TaskTerminalReadLedgerV1,
+} from '../taskAttention';
 import type {
   Message,
   MessageContentPart,
@@ -162,6 +167,12 @@ const waitForCatalogContinuation = (): Promise<void> =>
     }, 350);
   });
 
+function taskTerminalReadLedger(
+  ledger: TaskTerminalReadLedgerV1 | undefined
+): TaskTerminalReadLedgerV1 {
+  return ledger ?? { version: 1, entries: [] };
+}
+
 const fetchTeams = async (ref: SessionRef) =>
   (await import('@/services/teamService')).teamService.list(ref);
 
@@ -219,7 +230,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
     removeSession: (ref) => {
       const state = get();
-      state.markTaskRead(ref);
+      const key = sessionRefKey(ref);
       const isCurrent = sameSessionRef(state.currentSessionRef, ref);
       const cancelsFork = sameSessionRef(state.forkingSessionRef, ref);
       if (isCurrent || cancelsFork) {
@@ -228,9 +239,25 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       if (isCurrent) {
         state.unsubscribeFromEvents();
       }
+      let nextUnreadTaskKeys = state.unreadTaskKeys;
+      let nextLedger = taskTerminalReadLedger(state.taskTerminalReadLedger);
       set((currentState) => {
+        const sessionCatalogOverlays = { ...currentState.sessionCatalogOverlays };
+        delete sessionCatalogOverlays[key];
+        nextUnreadTaskKeys = currentState.unreadTaskKeys.filter(
+          (candidate) => candidate !== key
+        );
+        nextLedger = {
+          version: 1,
+          entries: taskTerminalReadLedger(
+            currentState.taskTerminalReadLedger
+          ).entries.filter((entry) => entry.key !== key),
+        };
         return {
           sessions: removeSessionByRef(currentState.sessions, ref),
+          unreadTaskKeys: nextUnreadTaskKeys,
+          taskTerminalReadLedger: nextLedger,
+          sessionCatalogOverlays,
           currentSessionId: isCurrent ? null : currentState.currentSessionId,
           currentSessionRef: isCurrent ? null : currentState.currentSessionRef,
           messages: isCurrent ? [] : currentState.messages,
@@ -241,6 +268,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           ...(isCurrent ? resetStreamingState() : {}),
         };
       });
+      persistTaskTerminalReadLedger(nextLedger);
+      persistUnreadTaskKeys(nextUnreadTaskKeys);
     },
 
     setCurrentSession: (ref) => {
@@ -601,24 +630,49 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           beginNavigation();
           state.unsubscribeFromEvents();
         }
+        let nextUnreadTaskKeys = state.unreadTaskKeys;
+        let nextLedger = taskTerminalReadLedger(state.taskTerminalReadLedger);
         set((currentState) => {
+          const archivedKeys = new Set(
+            currentState.sessions
+              .filter(
+                (session) =>
+                  session.projectPath === ref.projectPath &&
+                  archivedIds.has(session.sessionId)
+              )
+              .map((session) => sessionRefKey(sessionRefFromSession(session)))
+          );
           const sessions = currentState.sessions.filter(
             (session) =>
               session.projectPath !== ref.projectPath ||
               !archivedIds.has(session.sessionId)
           );
-          const unreadTaskKeys = pruneUnreadTaskKeys(
-            currentState.unreadTaskKeys,
-            sessions
+          nextUnreadTaskKeys = currentState.unreadTaskKeys.filter(
+            (key) => !archivedKeys.has(key)
           );
-          persistUnreadTaskKeys(unreadTaskKeys);
+          nextLedger = {
+            version: 1,
+            entries: taskTerminalReadLedger(
+              currentState.taskTerminalReadLedger
+            ).entries.filter((entry) => !archivedKeys.has(entry.key)),
+          };
+          const revision = (currentState.catalogOverlayRevision ?? 0) + 1;
+          const sessionCatalogOverlays = {
+            ...currentState.sessionCatalogOverlays,
+          };
+          for (const key of archivedKeys) {
+            sessionCatalogOverlays[key] = { revision, kind: 'remove' };
+          }
           return {
             sessions,
             archivedSessions: upsertSessionByRef(
               currentState.archivedSessions,
               result.session
             ),
-            unreadTaskKeys,
+            unreadTaskKeys: nextUnreadTaskKeys,
+            taskTerminalReadLedger: nextLedger,
+            catalogOverlayRevision: revision,
+            sessionCatalogOverlays,
             currentSessionId: archivesCurrent ? null : currentState.currentSessionId,
             currentSessionRef: archivesCurrent ? null : currentState.currentSessionRef,
             messages: archivesCurrent ? [] : currentState.messages,
@@ -626,6 +680,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             ...(archivesCurrent ? resetStreamingState() : {}),
           };
         });
+        persistTaskTerminalReadLedger(nextLedger);
+        persistUnreadTaskKeys(nextUnreadTaskKeys);
         if (isHistorySurfaceActive(get().historySurfaceSelection)) return;
         await get().loadArchivedSessions();
       } catch (err) {
@@ -644,14 +700,23 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       try {
         const result = await sessionService.unarchiveSession(ref);
         const restoredIds = new Set(result.restoredSessionIds);
-        set((state) => ({
-          archivedSessions: state.archivedSessions.filter(
-            (session) =>
-              session.projectPath !== ref.projectPath ||
-              !restoredIds.has(session.sessionId)
-          ),
-          sessions: upsertSessionByRef(state.sessions, result.session),
-        }));
+        set((state) => {
+          const revision = (state.catalogOverlayRevision ?? 0) + 1;
+          const key = sessionRefKey(sessionRefFromSession(result.session));
+          return {
+            archivedSessions: state.archivedSessions.filter(
+              (session) =>
+                session.projectPath !== ref.projectPath ||
+                !restoredIds.has(session.sessionId)
+            ),
+            sessions: upsertSessionByRef(state.sessions, result.session),
+            catalogOverlayRevision: revision,
+            sessionCatalogOverlays: {
+              ...state.sessionCatalogOverlays,
+              [key]: { revision, kind: 'upsert', session: result.session },
+            },
+          };
+        });
         if (isHistorySurfaceActive(get().historySurfaceSelection)) return;
         await Promise.all([get().loadSessions(), get().loadArchivedSessions()]);
       } catch (err) {
@@ -678,7 +743,6 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       }
       try {
         await sessionService.deleteSession(ref);
-        get().markTaskRead(ref);
         const state = get();
         const shouldClearCurrent =
           sameSessionRef(state.currentSessionRef, ref) &&
@@ -687,14 +751,40 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           beginNavigation();
           state.unsubscribeFromEvents();
         }
-        set((state) => ({
-          sessions: removeSessionByRef(state.sessions, ref),
-          currentSessionId: shouldClearCurrent ? null : state.currentSessionId,
-          currentSessionRef: shouldClearCurrent ? null : state.currentSessionRef,
-          messages: shouldClearCurrent ? [] : state.messages,
-          goal: shouldClearCurrent ? null : state.goal,
-          ...(shouldClearCurrent ? resetStreamingState() : {}),
-        }));
+        const key = sessionRefKey(ref);
+        let nextUnreadTaskKeys = state.unreadTaskKeys;
+        let nextLedger = taskTerminalReadLedger(state.taskTerminalReadLedger);
+        set((currentState) => {
+          const revision = (currentState.catalogOverlayRevision ?? 0) + 1;
+          nextUnreadTaskKeys = currentState.unreadTaskKeys.filter(
+            (candidate) => candidate !== key
+          );
+          nextLedger = {
+            version: 1,
+            entries: taskTerminalReadLedger(
+              currentState.taskTerminalReadLedger
+            ).entries.filter((entry) => entry.key !== key),
+          };
+          return {
+            sessions: removeSessionByRef(currentState.sessions, ref),
+            unreadTaskKeys: nextUnreadTaskKeys,
+            taskTerminalReadLedger: nextLedger,
+            catalogOverlayRevision: revision,
+            sessionCatalogOverlays: {
+              ...currentState.sessionCatalogOverlays,
+              [key]: { revision, kind: 'remove' },
+            },
+            currentSessionId: shouldClearCurrent ? null : currentState.currentSessionId,
+            currentSessionRef: shouldClearCurrent
+              ? null
+              : currentState.currentSessionRef,
+            messages: shouldClearCurrent ? [] : currentState.messages,
+            goal: shouldClearCurrent ? null : currentState.goal,
+            ...(shouldClearCurrent ? resetStreamingState() : {}),
+          };
+        });
+        persistTaskTerminalReadLedger(nextLedger);
+        persistUnreadTaskKeys(nextUnreadTaskKeys);
       } catch (err) {
         if (
           generation !== null &&

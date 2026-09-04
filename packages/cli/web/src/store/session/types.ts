@@ -27,6 +27,7 @@ import type {
   TeamSnapshot,
   WorkspaceInfo,
 } from '@/services';
+import type { TaskTerminalReadLedgerV1 } from './taskAttention';
 
 export type {
   BoundProject,
@@ -429,6 +430,9 @@ export interface TaskListSlice {
   updatingTaskKeys: string[];
   taskDeliveryActions: Record<string, 'apply' | 'discard'>;
   unreadTaskKeys: string[];
+  taskTerminalReadLedger?: TaskTerminalReadLedgerV1;
+  catalogOverlayRevision?: number;
+  sessionCatalogOverlays?: Record<string, SessionCatalogOverlay>;
 
   subscribeToTaskEvents: () => Promise<void>;
   reconnectTaskEvents: () => Promise<void>;
@@ -451,6 +455,32 @@ export interface TaskListSlice {
     options?: { selectSession?: boolean }
   ) => Promise<void>;
   startCodeReview: (input: CodeReviewDispatchInput) => Promise<void>;
+}
+
+export type SessionCatalogOverlay =
+  | {
+      revision: number;
+      kind: 'upsert';
+      session: Session;
+    }
+  | {
+      revision: number;
+      kind: 'remove';
+    };
+
+export interface TaskLiveProjection {
+  revision: number;
+  taskStatus: Session['taskStatus'];
+  taskStatusReason?: string;
+  taskFailure?: Session['taskFailure'];
+  taskPromptSummary?: string;
+  taskStartedAt?: string;
+  taskCompletedAt?: string;
+  taskDiffStat?: Session['taskDiffStat'];
+  taskQueuePosition?: number;
+  taskQueueDepth?: number;
+  taskConcurrencyLimit?: number;
+  updatedAt?: string;
 }
 
 export interface MessageSlice {

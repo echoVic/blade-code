@@ -25,7 +25,13 @@ vi.mock('../../../src/services', () => ({
 
 import { useConfigStore } from '../../../src/store/ConfigStore';
 import { useScheduleStore } from '../../../src/store/ScheduleStore';
+import { useSettingsStore } from '../../../src/store/SettingsStore';
 import { useSessionStore } from '../../../src/store/session';
+import { sessionRefKey } from '../../../src/store/session/sessionIdentity';
+import {
+  type TaskTerminalReadLedgerV1,
+  taskTerminalSignature,
+} from '../../../src/store/session/taskAttention';
 import type { SessionSurfaceSelection } from '../../../src/store/session/types';
 
 const actualSelectSession = useSessionStore.getState().selectSession;
@@ -77,6 +83,16 @@ function createHistorySelection(): SessionSurfaceSelection {
   };
 }
 
+function emptyTaskTerminalReadLedger(): TaskTerminalReadLedgerV1 {
+  return { version: 1, entries: [] };
+}
+
+function taskTerminalLedgerSignature(key: string): string | null | undefined {
+  return useSessionStore
+    .getState()
+    .taskTerminalReadLedger?.entries.find((entry) => entry.key === key)?.signature;
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
@@ -89,6 +105,7 @@ function deferred<T>() {
 
 describe('taskListSlice', () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
     const storage = new Map<string, string>();
     vi.stubGlobal('localStorage', {
       clear: () => storage.clear(),
@@ -117,6 +134,11 @@ describe('taskListSlice', () => {
     useScheduleStore.setState({
       loadSchedules: vi.fn().mockResolvedValue(undefined),
     });
+    useSettingsStore.setState({
+      notifyBuild: true,
+      notifyErrors: true,
+      notifySounds: false,
+    });
     localStorage.clear();
     useSessionStore.getState().unsubscribeFromTaskEvents();
     useSessionStore.setState({
@@ -143,6 +165,9 @@ describe('taskListSlice', () => {
       updatingTaskKeys: [],
       taskDeliveryActions: {},
       unreadTaskKeys: [],
+      taskTerminalReadLedger: emptyTaskTerminalReadLedger(),
+      catalogOverlayRevision: 0,
+      sessionCatalogOverlays: {},
       loadSessions: vi.fn().mockResolvedValue(undefined),
       selectSession: actualSelectSession,
     });
@@ -349,6 +374,53 @@ describe('taskListSlice', () => {
       projectPath: '/workspace/a',
     });
     expect(useSessionStore.getState().loadSessions).not.toHaveBeenCalled();
+    expect(
+      useSessionStore.getState().sessionCatalogOverlays?.[
+        sessionRefKey({
+          sessionId: remoteSession.sessionId,
+          projectPath: remoteSession.projectPath,
+        })
+      ]
+    ).toMatchObject({ kind: 'upsert', session: remoteSession });
+  });
+
+  it('records full upsert overlays for updated and unarchived sessions', async () => {
+    const updatedRef = { sessionId: 'shared-session', projectPath: '/workspace/a' };
+    const restored = {
+      ...createSession('/workspace/archive'),
+      sessionId: 'restored-session',
+      rootId: 'restored-session',
+    };
+    serviceMocks.getSession.mockResolvedValue(restored);
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'session.updated',
+      properties: { ...updatedRef, title: 'Updated title' },
+    });
+    useSessionStore.getState().handleTaskEvent({
+      type: 'session.unarchived',
+      properties: {
+        sessionId: restored.sessionId,
+        projectPath: restored.projectPath,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        useSessionStore.getState().sessionCatalogOverlays?.[
+          sessionRefKey({
+            sessionId: restored.sessionId,
+            projectPath: restored.projectPath,
+          })
+        ]
+      ).toMatchObject({ kind: 'upsert', session: restored });
+    });
+    expect(
+      useSessionStore.getState().sessionCatalogOverlays?.[sessionRefKey(updatedRef)]
+    ).toMatchObject({
+      kind: 'upsert',
+      session: expect.objectContaining({ title: 'Updated title' }),
+    });
   });
 
   it('does not resurrect a session deleted while its creation sync is pending', async () => {
@@ -604,6 +676,335 @@ describe('taskListSlice', () => {
     );
   });
 
+  it('marks a known running exact session unread when its first ledger-backed event is terminal', () => {
+    const ref = { sessionId: 'shared-session', projectPath: '/workspace/a' };
+    const key = sessionRefKey(ref);
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...createSession(ref.projectPath),
+          taskStatus: 'running',
+          taskCompletedAt: undefined,
+        },
+      ],
+      taskTerminalReadLedger: emptyTaskTerminalReadLedger(),
+    });
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: {
+        ...ref,
+        taskStatus: 'completed',
+        taskCompletedAt: '2026-08-05T11:00:00.000Z',
+      },
+    });
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([key]);
+    expect(taskTerminalLedgerSignature(key)).toBeNull();
+  });
+
+  it('silently baselines an unknown terminal event before its exact session sync', async () => {
+    const ref = { sessionId: 'unknown-terminal', projectPath: '/workspace/new' };
+    const key = sessionRefKey(ref);
+    const completedAt = '2026-08-05T11:01:00.000Z';
+    const exactSession = {
+      ...createSession(ref.projectPath),
+      sessionId: ref.sessionId,
+      rootId: ref.sessionId,
+      taskCompletedAt: completedAt,
+    };
+    const exactSync = deferred<Session>();
+    serviceMocks.getSession.mockReturnValue(exactSync.promise);
+    useSessionStore.setState({ sessions: [] });
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: { ...ref, taskStatus: 'completed', taskCompletedAt: completedAt },
+    });
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
+    expect(taskTerminalLedgerSignature(key)).toBe(
+      taskTerminalSignature({
+        taskStatus: 'completed',
+        taskCompletedAt: completedAt,
+        taskFailure: undefined,
+      })
+    );
+
+    exactSync.resolve(exactSession);
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().sessions).toContainEqual(exactSession);
+    });
+    expect(useSessionStore.getState().sessionCatalogOverlays?.[key]).toMatchObject({
+      kind: 'upsert',
+      session: exactSession,
+    });
+  });
+
+  it('does not let an older exact sync overwrite a newer live task projection', async () => {
+    const ref = { sessionId: 'late-sync', projectPath: '/workspace/new' };
+    const staleSession = {
+      ...createSession(ref.projectPath),
+      sessionId: ref.sessionId,
+      rootId: ref.sessionId,
+      taskStatus: 'running' as const,
+      taskCompletedAt: undefined,
+    };
+    const exactSync = deferred<Session>();
+    serviceMocks.getSession.mockReturnValue(exactSync.promise);
+    useSessionStore.setState({ sessions: [] });
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'session.created',
+      properties: ref,
+    });
+    useSessionStore.setState({ sessions: [staleSession] });
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: {
+        ...ref,
+        taskStatus: 'completed',
+        taskCompletedAt: '2026-08-05T11:01:30.000Z',
+      },
+    });
+
+    exactSync.resolve(staleSession);
+    await exactSync.promise;
+    await Promise.resolve();
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      taskStatus: 'completed',
+      taskCompletedAt: '2026-08-05T11:01:30.000Z',
+    });
+  });
+
+  it('marks a terminal event unread when the exact ledger baseline is null', () => {
+    const ref = { sessionId: 'shared-session', projectPath: '/workspace/a' };
+    const key = sessionRefKey(ref);
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...createSession(ref.projectPath),
+          taskStatus: 'running',
+          taskCompletedAt: undefined,
+        },
+      ],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [{ key, signature: null }],
+      },
+    });
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: {
+        ...ref,
+        taskStatus: 'failed',
+        taskCompletedAt: '2026-08-05T11:02:00.000Z',
+        taskFailure: { code: 'timeout', message: 'private failure', retryable: true },
+      },
+    });
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([key]);
+    expect(taskTerminalLedgerSignature(key)).toBeNull();
+  });
+
+  it('does not notify twice for duplicate terminal signatures', () => {
+    const notificationTitles: string[] = [];
+    class NotificationStub {
+      static permission: NotificationPermission = 'granted';
+      onclick: (() => void) | null = null;
+
+      constructor(title: string) {
+        notificationTitles.push(title);
+      }
+    }
+    vi.stubGlobal('document', { visibilityState: 'hidden' });
+    vi.stubGlobal('Notification', NotificationStub);
+    const ref = { sessionId: 'shared-session', projectPath: '/workspace/a' };
+    const key = sessionRefKey(ref);
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...createSession(ref.projectPath),
+          taskStatus: 'running',
+          taskCompletedAt: undefined,
+        },
+      ],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [{ key, signature: null }],
+      },
+    });
+    const event = {
+      type: 'task.status' as const,
+      properties: {
+        ...ref,
+        taskStatus: 'completed',
+        taskCompletedAt: '2026-08-05T11:03:00.000Z',
+      },
+    };
+
+    useSessionStore.getState().handleTaskEvent(event);
+    useSessionStore.getState().handleTaskEvent(event);
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([key]);
+    expect(notificationTitles).toHaveLength(1);
+  });
+
+  it('resets an acknowledged terminal baseline on running before detecting the next result', () => {
+    const ref = { sessionId: 'shared-session', projectPath: '/workspace/a' };
+    const key = sessionRefKey(ref);
+    const initial = createSession(ref.projectPath);
+    useSessionStore.setState({
+      sessions: [initial],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [{ key, signature: taskTerminalSignature(initial) }],
+      },
+    });
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: { ...ref, taskStatus: 'running' },
+    });
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
+    expect(taskTerminalLedgerSignature(key)).toBeNull();
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: {
+        ...ref,
+        taskStatus: 'completed',
+        taskCompletedAt: '2026-08-05T11:04:00.000Z',
+      },
+    });
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([key]);
+    expect(taskTerminalLedgerSignature(key)).toBeNull();
+  });
+
+  it.each([
+    {
+      name: 'completion timestamp',
+      initial: {
+        taskStatus: 'completed' as const,
+        taskCompletedAt: '2026-08-05T10:00:00.000Z',
+        taskFailure: undefined,
+      },
+      next: {
+        taskStatus: 'completed' as const,
+        taskCompletedAt: '2026-08-05T11:05:00.000Z',
+      },
+    },
+    {
+      name: 'failure code',
+      initial: {
+        taskStatus: 'failed' as const,
+        taskCompletedAt: '2026-08-05T10:00:00.000Z',
+        taskFailure: { code: 'timeout' as const, message: 'timeout', retryable: true },
+      },
+      next: {
+        taskStatus: 'failed' as const,
+        taskCompletedAt: '2026-08-05T10:00:00.000Z',
+        taskFailure: { code: 'network', message: 'network', retryable: true },
+      },
+    },
+  ])(
+    'marks a new terminal result unread when its $name changes',
+    ({ initial, next }) => {
+      const ref = { sessionId: 'shared-session', projectPath: '/workspace/a' };
+      const key = sessionRefKey(ref);
+      const session = { ...createSession(ref.projectPath), ...initial };
+      useSessionStore.setState({
+        sessions: [session],
+        taskTerminalReadLedger: {
+          version: 1,
+          entries: [{ key, signature: taskTerminalSignature(session) }],
+        },
+      });
+
+      useSessionStore.getState().handleTaskEvent({
+        type: 'task.status',
+        properties: { ...ref, ...next },
+      });
+
+      expect(useSessionStore.getState().unreadTaskKeys).toEqual([key]);
+    }
+  );
+
+  it('acknowledges a terminal event for the visible current exact session', () => {
+    vi.stubGlobal('document', { visibilityState: 'visible' });
+    const ref = { sessionId: 'shared-session', projectPath: '/workspace/a' };
+    const key = sessionRefKey(ref);
+    const completedAt = '2026-08-05T11:06:00.000Z';
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...createSession(ref.projectPath),
+          taskStatus: 'running',
+          taskCompletedAt: undefined,
+        },
+      ],
+      currentSessionId: ref.sessionId,
+      currentSessionRef: ref,
+      isTemporarySession: false,
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [{ key, signature: null }],
+      },
+    });
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: { ...ref, taskStatus: 'completed', taskCompletedAt: completedAt },
+    });
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
+    expect(taskTerminalLedgerSignature(key)).toBe(
+      taskTerminalSignature({
+        taskStatus: 'completed',
+        taskCompletedAt: completedAt,
+        taskFailure: undefined,
+      })
+    );
+  });
+
+  it('isolates terminal attention for the same session id across projects', () => {
+    const refA = { sessionId: 'shared-session', projectPath: '/workspace/a' };
+    const refB = { sessionId: 'shared-session', projectPath: '/workspace/b' };
+    const keyA = sessionRefKey(refA);
+    const keyB = sessionRefKey(refB);
+    useSessionStore.setState({
+      sessions: [
+        { ...createSession(refA.projectPath), taskStatus: 'running' },
+        { ...createSession(refB.projectPath), taskStatus: 'running' },
+      ],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [
+          { key: keyA, signature: null },
+          { key: keyB, signature: null },
+        ],
+      },
+    });
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: {
+        ...refA,
+        taskStatus: 'completed',
+        taskCompletedAt: '2026-08-05T11:07:00.000Z',
+      },
+    });
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([keyA]);
+    expect(taskTerminalLedgerSignature(keyA)).toBeNull();
+    expect(taskTerminalLedgerSignature(keyB)).toBeNull();
+    expect(useSessionStore.getState().sessions[1]?.taskStatus).toBe('running');
+  });
+
   it('clears unread state when the task is marked as read', () => {
     const ref = {
       sessionId: 'shared-session',
@@ -611,12 +1012,78 @@ describe('taskListSlice', () => {
     };
     useSessionStore.setState({
       unreadTaskKeys: [JSON.stringify([ref.projectPath, ref.sessionId])],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [
+          { key: JSON.stringify([ref.projectPath, ref.sessionId]), signature: null },
+        ],
+      },
     });
 
     useSessionStore.getState().markTaskRead(ref);
 
     expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
+    expect(taskTerminalLedgerSignature(sessionRefKey(ref))).toBe(
+      taskTerminalSignature(createSession(ref.projectPath))
+    );
     expect(localStorage.getItem('blade.tasks.unread')).toBe('[]');
+    expect(
+      JSON.parse(localStorage.getItem('blade.tasks.terminal-read-ledger.v1') ?? '{}')
+    ).toEqual(useSessionStore.getState().taskTerminalReadLedger);
+  });
+
+  it('does not clear unread tasks before the active catalog is ready', () => {
+    const ref = { sessionId: 'shared-session', projectPath: '/workspace/a' };
+    const key = sessionRefKey(ref);
+    const ledger = { version: 1 as const, entries: [{ key, signature: null }] };
+    useSessionStore.setState({
+      catalogLoadState: 'hydrating',
+      unreadTaskKeys: [key],
+      taskTerminalReadLedger: ledger,
+    });
+
+    useSessionStore.getState().clearUnreadTasks();
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([key]);
+    expect(useSessionStore.getState().taskTerminalReadLedger).toEqual(ledger);
+  });
+
+  it('clears ready unread tasks by acknowledging existing exact refs and pruning stale refs', () => {
+    const unreadSession = createSession('/workspace/a');
+    const untouchedSession = createSession('/workspace/b');
+    const unreadKey = sessionRefKey({
+      sessionId: unreadSession.sessionId,
+      projectPath: unreadSession.projectPath,
+    });
+    const untouchedKey = sessionRefKey({
+      sessionId: untouchedSession.sessionId,
+      projectPath: untouchedSession.projectPath,
+    });
+    const staleKey = sessionRefKey({
+      sessionId: 'stale-session',
+      projectPath: '/workspace/stale',
+    });
+    useSessionStore.setState({
+      sessions: [unreadSession, untouchedSession],
+      catalogLoadState: 'ready',
+      unreadTaskKeys: [unreadKey, staleKey],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [
+          { key: unreadKey, signature: null },
+          { key: untouchedKey, signature: null },
+          { key: staleKey, signature: JSON.stringify(['completed', null, null]) },
+        ],
+      },
+    });
+
+    useSessionStore.getState().clearUnreadTasks();
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key: untouchedKey, signature: null },
+      { key: unreadKey, signature: taskTerminalSignature(unreadSession) },
+    ]);
   });
 
   it('updates task metadata and task admission without changing navigation', async () => {

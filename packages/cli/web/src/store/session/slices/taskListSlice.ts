@@ -20,15 +20,26 @@ import {
   upsertSessionByRef,
 } from '../sessionIdentity';
 import {
+  acknowledgeTaskTerminal,
   isAttentionTaskStatus,
+  persistTaskTerminalReadLedger,
   persistUnreadTaskKeys,
   playTaskAttentionSound,
+  readTaskTerminalReadLedger,
   readUnreadTaskKeys,
-  shouldMarkTaskUnread,
   showTaskNotification,
   TASK_NOTIFICATION_OPEN_EVENT,
+  type TaskTerminalReadLedgerV1,
+  taskTerminalSignature,
 } from '../taskAttention';
-import type { Session, SessionRef, SliceCreator, TaskListSlice } from '../types';
+import type {
+  Session,
+  SessionCatalogOverlay,
+  SessionRef,
+  SliceCreator,
+  TaskListSlice,
+  TaskLiveProjection,
+} from '../types';
 
 const SELECTED_PROJECT_KEY = 'blade.projects.selected';
 
@@ -171,6 +182,60 @@ function taskInteger(value: unknown, minimum: number): number | undefined {
     : undefined;
 }
 
+export function applyTaskStatusProjection(
+  session: Session,
+  projection: TaskLiveProjection
+): Session {
+  return {
+    ...session,
+    taskStatus: projection.taskStatus,
+    taskStatusReason: projection.taskStatusReason,
+    taskFailure:
+      projection.taskStatus === 'failed'
+        ? (projection.taskFailure ?? session.taskFailure)
+        : undefined,
+    taskPromptSummary: projection.taskPromptSummary ?? session.taskPromptSummary,
+    taskStartedAt:
+      projection.taskStartedAt ??
+      (projection.taskStatus === 'queued' ? undefined : session.taskStartedAt),
+    taskCompletedAt:
+      projection.taskCompletedAt ??
+      (projection.taskStatus === 'queued' || projection.taskStatus === 'running'
+        ? undefined
+        : session.taskCompletedAt),
+    taskDiffStat: projection.taskDiffStat ?? session.taskDiffStat,
+    taskQueuePosition:
+      projection.taskStatus === 'queued'
+        ? (projection.taskQueuePosition ?? session.taskQueuePosition)
+        : undefined,
+    taskQueueDepth:
+      projection.taskStatus === 'queued'
+        ? (projection.taskQueueDepth ?? session.taskQueueDepth)
+        : undefined,
+    taskConcurrencyLimit:
+      projection.taskConcurrencyLimit ?? session.taskConcurrencyLimit,
+    lastMessageTime: projection.updatedAt ?? session.lastMessageTime,
+  };
+}
+
+function upsertCatalogOverlay(
+  overlays: Record<string, SessionCatalogOverlay>,
+  key: string,
+  revision: number,
+  session: Session
+): Record<string, SessionCatalogOverlay> {
+  return {
+    ...overlays,
+    [key]: { revision, kind: 'upsert', session },
+  };
+}
+
+function taskTerminalReadLedger(
+  ledger: TaskTerminalReadLedgerV1 | undefined
+): TaskTerminalReadLedgerV1 {
+  return ledger ?? { version: 1, entries: [] };
+}
+
 export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
   let subscriptionPromise: Promise<void> | null = null;
   let subscriptionRequested = false;
@@ -181,14 +246,27 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
   const syncExactSession = (ref: SessionRef): void => {
     const key = sessionRefKey(ref);
     const version = ++sessionLifecycleVersion;
+    const startedAtRevision = get().catalogOverlayRevision ?? 0;
     exactSessionSyncVersions.set(key, version);
     void sessionService
       .getSession(ref)
       .then((session) => {
         if (exactSessionSyncVersions.get(key) !== version) return;
-        set((state) => ({
-          sessions: upsertSessionByRef(state.sessions, session),
-        }));
+        set((state) => {
+          const currentOverlay = state.sessionCatalogOverlays?.[key];
+          if (currentOverlay && currentOverlay.revision > startedAtRevision) return {};
+          const revision = (state.catalogOverlayRevision ?? 0) + 1;
+          return {
+            sessions: upsertSessionByRef(state.sessions, session),
+            catalogOverlayRevision: revision,
+            sessionCatalogOverlays: upsertCatalogOverlay(
+              state.sessionCatalogOverlays ?? {},
+              key,
+              revision,
+              session
+            ),
+          };
+        });
       })
       .catch(() => {
         if (exactSessionSyncVersions.get(key) !== version) return;
@@ -199,6 +277,20 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
           exactSessionSyncVersions.delete(key);
         }
       });
+  };
+
+  const recordRemoveOverlay = (ref: SessionRef): void => {
+    const key = sessionRefKey(ref);
+    set((state) => {
+      const revision = (state.catalogOverlayRevision ?? 0) + 1;
+      return {
+        catalogOverlayRevision: revision,
+        sessionCatalogOverlays: {
+          ...state.sessionCatalogOverlays,
+          [key]: { revision, kind: 'remove' },
+        },
+      };
+    });
   };
 
   const invalidateExactSessionSync = (ref: SessionRef): void => {
@@ -229,6 +321,9 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     updatingTaskKeys: [],
     taskDeliveryActions: {},
     unreadTaskKeys: readUnreadTaskKeys(),
+    taskTerminalReadLedger: readTaskTerminalReadLedger(),
+    catalogOverlayRevision: 0,
+    sessionCatalogOverlays: {},
 
     handleTaskEvent: (event) => {
       if (event.type === 'session.created') {
@@ -249,6 +344,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         const ref = { sessionId, projectPath };
         invalidateExactSessionSync(ref);
         get().removeSession(ref);
+        recordRemoveOverlay(ref);
         return;
       }
       if (event.type === 'session.archived') {
@@ -260,6 +356,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         const ref = { sessionId, projectPath };
         invalidateExactSessionSync(ref);
         get().removeSession(ref);
+        recordRemoveOverlay(ref);
         void get().loadArchivedSessions();
         return;
       }
@@ -332,85 +429,88 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
           syncExactSession(ref);
           return;
         }
-        set((state) => ({
-          sessions: state.sessions.map((session) =>
-            sameSessionRef(
-              { sessionId: session.sessionId, projectPath: session.projectPath },
-              ref
+        set((state) => {
+          const previousSession = state.sessions.find((session) =>
+            sameSessionRef(sessionRefFromSession(session), ref)
+          );
+          if (!previousSession) return {};
+          const nextSession: Session = {
+            ...previousSession,
+            ...(typeof title === 'string' && title.trim() ? { title } : {}),
+            ...(typeof selectedModelId === 'string' && selectedModelId.trim()
+              ? { selectedModelId }
+              : {}),
+            ...(PERMISSION_MODES.has(
+              permissionMode as NonNullable<Session['permissionMode']>
             )
               ? {
-                  ...session,
-                  ...(typeof title === 'string' && title.trim() ? { title } : {}),
-                  ...(typeof selectedModelId === 'string' && selectedModelId.trim()
-                    ? { selectedModelId }
-                    : {}),
-                  ...(PERMISSION_MODES.has(
-                    permissionMode as NonNullable<Session['permissionMode']>
-                  )
-                    ? {
-                        permissionMode: permissionMode as NonNullable<
-                          Session['permissionMode']
-                        >,
-                      }
-                    : {}),
-                  ...(REASONING_EFFORTS.has(
-                    reasoningEffort as NonNullable<Session['reasoningEffort']>
-                  )
-                    ? {
-                        reasoningEffort: reasoningEffort as NonNullable<
-                          Session['reasoningEffort']
-                        >,
-                      }
-                    : {}),
-                  ...(SERVICE_TIERS.has(
-                    serviceTier as NonNullable<Session['serviceTier']>
-                  )
-                    ? {
-                        serviceTier: serviceTier as NonNullable<Session['serviceTier']>,
-                      }
-                    : {}),
-                  ...(RESPONSE_VERBOSITIES.has(
-                    responseVerbosity as NonNullable<Session['responseVerbosity']>
-                  )
-                    ? {
-                        responseVerbosity: responseVerbosity as NonNullable<
-                          Session['responseVerbosity']
-                        >,
-                      }
-                    : {}),
-                  ...(COMMUNICATION_STYLES.has(
-                    communicationStyle as NonNullable<Session['communicationStyle']>
-                  )
-                    ? {
-                        communicationStyle: communicationStyle as NonNullable<
-                          Session['communicationStyle']
-                        >,
-                      }
-                    : {}),
-                  ...(TASK_PRIORITIES.has(
-                    taskPriority as NonNullable<Session['taskPriority']>
-                  )
-                    ? {
-                        taskPriority: taskPriority as NonNullable<
-                          Session['taskPriority']
-                        >,
-                      }
-                    : {}),
-                  ...(TASK_KINDS.has(taskKind as NonNullable<Session['taskKind']>)
-                    ? {
-                        taskKind: taskKind as NonNullable<Session['taskKind']>,
-                      }
-                    : {}),
-                  ...(taskDueAt === null
-                    ? { taskDueAt: undefined }
-                    : typeof taskDueAt === 'string' &&
-                        Number.isFinite(Date.parse(taskDueAt))
-                      ? { taskDueAt }
-                      : {}),
+                  permissionMode: permissionMode as NonNullable<
+                    Session['permissionMode']
+                  >,
                 }
-              : session
-          ),
-        }));
+              : {}),
+            ...(REASONING_EFFORTS.has(
+              reasoningEffort as NonNullable<Session['reasoningEffort']>
+            )
+              ? {
+                  reasoningEffort: reasoningEffort as NonNullable<
+                    Session['reasoningEffort']
+                  >,
+                }
+              : {}),
+            ...(SERVICE_TIERS.has(serviceTier as NonNullable<Session['serviceTier']>)
+              ? {
+                  serviceTier: serviceTier as NonNullable<Session['serviceTier']>,
+                }
+              : {}),
+            ...(RESPONSE_VERBOSITIES.has(
+              responseVerbosity as NonNullable<Session['responseVerbosity']>
+            )
+              ? {
+                  responseVerbosity: responseVerbosity as NonNullable<
+                    Session['responseVerbosity']
+                  >,
+                }
+              : {}),
+            ...(COMMUNICATION_STYLES.has(
+              communicationStyle as NonNullable<Session['communicationStyle']>
+            )
+              ? {
+                  communicationStyle: communicationStyle as NonNullable<
+                    Session['communicationStyle']
+                  >,
+                }
+              : {}),
+            ...(TASK_PRIORITIES.has(
+              taskPriority as NonNullable<Session['taskPriority']>
+            )
+              ? {
+                  taskPriority: taskPriority as NonNullable<Session['taskPriority']>,
+                }
+              : {}),
+            ...(TASK_KINDS.has(taskKind as NonNullable<Session['taskKind']>)
+              ? {
+                  taskKind: taskKind as NonNullable<Session['taskKind']>,
+                }
+              : {}),
+            ...(taskDueAt === null
+              ? { taskDueAt: undefined }
+              : typeof taskDueAt === 'string' && Number.isFinite(Date.parse(taskDueAt))
+                ? { taskDueAt }
+                : {}),
+          };
+          const revision = (state.catalogOverlayRevision ?? 0) + 1;
+          return {
+            sessions: upsertSessionByRef(state.sessions, nextSession),
+            catalogOverlayRevision: revision,
+            sessionCatalogOverlays: upsertCatalogOverlay(
+              state.sessionCatalogOverlays ?? {},
+              sessionRefKey(ref),
+              revision,
+              nextSession
+            ),
+          };
+        });
         return;
       }
       if (event.type === 'task.delivery') {
@@ -590,29 +690,123 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
             : null,
         }));
       }
-      const previousSession = get().sessions.find((session) =>
-        sameSessionRef(sessionRefFromSession(session), ref)
-      );
-      const isCurrentVisible =
-        typeof document !== 'undefined' &&
-        document.visibilityState === 'visible' &&
-        sameSessionRef(get().currentSessionRef, ref);
-      const isNewAttention = shouldMarkTaskUnread(
-        previousSession?.taskStatus,
-        taskStatus,
-        isCurrentVisible
-      );
       const key = sessionRefKey(ref);
-      const isFirstUnread = !get().unreadTaskKeys.includes(key);
-      if (isNewAttention && isFirstUnread) {
-        set((state) => {
-          const unreadTaskKeys = [...state.unreadTaskKeys, key];
-          persistUnreadTaskKeys(unreadTaskKeys);
-          return { unreadTaskKeys };
-        });
+      const eventFailure = taskFailure(event.properties.taskFailure);
+      let shouldNotifyAttention = false;
+      let nextUnreadTaskKeys: string[] | null = null;
+      let nextLedger = null as ReturnType<typeof readTaskTerminalReadLedger> | null;
+      let needsExactSync = false;
+      set((state) => {
+        const previousSession = state.sessions.find((session) =>
+          sameSessionRef(sessionRefFromSession(session), ref)
+        );
+        if (!previousSession) {
+          needsExactSync = true;
+          nextLedger = acknowledgeTaskTerminal(
+            taskTerminalReadLedger(state.taskTerminalReadLedger),
+            ref,
+            {
+              taskStatus,
+              taskCompletedAt:
+                typeof event.properties.taskCompletedAt === 'string'
+                  ? event.properties.taskCompletedAt
+                  : undefined,
+              taskFailure: eventFailure,
+            }
+          );
+          return { taskTerminalReadLedger: nextLedger };
+        }
 
+        const revision = (state.catalogOverlayRevision ?? 0) + 1;
+        const projection: TaskLiveProjection = {
+          revision,
+          taskStatus,
+          taskStatusReason:
+            typeof event.properties.taskStatusReason === 'string'
+              ? event.properties.taskStatusReason
+              : undefined,
+          taskFailure: eventFailure,
+          taskPromptSummary:
+            typeof event.properties.taskPromptSummary === 'string'
+              ? event.properties.taskPromptSummary
+              : undefined,
+          taskStartedAt:
+            typeof event.properties.taskStartedAt === 'string'
+              ? event.properties.taskStartedAt
+              : undefined,
+          taskCompletedAt:
+            typeof event.properties.taskCompletedAt === 'string'
+              ? event.properties.taskCompletedAt
+              : undefined,
+          taskDiffStat: taskDiffStat(event.properties.taskDiffStat),
+          taskQueuePosition: taskInteger(event.properties.taskQueuePosition, 1),
+          taskQueueDepth: taskInteger(event.properties.taskQueueDepth, 0),
+          taskConcurrencyLimit,
+          updatedAt:
+            typeof event.properties.updatedAt === 'string'
+              ? event.properties.updatedAt
+              : undefined,
+        };
+        const nextSession = applyTaskStatusProjection(previousSession, projection);
+        const isCurrentVisible =
+          typeof document !== 'undefined' &&
+          document.visibilityState === 'visible' &&
+          sameSessionRef(state.currentSessionRef, ref);
+        const previousSignature = taskTerminalSignature(previousSession);
+        const signature = taskTerminalSignature(nextSession);
+        const currentLedger = taskTerminalReadLedger(state.taskTerminalReadLedger);
+        const ledgerEntry = currentLedger.entries.find((entry) => entry.key === key);
+        let ledger = currentLedger;
+        let unreadTaskKeys = state.unreadTaskKeys;
+
+        if (isCurrentVisible || signature === null) {
+          ledger = acknowledgeTaskTerminal(ledger, ref, nextSession);
+          if (isCurrentVisible) {
+            unreadTaskKeys = unreadTaskKeys.filter((candidate) => candidate !== key);
+          }
+        } else if (!ledgerEntry) {
+          if (previousSignature === null) {
+            ledger = acknowledgeTaskTerminal(ledger, ref, previousSession);
+            if (!unreadTaskKeys.includes(key)) {
+              unreadTaskKeys = [...unreadTaskKeys, key];
+              shouldNotifyAttention = true;
+            }
+          } else {
+            ledger = acknowledgeTaskTerminal(ledger, ref, nextSession);
+          }
+        } else if (ledgerEntry.signature !== signature) {
+          if (!unreadTaskKeys.includes(key)) {
+            unreadTaskKeys = [...unreadTaskKeys, key];
+            if (previousSignature !== signature) shouldNotifyAttention = true;
+          }
+        }
+
+        nextLedger = ledger;
+        nextUnreadTaskKeys = unreadTaskKeys;
+        return {
+          sessions: upsertSessionByRef(state.sessions, nextSession),
+          unreadTaskKeys,
+          taskTerminalReadLedger: ledger,
+          catalogOverlayRevision: revision,
+          sessionCatalogOverlays: upsertCatalogOverlay(
+            state.sessionCatalogOverlays ?? {},
+            key,
+            revision,
+            nextSession
+          ),
+        };
+      });
+      if (nextLedger) persistTaskTerminalReadLedger(nextLedger);
+      if (nextUnreadTaskKeys) persistUnreadTaskKeys(nextUnreadTaskKeys);
+
+      const notificationSession = shouldNotifyAttention
+        ? get().sessions.find((session) =>
+            sameSessionRef(sessionRefFromSession(session), ref)
+          )
+        : undefined;
+      if (notificationSession && isAttentionTaskStatus(taskStatus)) {
         const settings = useSettingsStore.getState();
-        if (settings.notifySounds && isAttentionTaskStatus(taskStatus)) {
+        if (settings.notifySounds) {
           playTaskAttentionSound(taskStatus);
         }
         const shouldNotify =
@@ -624,30 +818,8 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
               : taskStatus === 'failed'
                 ? t('attention.notification.failed')
                 : t('attention.notification.interrupted');
-          const eventFailure = taskFailure(event.properties.taskFailure);
-          const reason = previousSession
-            ? sessionTaskReason(
-                {
-                  ...previousSession,
-                  taskStatus,
-                  taskFailure: eventFailure ?? previousSession.taskFailure,
-                  taskStatusReason:
-                    typeof event.properties.taskStatusReason === 'string'
-                      ? event.properties.taskStatusReason
-                      : previousSession.taskStatusReason,
-                  taskPromptSummary:
-                    typeof event.properties.taskPromptSummary === 'string'
-                      ? event.properties.taskPromptSummary
-                      : previousSession.taskPromptSummary,
-                },
-                t
-              )
-            : (eventFailure?.message ??
-              (typeof event.properties.taskStatusReason === 'string'
-                ? event.properties.taskStatusReason
-                : undefined));
-          const displayTitle =
-            previousSession?.title ?? previousSession?.sessionId ?? sessionId;
+          const reason = sessionTaskReason(notificationSession, t);
+          const displayTitle = notificationSession.title ?? sessionId;
           showTaskNotification({
             ref,
             title: `Blade · ${notificationTitle}`,
@@ -664,67 +836,9 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
           });
         }
       }
-      if (!previousSession) {
+      if (needsExactSync) {
         syncExactSession(ref);
-        return;
       }
-
-      set((state) => ({
-        sessions: state.sessions.map((session) =>
-          sameSessionRef(
-            { sessionId: session.sessionId, projectPath: session.projectPath },
-            ref
-          )
-            ? {
-                ...session,
-                taskStatus,
-                taskStatusReason:
-                  typeof event.properties.taskStatusReason === 'string'
-                    ? event.properties.taskStatusReason
-                    : undefined,
-                taskFailure:
-                  taskStatus === 'failed'
-                    ? (taskFailure(event.properties.taskFailure) ?? session.taskFailure)
-                    : undefined,
-                taskPromptSummary:
-                  typeof event.properties.taskPromptSummary === 'string'
-                    ? event.properties.taskPromptSummary
-                    : session.taskPromptSummary,
-                taskStartedAt:
-                  typeof event.properties.taskStartedAt === 'string'
-                    ? event.properties.taskStartedAt
-                    : taskStatus === 'queued'
-                      ? undefined
-                      : session.taskStartedAt,
-                taskCompletedAt:
-                  typeof event.properties.taskCompletedAt === 'string'
-                    ? event.properties.taskCompletedAt
-                    : taskStatus === 'queued' || taskStatus === 'running'
-                      ? undefined
-                      : session.taskCompletedAt,
-                taskDiffStat:
-                  taskDiffStat(event.properties.taskDiffStat) ?? session.taskDiffStat,
-                taskQueuePosition:
-                  taskStatus === 'queued'
-                    ? (taskInteger(event.properties.taskQueuePosition, 1) ??
-                      session.taskQueuePosition)
-                    : undefined,
-                taskQueueDepth:
-                  taskStatus === 'queued'
-                    ? (taskInteger(event.properties.taskQueueDepth, 0) ??
-                      session.taskQueueDepth)
-                    : undefined,
-                taskConcurrencyLimit:
-                  taskInteger(event.properties.taskConcurrencyLimit, 1) ??
-                  session.taskConcurrencyLimit,
-                lastMessageTime:
-                  typeof event.properties.updatedAt === 'string'
-                    ? event.properties.updatedAt
-                    : session.lastMessageTime,
-              }
-            : session
-        ),
-      }));
     },
 
     subscribeToTaskEvents: async () => {
@@ -913,18 +1027,62 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
 
     markTaskRead: (ref) => {
       const key = sessionRefKey(ref);
+      let nextLedger = taskTerminalReadLedger(get().taskTerminalReadLedger);
+      let nextUnreadTaskKeys = get().unreadTaskKeys;
       set((state) => {
-        const unreadTaskKeys = state.unreadTaskKeys.filter(
+        const session = state.sessions.find((candidate) =>
+          sameSessionRef(sessionRefFromSession(candidate), ref)
+        );
+        nextLedger = session
+          ? acknowledgeTaskTerminal(
+              taskTerminalReadLedger(state.taskTerminalReadLedger),
+              ref,
+              session
+            )
+          : taskTerminalReadLedger(state.taskTerminalReadLedger);
+        nextUnreadTaskKeys = state.unreadTaskKeys.filter(
           (candidate) => candidate !== key
         );
-        persistUnreadTaskKeys(unreadTaskKeys);
-        return { unreadTaskKeys };
+        return {
+          taskTerminalReadLedger: nextLedger,
+          unreadTaskKeys: nextUnreadTaskKeys,
+        };
       });
+      persistTaskTerminalReadLedger(nextLedger);
+      persistUnreadTaskKeys(nextUnreadTaskKeys);
     },
 
     clearUnreadTasks: () => {
+      if (get().catalogLoadState !== 'ready') return;
+      let nextLedger = taskTerminalReadLedger(get().taskTerminalReadLedger);
+      set((state) => {
+        const sessionsByKey = new Map(
+          state.sessions.map((session) => [
+            sessionRefKey(sessionRefFromSession(session)),
+            session,
+          ])
+        );
+        const unreadKeys = new Set(state.unreadTaskKeys);
+        let ledger = {
+          version: 1 as const,
+          entries: taskTerminalReadLedger(state.taskTerminalReadLedger).entries.filter(
+            (entry) => !unreadKeys.has(entry.key) || sessionsByKey.has(entry.key)
+          ),
+        };
+        for (const key of state.unreadTaskKeys) {
+          const session = sessionsByKey.get(key);
+          if (!session) continue;
+          ledger = acknowledgeTaskTerminal(
+            ledger,
+            sessionRefFromSession(session),
+            session
+          );
+        }
+        nextLedger = ledger;
+        return { unreadTaskKeys: [], taskTerminalReadLedger: ledger };
+      });
+      persistTaskTerminalReadLedger(nextLedger);
       persistUnreadTaskKeys([]);
-      set({ unreadTaskKeys: [] });
     },
 
     setTaskAdmissionPaused: async (paused) => {
