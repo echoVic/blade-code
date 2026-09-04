@@ -327,7 +327,6 @@ export async function runTuiTaskAttentionPtyDriver(input: {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
-      if (!runnerExited(child)) signalRunner(child, 'SIGKILL');
       const failure = error as Error & Partial<RunnerResult>;
       failure.stdout = stdout;
       failure.stderr = stderr;
@@ -372,12 +371,28 @@ export async function runTuiTaskAttentionPtyDriver(input: {
 
   let result: RunnerResult;
   try {
-    const deadline = Date.now() + 45_000;
-    while (!existsSync(completionFile)) {
-      if (Date.now() >= deadline) {
-        throw new Error('Raw PTY did not persist the running task baseline');
+    const baseline = (async () => {
+      const deadline = Date.now() + 45_000;
+      while (!existsSync(completionFile)) {
+        if (Date.now() >= deadline) {
+          throw new Error('Raw PTY did not persist the running task baseline');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      return { kind: 'baseline' as const };
+    })();
+    const baselineResult = await Promise.race([
+      baseline,
+      runnerResult.then(
+        (earlyResult) => ({ kind: 'runner_exited' as const, earlyResult }),
+        (error: unknown) => ({ kind: 'runner_failed' as const, error })
+      ),
+    ]);
+    if (baselineResult.kind === 'runner_failed') throw baselineResult.error;
+    if (baselineResult.kind === 'runner_exited') {
+      throw new Error(
+        `Task attention PTY runner exited before baseline: ${baselineResult.earlyResult.stderr}`
+      );
     }
     const completion = Promise.resolve().then(() => input.completeTask());
     void completion.catch(() => undefined);

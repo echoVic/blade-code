@@ -246,5 +246,74 @@ describe.skipIf(process.platform === 'win32')(
           : true
       ).toBe(false);
     }, 30_000);
+
+    it('cleans up the runner tree when the outer runner deadline expires', async () => {
+      const root = await mkdtemp(
+        path.join(os.tmpdir(), 'blade-tui-attention-timeout-')
+      );
+      roots.push(root);
+      const workspace = path.join(root, 'workspace');
+      const storageRoot = path.join(root, 'storage');
+      const home = path.join(root, 'home');
+      const sessionId = `attention-timeout-${Date.now()}`;
+      await Promise.all([
+        mkdir(workspace, { recursive: true }),
+        mkdir(storageRoot, { recursive: true }),
+        mkdir(path.join(home, '.blade'), { recursive: true }),
+      ]);
+      await writeFile(
+        path.join(home, '.blade', 'config.json'),
+        `${JSON.stringify({
+          currentModelId: 'attention-fixture',
+          models: [
+            {
+              id: 'attention-fixture',
+              displayName: 'Attention Fixture',
+              provider: 'deepseek',
+              model: 'deepseek-v4-flash',
+            },
+          ],
+          permissionMode: PermissionMode.YOLO,
+          hooks: { enabled: false },
+          disableAllHooks: true,
+          mcpServers: {},
+        })}\n`,
+        { mode: 0o600 }
+      );
+      process.env.BLADE_STORAGE_ROOT = storageRoot;
+      resetProjectionDbCache();
+      await SessionService.createSessionMetadata(sessionId, workspace, {
+        title: 'Outer deadline fixture',
+        taskStatus: 'running',
+      });
+      const startedAt = Date.now();
+      let runnerPid: number | undefined;
+      let runnerIdentity: ProcessIdentity | undefined;
+
+      await expect(
+        runTuiTaskAttentionPtyDriver({
+          workspace,
+          storageRoot,
+          home,
+          sessionId,
+          title: 'Outer deadline fixture',
+          terminalContent: 'never-rendered',
+          completionTimeoutMs: 30_000,
+          timeoutMs: 1_000,
+          onRunnerSpawn: (pid) => {
+            runnerPid = pid;
+            runnerIdentity = captureProcessIdentity(pid);
+          },
+          completeTask: () => new Promise<void>(() => undefined),
+        })
+      ).rejects.toThrow('runner exceeded its deadline');
+      expect(Date.now() - startedAt).toBeLessThan(10_000);
+      expect(runnerPid).toEqual(expect.any(Number));
+      expect(
+        runnerPid && runnerIdentity
+          ? processIdentityMatches(runnerPid, runnerIdentity)
+          : true
+      ).toBe(false);
+    }, 30_000);
   }
 );
