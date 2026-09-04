@@ -17,6 +17,7 @@ import { startRecordingProviderProxy } from '../../support/recordingProviderProx
 import {
   createTuiTaskAttentionStreamCapture,
   runTuiTaskAttentionPtyDriver,
+  sanitizeTuiTaskAttentionError,
 } from '../../support/tuiTaskAttentionPtyDriver.js';
 import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
 import {
@@ -200,11 +201,14 @@ async function startProductionServer(input: {
     }
     if (cleanupError) {
       throw new AggregateError(
-        [error, cleanupError],
+        [
+          sanitizeTuiTaskAttentionError(error, input.secrets),
+          sanitizeTuiTaskAttentionError(cleanupError, input.secrets),
+        ],
         'Production Blade server startup and cleanup failed'
       );
     }
-    throw error;
+    throw sanitizeTuiTaskAttentionError(error, input.secrets);
   }
 }
 
@@ -219,15 +223,22 @@ async function waitForTerminal(
   const deadline = Date.now() + timeoutMs;
   let status = 'unknown';
   while (Date.now() < deadline) {
-    const response = await fetch(url);
-    if (response.ok) {
-      const session = SessionSchema.parse(await response.json());
-      status = session.taskStatus;
-      if (['completed', 'failed', 'cancelled', 'interrupted'].includes(status)) {
-        return session;
+    const remainingMs = deadline - Date.now();
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(Math.min(5_000, remainingMs)),
+      });
+      if (response.ok) {
+        const session = SessionSchema.parse(await response.json());
+        status = session.taskStatus;
+        if (['completed', 'failed', 'cancelled', 'interrupted'].includes(status)) {
+          return session;
+        }
+      } else {
+        status = `http-${response.status}`;
       }
-    } else {
-      status = `http-${response.status}`;
+    } catch (error) {
+      status = error instanceof Error ? error.name : 'request-error';
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -434,16 +445,32 @@ describeTrajectory('TUI durable task attention raw PTY trajectory (real API)', (
         resetProjectionDbCache();
         if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
         else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
-        await rm(root, { recursive: true, force: true });
+        try {
+          await rm(root, { recursive: true, force: true });
+        } catch (error) {
+          cleanupError = cleanupError
+            ? new AggregateError(
+                [cleanupError, error],
+                'TUI task attention cleanup failed'
+              )
+            : error;
+        }
       }
       if (primaryError && cleanupError) {
         throw new AggregateError(
-          [primaryError, cleanupError],
+          [
+            sanitizeTuiTaskAttentionError(primaryError, [model.apiKey]),
+            sanitizeTuiTaskAttentionError(cleanupError, [model.apiKey]),
+          ],
           'TUI task attention trajectory and cleanup failed'
         );
       }
-      if (primaryError) throw primaryError;
-      if (cleanupError) throw cleanupError;
+      if (primaryError) {
+        throw sanitizeTuiTaskAttentionError(primaryError, [model.apiKey]);
+      }
+      if (cleanupError) {
+        throw sanitizeTuiTaskAttentionError(cleanupError, [model.apiKey]);
+      }
     }, 360_000);
   }
 });

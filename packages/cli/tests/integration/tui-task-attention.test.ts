@@ -9,6 +9,11 @@ import { PermissionMode } from '../../src/config/types.js';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { resetProjectionDbCache } from '../../src/context/storage/sqlite/projection.js';
 import { SessionService } from '../../src/services/SessionService.js';
+import {
+  captureProcessIdentity,
+  type ProcessIdentity,
+  processIdentityMatches,
+} from '../../src/utils/process/ProcessIdentity.js';
 import { runTuiTaskAttentionPtyDriver } from '../support/tuiTaskAttentionPtyDriver.js';
 
 const roots: string[] = [];
@@ -68,17 +73,11 @@ async function stopBuildTree(
 }
 
 function ensureProductionCli(): Promise<void> {
-  productionCliReady ??= buildProductionCliWhenMissing();
+  productionCliReady ??= buildProductionCli();
   return productionCliReady;
 }
 
-async function buildProductionCliWhenMissing(): Promise<void> {
-  try {
-    await access(cliEntry);
-    return;
-  } catch {
-    // A clean checkout has no ignored dist; build once before the serial PTY cases.
-  }
+async function buildProductionCli(): Promise<void> {
   const { spawn } = await import('node:child_process');
   const child = spawn(
     process.execPath,
@@ -279,6 +278,73 @@ describe.skipIf(process.platform === 'win32')(
         })
       ).rejects.toThrow('fixture completion rejected');
       expect(Date.now() - startedAt).toBeLessThan(15_000);
+    }, 30_000);
+
+    it('bounds a task completion callback that never settles', async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'blade-tui-attention-hang-'));
+      roots.push(root);
+      const workspace = path.join(root, 'workspace');
+      const storageRoot = path.join(root, 'storage');
+      const home = path.join(root, 'home');
+      const sessionId = `attention-hang-${Date.now()}`;
+      await Promise.all([
+        mkdir(workspace, { recursive: true }),
+        mkdir(storageRoot, { recursive: true }),
+        mkdir(path.join(home, '.blade'), { recursive: true }),
+      ]);
+      await writeFile(
+        path.join(home, '.blade', 'config.json'),
+        `${JSON.stringify({
+          currentModelId: 'attention-fixture',
+          models: [
+            {
+              id: 'attention-fixture',
+              displayName: 'Attention Fixture',
+              provider: 'deepseek',
+              model: 'deepseek-v4-flash',
+            },
+          ],
+          permissionMode: PermissionMode.YOLO,
+          hooks: { enabled: false },
+          disableAllHooks: true,
+          mcpServers: {},
+        })}\n`,
+        { mode: 0o600 }
+      );
+      process.env.BLADE_STORAGE_ROOT = storageRoot;
+      resetProjectionDbCache();
+      await SessionService.createSessionMetadata(sessionId, workspace, {
+        title: 'Never settling completion fixture',
+        taskStatus: 'running',
+      });
+      const startedAt = Date.now();
+      let runnerPid: number | undefined;
+      let runnerIdentity: ProcessIdentity | undefined;
+
+      await expect(
+        runTuiTaskAttentionPtyDriver({
+          workspace,
+          storageRoot,
+          home,
+          sessionId,
+          title: 'Never settling completion fixture',
+          terminalContent: 'never-rendered',
+          completionTimeoutMs: 1_000,
+          timeoutMs: 15_000,
+          onRunnerSpawn: (pid) => {
+            runnerPid = pid;
+            runnerIdentity = captureProcessIdentity(pid);
+          },
+          completeTask: () => new Promise<void>(() => undefined),
+        })
+      ).rejects.toThrow('completion callback exceeded its deadline');
+      expect(Date.now() - startedAt).toBeLessThan(10_000);
+      expect(runnerPid).toEqual(expect.any(Number));
+      expect(
+        runnerPid && runnerIdentity
+          ? processIdentityMatches(runnerPid, runnerIdentity)
+          : true
+      ).toBe(false);
     }, 30_000);
   }
 );

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { spawn } from 'bun-pty';
 import {
+  ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
@@ -24,6 +25,7 @@ interface RunnerInput {
 interface LaunchResult {
   output: string;
   plainOutput: string;
+  sawNewMarker: boolean;
 }
 
 interface PtyCapture {
@@ -191,6 +193,8 @@ async function launch(
   let output = '';
   let plainOutput = '';
   let exited = false;
+  const newMarkerLatch = new ArmedPtyMarkerLatch('[NEW]');
+  newMarkerLatch.arm();
   const secretScanner = createTuiTaskAttentionSecretScanner(input.secrets);
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit(() => {
@@ -212,6 +216,7 @@ async function launch(
       stripVTControlCharacters(chunk),
       48_000
     );
+    newMarkerLatch.observe(stripVTControlCharacters(chunk));
   });
 
   let primaryError: unknown;
@@ -285,6 +290,7 @@ async function launch(
   return {
     output: redact(output, input.secrets),
     plainOutput: redact(plainOutput, input.secrets),
+    sawNewMarker: newMarkerLatch.seen,
   };
 }
 
@@ -313,7 +319,7 @@ async function main(): Promise<void> {
       },
     });
     output = appendBoundedPtyEvidence(output, first.output, 48_000);
-    const firstMarkerAbsent = !first.plainOutput.includes('[NEW]');
+    const firstMarkerAbsent = !first.sawNewMarker;
     const ledgerPath = path.join(
       process.env.BLADE_STORAGE_ROOT ?? '',
       'tui-task-attention-v1.json'
@@ -397,9 +403,9 @@ async function main(): Promise<void> {
           'Third resume selector did not render the selected Session',
           30_000
         );
-        markerCleared = !capture().plain.includes(`[NEW] [DONE] ${input.title}`);
       },
     });
+    markerCleared = !third.sawNewMarker;
     output = appendBoundedPtyEvidence(output, third.output, 48_000);
 
     process.stdout.write(

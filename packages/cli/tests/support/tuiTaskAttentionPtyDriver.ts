@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 const MAX_EVIDENCE_CHARS = 24_000;
+const MIN_COMPLETION_TIMEOUT_MS = 1_000;
+const MAX_COMPLETION_TIMEOUT_MS = 300_000;
+const RUNNER_SETTLE_TIMEOUT_MS = 250;
 
 export interface TuiTaskAttentionPtyEvidence {
   success: true;
@@ -58,6 +61,57 @@ function redact(value: string, secrets: readonly string[]): string {
     (result, secret) => (secret ? result.replaceAll(secret, '[REDACTED]') : result),
     value
   );
+}
+
+export function sanitizeTuiTaskAttentionError(
+  value: unknown,
+  secrets: readonly string[],
+  seen = new WeakSet<object>()
+): Error {
+  if (!(value instanceof Error)) {
+    return new Error(redact(String(value), secrets));
+  }
+  if (seen.has(value)) return new Error('Circular task attention error');
+  seen.add(value);
+  const cause =
+    value.cause === undefined
+      ? undefined
+      : sanitizeTuiTaskAttentionError(value.cause, secrets, seen);
+  if (value instanceof AggregateError) {
+    return new AggregateError(
+      Array.from(value.errors, (error) =>
+        sanitizeTuiTaskAttentionError(error, secrets, seen)
+      ),
+      redact(value.message, secrets),
+      cause ? { cause } : undefined
+    );
+  }
+  const sanitized = new Error(
+    redact(value.message, secrets),
+    cause ? { cause } : undefined
+  );
+  sanitized.name = redact(value.name, secrets);
+  return sanitized;
+}
+
+export async function awaitTuiTaskAttentionSettlement(
+  operation: Promise<unknown>,
+  timeoutMs: number
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation.then(
+        () => true,
+        () => true
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export interface TuiTaskAttentionSecretScanner {
@@ -204,7 +258,16 @@ export async function runTuiTaskAttentionPtyDriver(input: {
   completionTimeoutMs?: number;
   secrets?: readonly string[];
   timeoutMs?: number;
+  onRunnerSpawn?: (pid: number) => void;
 }): Promise<TuiTaskAttentionPtyEvidence> {
+  const completionTimeoutMs = input.completionTimeoutMs ?? 30_000;
+  if (
+    !Number.isSafeInteger(completionTimeoutMs) ||
+    completionTimeoutMs < MIN_COMPLETION_TIMEOUT_MS ||
+    completionTimeoutMs > MAX_COMPLETION_TIMEOUT_MS
+  ) {
+    throw new Error('Task attention completion timeout is invalid');
+  }
   const runner = path.resolve(import.meta.dirname, 'tuiTaskAttentionPtyRunner.ts');
   const cliEntry = path.resolve(import.meta.dirname, '../../dist/blade.js');
   const completionFile = path.join(
@@ -228,7 +291,7 @@ export async function runTuiTaskAttentionPtyDriver(input: {
           title: input.title,
           terminalContent: input.terminalContent,
           completionFile,
-          completionTimeoutMs: input.completionTimeoutMs ?? 30_000,
+          completionTimeoutMs,
           secrets: input.secrets ?? [],
         })
       ).toString('base64'),
@@ -244,12 +307,20 @@ export async function runTuiTaskAttentionPtyDriver(input: {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const child = runnerChild;
+    if (child.pid) input.onRunnerSpawn?.(child.pid);
     let stdout = '';
     let stderr = '';
-    let failure: Error | undefined;
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const fail = (error: Error) => {
-      failure ??= error;
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
       if (!runnerExited(child)) signalRunner(child, 'SIGKILL');
+      const failure = error as Error & Partial<RunnerResult>;
+      failure.stdout = stdout;
+      failure.stderr = stderr;
+      reject(failure);
     };
     const append = (current: string, chunk: Buffer | string): string => {
       const next = current + chunk.toString();
@@ -266,19 +337,20 @@ export async function runTuiTaskAttentionPtyDriver(input: {
       secretScanner.observe(chunk);
       stderr = append(stderr, chunk);
     });
-    const timeout = setTimeout(
+    timeout = setTimeout(
       () => fail(new Error('Task attention PTY runner exceeded its deadline')),
       input.timeoutMs ?? 100_000
     );
     child.once('error', fail);
     child.once('close', (code, signal) => {
-      clearTimeout(timeout);
-      if (!failure && code === 0) {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      if (code === 0) {
         resolve({ stdout, stderr });
         return;
       }
-      const error = (failure ??
-        new Error(`runner exited code=${code} signal=${signal}`)) as Error &
+      const error = new Error(`runner exited code=${code} signal=${signal}`) as Error &
         Partial<RunnerResult>;
       error.stdout = stdout;
       error.stderr = stderr;
@@ -296,7 +368,36 @@ export async function runTuiTaskAttentionPtyDriver(input: {
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    await input.completeTask();
+    const completion = Promise.resolve().then(() => input.completeTask());
+    void completion.catch(() => undefined);
+    let completionTimer: ReturnType<typeof setTimeout> | undefined;
+    const completionResult = await Promise.race([
+      completion.then(
+        () => ({ kind: 'completed' as const }),
+        (error: unknown) => ({ kind: 'completion_failed' as const, error })
+      ),
+      runnerResult.then(
+        (earlyResult) => ({ kind: 'runner_exited' as const, earlyResult }),
+        (error: unknown) => ({ kind: 'runner_failed' as const, error })
+      ),
+      new Promise<{ kind: 'timed_out' }>((resolve) => {
+        completionTimer = setTimeout(
+          () => resolve({ kind: 'timed_out' }),
+          Math.max(MIN_COMPLETION_TIMEOUT_MS, completionTimeoutMs - 5_000)
+        );
+      }),
+    ]);
+    if (completionTimer) clearTimeout(completionTimer);
+    if (completionResult.kind === 'completion_failed') throw completionResult.error;
+    if (completionResult.kind === 'runner_failed') throw completionResult.error;
+    if (completionResult.kind === 'runner_exited') {
+      throw new Error(
+        `Task attention PTY runner exited before task completion: ${completionResult.earlyResult.stderr}`
+      );
+    }
+    if (completionResult.kind === 'timed_out') {
+      throw new Error('Task attention completion callback exceeded its deadline');
+    }
     await writeFile(`${completionFile}.done`, 'completed\n', { mode: 0o600 });
     result = await runnerResult;
   } catch (error) {
@@ -308,19 +409,25 @@ export async function runTuiTaskAttentionPtyDriver(input: {
         cleanupError = cleanupFailure;
       }
     }
-    await runnerResult.catch(() => undefined);
-    const failure = error as Error & { stdout?: string; stderr?: string };
-    const diagnostic = redact(
-      `${failure.stdout ?? ''}\n${failure.stderr ?? ''}\n${failure.message}`,
-      input.secrets ?? []
-    ).slice(-8_000);
-    if (cleanupError) {
+    if (!runnerChild || runnerExited(runnerChild)) {
+      await runnerResult.catch(() => undefined);
+    } else {
+      await awaitTuiTaskAttentionSettlement(runnerResult, RUNNER_SETTLE_TIMEOUT_MS);
+    }
+    const safeError = sanitizeTuiTaskAttentionError(error, input.secrets ?? []);
+    const diagnostic = safeError.message.slice(-8_000);
+    const safeCleanupError = cleanupError
+      ? sanitizeTuiTaskAttentionError(cleanupError, input.secrets ?? [])
+      : undefined;
+    if (safeCleanupError) {
       throw new AggregateError(
-        [error, cleanupError],
+        [safeError, safeCleanupError],
         `Task attention PTY runner and cleanup failed: ${diagnostic}`
       );
     }
-    throw new Error(`Task attention PTY runner failed: ${diagnostic}`);
+    throw new Error(`Task attention PTY runner failed: ${diagnostic}`, {
+      cause: safeError,
+    });
   }
 
   const leakedSecrets = secretScanner.leakedSecretLabels();

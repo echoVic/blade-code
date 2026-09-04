@@ -10,8 +10,10 @@ import {
 } from '../../../scripts/qualification.js';
 import {
   assertTuiTaskAttentionRunnerOutputSafe,
+  awaitTuiTaskAttentionSettlement,
   createTuiTaskAttentionSecretScanner,
   createTuiTaskAttentionStreamCapture,
+  sanitizeTuiTaskAttentionError,
 } from '../../support/tuiTaskAttentionPtyDriver.js';
 
 describe('production qualification contract', () => {
@@ -196,6 +198,9 @@ describe('production qualification contract', () => {
     expect(driver).toContain('TUI_TASK_ATTENTION_PTY_USES_PRODUCTION_DIST');
     expect(runner).toContain("import { spawn } from 'bun-pty'");
     expect(runner).toContain('input.nodeExecutable');
+    expect(runner).toContain('ArmedPtyMarkerLatch');
+    expect(trajectory).toContain('AbortSignal.timeout');
+    expect(trajectory).toContain('completionTimeoutMs: 190_000');
     expect(deterministic).toContain('productionCliReady ??=');
     expect(deterministic).toContain('beforeAll(async () =>');
     expect(deterministic).toContain('BUILD_DEADLINE_MS = 120_000');
@@ -241,6 +246,34 @@ describe('production qualification contract', () => {
 
     expect(capture.output()).not.toContain(secret);
     expect(capture.leakedSecretLabels()).toEqual(['secret-1']);
+  });
+
+  it('bounds settlement when a killed runner never resolves', async () => {
+    const pending = new Promise<never>(() => undefined);
+    const startedAt = Date.now();
+
+    await awaitTuiTaskAttentionSettlement(pending, 10);
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it('recursively redacts ordinary and aggregate task attention errors', () => {
+    const secret = 'nested-error-secret';
+    const nested = new Error(`cause ${secret}`);
+    const aggregate = new AggregateError(
+      [new Error(`member ${secret}`, { cause: nested })],
+      `aggregate ${secret}`,
+      { cause: new Error(`outer cause ${secret}`) }
+    );
+
+    const sanitized = sanitizeTuiTaskAttentionError(aggregate, [secret]);
+    const serialized = JSON.stringify(sanitized, Object.getOwnPropertyNames(sanitized));
+
+    expect(serialized).not.toContain(secret);
+    expect(sanitized.message).toContain('[REDACTED]');
+    expect(sanitized).toBeInstanceOf(AggregateError);
+    expect((sanitized as AggregateError).errors).toHaveLength(1);
+    expect((sanitized as AggregateError).errors[0].message).toContain('[REDACTED]');
   });
 
   it('resolves the monorepo root from the CLI scripts directory', () => {
