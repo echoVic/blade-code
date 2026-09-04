@@ -23,6 +23,7 @@ export interface SessionHistoryLifecycleController {
 export class SessionHistoryLifecycle {
   private active?: SessionHistoryLifecycleController;
   private generation = 0;
+  private remoteRequestEpoch = 0;
 
   constructor(
     private readonly factory: () => SessionHistoryLifecycleController = () =>
@@ -59,6 +60,7 @@ export class SessionHistoryLifecycle {
   }
 
   closeView(): Promise<void> {
+    this.cancelRemoteRequest();
     return this.active?.closeView() ?? Promise.resolve();
   }
 
@@ -69,6 +71,18 @@ export class SessionHistoryLifecycle {
   fork(target: SessionHistoryActionTarget): Promise<void> {
     return this.active?.fork(target) ?? Promise.resolve();
   }
+
+  beginRemoteRequest(): number {
+    return ++this.remoteRequestEpoch;
+  }
+
+  cancelRemoteRequest(): void {
+    this.remoteRequestEpoch += 1;
+  }
+
+  isCurrentRemoteRequest(epoch: number): boolean {
+    return this.active !== undefined && this.remoteRequestEpoch === epoch;
+  }
 }
 
 export async function activateRemoteTaskAttention(
@@ -76,9 +90,27 @@ export async function activateRemoteTaskAttention(
   attention: TuiTaskAttentionLifecycle,
   viewer: { intent: SessionSelectionIntent; session: SessionSurfaceSummary }
 ): Promise<void> {
-  await attention.setVisibleLocator();
+  const requestEpoch = history.beginRemoteRequest();
+  const opening = attention.beginRemoteOpening();
+  await opening.cleared.catch(() => undefined);
+  if (
+    !history.isCurrentRemoteRequest(requestEpoch) ||
+    !attention.isRemoteOpeningCurrent(opening.epoch)
+  ) {
+    return;
+  }
   const activation = history.activate(viewer.session, viewer.intent);
-  await attention.beginRemote(viewer, history.getState().viewGeneration);
+  if (
+    !history.isCurrentRemoteRequest(requestEpoch) ||
+    !attention.bindRemoteOpening(
+      opening.epoch,
+      viewer,
+      history.getState().viewGeneration
+    )
+  ) {
+    await activation;
+    return;
+  }
   await activation;
 }
 

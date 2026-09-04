@@ -36,7 +36,10 @@ interface TaskAttentionVisibilityBoundary {
 
 interface TaskAttentionStarter {
   start(): Promise<void>;
-  getState(): { readonly sessions: readonly SessionSurfaceSummary[] };
+  getState(): {
+    readonly status: 'idle' | 'loading' | 'ready' | 'error';
+    readonly sessions: readonly SessionSurfaceSummary[];
+  };
 }
 
 interface TaskAttentionStartupIdentity {
@@ -57,6 +60,12 @@ export async function initializeTuiTaskAttentionVisibility(
     identity.continueSession ||
     identity.resume !== undefined ||
     identity.forkSession
+  ) {
+    return;
+  }
+  if (
+    identity.requestedSessionId !== undefined &&
+    controller.getState().status !== 'ready'
   ) {
     return;
   }
@@ -160,6 +169,27 @@ export class TuiTaskAttentionVisibilityCoordinator {
     this.remoteActive = true;
     this.remoteEpoch += 1;
     this.remote.begin(viewer, generation);
+  }
+
+  beginRemoteOpening(): { epoch: number; cleared: Promise<void> } {
+    this.remoteActive = true;
+    const epoch = ++this.remoteEpoch;
+    this.remote.reset();
+    return { epoch, cleared: this.attention.setVisibleLocator(undefined) };
+  }
+
+  isRemoteOpeningCurrent(epoch: number): boolean {
+    return this.remoteActive && this.remoteEpoch === epoch;
+  }
+
+  bindRemoteOpening(
+    epoch: number,
+    viewer: { intent: SessionSelectionIntent; session: SessionSurfaceSummary },
+    generation: number
+  ): boolean {
+    if (!this.isRemoteOpeningCurrent(epoch)) return false;
+    this.remote.begin(viewer, generation);
+    return true;
   }
 
   async endRemote(): Promise<void> {

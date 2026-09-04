@@ -658,6 +658,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       });
       return;
     }
+    sessionHistoryController.cancelRemoteRequest();
     void taskAttentionLifecycle.endRemote().catch(() => {
       logger.warn('[BladeInterface] Task attention visibility unavailable');
     });

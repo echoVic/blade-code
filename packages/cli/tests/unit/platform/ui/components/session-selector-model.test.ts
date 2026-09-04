@@ -96,7 +96,7 @@ describe('sessionSelectorModel', () => {
     const initialization = initializeTuiTaskAttentionVisibility(
       {
         start: vi.fn(() => started),
-        getState: () => ({ sessions: [] }),
+        getState: () => ({ status: 'ready', sessions: [] }),
       },
       coordinator,
       {
@@ -133,7 +133,7 @@ describe('sessionSelectorModel', () => {
     await initializeTuiTaskAttentionVisibility(
       {
         start: vi.fn(async () => undefined),
-        getState: () => ({ sessions: [local] }),
+        getState: () => ({ status: 'ready', sessions: [local] }),
       },
       coordinator,
       {
@@ -166,7 +166,7 @@ describe('sessionSelectorModel', () => {
     await initializeTuiTaskAttentionVisibility(
       {
         start: vi.fn(async () => undefined),
-        getState: () => ({ sessions: [] }),
+        getState: () => ({ status: 'ready', sessions: [] }),
       },
       coordinator,
       {
@@ -179,6 +179,38 @@ describe('sessionSelectorModel', () => {
     );
 
     expect(setVisibleLocator).toHaveBeenCalledWith(local.locator);
+  });
+
+  it('does not prove an explicit session id when startup catalog refresh failed', async () => {
+    const {
+      initializeTuiTaskAttentionVisibility,
+      TuiTaskAttentionVisibilityCoordinator,
+    } = await import('../../../../../src/ui/components/sessionSelectorModel.js');
+    const local = createLocalSummary();
+    const setVisibleLocator = vi.fn(
+      async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
+    );
+    const coordinator = new TuiTaskAttentionVisibilityCoordinator({
+      acknowledge: vi.fn(async (_summary: SessionSurfaceSummary) => undefined),
+      setVisibleLocator,
+    });
+
+    await initializeTuiTaskAttentionVisibility(
+      {
+        start: vi.fn(async () => undefined),
+        getState: () => ({ status: 'error', sessions: [] }),
+      },
+      coordinator,
+      {
+        continueSession: false,
+        resume: undefined,
+        forkSession: false,
+        requestedSessionId: local.locator.sessionId,
+        locator: local.locator,
+      }
+    );
+
+    expect(setVisibleLocator).not.toHaveBeenCalled();
   });
 
   it('proves an explicit session id that exists only in another workspace', async () => {
@@ -205,7 +237,7 @@ describe('sessionSelectorModel', () => {
     await initializeTuiTaskAttentionVisibility(
       {
         start: vi.fn(async () => undefined),
-        getState: () => ({ sessions: [collision] }),
+        getState: () => ({ status: 'ready', sessions: [collision] }),
       },
       coordinator,
       {

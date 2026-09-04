@@ -71,9 +71,9 @@ class FakeAttentionController {
   readonly start = vi.fn(async () => undefined);
   readonly listAll = vi.fn(async (): Promise<SessionSurfaceSummary[]> => []);
   readonly acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
-  readonly setVisibleLocator = vi.fn(
-    async (_locator?: SessionSurfaceSummary['locator']) => undefined
-  );
+  readonly setVisibleLocator = vi.fn<
+    (_locator?: SessionSurfaceSummary['locator']) => Promise<void>
+  >(async () => undefined);
   readonly subscribe = vi.fn((_listener: (state: TuiTaskAttentionState) => void) =>
     vi.fn()
   );
@@ -186,5 +186,124 @@ describe('SessionHistoryLifecycle', () => {
     expect(historyController.close).toHaveBeenCalledOnce();
     expect(attentionController.close).toHaveBeenCalledOnce();
     attentionVisibility = undefined;
+  });
+
+  it('does not activate after a deferred visibility clear is cancelled by close', async () => {
+    const historyController = new FakeHistoryController();
+    const attentionController = new FakeAttentionController();
+    const history = new SessionHistoryLifecycle(() => historyController);
+    const attention = new TuiTaskAttentionLifecycle(() => attentionController);
+    history.acquire(() => undefined);
+    attention.acquire(() => undefined);
+    let resolveClear = (): void => undefined;
+    attentionController.setVisibleLocator.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClear = resolve;
+        })
+    );
+    const remote = {
+      locator: {
+        version: 2 as const,
+        sessionId: 'remote-a',
+        workspace: {
+          kind: 'acp-remote' as const,
+          workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+        },
+      },
+    } as SessionSurfaceSummary;
+
+    const opening = activateRemoteTaskAttention(history, attention, {
+      intent: 'resume',
+      session: remote,
+    });
+    history.cancelRemoteRequest();
+    await attention.endRemote();
+    resolveClear();
+    await opening;
+
+    expect(historyController.activate).not.toHaveBeenCalled();
+  });
+
+  it('activates only the latest remote when visibility clears resolve in reverse order', async () => {
+    const historyController = new FakeHistoryController();
+    const attentionController = new FakeAttentionController();
+    const history = new SessionHistoryLifecycle(() => historyController);
+    const attention = new TuiTaskAttentionLifecycle(() => attentionController);
+    history.acquire(() => undefined);
+    attention.acquire(() => undefined);
+    const clearResolvers: Array<() => void> = [];
+    attentionController.setVisibleLocator.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          clearResolvers.push(resolve);
+        })
+    );
+    const first = {
+      locator: {
+        version: 2 as const,
+        sessionId: 'remote-a',
+        workspace: {
+          kind: 'acp-remote' as const,
+          workspaceRef: `acp-remote-workspace:${'A'.repeat(43)}`,
+        },
+      },
+    } as SessionSurfaceSummary;
+    const second = {
+      ...first,
+      locator: {
+        ...first.locator,
+        sessionId: 'remote-b',
+        workspace: {
+          kind: 'acp-remote' as const,
+          workspaceRef: `acp-remote-workspace:${'B'.repeat(43)}`,
+        },
+      },
+    };
+
+    const openingA = activateRemoteTaskAttention(history, attention, {
+      intent: 'resume',
+      session: first,
+    });
+    const openingB = activateRemoteTaskAttention(history, attention, {
+      intent: 'resume',
+      session: second,
+    });
+    clearResolvers[1]?.();
+    await openingB;
+    clearResolvers[0]?.();
+    await openingA;
+
+    expect(historyController.activate).toHaveBeenCalledOnce();
+    expect(historyController.activate).toHaveBeenCalledWith(second, 'resume');
+  });
+
+  it('continues the current remote activation when clearing visibility fails', async () => {
+    const historyController = new FakeHistoryController();
+    const attentionController = new FakeAttentionController();
+    const history = new SessionHistoryLifecycle(() => historyController);
+    const attention = new TuiTaskAttentionLifecycle(() => attentionController);
+    history.acquire(() => undefined);
+    attention.acquire(() => undefined);
+    attentionController.setVisibleLocator.mockRejectedValueOnce(
+      new Error('clear unavailable')
+    );
+    const remote = {
+      locator: {
+        version: 2 as const,
+        sessionId: 'remote-current',
+        workspace: {
+          kind: 'acp-remote' as const,
+          workspaceRef: `acp-remote-workspace:${'C'.repeat(43)}`,
+        },
+      },
+    } as SessionSurfaceSummary;
+
+    await activateRemoteTaskAttention(history, attention, {
+      intent: 'resume',
+      session: remote,
+    });
+
+    expect(historyController.activate).toHaveBeenCalledWith(remote, 'resume');
   });
 });

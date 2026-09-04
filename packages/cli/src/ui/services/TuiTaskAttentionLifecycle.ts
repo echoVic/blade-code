@@ -87,6 +87,29 @@ export class TuiTaskAttentionLifecycle {
     return this.active?.visibility.beginRemote(viewer, generation) ?? Promise.resolve();
   }
 
+  beginRemoteOpening(): { epoch: number; cleared: Promise<void> } {
+    return (
+      this.active?.visibility.beginRemoteOpening() ?? {
+        epoch: 0,
+        cleared: Promise.resolve(),
+      }
+    );
+  }
+
+  isRemoteOpeningCurrent(epoch: number): boolean {
+    return this.active?.visibility.isRemoteOpeningCurrent(epoch) ?? false;
+  }
+
+  bindRemoteOpening(
+    epoch: number,
+    viewer: Parameters<TuiTaskAttentionVisibilityCoordinator['bindRemoteOpening']>[1],
+    generation: number
+  ): boolean {
+    return (
+      this.active?.visibility.bindRemoteOpening(epoch, viewer, generation) ?? false
+    );
+  }
+
   endRemote(): Promise<void> {
     return this.active?.visibility.endRemote() ?? Promise.resolve();
   }
