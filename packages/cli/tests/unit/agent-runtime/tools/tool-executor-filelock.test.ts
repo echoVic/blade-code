@@ -15,6 +15,7 @@ import { AcpFileSystemService } from '../../../../src/acp/AcpFileSystemService.j
 import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
 import { createAcpRemoteWorkspaceDescriptor } from '../../../../src/acp/AcpRemoteWorkspace.js';
 import { AcpServiceContext } from '../../../../src/acp/AcpServiceContext.js';
+import { createLocalSessionWorkspace } from '../../../../src/agent/runtime/SessionWorkspace.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
 import {
@@ -879,13 +880,372 @@ describe('ToolExecutor — file lock logic', () => {
       });
       expect(result.error?.details).toBeUndefined();
       expect(result.metadata?.file_path).toBeUndefined();
-      expect(result.metadata?.sideEffectsUncertain).toBeUndefined();
+      expect(result.metadata?.sideEffectsUncertain).toBe(false);
       expect(JSON.stringify(result)).not.toContain(rejectedPath);
       expect(scheduleSpy).not.toHaveBeenCalled();
       expect(opaqueLockSpy).not.toHaveBeenCalled();
       expect(invocationSpy).not.toHaveBeenCalled();
       expect(client.requests).toEqual([]);
       opaqueLockSpy.mockRestore();
+    });
+
+    it('rejects an invalid remote generic write path before scheduling locking or invocation', async () => {
+      const rejectedPath = 'C:\\workspace\\artifact.txt:$DATA';
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'mcp__safe__write_path',
+        displayName: 'Write Path',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({ path: Type.String() }),
+        description: { short: 'typed remote generic path probe' },
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.registerMcpTool(tool as Tool);
+      const scheduler = new ConcurrencyScheduler();
+      const scheduleSpy = vi.spyOn(scheduler, 'schedule');
+      const hostLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireLock');
+      const opaqueLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        scheduler,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId: 'remote-generic-path',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        },
+      });
+
+      const result = await executor.execute(tool.name, { path: rejectedPath }, {});
+
+      expect(result).toMatchObject({
+        success: false,
+        llmContent: 'ACP remote file path is invalid',
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          code: 'acp_remote_path_invalid',
+          message: 'ACP remote file path is invalid',
+        },
+        metadata: { sideEffectsUncertain: false },
+      });
+      expect(result.error?.details).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(rejectedPath);
+      expect(scheduleSpy).not.toHaveBeenCalled();
+      expect(hostLockSpy).not.toHaveBeenCalled();
+      expect(opaqueLockSpy).not.toHaveBeenCalled();
+      expect(invocationSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects every explicitly declared remote affected path', async () => {
+      const rejectedPath = 'C:\\workspace\\second.txt:$DATA';
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'mcp__safe__inspect_targets',
+        displayName: 'Inspect Targets',
+        kind: ToolKind.ReadOnly,
+        isConcurrencySafe: true,
+        parallelism: 'shared',
+        schema: Type.Object({
+          primary: Type.String(),
+          secondary: Type.String(),
+        }),
+        description: { short: 'typed affected path probe' },
+        affectedPaths: (params) => [params.primary, params.secondary],
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.registerMcpTool(tool as Tool);
+      const scheduler = new ConcurrencyScheduler();
+      const scheduleSpy = vi.spyOn(scheduler, 'schedule');
+      const hookSpy = vi.fn(async () => ({ inputModified: false }));
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        scheduler,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId: 'remote-affected-paths',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        },
+      });
+      Reflect.set(executor, 'preToolUseHookRunner', hookSpy);
+
+      const result = await executor.execute(
+        tool.name,
+        {
+          primary: 'C:\\workspace\\first.txt',
+          secondary: rejectedPath,
+        },
+        {}
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: 'acp_remote_path_invalid' },
+      });
+      expect(result.metadata?.sideEffectsUncertain).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(rejectedPath);
+      expect(hookSpy).not.toHaveBeenCalled();
+      expect(scheduleSpy).not.toHaveBeenCalled();
+      expect(invocationSpy).not.toHaveBeenCalled();
+    });
+
+    it('revalidates hook-rewritten remote affected paths before scheduling or invocation', async () => {
+      const rejectedPath = 'C:\\workspace\\rewritten.txt:$DATA';
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'mcp__safe__transform_target',
+        displayName: 'Transform Target',
+        kind: ToolKind.Execute,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({ target: Type.String() }),
+        description: { short: 'typed rewritten affected path probe' },
+        affectedPaths: (params) => [params.target],
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.registerMcpTool(tool as Tool);
+      const scheduler = new ConcurrencyScheduler();
+      const scheduleSpy = vi.spyOn(scheduler, 'schedule');
+      const opaqueLockSpy = vi.spyOn(FileLockManager.prototype, 'acquireOpaqueLock');
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        scheduler,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId: 'remote-hook-affected-path',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        },
+      });
+      const hookSpy = vi.fn(async (hookTool: Tool, params: Record<string, unknown>) => {
+        const modifiedParams = { ...params, target: rejectedPath };
+        return {
+          params: modifiedParams,
+          invocation: hookTool.build(modifiedParams),
+          inputModified: true,
+        };
+      });
+      Reflect.set(executor, 'preToolUseHookRunner', hookSpy);
+
+      const result = await executor.execute(
+        tool.name,
+        { target: 'C:\\workspace\\safe.txt' },
+        {}
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: 'acp_remote_path_invalid' },
+        metadata: { sideEffectsUncertain: false },
+      });
+      expect(JSON.stringify(result)).not.toContain(rejectedPath);
+      expect(hookSpy).toHaveBeenCalledTimes(1);
+      expect(scheduleSpy).not.toHaveBeenCalled();
+      expect(opaqueLockSpy).not.toHaveBeenCalled();
+      expect(invocationSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not treat an undeclared readonly MCP path field as a remote file path', async () => {
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'mcp__safe__resource_path',
+        displayName: 'Resource Path',
+        kind: ToolKind.ReadOnly,
+        isConcurrencySafe: true,
+        parallelism: 'shared',
+        schema: Type.Object({ path: Type.String() }),
+        description: { short: 'typed non-filesystem path probe' },
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'resource path ok' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.registerMcpTool(tool as Tool);
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId: 'remote-resource-path',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        },
+      });
+
+      await expect(
+        executor.execute(tool.name, { path: 'opaque://resource:not-a-file' }, {})
+      ).resolves.toMatchObject({ success: true, llmContent: 'resource path ok' });
+      expect(invocationSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not apply ACP remote path parsing to a local write path', async () => {
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'LocalWritePath',
+        displayName: 'Local Write Path',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({ path: Type.String() }),
+        description: { short: 'typed local generic path probe' },
+        affectedPaths: (params) => [params.path],
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'local path ok' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.register(tool as Tool);
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: createWorkspaceToolPolicy(
+          createLocalSessionWorkspace('/workspace')
+        ),
+        contextDefaults: {
+          sessionId: 'local-generic-path',
+          workspaceKind: 'local',
+          workspaceRoot: '/workspace',
+          executionRoot: '/workspace',
+        },
+      });
+
+      await expect(
+        executor.execute(tool.name, { path: 'C:\\workspace\\local.txt:$DATA' }, {})
+      ).resolves.toMatchObject({ success: true, llmContent: 'local path ok' });
+      expect(invocationSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves relative ApplyPatch affected paths to its dedicated remote preflight', async () => {
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'ApplyPatch',
+        displayName: 'Apply Patch',
+        kind: ToolKind.Write,
+        isConcurrencySafe: true,
+        parallelism: 'shared',
+        schema: Type.Object({ patch: Type.String() }),
+        description: { short: 'typed ApplyPatch boundary probe' },
+        affectedPaths: () => ['src/file.ts'],
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'dedicated preflight ran' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.register(tool as Tool);
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'posix',
+        },
+        contextDefaults: {
+          sessionId: 'remote-apply-patch-paths',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: '/workspace',
+        },
+      });
+
+      await expect(
+        executor.execute(tool.name, { patch: 'fixture' }, {})
+      ).resolves.toMatchObject({
+        success: true,
+        llmContent: 'dedicated preflight ran',
+      });
+      expect(invocationSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not grant the ApplyPatch path exemption to a dynamic MCP tool by name', async () => {
+      const rejectedPath = 'C:\\workspace\\dynamic.txt:$DATA';
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'ApplyPatch',
+        displayName: 'Dynamic Apply Patch',
+        kind: ToolKind.Write,
+        isConcurrencySafe: true,
+        parallelism: 'shared',
+        schema: Type.Object({ target: Type.String() }),
+        description: { short: 'dynamic name collision probe' },
+        affectedPaths: (params) => [params.target],
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.registerMcpTool(tool as Tool);
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId: 'remote-dynamic-apply-patch',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        },
+      });
+
+      const result = await executor.execute(tool.name, { target: rejectedPath }, {});
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: 'acp_remote_path_invalid' },
+        metadata: { sideEffectsUncertain: false },
+      });
+      expect(JSON.stringify(result)).not.toContain(rejectedPath);
+      expect(invocationSpy).not.toHaveBeenCalled();
     });
 
     it('rejects a hook-rewritten invalid remote path before scheduling or locking', async () => {

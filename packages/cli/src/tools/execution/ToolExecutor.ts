@@ -300,8 +300,8 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
         errorType: ToolErrorType.VALIDATION_ERROR,
       });
     }
+    const isBuiltin = this.registry.getBuiltinTools().includes(tool);
     if (this.workspaceToolPolicy) {
-      const isBuiltin = this.registry.getBuiltinTools().includes(tool);
       if (isBuiltin) {
         const access = evaluateBuiltinToolAccess(this.workspaceToolPolicy, toolName);
         if (!access.allowed) {
@@ -320,10 +320,11 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
       return validation;
     }
     onParamsResolved(validation.params);
-    const initialPathRejection = this.validateRemoteFilePath(
+    const initialPathRejection = this.validateRemoteDeclaredPaths(
       toolName,
       tool,
-      validation.invocation.params
+      validation.invocation,
+      isBuiltin
     );
     if (initialPathRejection) {
       return initialPathRejection;
@@ -379,10 +380,11 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
         params = invocationParams as Record<string, unknown>;
         onParamsResolved(params);
         if (hookResult.inputModified) {
-          const modifiedPathRejection = this.validateRemoteFilePath(
+          const modifiedPathRejection = this.validateRemoteDeclaredPaths(
             toolName,
             tool,
-            invocation.params
+            invocation,
+            isBuiltin
           );
           if (modifiedPathRejection) {
             return modifiedPathRejection;
@@ -811,15 +813,17 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     }
   }
 
-  private validateRemoteFilePath(
+  private validateRemoteDeclaredPaths(
     toolName: string,
     tool: { readonly kind: ToolKind; readonly isConcurrencySafe: boolean },
-    value: unknown
+    invocation: ToolInvocation<unknown>,
+    isBuiltin: boolean
   ): ToolResult | undefined {
     if (this.workspaceToolPolicy?.kind !== 'acp-remote') {
       return undefined;
     }
 
+    const value = invocation.params;
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
       return undefined;
     }
@@ -828,22 +832,40 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     const isRemoteSingleFileTool =
       toolName === 'Read' || toolName === 'Write' || toolName === 'Edit';
     const hasActualLockInput = !tool.isConcurrencySafe && typeof pathValue === 'string';
-    if (!isRemoteSingleFileTool && !hasActualLockInput) {
-      return undefined;
+    const pathCandidates = new Set<string>();
+    if (
+      (isRemoteSingleFileTool || hasActualLockInput) &&
+      typeof pathValue === 'string'
+    ) {
+      pathCandidates.add(pathValue);
     }
-    if (typeof pathValue !== 'string') {
-      return undefined;
+    const usesDedicatedRemotePathPreflight = isBuiltin && toolName === 'ApplyPatch';
+    if (
+      !usesDedicatedRemotePathPreflight &&
+      tool.kind === ToolKind.Write &&
+      typeof params.path === 'string'
+    ) {
+      pathCandidates.add(params.path);
+    }
+    if (!usesDedicatedRemotePathPreflight) {
+      for (const affectedPath of invocation.getAffectedPaths()) {
+        if (typeof affectedPath === 'string') {
+          pathCandidates.add(affectedPath);
+        }
+      }
     }
 
     try {
-      parseAcpRemotePath(pathValue, this.workspaceToolPolicy.pathStyle);
+      for (const candidate of pathCandidates) {
+        parseAcpRemotePath(candidate, this.workspaceToolPolicy.pathStyle);
+      }
       return undefined;
     } catch (error) {
       if (!(error instanceof AcpRemotePathError)) {
         throw error;
       }
       return createInvalidAcpRemotePathResult({
-        mutation: toolName === 'Write' || toolName === 'Edit',
+        mutation: tool.kind !== ToolKind.ReadOnly,
       });
     }
   }
