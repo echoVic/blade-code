@@ -58,11 +58,18 @@ expect(invalidSummary.taskCompletedAt).toBeUndefined();
 - [ ] Serialize mutations through `KeyedMutexRegistry` and `proper-lockfile`, read after
   acquiring the file lock, and write with `write-file-atomic`, mode `0600`, under a
   `0700` directory.
+- [ ] Keep failed writes/locks/reads as a bounded semantic mutation journal and replay
+  it once over the next locked latest disk state. Treat only `ENOENT` and explicitly
+  invalid v1 content as empty; other I/O failures must not be written back as empty.
+  Use a non-throwing `onCompromised` callback and prevent writes after compromise.
 - [ ] Add a real two-Bun-process fixture proving concurrent exact entries are not lost.
 - [ ] Reconcile acknowledged terminal entries by authoritative newest-first catalog
   order on every complete pass, retaining the latest 1,024 plus every protected
   null/unread entry. Repeat the same 1,025-entry catalog and add one newer terminal to
   prove the retained set is stable and admits the new latest entry.
+- [ ] Deduplicate repeated locators by the first newest-first occurrence. Add tests for
+  write-failure replay over a second writer's committed update, transient read failure,
+  lock compromise, and bounded fixture timeouts/child cleanup.
 - [ ] Run focused tests, type-check, Biome, and diff check; commit as
   `feat(tui): persist task attention`.
 

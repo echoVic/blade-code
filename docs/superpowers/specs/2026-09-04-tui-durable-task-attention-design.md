@@ -88,7 +88,19 @@ latest file, compute the next state, and use `write-file-atomic` with mode `0600
 parent directory is created/chmodded to `0700`. Persistence failures do not block
 Session listing or activation: the controller retains the newly computed in-memory
 snapshot for the current process and reports only a bounded diagnostic through the
-logger.
+logger. Failed mutations remain in a bounded in-memory semantic journal. On the next
+successful lock/read cycle, Blade replays that journal over the latest disk state
+before applying the new mutation, preserving both this process's fail-soft decisions
+and another process's committed updates. The journal is cleared only after atomic
+write and permission hardening complete.
+
+Only `ENOENT` and content that is explicitly invalid under the bounded v1 parser are
+treated as an empty ledger. Other stat/open/read failures abort the disk mutation and
+use the semantic journal against the in-memory snapshot; they must not overwrite
+valid state with an assumed empty ledger. Reads use one opened handle and enforce the
+byte limit on the bytes actually read. `proper-lockfile` receives a non-throwing
+`onCompromised` callback; a compromised lock prevents the guarded write and enters the
+same bounded fail-soft diagnostic path.
 
 The store retains every active non-terminal and unread entry, plus the 1,024 most
 recent acknowledged terminal Sessions according to the complete catalog's
@@ -100,7 +112,8 @@ Explicit and visible acknowledgement still clears unread exactly, but the next
 complete reconciliation restores catalog-recency ordering. Because keys and
 signatures are fixed-size and task admission is already bounded, this keeps ordinary
 state compact without evicting an unread marker. Entries absent from a complete
-catalog are removed.
+catalog are removed. Duplicate locators in one input catalog are deduplicated by their
+first, therefore newest, occurrence before transition or capacity accounting.
 
 ## Reconciliation State Machine
 
