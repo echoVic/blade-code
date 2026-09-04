@@ -115,6 +115,13 @@ const SessionSurfaceCursorSchema = Type.String({ minLength: 1 });
 
 const SessionSurfaceSnapshotSchema = Type.String({ minLength: 1 });
 
+export function canonicalizeSessionSurfaceTimestamp(
+  value: string | undefined
+): string | undefined {
+  const timestamp = value === undefined ? Number.NaN : Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+}
+
 export const SessionSurfaceSummarySchema = Runtime(
   StrictObject({
     locator: SessionLocatorV2Schema,

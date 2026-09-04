@@ -1,5 +1,6 @@
 import path from 'node:path';
 import {
+  canonicalizeSessionSurfaceTimestamp,
   type SessionSurfaceSummary,
   SessionSurfaceSummarySchema,
 } from '../../api/sessionSurfaceSchemas.js';
@@ -68,6 +69,7 @@ export function toLocalSessionSurfaceSummary(
     throw new Error('Remote history cannot enter the local compatibility path');
   }
   const archived = metadata.archivedAt !== undefined;
+  const taskCompletedAt = canonicalizeSessionSurfaceTimestamp(metadata.taskCompletedAt);
   return SessionSurfaceSummarySchema.parse({
     locator: {
       version: 2,
@@ -80,7 +82,7 @@ export function toLocalSessionSurfaceSummary(
     parentId: metadata.parentId,
     relationType: metadata.relationType,
     taskStatus: metadata.taskStatus,
-    taskCompletedAt: metadata.taskCompletedAt,
+    ...(taskCompletedAt !== undefined ? { taskCompletedAt } : {}),
     messageCount: metadata.messageCount,
     firstMessageTime: metadata.firstMessageTime,
     lastMessageTime: metadata.lastMessageTime,

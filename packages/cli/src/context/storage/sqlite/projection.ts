@@ -24,6 +24,7 @@ import {
 } from '../../../acp/AcpRemoteWorkspace.js';
 import { getOrCreateAcpRemoteWorkspaceReferenceInScope } from '../../../acp/AcpRemoteWorkspaceReference.js';
 import {
+  canonicalizeSessionSurfaceTimestamp,
   type SessionSurfaceMessage,
   SessionSurfaceMessageSchema,
   type SessionSurfaceSummary,
@@ -515,10 +516,7 @@ export function projectSessionSurfaceSummaryFields(
   };
   const relationType = metadata.relationType as 'subagent' | 'fork' | undefined;
   const taskStatus = metadata.taskStatus as SessionSurfaceSummary['taskStatus'];
-  const taskCompletedAt =
-    typeof metadata.taskCompletedAt === 'string'
-      ? Date.parse(metadata.taskCompletedAt)
-      : Number.NaN;
+  const taskCompletedAt = canonicalizeSessionSurfaceTimestamp(metadata.taskCompletedAt);
   return {
     displayCwd: remoteDescriptor?.wirePath ?? metadata.projectPath,
     ...(remoteDescriptor ? { pathStyle: remoteDescriptor.style } : {}),
@@ -529,9 +527,7 @@ export function projectSessionSurfaceSummaryFields(
     ...(metadata.parentId !== undefined ? { parentId: metadata.parentId } : {}),
     ...(relationType !== undefined ? { relationType } : {}),
     taskStatus,
-    ...(Number.isFinite(taskCompletedAt)
-      ? { taskCompletedAt: new Date(taskCompletedAt).toISOString() }
-      : {}),
+    ...(taskCompletedAt !== undefined ? { taskCompletedAt } : {}),
     messageCount: metadata.messageCount,
     firstMessageTime: metadata.firstMessageTime,
     lastMessageTime: metadata.lastMessageTime,

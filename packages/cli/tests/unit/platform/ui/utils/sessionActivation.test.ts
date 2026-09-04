@@ -717,9 +717,9 @@ describe('listSessionCandidatesForIntent', () => {
     serviceMocks.listSessions.mockReset();
   });
 
-  it('preserves the durable task completion timestamp in local summaries', async () => {
+  it('canonicalizes the durable task completion timestamp in local summaries', async () => {
     const metadata = createSessionMetadata({
-      taskCompletedAt: '2026-09-04T12:30:00.000Z',
+      taskCompletedAt: '2026-09-04T14:30:00+02:00',
     });
     const { toLocalSessionSurfaceSummary } = await import(
       '../../../../../src/ui/utils/sessionActivation.js'
@@ -728,6 +728,19 @@ describe('listSessionCandidatesForIntent', () => {
     const summary = toLocalSessionSurfaceSummary(metadata);
 
     expect(summary.taskCompletedAt).toBe('2026-09-04T12:30:00.000Z');
+  });
+
+  it('omits invalid legacy task completion timestamps from local summaries', async () => {
+    const metadata = createSessionMetadata({
+      taskCompletedAt: 'PRIVATE_FAILURE_TEXT',
+    });
+    const { toLocalSessionSurfaceSummary } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    const summary = toLocalSessionSurfaceSummary(metadata);
+
+    expect(summary.taskCompletedAt).toBeUndefined();
   });
 
   it('lists fork candidates across workspaces and excludes subagents', async () => {
