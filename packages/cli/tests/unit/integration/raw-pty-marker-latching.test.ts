@@ -24,6 +24,7 @@ const runnerInventory = [
   'tokenBudgetHandoffPtyRunner.ts',
   'toolAdmissionPtyRunner.ts',
   'tuiPtyRunner.ts',
+  'tuiTaskAttentionPtyRunner.ts',
   'weightedProviderAdmissionPtyRunner.ts',
 ] as const;
 
@@ -182,6 +183,7 @@ describe('raw PTY marker latching source contract', () => {
     ],
     ['toolAdmissionPtyRunner.ts', 'new ArmedPtyMarkerLatch(input.marker)'],
     ['tuiPtyRunner.ts', 'latchPtyMarker'],
+    ['tuiTaskAttentionPtyRunner.ts', "new ArmedPtyMarkerLatch('[NEW]')"],
     ['weightedProviderAdmissionPtyRunner.ts', 'latchPtyEvidence'],
   ] as const)('%s latches positive marker evidence', (fileName, latchName) => {
     expect(readRunner(fileName)).toContain(latchName);
