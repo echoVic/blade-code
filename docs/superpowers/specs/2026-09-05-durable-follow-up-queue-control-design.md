@@ -92,11 +92,10 @@ interface InboxRecordV2 {
 ~~~
 
 `generation` is an opaque random identifier replaced by every successful durable
-mutation, including enqueue and acknowledgement. Opening a version 1 record performs a
-locked, atomic migration before returning it to a caller. Empty version 2 inboxes remain
-as valid records so generation does not disappear; `SessionRuntime.hasPendingInbox()`
-must parse the bounded record and inspect message count rather than equating file
-existence with pending work.
+mutation, including enqueue and acknowledgement. Opening a non-empty version 1 record
+performs a locked, atomic migration before returning it to a caller. An empty inbox keeps
+the existing deletion contract; its in-memory generation is combined with a fresh
+Runtime owner epoch, so a restarted owner cannot accept an older surface token.
 
 The parser continues to reject malformed records, wrong Session identity, unknown
 versions after supported migration, duplicate message IDs, unsafe metadata, and files

@@ -138,7 +138,7 @@ Expected: all checks exit 0 before the commit.
 
 - [ ] **Step 1: Add failing storage tests**
 
-Prove V1 migration, persistent empty V2 records, duplicate-ID rejection, two inbox instances concurrently enqueueing without lost updates, stale object refresh, atomic-write failure, lock failure, private mode, and a bounded two-process no-lost-update fixture.
+Prove non-empty V1 migration, empty-file deletion after acknowledgement, duplicate-ID rejection, two inbox instances concurrently enqueueing without lost updates, stale object refresh, atomic-write failure, lock failure, private mode, and a bounded two-process no-lost-update fixture.
 
 ~~~ts
 const [first, second] = await Promise.all([
@@ -185,7 +185,7 @@ export async function withDurableSteeringInboxLock<T>(
 
 - [ ] **Step 4: Upgrade inbox persistence to V2**
 
-Every operation reads under the lock and updates memory only after durable commit. Empty V2 state is written rather than unlinked. Add `snapshot()`, `refresh()` and an exact-generation replace primitive. Extend the origin parser with `interaction_recovery` and update `SessionInteractionService.recoverResponded()` to set it explicitly. Make `SessionRuntime.hasPendingInbox()` parse the bounded inbox and inspect `messages.length`.
+Every operation reads under the lock and updates memory only after durable commit. Non-empty V1 state migrates atomically; acknowledgement that empties the queue retains the existing unlink behavior. Add `snapshot()`, `refresh()` and an exact-generation replace primitive. Extend the origin parser with `interaction_recovery` and update `SessionInteractionService.recoverResponded()` to set it explicitly.
 
 ~~~ts
 interface DurableSteeringInboxSnapshot {
