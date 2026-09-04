@@ -80,6 +80,7 @@ export function toLocalSessionSurfaceSummary(
     parentId: metadata.parentId,
     relationType: metadata.relationType,
     taskStatus: metadata.taskStatus,
+    taskCompletedAt: metadata.taskCompletedAt,
     messageCount: metadata.messageCount,
     firstMessageTime: metadata.firstMessageTime,
     lastMessageTime: metadata.lastMessageTime,

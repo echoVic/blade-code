@@ -134,11 +134,20 @@ describe('SessionSurfaceService', () => {
       title: 'Local surface',
       taskStatus: 'completed',
     });
+    await SessionService.updateSessionMetadata(sessionId, localWorkspace, {
+      taskCompletedAt: '2026-09-04T14:30:00+02:00',
+    });
     await SessionService.createRemoteSessionMetadata(
       sessionId,
       hostStateRoot,
       descriptor,
       { title: 'Remote surface', taskStatus: 'completed' }
+    );
+    await SessionService.updateRemoteSessionMetadata(
+      sessionId,
+      hostStateRoot,
+      descriptor,
+      { taskCompletedAt: '2026-09-04 12:30:00Z' }
     );
 
     const first = await service.listPage({ archived: false, limit: 1 });
@@ -162,6 +171,7 @@ describe('SessionSurfaceService', () => {
       sessions.find((session) => session.locator.workspace.kind === 'local')
     ).toMatchObject({
       displayCwd: localWorkspace,
+      taskCompletedAt: '2026-09-04T12:30:00.000Z',
       capabilities: { connection: 'local', history: { read: true, fork: true } },
     });
     expect(
@@ -169,6 +179,7 @@ describe('SessionSurfaceService', () => {
     ).toMatchObject({
       displayCwd: descriptor.wirePath,
       pathStyle: 'win32',
+      taskCompletedAt: '2026-09-04T12:30:00.000Z',
       capabilities: {
         connection: 'offline',
         history: { read: true, fork: true },
@@ -564,6 +575,9 @@ describe('SessionSurfaceService', () => {
       title: 'Local fallback',
       taskStatus: 'completed',
     });
+    await SessionService.updateSessionMetadata(localSessionId, localWorkspace, {
+      taskCompletedAt: '2026-09-04T14:30:00+02:00',
+    });
     await new JSONLStore(
       getSessionFilePath(localWorkspace, localSessionId)
     ).appendBatch(
@@ -584,6 +598,12 @@ describe('SessionSurfaceService', () => {
         title: `Remote fallback ${descriptor.wirePath}/private`,
         taskStatus: 'completed',
       }
+    );
+    await SessionService.updateRemoteSessionMetadata(
+      remoteSessionId,
+      hostStateRoot,
+      descriptor,
+      { taskCompletedAt: 'legacy-not-a-timestamp' }
     );
     await withValidatedAcpRemoteStateScope(hostStateRoot, async (scope) => {
       await new JSONLStore(
@@ -619,6 +639,8 @@ describe('SessionSurfaceService', () => {
     const remote = summaries.find(
       (summary) => summary.locator.workspace.kind === 'acp-remote'
     )!;
+    expect(local.taskCompletedAt).toBe('2026-09-04T12:30:00.000Z');
+    expect(remote.taskCompletedAt).toBeUndefined();
     expect(remote.displayCwd).toBe(descriptor.wirePath);
     expect(remote.title).toBe('Remote fallback [private state path]');
     const openedRemote = await fallback.open(remote.locator, { limit: 1 });

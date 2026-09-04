@@ -47,6 +47,7 @@ import {
   SCHEMA_VERSION,
 } from '../../../../src/context/storage/sqlite/schema.js';
 import type { SessionEvent } from '../../../../src/context/types.js';
+import type { SessionMetadata } from '../../../../src/services/SessionService.js';
 import { sessionCatalogSortKey } from '../../../../src/services/sessionCatalog.js';
 import { SessionSurfaceProjectionError } from '../../../../src/services/sessionSurfaceProjection.js';
 
@@ -424,6 +425,29 @@ describe('SQLite projection sync', () => {
     expect(candidate?.summary.selectedModelId).toBe('[private state path]');
     expect(JSON.stringify(candidate)).not.toContain(privateTitle);
     expect(JSON.stringify(candidate)).not.toContain(privateModel);
+  });
+
+  it('projects only parseable task completion timestamps in canonical form', () => {
+    const metadata: SessionMetadata = {
+      sessionId,
+      projectPath,
+      rootId: sessionId,
+      taskStatus: 'completed',
+      taskCompletedAt: '2026-09-04T14:30:00+02:00',
+      messageCount: 0,
+      firstMessageTime: ts,
+      lastMessageTime: ts,
+      hasErrors: false,
+    };
+
+    const summary = projectSessionSurfaceSummaryFields(metadata);
+    const invalidSummary = projectSessionSurfaceSummaryFields({
+      ...metadata,
+      taskCompletedAt: 'legacy-not-a-timestamp',
+    });
+
+    expect(summary.taskCompletedAt).toBe('2026-09-04T12:30:00.000Z');
+    expect(invalidSummary.taskCompletedAt).toBeUndefined();
   });
 
   it('rejects private or malformed remote lineage identifiers before projection', () => {

@@ -137,6 +137,7 @@ export interface SessionSurfaceSummaryProjectionInput {
   model?: string;
   parentId?: string;
   taskStatus: string;
+  taskCompletedAt?: string;
   taskPriority?: string;
   taskKind?: string;
   taskDueAt?: string;
@@ -514,6 +515,10 @@ export function projectSessionSurfaceSummaryFields(
   };
   const relationType = metadata.relationType as 'subagent' | 'fork' | undefined;
   const taskStatus = metadata.taskStatus as SessionSurfaceSummary['taskStatus'];
+  const taskCompletedAt =
+    typeof metadata.taskCompletedAt === 'string'
+      ? Date.parse(metadata.taskCompletedAt)
+      : Number.NaN;
   return {
     displayCwd: remoteDescriptor?.wirePath ?? metadata.projectPath,
     ...(remoteDescriptor ? { pathStyle: remoteDescriptor.style } : {}),
@@ -524,6 +529,9 @@ export function projectSessionSurfaceSummaryFields(
     ...(metadata.parentId !== undefined ? { parentId: metadata.parentId } : {}),
     ...(relationType !== undefined ? { relationType } : {}),
     taskStatus,
+    ...(Number.isFinite(taskCompletedAt)
+      ? { taskCompletedAt: new Date(taskCompletedAt).toISOString() }
+      : {}),
     messageCount: metadata.messageCount,
     firstMessageTime: metadata.firstMessageTime,
     lastMessageTime: metadata.lastMessageTime,

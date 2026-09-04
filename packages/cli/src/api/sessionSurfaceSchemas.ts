@@ -125,6 +125,7 @@ export const SessionSurfaceSummarySchema = Runtime(
     parentId: Type.Optional(SessionIdSchema),
     relationType: Type.Optional(SessionSurfaceRelationTypeSchema),
     taskStatus: SessionTaskStatusSchema,
+    taskCompletedAt: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
     messageCount: Type.Integer({ minimum: 0 }),
     firstMessageTime: Type.String({ minLength: 1 }),
     lastMessageTime: Type.String({ minLength: 1 }),
