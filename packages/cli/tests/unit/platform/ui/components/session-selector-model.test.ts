@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   SessionSurfaceCapabilities,
   SessionSurfaceSummary,
@@ -74,6 +74,138 @@ function createRemoteSummary(
 }
 
 describe('sessionSelectorModel', () => {
+  it('clears an old local visible locator before a remote viewer can refresh', async () => {
+    const { TuiTaskAttentionVisibilityCoordinator, getSessionCandidateKey } =
+      await import('../../../../../src/ui/components/sessionSelectorModel.js');
+    const local = createLocalSummary({ taskStatus: 'running' });
+    const remote = createRemoteSummary();
+    let visibleLocator: SessionSurfaceSummary['locator'] | undefined = local.locator;
+    const acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
+    const setVisibleLocator = vi.fn(
+      async (locator: SessionSurfaceSummary['locator'] | undefined) => {
+        visibleLocator = locator;
+      }
+    );
+    const coordinator = new TuiTaskAttentionVisibilityCoordinator({
+      acknowledge,
+      setVisibleLocator,
+    });
+
+    const clearing = coordinator.beginRemote({ intent: 'resume', session: remote }, 7);
+    expect(setVisibleLocator).toHaveBeenCalledWith(undefined);
+    await clearing;
+
+    const completedLocal = {
+      ...local,
+      taskStatus: 'completed' as const,
+      taskCompletedAt: '2026-09-05T10:00:00.000Z',
+    };
+    if (
+      visibleLocator &&
+      getSessionCandidateKey({ ...local, locator: visibleLocator }) ===
+        getSessionCandidateKey(completedLocal)
+    ) {
+      await acknowledge(completedLocal);
+    }
+    expect(visibleLocator).toBeUndefined();
+    expect(acknowledge).not.toHaveBeenCalled();
+  });
+
+  it('does not infer visibility from an unproven mounted session identity', async () => {
+    const { TuiTaskAttentionVisibilityCoordinator } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+    const acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
+    const setVisibleLocator = vi.fn(
+      async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
+    );
+
+    new TuiTaskAttentionVisibilityCoordinator({ acknowledge, setVisibleLocator });
+
+    expect(acknowledge).not.toHaveBeenCalled();
+    expect(setVisibleLocator).not.toHaveBeenCalled();
+  });
+
+  it('does not publish stale remote visibility when acknowledgement finishes after another view begins', async () => {
+    const { TuiTaskAttentionVisibilityCoordinator } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+    const first = createRemoteSummary();
+    const second = createRemoteSummary({
+      locator: {
+        version: 2,
+        sessionId: 'remote-session-2',
+        workspace: { kind: 'acp-remote', workspaceRef: REMOTE_WORKSPACE_REF_B },
+      },
+    });
+    let resolveAcknowledgement = (): void => undefined;
+    const acknowledgement = new Promise<void>((resolve) => {
+      resolveAcknowledgement = resolve;
+    });
+    const setVisibleLocator = vi.fn(
+      async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
+    );
+    const coordinator = new TuiTaskAttentionVisibilityCoordinator({
+      acknowledge: vi.fn(() => acknowledgement),
+      setVisibleLocator,
+    });
+    await coordinator.beginRemote({ intent: 'resume', session: first }, 7);
+    setVisibleLocator.mockClear();
+    const staleUpdate = coordinator.updateRemote(
+      { intent: 'resume', session: first },
+      {
+        viewGeneration: 7,
+        status: 'ready',
+        session: first,
+        messages: [],
+        truncated: false,
+      }
+    );
+    await Promise.resolve();
+
+    await coordinator.beginRemote({ intent: 'resume', session: second }, 8);
+    setVisibleLocator.mockClear();
+    resolveAcknowledgement();
+    await staleUpdate;
+
+    expect(setVisibleLocator).not.toHaveBeenCalled();
+  });
+
+  it('reports a deferred acknowledgement as stale after the expected remote view changes', async () => {
+    const { RemoteHistoryAttentionAcknowledger } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+    const first = createRemoteSummary();
+    const second = createRemoteSummary({
+      locator: {
+        version: 2,
+        sessionId: 'remote-session-2',
+        workspace: { kind: 'acp-remote', workspaceRef: REMOTE_WORKSPACE_REF_B },
+      },
+    });
+    let resolveAcknowledgement = (): void => undefined;
+    const acknowledgement = new Promise<void>((resolve) => {
+      resolveAcknowledgement = resolve;
+    });
+    const acknowledger = new RemoteHistoryAttentionAcknowledger(() => acknowledgement);
+    acknowledger.begin({ intent: 'resume', session: first }, 7);
+    const staleUpdate = acknowledger.update(
+      { intent: 'resume', session: first },
+      {
+        viewGeneration: 7,
+        status: 'ready',
+        session: first,
+        messages: [],
+        truncated: false,
+      }
+    );
+    await Promise.resolve();
+    acknowledger.begin({ intent: 'resume', session: second }, 8);
+    resolveAcknowledgement();
+
+    await expect(staleUpdate).resolves.toBe(false);
+  });
+
   it('returns intent-specific selector copy', async () => {
     const { getSessionSelectorCopy } = await import(
       '../../../../../src/ui/components/sessionSelectorModel.js'

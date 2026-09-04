@@ -72,7 +72,7 @@ import { SubagentProgress } from './SubagentProgress.js';
 import {
   commitLocalTaskAttention,
   getMostRecentLocalSessionCandidate,
-  RemoteHistoryAttentionAcknowledger,
+  TuiTaskAttentionVisibilityCoordinator,
 } from './sessionSelectorModel.js';
 import { TeamProgress } from './TeamProgress.js';
 import { ThemeSelector } from './ThemeSelector.js';
@@ -121,14 +121,14 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     taskAttentionControllerRef.current = new TuiTaskAttentionController();
   }
   const taskAttentionController = taskAttentionControllerRef.current;
-  const historyAttentionAcknowledgerRef =
-    useRef<RemoteHistoryAttentionAcknowledger | null>(null);
-  if (!historyAttentionAcknowledgerRef.current) {
-    historyAttentionAcknowledgerRef.current = new RemoteHistoryAttentionAcknowledger(
-      (summary) => taskAttentionController.acknowledge(summary)
+  const taskAttentionVisibilityRef =
+    useRef<TuiTaskAttentionVisibilityCoordinator | null>(null);
+  if (!taskAttentionVisibilityRef.current) {
+    taskAttentionVisibilityRef.current = new TuiTaskAttentionVisibilityCoordinator(
+      taskAttentionController
     );
   }
-  const historyAttentionAcknowledger = historyAttentionAcknowledgerRef.current;
+  const taskAttentionVisibility = taskAttentionVisibilityRef.current;
   const [sessionHistoryState, setSessionHistoryState] = useState(
     sessionHistoryController.getState()
   );
@@ -209,15 +209,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       }),
     [appActions, taskAttentionController]
   );
-
-  useEffect(() => {
-    if (!readyForChat || activeModal === 'sessionHistoryViewer') return;
-    void taskAttentionController.setVisibleLocator({
-      version: 2,
-      sessionId,
-      workspace: { kind: 'local', projectPath: workspaceRoot },
-    });
-  }, [activeModal, readyForChat, sessionId, taskAttentionController, workspaceRoot]);
 
   useEffect(() => {
     if (!readyForChat) return;
@@ -620,51 +611,41 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   useEffect(() => {
     if (activeModal === 'sessionHistoryViewer' && sessionHistoryViewerState) {
+      const visibility = taskAttentionVisibility
+        .beginRemote(
+          sessionHistoryViewerState,
+          sessionHistoryController.getState().viewGeneration + 1
+        )
+        .catch(() => {
+          logger.warn('[BladeInterface] Task attention visibility unavailable');
+        });
       const activation = sessionHistoryController.activate(
         sessionHistoryViewerState.session,
         sessionHistoryViewerState.intent
       );
-      historyAttentionAcknowledger.begin(
-        sessionHistoryViewerState,
-        sessionHistoryController.getState().viewGeneration
-      );
+      void visibility;
       void activation;
       return;
     }
-    historyAttentionAcknowledger.reset();
+    taskAttentionVisibility.resetRemote();
     if (sessionHistoryController.getState().status !== 'idle') {
       void sessionHistoryController.closeView();
     }
   }, [
     activeModal,
-    historyAttentionAcknowledger,
     sessionHistoryController,
     sessionHistoryViewerState,
+    taskAttentionVisibility,
   ]);
 
   useEffect(() => {
     if (!sessionHistoryViewerState) return;
-    let cancelled = false;
-    void historyAttentionAcknowledger
-      .update(sessionHistoryViewerState, sessionHistoryState)
-      .then((acknowledged) => {
-        if (!acknowledged || cancelled) return;
-        return taskAttentionController.setVisibleLocator(
-          sessionHistoryViewerState.session.locator
-        );
-      })
+    void taskAttentionVisibility
+      .updateRemote(sessionHistoryViewerState, sessionHistoryState)
       .catch(() => {
         logger.warn('[BladeInterface] Task attention acknowledgement unavailable');
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    historyAttentionAcknowledger,
-    sessionHistoryState,
-    sessionHistoryViewerState,
-    taskAttentionController,
-  ]);
+  }, [sessionHistoryState, sessionHistoryViewerState, taskAttentionVisibility]);
 
   const handleModelEditRequest = useMemoizedFn((model: ModelConfig) => {
     appActions.showModelEditWizard(model);

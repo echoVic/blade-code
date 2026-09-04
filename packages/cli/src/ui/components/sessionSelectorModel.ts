@@ -26,19 +26,55 @@ export function getTaskAttentionKey(session: SessionSurfaceSummary): string {
   return getTuiTaskAttentionKey(session.locator);
 }
 
-interface LocalTaskAttentionBoundary {
+interface TaskAttentionVisibilityBoundary {
   acknowledge(summary: SessionSurfaceSummary): Promise<void>;
-  setVisibleLocator(locator: SessionSurfaceSummary['locator']): Promise<void>;
+  setVisibleLocator(locator?: SessionSurfaceSummary['locator']): Promise<void>;
 }
 
 export async function commitLocalTaskAttention(
   intent: SessionSelectionIntent,
   summary: SessionSurfaceSummary,
-  attention: LocalTaskAttentionBoundary
+  attention: TaskAttentionVisibilityBoundary
 ): Promise<void> {
   if (intent !== 'resume') return;
   await attention.acknowledge(summary);
   await attention.setVisibleLocator(summary.locator);
+}
+
+export class TuiTaskAttentionVisibilityCoordinator {
+  readonly remote: RemoteHistoryAttentionAcknowledger;
+  private remoteEpoch = 0;
+
+  constructor(private readonly attention: TaskAttentionVisibilityBoundary) {
+    this.remote = new RemoteHistoryAttentionAcknowledger((summary) =>
+      attention.acknowledge(summary)
+    );
+  }
+
+  async beginRemote(
+    viewer: { intent: SessionSelectionIntent; session: SessionSurfaceSummary },
+    generation: number
+  ): Promise<void> {
+    this.remoteEpoch += 1;
+    this.remote.begin(viewer, generation);
+    await this.attention.setVisibleLocator(undefined);
+  }
+
+  resetRemote(): void {
+    this.remoteEpoch += 1;
+    this.remote.reset();
+  }
+
+  async updateRemote(
+    viewer: { intent: SessionSelectionIntent; session: SessionSurfaceSummary },
+    history: SessionHistoryViewState
+  ): Promise<void> {
+    const epoch = this.remoteEpoch;
+    if (!(await this.remote.update(viewer, history)) || epoch !== this.remoteEpoch) {
+      return;
+    }
+    await this.attention.setVisibleLocator(history.session?.locator);
+  }
 }
 
 export class RemoteHistoryAttentionAcknowledger {
@@ -84,6 +120,12 @@ export class RemoteHistoryAttentionAcknowledger {
     this.pendingView = view;
     try {
       await this.acknowledge(history.session);
+      if (
+        this.expectedView?.generation !== history.viewGeneration ||
+        this.expectedView.key !== getSessionCandidateKey(history.session)
+      ) {
+        return false;
+      }
       this.acknowledgedView = view;
       return true;
     } finally {
