@@ -160,7 +160,6 @@ export class TuiTaskAttentionVisibilityCoordinator {
     this.remoteActive = true;
     this.remoteEpoch += 1;
     this.remote.begin(viewer, generation);
-    await this.attention.setVisibleLocator(undefined);
   }
 
   async endRemote(): Promise<void> {

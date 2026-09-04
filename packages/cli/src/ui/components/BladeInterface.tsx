@@ -40,7 +40,11 @@ import { useInputBuffer } from '../hooks/useInputBuffer.js';
 import { useMainInput } from '../hooks/useMainInput.js';
 import { useRefreshStatic } from '../hooks/useRefreshStatic.js';
 import { useTerminalInput } from '../input/TerminalInputRouter.js';
-import { SessionHistoryController } from '../services/SessionHistoryController.js';
+import {
+  activateRemoteTaskAttention,
+  SessionHistoryLifecycle,
+  useSessionHistoryLifecycle,
+} from '../services/SessionHistoryLifecycle.js';
 import {
   TuiTaskAttentionLifecycle,
   useTuiTaskAttentionLifecycle,
@@ -115,11 +119,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const readyAnnouncementSent = useRef(false);
   const lastInitializationError = useRef<string | null>(null);
   const pagerTransitionMountedRef = useRef(false);
-  const sessionHistoryControllerRef = useRef<SessionHistoryController | null>(null);
-  if (!sessionHistoryControllerRef.current) {
-    sessionHistoryControllerRef.current = new SessionHistoryController();
+  const sessionHistoryLifecycleRef = useRef<SessionHistoryLifecycle | null>(null);
+  if (!sessionHistoryLifecycleRef.current) {
+    sessionHistoryLifecycleRef.current = new SessionHistoryLifecycle();
   }
-  const sessionHistoryController = sessionHistoryControllerRef.current;
+  const sessionHistoryController = sessionHistoryLifecycleRef.current;
   const taskAttentionLifecycleRef = useRef<TuiTaskAttentionLifecycle | null>(null);
   if (!taskAttentionLifecycleRef.current) {
     taskAttentionLifecycleRef.current = new TuiTaskAttentionLifecycle();
@@ -229,19 +233,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     report: reportTaskAttentionLifecycle,
   });
 
-  useEffect(
-    () => sessionHistoryController.subscribe(setSessionHistoryState),
-    [sessionHistoryController]
-  );
-
-  useEffect(
-    () => () => {
-      void sessionHistoryController.close().catch(() => {
-        logger.warn('[BladeInterface] Session history shutdown unavailable');
-      });
-    },
-    [sessionHistoryController]
-  );
+  const projectSessionHistory = useMemoizedFn(setSessionHistoryState);
+  const reportSessionHistoryShutdown = useMemoizedFn(() => {
+    logger.warn('[BladeInterface] Session history shutdown unavailable');
+  });
+  useSessionHistoryLifecycle({
+    lifecycle: sessionHistoryController,
+    project: projectSessionHistory,
+    report: reportSessionHistoryShutdown,
+  });
 
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
 
@@ -649,20 +649,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   useEffect(() => {
     if (activeModal === 'sessionHistoryViewer' && sessionHistoryViewerState) {
-      const visibility = taskAttentionLifecycle
-        .beginRemote(
-          sessionHistoryViewerState,
-          sessionHistoryController.getState().viewGeneration + 1
-        )
-        .catch(() => {
-          logger.warn('[BladeInterface] Task attention visibility unavailable');
-        });
-      const activation = sessionHistoryController.activate(
-        sessionHistoryViewerState.session,
-        sessionHistoryViewerState.intent
-      );
-      void visibility;
-      void activation.catch(() => {
+      void activateRemoteTaskAttention(
+        sessionHistoryController,
+        taskAttentionLifecycle,
+        sessionHistoryViewerState
+      ).catch(() => {
         logger.warn('[BladeInterface] Session history activation unavailable');
       });
       return;

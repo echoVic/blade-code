@@ -62,37 +62,40 @@ export class TuiTaskAttentionLifecycle {
   }
 
   listAll(): Promise<SessionSurfaceSummary[]> {
-    return this.controller().listAll();
+    const controller = this.active?.controller;
+    return controller
+      ? controller.listAll()
+      : Promise.reject(new Error('TUI task attention lifecycle is not active'));
   }
 
   acknowledge(summary: SessionSurfaceSummary): Promise<void> {
-    return this.controller().acknowledge(summary);
+    return this.active?.controller.acknowledge(summary) ?? Promise.resolve();
   }
 
   setVisibleLocator(locator?: SessionSurfaceSummary['locator']): Promise<void> {
-    return this.controller().setVisibleLocator(locator);
+    return this.active?.controller.setVisibleLocator(locator) ?? Promise.resolve();
   }
 
   proveLocal(locator: SessionSurfaceSummary['locator']): Promise<void> {
-    return this.visibility().proveLocal(locator);
+    return this.active?.visibility.proveLocal(locator) ?? Promise.resolve();
   }
 
   beginRemote(
     viewer: Parameters<TuiTaskAttentionVisibilityCoordinator['beginRemote']>[0],
     generation: number
   ): Promise<void> {
-    return this.visibility().beginRemote(viewer, generation);
+    return this.active?.visibility.beginRemote(viewer, generation) ?? Promise.resolve();
   }
 
   endRemote(): Promise<void> {
-    return this.visibility().endRemote();
+    return this.active?.visibility.endRemote() ?? Promise.resolve();
   }
 
   updateRemote(
     viewer: Parameters<TuiTaskAttentionVisibilityCoordinator['updateRemote']>[0],
     history: Parameters<TuiTaskAttentionVisibilityCoordinator['updateRemote']>[1]
   ): Promise<void> {
-    return this.visibility().updateRemote(viewer, history);
+    return this.active?.visibility.updateRemote(viewer, history) ?? Promise.resolve();
   }
 
   controller(): TuiTaskAttentionLifecycleController {

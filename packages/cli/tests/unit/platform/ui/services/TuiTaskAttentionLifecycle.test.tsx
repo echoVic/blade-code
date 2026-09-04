@@ -29,6 +29,61 @@ class FakeController {
 }
 
 describe('TuiTaskAttentionLifecycle', () => {
+  it('keeps inactive proxy calls asynchronous and treats mutations as no-ops', async () => {
+    const lifecycle = new TuiTaskAttentionLifecycle(() => new FakeController());
+    const summary = {
+      locator: {
+        version: 2 as const,
+        sessionId: 'inactive',
+        workspace: { kind: 'local' as const, projectPath: '/workspace' },
+      },
+    } as SessionSurfaceSummary;
+
+    let list: Promise<SessionSurfaceSummary[]> | undefined;
+    expect(() => {
+      list = lifecycle.listAll();
+    }).not.toThrow();
+    await expect(list).rejects.toThrow('TUI task attention lifecycle is not active');
+    expect(() => lifecycle.acknowledge(summary)).not.toThrow();
+    expect(() => lifecycle.setVisibleLocator()).not.toThrow();
+    expect(() => lifecycle.proveLocal(summary.locator)).not.toThrow();
+    expect(() =>
+      lifecycle.beginRemote({ intent: 'resume', session: summary }, 1)
+    ).not.toThrow();
+    expect(() => lifecycle.endRemote()).not.toThrow();
+    expect(() =>
+      lifecycle.updateRemote(
+        { intent: 'resume', session: summary },
+        {
+          viewGeneration: 1,
+          status: 'ready',
+          session: summary,
+          messages: [],
+          truncated: false,
+        }
+      )
+    ).not.toThrow();
+    await expect(lifecycle.acknowledge(summary)).resolves.toBeUndefined();
+    await expect(lifecycle.setVisibleLocator()).resolves.toBeUndefined();
+    await expect(lifecycle.proveLocal(summary.locator)).resolves.toBeUndefined();
+    await expect(
+      lifecycle.beginRemote({ intent: 'resume', session: summary }, 1)
+    ).resolves.toBeUndefined();
+    await expect(lifecycle.endRemote()).resolves.toBeUndefined();
+    await expect(
+      lifecycle.updateRemote(
+        { intent: 'resume', session: summary },
+        {
+          viewGeneration: 1,
+          status: 'ready',
+          session: summary,
+          messages: [],
+          truncated: false,
+        }
+      )
+    ).resolves.toBeUndefined();
+  });
+
   it('keeps the live controller through a real StrictMode effect replay', async () => {
     const controllers: FakeController[] = [];
     const lifecycle = new TuiTaskAttentionLifecycle(() => {
