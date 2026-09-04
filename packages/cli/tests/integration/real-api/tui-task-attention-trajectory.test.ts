@@ -336,7 +336,8 @@ describeTrajectory('TUI durable task attention raw PTY trajectory (real API)', (
           title,
           terminalContent: marker,
           secrets: [model.apiKey],
-          timeoutMs: 240_000,
+          completionTimeoutMs: 190_000,
+          timeoutMs: 300_000,
           completeTask: async () => {
             proxy.releaseHeld();
             const terminal = await waitForTerminal(

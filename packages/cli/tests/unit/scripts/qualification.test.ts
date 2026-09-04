@@ -197,6 +197,9 @@ describe('production qualification contract', () => {
     expect(runner).toContain("import { spawn } from 'bun-pty'");
     expect(runner).toContain('input.nodeExecutable');
     expect(deterministic).toContain('productionCliReady ??=');
+    expect(deterministic).toContain('beforeAll(async () =>');
+    expect(deterministic).toContain('BUILD_DEADLINE_MS = 120_000');
+    expect(deterministic).toContain('BUILD_HOOK_TIMEOUT_MS = 180_000');
     expect(deterministic).toContain("describe.skipIf(process.platform === 'win32')");
   });
 

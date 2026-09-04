@@ -17,6 +17,7 @@ interface RunnerInput {
   title: string;
   terminalContent: string;
   completionFile: string;
+  completionTimeoutMs: number;
   secrets: string[];
 }
 
@@ -55,6 +56,18 @@ function readBoundedString(
   return value;
 }
 
+function readBoundedTimeout(value: unknown): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isSafeInteger(value) ||
+    value < 1_000 ||
+    value > 300_000
+  ) {
+    throw new Error('Invalid task completion timeout');
+  }
+  return value;
+}
+
 function loadInput(): RunnerInput {
   const encoded = process.env.BLADE_TUI_ATTENTION_INPUT;
   if (!encoded || encoded.length > 64 * 1024) {
@@ -81,6 +94,7 @@ function loadInput(): RunnerInput {
     title: readBoundedString(candidate.title, 'title', 512),
     terminalContent: readBoundedString(candidate.terminalContent, 'terminal content'),
     completionFile: readBoundedString(candidate.completionFile, 'completion file'),
+    completionTimeoutMs: readBoundedTimeout(candidate.completionTimeoutMs),
     secrets: [...candidate.secrets],
   };
 }
@@ -333,7 +347,7 @@ async function main(): Promise<void> {
         }
       },
       'Timed out waiting for task completion after TUI exit',
-      30_000
+      input.completionTimeoutMs
     );
 
     let newMarkerSeen = false;

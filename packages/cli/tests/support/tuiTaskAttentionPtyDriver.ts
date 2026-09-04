@@ -201,6 +201,7 @@ export async function runTuiTaskAttentionPtyDriver(input: {
   title: string;
   terminalContent: string;
   completeTask(): Promise<void>;
+  completionTimeoutMs?: number;
   secrets?: readonly string[];
   timeoutMs?: number;
 }): Promise<TuiTaskAttentionPtyEvidence> {
@@ -227,6 +228,7 @@ export async function runTuiTaskAttentionPtyDriver(input: {
           title: input.title,
           terminalContent: input.terminalContent,
           completionFile,
+          completionTimeoutMs: input.completionTimeoutMs ?? 30_000,
           secrets: input.secrets ?? [],
         })
       ).toString('base64'),
