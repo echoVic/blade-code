@@ -1013,6 +1013,66 @@ describe('ToolExecutor — file lock logic', () => {
       expect(invocationSpy).not.toHaveBeenCalled();
     });
 
+    it('validates file_path and notebook_path independently when both are present', async () => {
+      const rejectedPath = 'C:\\workspace\\notes.ipynb:$DATA';
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'mcp__safe__dual_path_write',
+        displayName: 'Dual Path Write',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        parallelism: 'shared',
+        schema: Type.Object({
+          file_path: Type.String(),
+          notebook_path: Type.String(),
+        }),
+        description: { short: 'typed dual path probe' },
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.registerMcpTool(tool as Tool);
+      const scheduler = new ConcurrencyScheduler();
+      const scheduleSpy = vi.spyOn(scheduler, 'schedule');
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        scheduler,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId: 'remote-dual-paths',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        },
+      });
+
+      const result = await executor.execute(
+        tool.name,
+        {
+          file_path: 'C:\\workspace\\safe.txt',
+          notebook_path: rejectedPath,
+        },
+        {}
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: 'acp_remote_path_invalid' },
+        metadata: { sideEffectsUncertain: false },
+      });
+      expect(JSON.stringify(result)).not.toContain(rejectedPath);
+      expect(scheduleSpy).not.toHaveBeenCalled();
+      expect(invocationSpy).not.toHaveBeenCalled();
+    });
+
     it('revalidates hook-rewritten remote affected paths before scheduling or invocation', async () => {
       const rejectedPath = 'C:\\workspace\\rewritten.txt:$DATA';
       const invocationSpy = vi.fn();
