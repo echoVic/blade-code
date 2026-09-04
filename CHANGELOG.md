@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.133] - 2026-09-04
+
+### Added
+- Added durable TUI attention for known background tasks: `/resume` marks missed completed, failed, or interrupted transitions with `[NEW]`, and the status bar reports the unread count without sharing acknowledgement state with the Web UI.
+- Added a private, bounded, cross-process ledger with canonical terminal signatures, SHA-256 locator digests, atomic persistence, ordered failure replay, exact-Session acknowledgement, and silent first-seen terminal baselines.
+
+### Fixed
+- Kept unread markers through cancelled selectors, failed or stale activations, same-ID Sessions in other workspaces, forks, synchronization failures, StrictMode lifecycle replay, and shutdown races; only a proven exact Session open clears its marker.
+- Moved production-dist builds ahead of dependent Vitest processes, preserving non-coverage and coverage project ordering while preventing parallel workers from reading a partially rebuilt `dist`.
+- Bounded and fail-closed the raw PTY qualification lifecycle, including Provider completion, HTTP requests, runner and child-process teardown, recursive error redaction, and credential-free runner environments.
+
+### Tests
+- Added deterministic production raw-PTY coverage for silent baseline, missed terminal transition, `[NEW]`, exact resume, transcript verification, acknowledgement persistence, callback failure, callback stall, and outer runner timeout.
+- Qualified `deepseek-v4-flash` and `deepseek-v4-pro` through one real upstream request per model with framework retry `0`, model `maxRetries=0`, exact persisted terminal content, bounded diagnostics, and no credential leakage.
+
 ## [0.10.132] - 2026-09-04
 
 ### Fixed

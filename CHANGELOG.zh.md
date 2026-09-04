@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.133] - 2026-09-04
+
+### 新增
+- 为已知后台任务新增 durable TUI attention：任务在 TUI 缺席期间进入 completed、failed 或 interrupted 后，`/resume` 会显示 `[NEW]`，状态栏会显示未读数量，且不与 Web UI 共享确认状态。
+- 新增私有、有界、跨进程 ledger，使用 canonical terminal signature、SHA-256 locator 摘要、原子持久化、有序失败重放、exact Session 确认和首次终态静默基线。
+
+### 修复
+- 在取消选择、激活失败或过期、跨 workspace 同 ID Session、fork、同步失败、StrictMode lifecycle 重放和 shutdown 竞态中保留 unread；只有已证明成功打开的 exact Session 才会清除提醒。
+- 将 production dist 构建统一前置到依赖它的 Vitest 进程之前，在保持非 coverage 与 coverage 项目顺序的同时，避免并行 worker 读取正在重建的 `dist`。
+- 对 raw PTY 资格验证中的 Provider completion、HTTP 请求、runner 与子进程清理、递归错误脱敏和 runner 凭据隔离建立有界、fail-closed 的生命周期。
+
+### 测试
+- 新增 production raw PTY 确定性覆盖，验证静默基线、错过终态、`[NEW]`、精确恢复、transcript 内容、确认持久化、callback 失败、callback 卡住及 outer runner timeout。
+- 使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 各完成一次真实上游请求；framework retry 为 `0`、model `maxRetries=0`，并验证精确持久化终态内容、有界诊断和零 credential 泄漏。
+
 ## [0.10.132] - 2026-09-04
 
 ### 修复
