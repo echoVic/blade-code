@@ -23,7 +23,7 @@ spinner as the source of truth.
 ## Goals
 
 1. Persist TUI task attention across process restarts.
-2. Mark a previously known non-terminal root/fork Session unread when a complete
+2. Mark a previously known non-terminal user-visible root/fork Session unread when a complete
    catalog later reports `completed`, `failed`, or `interrupted`.
 3. Keep first-seen historical terminal Sessions quiet.
 4. Show a durable `NEW` marker in `/resume` and a bounded unread count in the TUI
@@ -102,8 +102,10 @@ The controller serializes refreshes; a refresh requested during an active scan s
 dirty bit and causes one follow-up scan, so an older completion cannot overwrite a
 newer catalog. Failed or aborted scans preserve the previous in-memory and durable
 state.
-The catalog already excludes `relationType=subagent`; no hidden child Session is
-introduced into the attention state or `/resume` UI.
+The catalog already excludes `relationType=subagent`; all remaining user-visible root
+and fork Sessions participate regardless of `taskIsolation`. This includes ordinary
+interactive Sessions whose durable turn status changes while another process owns the
+work, without introducing hidden child Sessions into attention state or `/resume`.
 
 For every visible root/fork Session in the complete catalog:
 
