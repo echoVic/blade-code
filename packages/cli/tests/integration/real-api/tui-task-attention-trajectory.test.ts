@@ -14,7 +14,10 @@ import {
   stopForegroundGuiLauncher,
 } from '../../support/foregroundBoundedOutputWebDriver.js';
 import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
-import { runTuiTaskAttentionPtyDriver } from '../../support/tuiTaskAttentionPtyDriver.js';
+import {
+  createTuiTaskAttentionStreamCapture,
+  runTuiTaskAttentionPtyDriver,
+} from '../../support/tuiTaskAttentionPtyDriver.js';
 import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
@@ -35,10 +38,7 @@ interface TestServer {
   child: ChildProcess;
   identity: ProcessIdentity;
   output(): string;
-}
-
-function appendTail(current: string, value: Buffer | string): string {
-  return `${current}${value.toString()}`.slice(-16_384);
+  leakedSecretLabels(): string[];
 }
 
 function redact(value: string, secrets: readonly string[]): string {
@@ -70,11 +70,60 @@ async function reservePort(): Promise<number> {
   return address.port;
 }
 
+function serverExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForServerExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (serverExited(child)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      child.off('exit', onExit);
+      resolve(false);
+    }, timeoutMs);
+    child.once('exit', onExit);
+  });
+}
+
+function signalDetachedServer(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (process.platform !== 'win32' && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to the direct child when the process group is already gone.
+    }
+  }
+  child.kill(signal);
+}
+
+async function stopStartedServer(
+  child: ChildProcess,
+  identity?: ProcessIdentity
+): Promise<void> {
+  if (identity) {
+    await stopForegroundGuiLauncher(child, identity);
+    return;
+  }
+  if (serverExited(child)) return;
+  signalDetachedServer(child, 'SIGTERM');
+  if (await waitForServerExit(child, 5_000)) return;
+  signalDetachedServer(child, 'SIGKILL');
+  if (!(await waitForServerExit(child, 5_000))) {
+    throw new Error('Unidentified production Blade server remained after SIGKILL');
+  }
+}
+
 async function startProductionServer(input: {
   workspace: string;
   storageRoot: string;
   home: string;
   secrets: readonly string[];
+  captureIdentity?: typeof captureForegroundGuiLauncherIdentity;
 }): Promise<TestServer> {
   const port = await reservePort();
   const cliEntry = path.resolve(import.meta.dirname, '../../../dist/blade.js');
@@ -88,39 +137,75 @@ async function startProductionServer(input: {
         ...process.env,
         HOME: input.home,
         BLADE_STORAGE_ROOT: input.storageRoot,
+        BLADE_VERSION: '999.0.0',
         BLADE_AUTO_MEMORY: '0',
         BLADE_TELEMETRY_DISABLED: '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     }
   );
-  let output = '';
+  const capture = createTuiTaskAttentionStreamCapture(input.secrets, 16_384);
   child.stdout?.on('data', (chunk: Buffer | string) => {
-    output = appendTail(output, chunk);
+    capture.append(chunk);
   });
   child.stderr?.on('data', (chunk: Buffer | string) => {
-    output = appendTail(output, chunk);
+    capture.append(chunk);
   });
-  if (!child.pid) throw new Error('Production Blade server has no PID');
-  const identity = await captureForegroundGuiLauncherIdentity(child.pid);
-  const origin = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`${origin}/health`);
-      if (response.ok) return { origin, child, identity, output: () => output };
-    } catch {
-      // The production server is still starting.
+  let identity: ProcessIdentity | undefined;
+  try {
+    if (!child.pid) throw new Error('Production Blade server has no PID');
+    identity = await (input.captureIdentity ?? captureForegroundGuiLauncherIdentity)(
+      child.pid
+    );
+    const origin = `http://127.0.0.1:${port}`;
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`${origin}/health`);
+        if (response.ok) {
+          const leakedSecrets = capture.leakedSecretLabels();
+          if (leakedSecrets.length > 0) {
+            throw new Error(
+              `Production Blade server output contains credentials: ${leakedSecrets.join(', ')}`
+            );
+          }
+          return {
+            origin,
+            child,
+            identity,
+            output: capture.output,
+            leakedSecretLabels: capture.leakedSecretLabels,
+          };
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('credentials')) {
+          throw error;
+        }
+        // The production server is still starting.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    throw new Error(
+      `Production Blade server did not start: ${redact(
+        capture.output().slice(-2_000),
+        input.secrets
+      )}`
+    );
+  } catch (error) {
+    let cleanupError: unknown;
+    try {
+      await stopStartedServer(child, identity);
+    } catch (failure) {
+      cleanupError = failure;
+    }
+    if (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Production Blade server startup and cleanup failed'
+      );
+    }
+    throw error;
   }
-  await stopForegroundGuiLauncher(child, identity);
-  throw new Error(
-    `Production Blade server did not start: ${redact(
-      output.slice(-2_000),
-      input.secrets
-    )}`
-  );
 }
 
 async function waitForTerminal(
@@ -156,7 +241,8 @@ function serverFaults(output: string): string[] {
     .slice(-20);
 }
 
-const describeTrajectory = enabled ? describe.sequential : describe.skip;
+const describeTrajectory =
+  enabled && process.platform !== 'win32' ? describe.sequential : describe.skip;
 
 describeTrajectory('TUI durable task attention raw PTY trajectory (real API)', () => {
   it.skipIf(enabled)('requires the real API release matrix', () => undefined);
@@ -177,6 +263,8 @@ describeTrajectory('TUI durable task attention raw PTY trajectory (real API)', (
       });
       let server: TestServer | undefined;
       const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
+      let primaryError: unknown;
+      let cleanupError: unknown;
       try {
         await Promise.all([
           mkdir(workspace, { recursive: true }),
@@ -248,14 +336,14 @@ describeTrajectory('TUI durable task attention raw PTY trajectory (real API)', (
           title,
           terminalContent: marker,
           secrets: [model.apiKey],
-          timeoutMs: 300_000,
+          timeoutMs: 240_000,
           completeTask: async () => {
             proxy.releaseHeld();
             const terminal = await waitForTerminal(
               startedServer.origin,
               accepted.session.sessionId,
               workspace,
-              240_000
+              180_000
             );
             if (terminal.taskStatus !== 'completed') {
               throw new Error(`Real TUI attention task ended ${terminal.taskStatus}`);
@@ -305,9 +393,7 @@ describeTrajectory('TUI durable task attention raw PTY trajectory (real API)', (
         });
         const serverOutput = startedServer.output();
         const faults = serverFaults(serverOutput);
-        const leakedSecrets = [model.apiKey].flatMap((secret, index) =>
-          secret && serverOutput.includes(secret) ? [`secret-${index + 1}`] : []
-        );
+        const leakedSecrets = startedServer.leakedSecretLabels();
         expect(faults).toEqual([]);
         expect(leakedSecrets).toEqual([]);
         expect(evidence.output.length).toBeLessThanOrEqual(12_000);
@@ -325,19 +411,38 @@ describeTrajectory('TUI durable task attention raw PTY trajectory (real API)', (
           },
           [model.apiKey]
         );
+      } catch (error) {
+        primaryError = error;
       } finally {
         proxy.releaseHeld();
-        if (server) {
-          await stopForegroundGuiLauncher(server.child, server.identity).catch(
-            () => undefined
-          );
+        try {
+          if (server) await stopStartedServer(server.child, server.identity);
+        } catch (error) {
+          cleanupError = error;
         }
-        await proxy.close();
+        try {
+          await proxy.close();
+        } catch (error) {
+          cleanupError = cleanupError
+            ? new AggregateError(
+                [cleanupError, error],
+                'TUI task attention cleanup failed'
+              )
+            : error;
+        }
         resetProjectionDbCache();
         if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
         else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
         await rm(root, { recursive: true, force: true });
       }
-    }, 300_000);
+      if (primaryError && cleanupError) {
+        throw new AggregateError(
+          [primaryError, cleanupError],
+          'TUI task attention trajectory and cleanup failed'
+        );
+      }
+      if (primaryError) throw primaryError;
+      if (cleanupError) throw cleanupError;
+    }, 360_000);
   }
 });

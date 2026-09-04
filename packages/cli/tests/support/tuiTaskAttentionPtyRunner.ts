@@ -7,14 +7,17 @@ import {
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyEnvironment, TUI_COMPOSER_MARKER } from './ptyInput.js';
+import { createTuiTaskAttentionSecretScanner } from './tuiTaskAttentionPtyDriver.js';
 
 interface RunnerInput {
   cliEntry: string;
+  nodeExecutable: string;
   workspace: string;
   sessionId: string;
   title: string;
   terminalContent: string;
   completionFile: string;
+  secrets: string[];
 }
 
 interface LaunchResult {
@@ -27,45 +30,79 @@ interface PtyCapture {
   plain: string;
 }
 
-let activeTerminal:
-  | {
-      pid: number;
-      kill(signal?: string): void;
-      exitPromise: Promise<void>;
-      exited: () => boolean;
-    }
-  | undefined;
+interface ActiveTerminal {
+  pid: number;
+  kill(signal?: string): void;
+  exitPromise: Promise<void>;
+  exited(): boolean;
+}
+
+let activeTerminal: ActiveTerminal | undefined;
+
+function readBoundedString(
+  value: unknown,
+  label: string,
+  maximumLength = 8_192
+): string {
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    value.length > maximumLength ||
+    value.includes('\0')
+  ) {
+    throw new Error(`Invalid ${label}`);
+  }
+  return value;
+}
 
 function loadInput(): RunnerInput {
   const encoded = process.env.BLADE_TUI_ATTENTION_INPUT;
-  if (!encoded) throw new Error('Missing BLADE_TUI_ATTENTION_INPUT');
-  return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
+  if (!encoded || encoded.length > 64 * 1024) {
+    throw new Error('Missing or oversized BLADE_TUI_ATTENTION_INPUT');
+  }
+  const value: unknown = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid task attention PTY input');
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    !Array.isArray(candidate.secrets) ||
+    candidate.secrets.some(
+      (secret) => typeof secret !== 'string' || secret.length > 16_384
+    )
+  ) {
+    throw new Error('Invalid task attention PTY secrets');
+  }
+  return {
+    cliEntry: readBoundedString(candidate.cliEntry, 'CLI entry'),
+    nodeExecutable: readBoundedString(candidate.nodeExecutable, 'Node executable'),
+    workspace: readBoundedString(candidate.workspace, 'workspace'),
+    sessionId: readBoundedString(candidate.sessionId, 'Session ID', 512),
+    title: readBoundedString(candidate.title, 'title', 512),
+    terminalContent: readBoundedString(candidate.terminalContent, 'terminal content'),
+    completionFile: readBoundedString(candidate.completionFile, 'completion file'),
+    secrets: [...candidate.secrets],
+  };
 }
 
-function waitFor(
+function redact(value: string, secrets: readonly string[]): string {
+  return secrets.reduce(
+    (result, secret) => (secret ? result.replaceAll(secret, '[REDACTED]') : result),
+    value
+  );
+}
+
+async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   message: string,
   timeoutMs: number
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const deadline = Date.now() + timeoutMs;
-    const inspect = async () => {
-      try {
-        if (await predicate()) {
-          clearInterval(timer);
-          resolve();
-        } else if (Date.now() >= deadline) {
-          clearInterval(timer);
-          reject(new Error(message));
-        }
-      } catch (error) {
-        clearInterval(timer);
-        reject(error);
-      }
-    };
-    const timer = setInterval(() => void inspect(), 50);
-    void inspect();
-  });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(message);
 }
 
 function signalTerminalTree(
@@ -88,6 +125,27 @@ function signalTerminalTree(
   }
 }
 
+async function terminateTerminal(
+  terminal: ActiveTerminal,
+  graceMs: number
+): Promise<void> {
+  if (terminal.exited()) return;
+  signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
+  await Promise.race([
+    terminal.exitPromise,
+    new Promise<void>((resolve) => setTimeout(resolve, graceMs)),
+  ]);
+  if (terminal.exited()) return;
+  signalTerminalTree(terminal.pid, 'SIGKILL', () => terminal.kill('SIGKILL'));
+  await Promise.race([
+    terminal.exitPromise,
+    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+  if (!terminal.exited()) {
+    throw new Error('Task attention PTY remained alive after SIGKILL');
+  }
+}
+
 async function launch(
   input: RunnerInput,
   options: {
@@ -100,9 +158,8 @@ async function launch(
   }
 ): Promise<LaunchResult> {
   const terminal = spawn(
-    '/usr/bin/env',
+    input.nodeExecutable,
     [
-      'node',
       input.cliEntry,
       '--trust-workspace',
       '--permission-mode',
@@ -114,12 +171,13 @@ async function launch(
       cwd: input.workspace,
       cols: 120,
       rows: 40,
-      env: createTuiPtyEnvironment(),
+      env: createTuiPtyEnvironment({ BLADE_VERSION: '999.0.0' }),
     }
   );
   let output = '';
   let plainOutput = '';
   let exited = false;
+  const secretScanner = createTuiTaskAttentionSecretScanner(input.secrets);
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit(() => {
       exited = true;
@@ -133,6 +191,7 @@ async function launch(
     exited: () => exited,
   };
   terminal.onData((chunk) => {
+    secretScanner.observe(chunk);
     output = appendBoundedPtyEvidence(output, chunk, 48_000);
     plainOutput = appendBoundedPtyEvidence(
       plainOutput,
@@ -141,6 +200,7 @@ async function launch(
     );
   });
 
+  let primaryError: unknown;
   try {
     await waitFor(
       () =>
@@ -157,12 +217,18 @@ async function launch(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(
-        `${message}; PTY=${projectForegroundBoundedPtyOutput(output).slice(-8_000)}`
+        `${message}; PTY=${redact(
+          projectForegroundBoundedPtyOutput(output).slice(-8_000),
+          input.secrets
+        )}`
       );
     }
-    return { output, plainOutput };
-  } finally {
-    options.capture?.(projectForegroundBoundedPtyOutput(output).slice(-3_000));
+  } catch (error) {
+    primaryError = error;
+  }
+
+  let cleanupError: unknown;
+  try {
     if (!exited) {
       terminal.write('\u0003');
       terminal.write('\u0003');
@@ -171,39 +237,50 @@ async function launch(
         new Promise<void>((resolve) => setTimeout(resolve, 750)),
       ]);
     }
-    if (!exited) {
-      signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
-      await Promise.race([
+    await terminateTerminal(
+      {
+        pid: terminal.pid,
+        kill: (signal) => terminal.kill(signal),
         exitPromise,
-        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-      ]);
-    }
-    if (!exited) {
-      signalTerminalTree(terminal.pid, 'SIGKILL', () => terminal.kill('SIGKILL'));
-      await Promise.race([
-        exitPromise,
-        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-      ]);
-    }
+        exited: () => exited,
+      },
+      2_000
+    );
+  } catch (error) {
+    cleanupError = error;
+  } finally {
+    options.capture?.(
+      redact(projectForegroundBoundedPtyOutput(output).slice(-3_000), input.secrets)
+    );
     if (activeTerminal?.pid === terminal.pid) activeTerminal = undefined;
   }
+  const leakedSecrets = secretScanner.leakedSecretLabels();
+  const leakError =
+    leakedSecrets.length > 0
+      ? new Error(
+          `Task attention PTY output contains credentials: ${leakedSecrets.join(', ')}`
+        )
+      : undefined;
+  const failures = [primaryError, cleanupError, leakError].filter(
+    (error): error is NonNullable<typeof error> => error !== undefined
+  );
+  if (failures.length > 1) {
+    throw new AggregateError(failures, 'Task attention PTY launch and cleanup failed');
+  }
+  if (failures.length === 1) throw failures[0];
+  return {
+    output: redact(output, input.secrets),
+    plainOutput: redact(plainOutput, input.secrets),
+  };
 }
 
 async function stopForSignal(): Promise<void> {
   const terminal = activeTerminal;
-  if (terminal && !terminal.exited()) {
-    signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
-    await Promise.race([
-      terminal.exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
-    ]);
-  }
-  if (terminal && !terminal.exited()) {
-    signalTerminalTree(terminal.pid, 'SIGKILL', () => terminal.kill('SIGKILL'));
-    await Promise.race([
-      terminal.exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
-    ]);
+  try {
+    if (terminal) await terminateTerminal(terminal, 1_000);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
   }
   process.exit(143);
 }
@@ -328,9 +405,12 @@ async function main(): Promise<void> {
     process.stdout.write(
       JSON.stringify({
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: redact(
+          error instanceof Error ? error.message : String(error),
+          input.secrets
+        ),
         stageOutput,
-        output: projectForegroundBoundedPtyOutput(output),
+        output: redact(projectForegroundBoundedPtyOutput(output), input.secrets),
       })
     );
     process.exitCode = 1;

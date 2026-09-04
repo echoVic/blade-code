@@ -8,6 +8,11 @@ import {
   resolveQualificationRoot,
   runQualification,
 } from '../../../scripts/qualification.js';
+import {
+  assertTuiTaskAttentionRunnerOutputSafe,
+  createTuiTaskAttentionSecretScanner,
+  createTuiTaskAttentionStreamCapture,
+} from '../../support/tuiTaskAttentionPtyDriver.js';
 
 describe('production qualification contract', () => {
   const workflowsDirectory = path.resolve(
@@ -160,6 +165,10 @@ describe('production qualification contract', () => {
       __dirname,
       '../../integration/real-api/tui-task-attention-trajectory.test.ts'
     );
+    const deterministicPath = path.resolve(
+      __dirname,
+      '../../integration/tui-task-attention.test.ts'
+    );
     const driverPath = path.resolve(
       __dirname,
       '../../support/tuiTaskAttentionPtyDriver.ts'
@@ -168,6 +177,10 @@ describe('production qualification contract', () => {
       __dirname,
       '../../support/tuiTaskAttentionPtyRunner.ts'
     );
+    const trajectory = fs.readFileSync(trajectoryPath, 'utf8');
+    const deterministic = fs.readFileSync(deterministicPath, 'utf8');
+    const driver = fs.readFileSync(driverPath, 'utf8');
+    const runner = fs.readFileSync(runnerPath, 'utf8');
 
     expect(testConfig).toContain(
       "'tests/integration/real-api/tui-task-attention-trajectory.test.ts'"
@@ -175,6 +188,56 @@ describe('production qualification contract', () => {
     expect(fs.existsSync(trajectoryPath)).toBe(true);
     expect(fs.existsSync(driverPath)).toBe(true);
     expect(fs.existsSync(runnerPath)).toBe(true);
+    expect(trajectory).toContain('resolveRequiredDeepSeekQualificationModels');
+    expect(trajectory).toContain('frameworkRetryBudget(context)');
+    expect(trajectory).toContain('configured.overrides?.maxRetries');
+    expect(trajectory).toContain("process.platform !== 'win32'");
+    expect(driver).toContain('../../dist/blade.js');
+    expect(driver).toContain('TUI_TASK_ATTENTION_PTY_USES_PRODUCTION_DIST');
+    expect(runner).toContain("import { spawn } from 'bun-pty'");
+    expect(runner).toContain('input.nodeExecutable');
+    expect(deterministic).toContain('productionCliReady ??=');
+    expect(deterministic).toContain("describe.skipIf(process.platform === 'win32')");
+  });
+
+  it('rejects secrets anywhere in raw task attention runner output before parsing', () => {
+    const secret = 'qualification-secret';
+
+    expect(() =>
+      assertTuiTaskAttentionRunnerOutputSafe(
+        JSON.stringify({ success: true, unexpected: secret }),
+        '',
+        [secret]
+      )
+    ).toThrow('credentials');
+    expect(() =>
+      assertTuiTaskAttentionRunnerOutputSafe(
+        JSON.stringify({ success: true }),
+        `unprojected stderr ${secret}`,
+        [secret]
+      )
+    ).toThrow('credentials');
+  });
+
+  it('retains an early secret leak after bounded output rolls forward', () => {
+    const secret = 'early-qualification-secret';
+    const scanner = createTuiTaskAttentionSecretScanner([secret]);
+
+    scanner.observe(`prefix ${secret}`);
+    scanner.observe('x'.repeat(128 * 1024));
+
+    expect(scanner.leakedSecretLabels()).toEqual(['secret-1']);
+  });
+
+  it('keeps a secret latch after early output rolls out of the retained tail', () => {
+    const secret = 'rolled-off-secret';
+    const capture = createTuiTaskAttentionStreamCapture([secret], 32);
+
+    capture.append(`early ${secret}`);
+    capture.append('x'.repeat(128));
+
+    expect(capture.output()).not.toContain(secret);
+    expect(capture.leakedSecretLabels()).toEqual(['secret-1']);
   });
 
   it('resolves the monorepo root from the CLI scripts directory', () => {

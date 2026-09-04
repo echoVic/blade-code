@@ -20,13 +20,27 @@ export interface TuiTaskAttentionPtyEvidence {
   output: string;
 }
 
+export const TUI_TASK_ATTENTION_PTY_USES_PRODUCTION_DIST = true;
+
 function resolveBunExecutable(): string {
   const candidates = [
     process.env.BUN_EXEC_PATH,
     process.env.BUN_INSTALL
-      ? path.join(process.env.BUN_INSTALL, 'bin', 'bun')
+      ? path.join(
+          process.env.BUN_INSTALL,
+          'bin',
+          process.platform === 'win32' ? 'bun.exe' : 'bun'
+        )
       : undefined,
-    path.join(os.homedir(), '.bun', 'bin', 'bun'),
+    path.join(
+      os.homedir(),
+      '.bun',
+      'bin',
+      process.platform === 'win32' ? 'bun.exe' : 'bun'
+    ),
+    process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, 'bun', 'bin', 'bun.exe')
+      : undefined,
     '/opt/homebrew/bin/bun',
     '/usr/local/bin/bun',
   ];
@@ -44,6 +58,67 @@ function redact(value: string, secrets: readonly string[]): string {
     (result, secret) => (secret ? result.replaceAll(secret, '[REDACTED]') : result),
     value
   );
+}
+
+export interface TuiTaskAttentionSecretScanner {
+  observe(chunk: string | Buffer): void;
+  leakedSecretLabels(): string[];
+}
+
+export interface TuiTaskAttentionStreamCapture {
+  append(chunk: string | Buffer): void;
+  output(): string;
+  leakedSecretLabels(): string[];
+}
+
+export function createTuiTaskAttentionSecretScanner(
+  secrets: readonly string[]
+): TuiTaskAttentionSecretScanner {
+  const candidates = secrets
+    .map((secret, index) => ({ secret, label: `secret-${index + 1}` }))
+    .filter(({ secret }) => secret.length > 0);
+  const found = new Set<string>();
+  let carry = '';
+  const carryLength = Math.max(0, ...candidates.map(({ secret }) => secret.length - 1));
+  return {
+    observe(chunk) {
+      const text = `${carry}${chunk.toString()}`;
+      for (const candidate of candidates) {
+        if (text.includes(candidate.secret)) found.add(candidate.label);
+      }
+      carry = carryLength > 0 ? text.slice(-carryLength) : '';
+    },
+    leakedSecretLabels: () => [...found],
+  };
+}
+
+export function createTuiTaskAttentionStreamCapture(
+  secrets: readonly string[],
+  maximumCharacters: number
+): TuiTaskAttentionStreamCapture {
+  const scanner = createTuiTaskAttentionSecretScanner(secrets);
+  let boundedOutput = '';
+  return {
+    append(chunk) {
+      scanner.observe(chunk);
+      boundedOutput = `${boundedOutput}${chunk.toString()}`.slice(-maximumCharacters);
+    },
+    output: () => boundedOutput,
+    leakedSecretLabels: () => scanner.leakedSecretLabels(),
+  };
+}
+
+export function assertTuiTaskAttentionRunnerOutputSafe(
+  stdout: string,
+  stderr: string,
+  secrets: readonly string[]
+): void {
+  const scanner = createTuiTaskAttentionSecretScanner(secrets);
+  scanner.observe(stdout);
+  scanner.observe(stderr);
+  if (scanner.leakedSecretLabels().length > 0) {
+    throw new Error('Task attention PTY runner output contains credentials');
+  }
 }
 
 interface RunnerResult {
@@ -113,7 +188,9 @@ async function stopRunner(child: ChildProcess): Promise<void> {
   signalRunner(child, 'SIGTERM');
   if (await waitForRunnerExit(child, 2_000)) return;
   signalRunner(child, 'SIGKILL');
-  await waitForRunnerExit(child, 2_000);
+  if (!(await waitForRunnerExit(child, 2_000))) {
+    throw new Error('Task attention PTY runner remained alive after SIGKILL');
+  }
 }
 
 export async function runTuiTaskAttentionPtyDriver(input: {
@@ -144,16 +221,19 @@ export async function runTuiTaskAttentionPtyDriver(input: {
       BLADE_TUI_ATTENTION_INPUT: Buffer.from(
         JSON.stringify({
           cliEntry,
+          nodeExecutable: process.execPath,
           workspace: input.workspace,
           sessionId: input.sessionId,
           title: input.title,
           terminalContent: input.terminalContent,
           completionFile,
+          secrets: input.secrets ?? [],
         })
       ).toString('base64'),
     }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
   );
   let runnerChild: ChildProcess | undefined;
+  const secretScanner = createTuiTaskAttentionSecretScanner(input.secrets ?? []);
   const runnerResult = new Promise<RunnerResult>((resolve, reject) => {
     runnerChild = spawn(resolveBunExecutable(), [runner], {
       cwd: path.resolve(import.meta.dirname, '../..'),
@@ -177,9 +257,11 @@ export async function runTuiTaskAttentionPtyDriver(input: {
       return next.slice(-64 * 1024);
     };
     child.stdout?.on('data', (chunk: Buffer | string) => {
+      secretScanner.observe(chunk);
       stdout = append(stdout, chunk);
     });
     child.stderr?.on('data', (chunk: Buffer | string) => {
+      secretScanner.observe(chunk);
       stderr = append(stderr, chunk);
     });
     const timeout = setTimeout(
@@ -216,16 +298,40 @@ export async function runTuiTaskAttentionPtyDriver(input: {
     await writeFile(`${completionFile}.done`, 'completed\n', { mode: 0o600 });
     result = await runnerResult;
   } catch (error) {
-    if (runnerChild) await stopRunner(runnerChild);
+    let cleanupError: unknown;
+    if (runnerChild) {
+      try {
+        await stopRunner(runnerChild);
+      } catch (cleanupFailure) {
+        cleanupError = cleanupFailure;
+      }
+    }
     await runnerResult.catch(() => undefined);
     const failure = error as Error & { stdout?: string; stderr?: string };
     const diagnostic = redact(
       `${failure.stdout ?? ''}\n${failure.stderr ?? ''}\n${failure.message}`,
       input.secrets ?? []
     ).slice(-8_000);
+    if (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        `Task attention PTY runner and cleanup failed: ${diagnostic}`
+      );
+    }
     throw new Error(`Task attention PTY runner failed: ${diagnostic}`);
   }
 
+  const leakedSecrets = secretScanner.leakedSecretLabels();
+  if (leakedSecrets.length > 0) {
+    throw new Error(
+      `Task attention PTY runner output contains credentials: ${leakedSecrets.join(', ')}`
+    );
+  }
+  assertTuiTaskAttentionRunnerOutputSafe(
+    result.stdout,
+    result.stderr,
+    input.secrets ?? []
+  );
   if (result.stdout.length + result.stderr.length > MAX_EVIDENCE_CHARS) {
     throw new Error('Task attention PTY evidence exceeded its serialized budget');
   }
@@ -248,9 +354,6 @@ export async function runTuiTaskAttentionPtyDriver(input: {
     result.stderr,
     stageOutput ? JSON.stringify(stageOutput) : '',
   ].join('\n');
-  const leakedSecrets = (input.secrets ?? []).flatMap((secret, index) =>
-    secret && allOutput.includes(secret) ? [`secret-${index + 1}`] : []
-  );
   const faults = allOutput
     .split(/\r?\n/)
     .filter((line) => /\b(uncaught|panic|fatal)\b/i.test(line))
