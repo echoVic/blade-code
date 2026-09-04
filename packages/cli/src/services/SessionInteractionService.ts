@@ -336,6 +336,7 @@ export class SessionInteractionService {
               id: inboxMessageId,
               content: content.inbox,
               queuedAt: Date.now(),
+              origin: 'interaction_recovery',
             },
             (messages) => !messages.some((message) => message.id === inboxMessageId)
           );

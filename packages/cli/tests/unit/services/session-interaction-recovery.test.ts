@@ -165,6 +165,7 @@ describe('SessionInteractionService durable recovery', () => {
       expect.objectContaining({
         id: `interaction-${request.requestId}`,
         content: expect.stringContaining('Database: Postgres'),
+        origin: 'interaction_recovery',
       }),
     ]);
     await expect(

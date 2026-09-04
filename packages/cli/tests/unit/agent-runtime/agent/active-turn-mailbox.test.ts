@@ -1,8 +1,13 @@
+import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.unmock('node:child_process');
+
 import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
 import {
   createAcpRemoteWorkspaceDescriptor,
@@ -17,13 +22,17 @@ import {
   MAX_PENDING_STEERS,
 } from '../../../../src/agent/runtime/ActiveTurnMailbox.js';
 import { DurableSteeringInbox } from '../../../../src/agent/runtime/DurableSteeringInbox.js';
+import { durableSteeringInboxLockStatsForTests } from '../../../../src/agent/runtime/DurableSteeringInboxLock.js';
 import type { BackgroundSubagentCompletion } from '../../../../src/agent/subagents/BackgroundSubagentCompletion.js';
 import { PersistentStore } from '../../../../src/context/storage/PersistentStore.js';
 import {
   getSessionFilePath,
   getSessionInboxFilePath,
 } from '../../../../src/context/storage/pathUtils.js';
-import { createRemoteSessionStateStorage } from '../../../../src/context/storage/SessionStateStorage.js';
+import {
+  createRemoteSessionStateStorage,
+  createSessionStateStorage,
+} from '../../../../src/context/storage/SessionStateStorage.js';
 import { MAX_TURN_INPUT_MESSAGE_IDS } from '../../../../src/context/types.js';
 
 describe('ActiveTurnMailbox', () => {
@@ -37,12 +46,57 @@ describe('ActiveTurnMailbox', () => {
   });
 
   afterEach(() => {
+    expect(durableSteeringInboxLockStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
+    });
     vi.unstubAllEnvs();
     rmSync(storageRoot, { recursive: true, force: true });
   });
 
   async function createMailbox(sessionId = 'session-1') {
     return ActiveTurnMailbox.create(workspaceRoot, sessionId);
+  }
+
+  async function runInboxWriter(
+    sessionId: string,
+    messageId: string,
+    readyPath: string,
+    releasePath: string
+  ): Promise<void> {
+    const fixture = fileURLToPath(
+      new URL('../../../fixtures/durable-steering-inbox-writer.ts', import.meta.url)
+    );
+    await new Promise<void>((resolve, reject) => {
+      const child: ChildProcess = spawn(
+        'bun',
+        [fixture, workspaceRoot, sessionId, messageId, readyPath, releasePath],
+        {
+          env: { ...process.env, BLADE_STORAGE_ROOT: storageRoot },
+          stdio: ['ignore', 'ignore', 'pipe'],
+        }
+      );
+      let stderr = '';
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        reject(new Error('inbox writer exceeded deadline'));
+      }, 10_000);
+      timer.unref();
+      child.stderr?.setEncoding('utf8');
+      child.stderr?.on('data', (chunk: string) => {
+        stderr += chunk;
+      });
+      child.once('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      child.once('exit', (code, signal) => {
+        clearTimeout(timer);
+        if (code === 0) resolve();
+        else
+          reject(new Error(`writer exited code=${code} signal=${signal}: ${stderr}`));
+      });
+    });
   }
 
   it('keeps the durable turn identity limit aligned with mailbox capacities', () => {
@@ -108,6 +162,7 @@ describe('ActiveTurnMailbox', () => {
     await expect(inbox.acknowledge(['remote-message'])).rejects.toMatchObject({
       code: 'acp_remote_workspace_state_invalid',
     });
+    expect(inbox.list()).toEqual([expect.objectContaining({ id: 'remote-message' })]);
     await expect(
       DurableSteeringInbox.open(hostStateRoot, sessionId, remoteStorage)
     ).rejects.toMatchObject({ code: 'acp_remote_workspace_state_invalid' });
@@ -588,6 +643,167 @@ describe('ActiveTurnMailbox', () => {
       getSessionInboxFilePath(workspaceRoot, 'permission-session')
     );
     expect(file.mode & 0o777).toBe(0o600);
+  });
+
+  it('migrates a non-empty version 1 inbox and deletes it when acknowledged', async () => {
+    const sessionId = 'migrated-empty-inbox';
+    const inboxPath = getSessionInboxFilePath(workspaceRoot, sessionId);
+    await mkdir(path.dirname(inboxPath), { recursive: true });
+    await writeFile(
+      inboxPath,
+      JSON.stringify({
+        version: 1,
+        sessionId,
+        messages: [{ id: 'legacy', content: 'legacy input', queuedAt: 1 }],
+      }) + '\n',
+      'utf8'
+    );
+
+    const inbox = await DurableSteeringInbox.open(workspaceRoot, sessionId);
+    const migrated = inbox.snapshot();
+    expect(migrated.generation).toMatch(/^[a-f0-9-]{36}$/);
+    expect(migrated.messages).toEqual([
+      expect.objectContaining({ id: 'legacy', recovered: true }),
+    ]);
+    expect(JSON.parse(await readFile(inboxPath, 'utf8'))).toMatchObject({
+      version: 2,
+      generation: migrated.generation,
+    });
+
+    await inbox.acknowledge(['legacy']);
+    await expect(stat(inboxPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(inbox.snapshot()).toMatchObject({ messages: [] });
+    expect(inbox.snapshot().generation).not.toBe(migrated.generation);
+  });
+
+  it('serializes concurrent writes from separate inbox instances', async () => {
+    const sessionId = 'cross-instance-inbox';
+    const [first, second] = await Promise.all([
+      DurableSteeringInbox.open(workspaceRoot, sessionId),
+      DurableSteeringInbox.open(workspaceRoot, sessionId),
+    ]);
+
+    await Promise.all([
+      first.enqueue({ id: 'first', content: 'first input', queuedAt: 1 }),
+      second.enqueue({ id: 'second', content: 'second input', queuedAt: 2 }),
+    ]);
+
+    const snapshot = await first.refresh();
+    expect(snapshot.messages.map((message) => message.id).sort()).toEqual([
+      'first',
+      'second',
+    ]);
+    expect(snapshot.generation).toMatch(/^[a-f0-9-]{36}$/);
+  });
+
+  it('serializes concurrent writes from separate Bun processes', async () => {
+    const sessionId = 'cross-process-inbox';
+    const readyA = path.join(storageRoot, 'writer-a-ready');
+    const readyB = path.join(storageRoot, 'writer-b-ready');
+    const release = path.join(storageRoot, 'writers-release');
+    const writers = [
+      runInboxWriter(sessionId, 'process-a', readyA, release),
+      runInboxWriter(sessionId, 'process-b', readyB, release),
+    ];
+
+    const deadline = Date.now() + 5_000;
+    while (true) {
+      const ready = await Promise.all(
+        [readyA, readyB].map((file) =>
+          stat(file)
+            .then(() => true)
+            .catch(() => false)
+        )
+      );
+      if (ready.every(Boolean)) break;
+      if (Date.now() >= deadline) throw new Error('writers did not reach the barrier');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await writeFile(release, 'release', 'utf8');
+    await Promise.all(writers);
+
+    const inbox = await DurableSteeringInbox.open(workspaceRoot, sessionId);
+    expect(
+      inbox
+        .list()
+        .map((message) => message.id)
+        .sort()
+    ).toEqual(['process-a', 'process-b']);
+  });
+
+  it('does not advance memory when an atomic inbox write fails', async () => {
+    const sessionId = 'atomic-write-failure';
+    const inbox = await DurableSteeringInbox.open(
+      workspaceRoot,
+      sessionId,
+      createSessionStateStorage(workspaceRoot),
+      {
+        writeFile: async () => {
+          throw new Error('injected atomic write failure');
+        },
+      }
+    );
+    const before = inbox.snapshot();
+
+    await expect(
+      inbox.enqueue({ id: 'rejected', content: 'not committed', queuedAt: 1 })
+    ).rejects.toThrow('injected atomic write failure');
+    expect(inbox.snapshot()).toEqual(before);
+    await expect(
+      stat(getSessionInboxFilePath(workspaceRoot, sessionId))
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('does not advance memory when the inbox lock cannot be acquired', async () => {
+    const sessionId = 'lock-failure';
+    let rejectLock = false;
+    const inbox = await DurableSteeringInbox.open(
+      workspaceRoot,
+      sessionId,
+      createSessionStateStorage(workspaceRoot),
+      {
+        lockFile: async () => {
+          if (rejectLock) throw new Error('injected lock failure');
+          return async () => undefined;
+        },
+      }
+    );
+    const before = inbox.snapshot();
+    rejectLock = true;
+
+    await expect(
+      inbox.enqueue({ id: 'rejected', content: 'not committed', queuedAt: 1 })
+    ).rejects.toThrow('injected lock failure');
+    expect(inbox.snapshot()).toEqual(before);
+  });
+
+  it('does not advance memory when the inbox lock is compromised during write', async () => {
+    const sessionId = 'compromised-lock';
+    let compromise: ((error: Error) => unknown) | undefined;
+    const inbox = await DurableSteeringInbox.open(
+      workspaceRoot,
+      sessionId,
+      createSessionStateStorage(workspaceRoot),
+      {
+        lockFile: async (_filePath, options) => {
+          compromise = options.onCompromised;
+          return async () => undefined;
+        },
+        writeFile: async (filePath, data, options) => {
+          await writeFile(filePath, data, {
+            encoding: options.encoding,
+            mode: options.mode,
+          });
+          compromise?.(new Error('injected compromised lock'));
+        },
+      }
+    );
+    const before = inbox.snapshot();
+
+    await expect(
+      inbox.enqueue({ id: 'uncertain', content: 'uncertain write', queuedAt: 1 })
+    ).rejects.toThrow('injected compromised lock');
+    expect(inbox.snapshot()).toEqual(before);
   });
 
   it('fails closed for a corrupted durable inbox', async () => {
