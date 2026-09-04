@@ -303,6 +303,38 @@ describe('TuiTaskAttentionController', () => {
     await controller.close();
   });
 
+  it('serializes a lifecycle refresh emitted synchronously by the loading listener', async () => {
+    const service = new DeferredCatalogClient();
+    const bus = new FakeBus();
+    const controller = new TuiTaskAttentionController({
+      service,
+      store: new FakeAttentionStore(),
+      bus,
+      timerApi: new FakeTimerApi(),
+    });
+    let emitted = false;
+    controller.subscribe((state) => {
+      if (state.status !== 'loading' || emitted) return;
+      emitted = true;
+      bus.emit('task.status');
+    });
+
+    const started = controller.start();
+    await waitForRequest(service, 1);
+    expect(service.requests).toHaveLength(1);
+    expect(service.maxActiveRequests).toBe(1);
+    service.requests[0]?.request.resolve(page([summary('first')]));
+
+    await waitForRequest(service, 2);
+    expect(service.maxActiveRequests).toBe(1);
+    service.requests[1]?.request.resolve(page([summary('follow-up')]));
+    await started;
+
+    expect(controller.getState().sessions).toEqual([summary('follow-up')]);
+    expect(service.maxActiveRequests).toBe(1);
+    await controller.close();
+  });
+
   it('runs a lifecycle refresh queued from the ready listener after finalization', async () => {
     const service = new DeferredCatalogClient();
     const bus = new FakeBus();

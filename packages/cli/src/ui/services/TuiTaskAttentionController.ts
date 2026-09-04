@@ -143,11 +143,13 @@ export class TuiTaskAttentionController {
       if (markDirty) this.dirty = true;
       return this.activeRefresh;
     }
-    const refresh = this.runRefreshLoop().finally(() => {
-      if (this.activeRefresh !== refresh) return;
-      this.activeRefresh = null;
-      if (!this.disposed && this.dirty) void this.requestRefresh(false);
-    });
+    const refresh = Promise.resolve()
+      .then(() => this.runRefreshLoop())
+      .finally(() => {
+        if (this.activeRefresh !== refresh) return;
+        this.activeRefresh = null;
+        if (!this.disposed && this.dirty) void this.requestRefresh(false);
+      });
     this.activeRefresh = refresh;
     return refresh;
   }
