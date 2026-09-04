@@ -88,11 +88,15 @@ latest file, compute the next state, and use `write-file-atomic` with mode `0600
 parent directory is created/chmodded to `0700`. Persistence failures do not block
 Session listing or activation: the controller retains the newly computed in-memory
 snapshot for the current process and reports only a bounded diagnostic through the
-logger. Failed mutations remain in a bounded in-memory semantic journal. On the next
+logger. Failed mutations remain in a bounded, ordered in-memory semantic journal;
+reconcile mutations are not coalesced because an intermediate non-terminal to
+terminal transition is itself attention evidence. On the next
 successful lock/read cycle, Blade replays that journal over the latest disk state
 before applying the new mutation, preserving both this process's fail-soft decisions
 and another process's committed updates. The journal is cleared only after atomic
-write and permission hardening complete.
+write and permission hardening complete. At 256 pending mutations it becomes sticky
+fail-closed and stops attempting disk writes rather than dropping or reordering an
+attention transition.
 
 Only `ENOENT` and content that is explicitly invalid under the bounded v1 parser are
 treated as an empty ledger. Other stat/open/read failures abort the disk mutation and
