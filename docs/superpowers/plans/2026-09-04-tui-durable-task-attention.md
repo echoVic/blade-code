@@ -64,7 +64,9 @@ expect(invalidSummary.taskCompletedAt).toBeUndefined();
   must not replay the committed mutation. At 256 entries, become sticky fail-closed
   instead of dropping or reordering operations. Treat only `ENOENT` and explicitly
   invalid v1 content as empty; other I/O failures must not be written back as empty.
-  Use a non-throwing `onCompromised` callback and prevent writes after compromise.
+  Use a non-throwing `onCompromised` callback; prevent writes when compromise is known
+  before commit, and retain the journal when compromise arrives during the atomic
+  write so a later fresh lock can replay it safely.
 - [ ] Add a real two-Bun-process fixture proving concurrent exact entries are not lost.
 - [ ] Reconcile acknowledged terminal entries by authoritative newest-first catalog
   order on every complete pass, retaining the latest 1,024 plus every protected

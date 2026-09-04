@@ -106,8 +106,10 @@ treated as an empty ledger. Other stat/open/read failures abort the disk mutatio
 use the semantic journal against the in-memory snapshot; they must not overwrite
 valid state with an assumed empty ledger. Reads use one opened handle and enforce the
 byte limit on the bytes actually read. `proper-lockfile` receives a non-throwing
-`onCompromised` callback; a compromised lock prevents the guarded write and enters the
-same bounded fail-soft diagnostic path.
+`onCompromised` callback. A compromise observed before the atomic write prevents it; a
+compromise observed while that write is in flight prevents Blade from treating the
+result as safely committed. Both cases retain the journal for idempotent replay under
+a fresh lock and enter the same bounded fail-soft diagnostic path.
 
 The store retains every active non-terminal and unread entry, plus the 1,024 most
 recent acknowledged terminal Sessions according to the complete catalog's
