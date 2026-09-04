@@ -1,5 +1,8 @@
 import { basename } from 'node:path';
-import type { SessionSurfaceSummary } from '../../api/sessionSurfaceSchemas.js';
+import type {
+  SessionLocatorV2,
+  SessionSurfaceSummary,
+} from '../../api/sessionSurfaceSchemas.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import type { SessionHistoryViewState } from '../services/SessionHistoryController.js';
 import { getTuiTaskAttentionKey } from '../services/TuiTaskAttentionStore.js';
@@ -31,6 +34,35 @@ interface TaskAttentionVisibilityBoundary {
   setVisibleLocator(locator?: SessionSurfaceSummary['locator']): Promise<void>;
 }
 
+interface TaskAttentionStarter {
+  start(): Promise<void>;
+}
+
+interface TaskAttentionStartupIdentity {
+  continueSession: boolean;
+  resume: string | undefined;
+  forkSession: boolean;
+  requestedSessionId: string | undefined;
+  locator: SessionLocatorV2;
+}
+
+export async function initializeTuiTaskAttentionVisibility(
+  controller: TaskAttentionStarter,
+  visibility: TuiTaskAttentionVisibilityCoordinator,
+  identity: TaskAttentionStartupIdentity
+): Promise<void> {
+  await controller.start();
+  if (
+    identity.continueSession ||
+    identity.resume !== undefined ||
+    identity.forkSession ||
+    identity.requestedSessionId !== undefined
+  ) {
+    return;
+  }
+  await visibility.proveLocal(identity.locator);
+}
+
 export async function commitLocalTaskAttention(
   intent: SessionSelectionIntent,
   summary: SessionSurfaceSummary,
@@ -44,6 +76,8 @@ export async function commitLocalTaskAttention(
 export class TuiTaskAttentionVisibilityCoordinator {
   readonly remote: RemoteHistoryAttentionAcknowledger;
   private remoteEpoch = 0;
+  private provenLocalLocator?: SessionLocatorV2;
+  private remoteActive = false;
 
   constructor(private readonly attention: TaskAttentionVisibilityBoundary) {
     this.remote = new RemoteHistoryAttentionAcknowledger((summary) =>
@@ -51,18 +85,29 @@ export class TuiTaskAttentionVisibilityCoordinator {
     );
   }
 
+  async proveLocal(locator: SessionLocatorV2): Promise<void> {
+    this.provenLocalLocator = locator;
+    if (this.remoteActive) return;
+    this.remoteEpoch += 1;
+    this.remote.reset();
+    await this.attention.setVisibleLocator(locator);
+  }
+
   async beginRemote(
     viewer: { intent: SessionSelectionIntent; session: SessionSurfaceSummary },
     generation: number
   ): Promise<void> {
+    this.remoteActive = true;
     this.remoteEpoch += 1;
     this.remote.begin(viewer, generation);
     await this.attention.setVisibleLocator(undefined);
   }
 
-  resetRemote(): void {
+  async endRemote(): Promise<void> {
+    this.remoteActive = false;
     this.remoteEpoch += 1;
     this.remote.reset();
+    await this.attention.setVisibleLocator(this.provenLocalLocator);
   }
 
   async updateRemote(

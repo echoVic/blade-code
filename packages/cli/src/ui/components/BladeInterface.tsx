@@ -72,6 +72,7 @@ import { SubagentProgress } from './SubagentProgress.js';
 import {
   commitLocalTaskAttention,
   getMostRecentLocalSessionCandidate,
+  initializeTuiTaskAttentionVisibility,
   TuiTaskAttentionVisibilityCoordinator,
 } from './sessionSelectorModel.js';
 import { TeamProgress } from './TeamProgress.js';
@@ -111,6 +112,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const readyAnnouncementSent = useRef(false);
   const lastInitializationError = useRef<string | null>(null);
   const pagerTransitionMountedRef = useRef(false);
+  const taskAttentionStartedRef = useRef(false);
   const sessionHistoryControllerRef = useRef<SessionHistoryController | null>(null);
   if (!sessionHistoryControllerRef.current) {
     sessionHistoryControllerRef.current = new SessionHistoryController();
@@ -198,7 +200,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       list: () => taskAttentionController.listAll(),
       acknowledge: (summary) => taskAttentionController.acknowledge(summary),
       setVisibleLocator: (locator) =>
-        taskAttentionController.setVisibleLocator(locator),
+        locator
+          ? taskAttentionVisibility.proveLocal(locator)
+          : taskAttentionController.setVisibleLocator(),
     }
   );
 
@@ -211,9 +215,36 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   );
 
   useEffect(() => {
-    if (!readyForChat) return;
-    void taskAttentionController.start();
-  }, [readyForChat, taskAttentionController]);
+    if (!readyForChat || taskAttentionStartedRef.current) return;
+    taskAttentionStartedRef.current = true;
+    void initializeTuiTaskAttentionVisibility(
+      taskAttentionController,
+      taskAttentionVisibility,
+      {
+        continueSession: continueSession === true,
+        resume: otherProps.resume,
+        forkSession: otherProps.forkSession === true,
+        requestedSessionId: otherProps.sessionId,
+        locator: {
+          version: 2,
+          sessionId,
+          workspace: { kind: 'local', projectPath: workspaceRoot },
+        },
+      }
+    ).catch(() => {
+      logger.warn('[BladeInterface] Task attention startup unavailable');
+    });
+  }, [
+    continueSession,
+    otherProps.forkSession,
+    otherProps.resume,
+    otherProps.sessionId,
+    readyForChat,
+    sessionId,
+    taskAttentionController,
+    taskAttentionVisibility,
+    workspaceRoot,
+  ]);
 
   useEffect(
     () => () => {
@@ -389,11 +420,14 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           activateLocal: async (metadata, localIntent) => {
             await sessionHistoryController.closeView();
             await activatePersistedSession(metadata, localIntent, options);
-            await commitLocalTaskAttention(
-              localIntent,
-              summary,
-              taskAttentionController
-            );
+            await commitLocalTaskAttention(localIntent, summary, {
+              acknowledge: (candidate) =>
+                taskAttentionController.acknowledge(candidate),
+              setVisibleLocator: (locator) =>
+                locator
+                  ? taskAttentionVisibility.proveLocal(locator)
+                  : taskAttentionController.setVisibleLocator(),
+            });
             appActions.closeModal();
           },
         },
@@ -627,7 +661,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       void activation;
       return;
     }
-    taskAttentionVisibility.resetRemote();
+    void taskAttentionVisibility.endRemote().catch(() => {
+      logger.warn('[BladeInterface] Task attention visibility unavailable');
+    });
     if (sessionHistoryController.getState().status !== 'idle') {
       void sessionHistoryController.closeView();
     }

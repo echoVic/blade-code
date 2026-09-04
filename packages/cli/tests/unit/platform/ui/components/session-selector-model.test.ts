@@ -111,19 +111,103 @@ describe('sessionSelectorModel', () => {
     expect(acknowledge).not.toHaveBeenCalled();
   });
 
-  it('does not infer visibility from an unproven mounted session identity', async () => {
-    const { TuiTaskAttentionVisibilityCoordinator } = await import(
-      '../../../../../src/ui/components/sessionSelectorModel.js'
-    );
+  it('marks a default new local session visible only after attention startup completes', async () => {
+    const {
+      initializeTuiTaskAttentionVisibility,
+      TuiTaskAttentionVisibilityCoordinator,
+    } = await import('../../../../../src/ui/components/sessionSelectorModel.js');
+    let resolveStart = (): void => undefined;
+    const started = new Promise<void>((resolve) => {
+      resolveStart = resolve;
+    });
     const acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
     const setVisibleLocator = vi.fn(
       async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
     );
+    const coordinator = new TuiTaskAttentionVisibilityCoordinator({
+      acknowledge,
+      setVisibleLocator,
+    });
+    const local = createLocalSummary();
 
-    new TuiTaskAttentionVisibilityCoordinator({ acknowledge, setVisibleLocator });
+    const initialization = initializeTuiTaskAttentionVisibility(
+      { start: vi.fn(() => started) },
+      coordinator,
+      {
+        continueSession: false,
+        resume: undefined,
+        forkSession: false,
+        requestedSessionId: undefined,
+        locator: local.locator,
+      }
+    );
+    await Promise.resolve();
+    expect(setVisibleLocator).not.toHaveBeenCalled();
+
+    resolveStart();
+    await initialization;
+    expect(setVisibleLocator).toHaveBeenCalledWith(local.locator);
+  });
+
+  it('does not infer visibility from a mounted explicit session id', async () => {
+    const {
+      initializeTuiTaskAttentionVisibility,
+      TuiTaskAttentionVisibilityCoordinator,
+    } = await import('../../../../../src/ui/components/sessionSelectorModel.js');
+    const acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
+    const setVisibleLocator = vi.fn(
+      async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
+    );
+    const coordinator = new TuiTaskAttentionVisibilityCoordinator({
+      acknowledge,
+      setVisibleLocator,
+    });
+    const local = createLocalSummary();
+
+    await initializeTuiTaskAttentionVisibility(
+      { start: vi.fn(async () => undefined) },
+      coordinator,
+      {
+        continueSession: false,
+        resume: undefined,
+        forkSession: false,
+        requestedSessionId: local.locator.sessionId,
+        locator: local.locator,
+      }
+    );
 
     expect(acknowledge).not.toHaveBeenCalled();
     expect(setVisibleLocator).not.toHaveBeenCalled();
+  });
+
+  it('restores only a proven local locator when a remote viewer closes', async () => {
+    const { TuiTaskAttentionVisibilityCoordinator } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+    const local = createLocalSummary();
+    const remote = createRemoteSummary();
+    const setVisibleLocator = vi.fn(
+      async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
+    );
+    const coordinator = new TuiTaskAttentionVisibilityCoordinator({
+      acknowledge: vi.fn(async (_summary: SessionSurfaceSummary) => undefined),
+      setVisibleLocator,
+    });
+
+    await coordinator.proveLocal(local.locator);
+    await coordinator.beginRemote({ intent: 'resume', session: remote }, 7);
+    setVisibleLocator.mockClear();
+    await coordinator.endRemote();
+    expect(setVisibleLocator).toHaveBeenCalledWith(local.locator);
+
+    const withoutLocal = new TuiTaskAttentionVisibilityCoordinator({
+      acknowledge: vi.fn(async (_summary: SessionSurfaceSummary) => undefined),
+      setVisibleLocator,
+    });
+    await withoutLocal.beginRemote({ intent: 'resume', session: remote }, 8);
+    setVisibleLocator.mockClear();
+    await withoutLocal.endRemote();
+    expect(setVisibleLocator).toHaveBeenCalledWith(undefined);
   });
 
   it('does not publish stale remote visibility when acknowledgement finishes after another view begins', async () => {
