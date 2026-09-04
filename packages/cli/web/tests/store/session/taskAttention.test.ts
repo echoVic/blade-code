@@ -423,6 +423,31 @@ describe('taskAttention', () => {
       ).toEqual(recovered);
     });
 
+    it('does not revive the same terminal result after it is acknowledged', () => {
+      const completed = createSession({
+        taskStatus: 'completed',
+        taskCompletedAt: COMPLETED_AT,
+      });
+      const acknowledged = acknowledgeTaskTerminal(
+        ledger([{ key: keyFor(completed), signature: null }]),
+        refFor(completed),
+        completed
+      );
+
+      expect(
+        reconcileTaskAttention({
+          ledger: acknowledged,
+          unreadTaskKeys: [],
+          sessions: [completed],
+          currentSessionRef: null,
+          documentVisible: true,
+        })
+      ).toEqual({
+        ledger: acknowledged,
+        unreadTaskKeys: [],
+      });
+    });
+
     it('retains a new terminal baseline as MRU so its next result becomes unread', () => {
       const acknowledgedSessions = Array.from({ length: 1_024 }, (_, index) =>
         createSession({

@@ -21,7 +21,7 @@ import {
 import {
   persistTaskTerminalReadLedger,
   persistUnreadTaskKeys,
-  pruneUnreadTaskKeys,
+  reconcileTaskAttention,
   type TaskTerminalReadLedgerV1,
 } from '../taskAttention';
 import type {
@@ -29,6 +29,7 @@ import type {
   MessageContentPart,
   SendMessagePayload,
   Session,
+  SessionCatalogOverlay,
   SessionRef,
   SessionSlice,
   SliceCreator,
@@ -171,6 +172,34 @@ function taskTerminalReadLedger(
   ledger: TaskTerminalReadLedgerV1 | undefined
 ): TaskTerminalReadLedgerV1 {
   return ledger ?? { version: 1, entries: [] };
+}
+
+function applySessionCatalogOverlays(
+  sessions: readonly Session[],
+  overlays: Record<string, SessionCatalogOverlay>,
+  startRevision: number
+): Session[] {
+  let merged = [...sessions];
+  for (const [key, overlay] of Object.entries(overlays)) {
+    if (overlay.revision <= startRevision) continue;
+    if (overlay.kind === 'remove') {
+      merged = merged.filter(
+        (session) => sessionRefKey(sessionRefFromSession(session)) !== key
+      );
+    } else {
+      merged = upsertSessionByRef(merged, overlay.session);
+    }
+  }
+  return merged;
+}
+
+function retainNewerSessionCatalogOverlays(
+  overlays: Record<string, SessionCatalogOverlay>,
+  startRevision: number
+): Record<string, SessionCatalogOverlay> {
+  return Object.fromEntries(
+    Object.entries(overlays).filter(([, overlay]) => overlay.revision > startRevision)
+  );
 }
 
 const fetchTeams = async (ref: SessionRef) =>
@@ -333,44 +362,40 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
     loadSessions: async () => {
       const generation = ++catalogGeneration;
-      const initialSessionKeys = new Set(
-        get().sessions.map((session) => sessionRefKey(sessionRefFromSession(session)))
-      );
-      const catalogSessionKeys = new Set<string>();
+      const initialSessions = get().sessions;
+      const startRevision = get().catalogOverlayRevision ?? 0;
+      let catalogSessions: Session[] = [];
       set({ catalogLoadState: 'loading', catalogError: null });
       try {
         let cursor: string | undefined;
-        let firstPage = true;
         do {
           const page = await sessionService.listSessionPage(cursor);
           if (generation !== catalogGeneration) return;
           for (const session of page.sessions) {
-            catalogSessionKeys.add(sessionRefKey(sessionRefFromSession(session)));
+            catalogSessions = upsertSessionByRef(catalogSessions, session);
           }
           set((state) => {
-            const incomingKeys = new Set(
-              page.sessions.map((session) =>
+            const catalogKeys = new Set(
+              catalogSessions.map((session) =>
                 sessionRefKey(sessionRefFromSession(session))
               )
             );
-            const sessions = firstPage
-              ? [
-                  ...page.sessions,
-                  ...state.sessions.filter(
-                    (session) =>
-                      !incomingKeys.has(sessionRefKey(sessionRefFromSession(session)))
-                  ),
-                ]
-              : page.sessions.reduce(
-                  (current, session) => upsertSessionByRef(current, session),
-                  state.sessions
-                );
+            const progressiveSessions = [
+              ...catalogSessions,
+              ...initialSessions.filter(
+                (session) =>
+                  !catalogKeys.has(sessionRefKey(sessionRefFromSession(session)))
+              ),
+            ];
             return {
-              sessions,
-              catalogLoadState: page.nextCursor ? 'hydrating' : 'ready',
+              sessions: applySessionCatalogOverlays(
+                progressiveSessions,
+                state.sessionCatalogOverlays ?? {},
+                startRevision
+              ),
+              catalogLoadState: 'hydrating',
             };
           });
-          firstPage = false;
           cursor = page.nextCursor;
           if (cursor) {
             await waitForCatalogContinuation();
@@ -379,18 +404,38 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         } while (cursor);
 
         if (generation !== catalogGeneration) return;
-        const sessions = get().sessions.filter((session) => {
-          const key = sessionRefKey(sessionRefFromSession(session));
-          return catalogSessionKeys.has(key) || !initialSessionKeys.has(key);
+        let nextUnreadTaskKeys = get().unreadTaskKeys;
+        let nextLedger = taskTerminalReadLedger(get().taskTerminalReadLedger);
+        set((state) => {
+          const sessions = applySessionCatalogOverlays(
+            catalogSessions,
+            state.sessionCatalogOverlays ?? {},
+            startRevision
+          );
+          const reconciled = reconcileTaskAttention({
+            ledger: taskTerminalReadLedger(state.taskTerminalReadLedger),
+            unreadTaskKeys: state.unreadTaskKeys,
+            sessions,
+            currentSessionRef: state.currentSessionRef,
+            documentVisible:
+              typeof document !== 'undefined' && document.visibilityState === 'visible',
+          });
+          nextUnreadTaskKeys = reconciled.unreadTaskKeys;
+          nextLedger = reconciled.ledger;
+          return {
+            sessions,
+            unreadTaskKeys: nextUnreadTaskKeys,
+            taskTerminalReadLedger: nextLedger,
+            sessionCatalogOverlays: retainNewerSessionCatalogOverlays(
+              state.sessionCatalogOverlays ?? {},
+              startRevision
+            ),
+            catalogLoadState: 'ready' as const,
+            catalogError: null,
+          };
         });
-        const unreadTaskKeys = pruneUnreadTaskKeys(get().unreadTaskKeys, sessions);
-        persistUnreadTaskKeys(unreadTaskKeys);
-        set({
-          sessions,
-          unreadTaskKeys,
-          catalogLoadState: 'ready',
-          catalogError: null,
-        });
+        persistTaskTerminalReadLedger(nextLedger);
+        persistUnreadTaskKeys(nextUnreadTaskKeys);
       } catch (err) {
         if (generation !== catalogGeneration) return;
         set({

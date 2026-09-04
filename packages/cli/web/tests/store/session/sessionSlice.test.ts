@@ -3077,17 +3077,401 @@ describe('sessionSlice multimodal sendMessage', () => {
         nextCursor: 'next-page',
       })
       .mockRejectedValueOnce(new Error('history unavailable'));
+    const firstKey = sessionRefKey(createRef(first.sessionId, first.projectPath));
+    const staleKey = sessionRefKey(createRef('stale-session', '/tmp/stale'));
+    useSessionStore.setState({
+      unreadTaskKeys: [staleKey],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [
+          { key: firstKey, signature: null },
+          { key: staleKey, signature: null },
+        ],
+      },
+    });
 
     await useSessionStore.getState().loadSessions();
 
     expect(useSessionStore.getState()).toMatchObject({
       sessions: [first],
+      unreadTaskKeys: [staleKey],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [
+          { key: firstKey, signature: null },
+          { key: staleKey, signature: null },
+        ],
+      },
       catalogLoadState: 'error',
       catalogError: 'history unavailable',
       error: null,
       isLoading: false,
     });
   });
+
+  it('reconciles missed task attention across complete catalog loads without revival', async () => {
+    const running = createSession({
+      sessionId: 'missed-task',
+      projectPath: '/tmp/missed-task',
+      taskStatus: 'running',
+      taskCompletedAt: undefined,
+    });
+    const completed = {
+      ...running,
+      taskStatus: 'completed' as const,
+      taskCompletedAt: '2026-09-04T12:30:00.000Z',
+    };
+    const ref = createRef(running.sessionId, running.projectPath);
+    const key = sessionRefKey(ref);
+    const staleOverlaySession = { ...running, title: 'Pre-load stale overlay' };
+    vi.mocked(sessionService.listSessionPage)
+      .mockResolvedValueOnce({ sessions: [running] })
+      .mockResolvedValueOnce({ sessions: [completed] })
+      .mockResolvedValueOnce({ sessions: [completed] });
+    useSessionStore.setState({
+      catalogOverlayRevision: 1,
+      sessionCatalogOverlays: {
+        [key]: { revision: 1, kind: 'upsert', session: staleOverlaySession },
+      },
+    });
+
+    await useSessionStore.getState().loadSessions();
+    expect(useSessionStore.getState().sessions).toEqual([running]);
+    expect(useSessionStore.getState().sessionCatalogOverlays).toEqual({});
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key, signature: null },
+    ]);
+
+    await useSessionStore.getState().loadSessions();
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([key]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key, signature: null },
+    ]);
+
+    useSessionStore.getState().markTaskRead(ref);
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key, signature: taskTerminalSignature(completed) },
+    ]);
+
+    await useSessionStore.getState().loadSessions();
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key, signature: taskTerminalSignature(completed) },
+    ]);
+  });
+
+  it('silently baselines a terminal task on its first complete catalog', async () => {
+    const completed = createSession({
+      sessionId: 'historical-terminal',
+      projectPath: '/tmp/historical-terminal',
+      taskStatus: 'failed',
+      taskCompletedAt: '2026-09-04T12:31:00.000Z',
+      taskFailure: { code: 'runtime', message: 'historical', retryable: true },
+    });
+    const key = sessionRefKey(createRef(completed.sessionId, completed.projectPath));
+    vi.mocked(sessionService.listSessionPage).mockResolvedValue({
+      sessions: [completed],
+    });
+
+    await useSessionStore.getState().loadSessions();
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key, signature: taskTerminalSignature(completed) },
+    ]);
+  });
+
+  it('waits for cursor exhaustion before reconciling and pruning attention', async () => {
+    const active = createSession({
+      sessionId: 'active-running',
+      projectPath: '/tmp/active-running',
+      taskStatus: 'running',
+      taskCompletedAt: undefined,
+    });
+    const activeKey = sessionRefKey(createRef(active.sessionId, active.projectPath));
+    const staleKey = sessionRefKey(createRef('stale-session', '/tmp/stale'));
+    const finalPage = deferred<{ sessions: Session[]; nextCursor?: string }>();
+    vi.mocked(sessionService.listSessionPage)
+      .mockResolvedValueOnce({ sessions: [active], nextCursor: 'next-page' })
+      .mockReturnValueOnce(finalPage.promise);
+    useSessionStore.setState({
+      unreadTaskKeys: [staleKey],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [{ key: staleKey, signature: null }],
+      },
+    });
+
+    const loading = useSessionStore.getState().loadSessions();
+    await flushMicrotasks();
+
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [active],
+      unreadTaskKeys: [staleKey],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [{ key: staleKey, signature: null }],
+      },
+      catalogLoadState: 'hydrating',
+    });
+
+    finalPage.resolve({ sessions: [] });
+    await loading;
+
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key: activeKey, signature: null },
+    ]);
+  });
+
+  it('does not let an older catalog generation reconcile attention', async () => {
+    const running = createSession({
+      sessionId: 'generation-task',
+      projectPath: '/tmp/generation-task',
+      taskStatus: 'running',
+      taskCompletedAt: undefined,
+    });
+    const completed = {
+      ...running,
+      taskStatus: 'completed' as const,
+      taskCompletedAt: '2026-09-04T12:32:00.000Z',
+    };
+    const key = sessionRefKey(createRef(running.sessionId, running.projectPath));
+    const stalePage = deferred<{ sessions: Session[]; nextCursor?: string }>();
+    vi.mocked(sessionService.listSessionPage)
+      .mockReturnValueOnce(stalePage.promise)
+      .mockResolvedValueOnce({ sessions: [running] });
+
+    const staleLoad = useSessionStore.getState().loadSessions();
+    await useSessionStore.getState().loadSessions();
+    stalePage.resolve({ sessions: [completed] });
+    await staleLoad;
+
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [running],
+      unreadTaskKeys: [],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [{ key, signature: null }],
+      },
+      catalogLoadState: 'ready',
+    });
+  });
+
+  it('keeps a terminal task event that arrives between catalog pages', async () => {
+    const acknowledged = createSession({
+      sessionId: 'between-pages',
+      projectPath: '/tmp/between-pages',
+      taskStatus: 'completed',
+      taskCompletedAt: '2026-09-04T12:32:00.000Z',
+    });
+    const running = {
+      ...acknowledged,
+      taskStatus: 'running' as const,
+      taskCompletedAt: undefined,
+    };
+    const other = createSession({
+      sessionId: 'other-page',
+      projectPath: '/tmp/other-page',
+      taskStatus: 'running',
+      taskCompletedAt: undefined,
+    });
+    const ref = createRef(running.sessionId, running.projectPath);
+    const key = sessionRefKey(ref);
+    const finalPage = deferred<{ sessions: Session[]; nextCursor?: string }>();
+    vi.mocked(sessionService.listSessionPage)
+      .mockResolvedValueOnce({ sessions: [running], nextCursor: 'next-page' })
+      .mockReturnValueOnce(finalPage.promise);
+    useSessionStore.setState({
+      sessions: [acknowledged],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [{ key, signature: taskTerminalSignature(acknowledged) }],
+      },
+    });
+
+    const loading = useSessionStore.getState().loadSessions();
+    await flushMicrotasks();
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: {
+        ...ref,
+        taskStatus: 'completed',
+        taskCompletedAt: '2026-09-04T12:33:00.000Z',
+      },
+    });
+
+    finalPage.resolve({ sessions: [running, other] });
+    await loading;
+
+    expect(useSessionStore.getState().sessions).toContainEqual(
+      expect.objectContaining({
+        ...ref,
+        taskStatus: 'completed',
+        taskCompletedAt: '2026-09-04T12:33:00.000Z',
+      })
+    );
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([key]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toContainEqual({
+      key,
+      signature: taskTerminalSignature(acknowledged),
+    });
+  });
+
+  it('keeps a terminal task event after the final page resolves before commit', async () => {
+    const acknowledged = createSession({
+      sessionId: 'before-final-commit',
+      projectPath: '/tmp/before-final-commit',
+      taskStatus: 'completed',
+      taskCompletedAt: '2026-09-04T12:33:00.000Z',
+    });
+    const running = {
+      ...acknowledged,
+      taskStatus: 'running' as const,
+      taskCompletedAt: undefined,
+    };
+    const ref = createRef(running.sessionId, running.projectPath);
+    const key = sessionRefKey(ref);
+    useSessionStore.setState({
+      sessions: [acknowledged],
+      taskTerminalReadLedger: {
+        version: 1,
+        entries: [{ key, signature: taskTerminalSignature(acknowledged) }],
+      },
+    });
+    vi.mocked(sessionService.listSessionPage).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolve({ sessions: [running] });
+          useSessionStore.getState().handleTaskEvent({
+            type: 'task.status',
+            properties: {
+              ...ref,
+              taskStatus: 'completed',
+              taskCompletedAt: '2026-09-04T12:34:00.000Z',
+            },
+          });
+        })
+    );
+
+    await useSessionStore.getState().loadSessions();
+
+    expect(useSessionStore.getState().sessions).toContainEqual(
+      expect.objectContaining({
+        ...ref,
+        taskStatus: 'completed',
+        taskCompletedAt: '2026-09-04T12:34:00.000Z',
+      })
+    );
+    expect(useSessionStore.getState().unreadTaskKeys).toEqual([key]);
+    expect(useSessionStore.getState().taskTerminalReadLedger?.entries).toEqual([
+      { key, signature: taskTerminalSignature(acknowledged) },
+    ]);
+  });
+
+  it('preserves created and updated session upserts during hydration', async () => {
+    const staleUpdated = createSession({
+      sessionId: 'updated-during-hydration',
+      projectPath: '/tmp/updated-during-hydration',
+      title: 'Stale title',
+    });
+    const staleCreated = createSession({
+      sessionId: 'created-during-hydration',
+      projectPath: '/tmp/created-during-hydration',
+      title: 'Stale created title',
+    });
+    const liveCreated = { ...staleCreated, title: 'Live created title' };
+    const finalPage = deferred<{ sessions: Session[]; nextCursor?: string }>();
+    vi.mocked(sessionService.listSessionPage)
+      .mockResolvedValueOnce({
+        sessions: [staleUpdated],
+        nextCursor: 'next-page',
+      })
+      .mockReturnValueOnce(finalPage.promise);
+    vi.mocked(sessionService.getSession).mockResolvedValue(liveCreated);
+    useSessionStore.setState({ sessions: [staleUpdated] });
+
+    const loading = useSessionStore.getState().loadSessions();
+    await flushMicrotasks();
+    useSessionStore.getState().handleTaskEvent({
+      type: 'session.created',
+      properties: createRef(liveCreated.sessionId, liveCreated.projectPath),
+    });
+    useSessionStore.getState().handleTaskEvent({
+      type: 'session.updated',
+      properties: {
+        ...createRef(staleUpdated.sessionId, staleUpdated.projectPath),
+        title: 'Live updated title',
+      },
+    });
+    await flushMicrotasks();
+
+    finalPage.resolve({ sessions: [staleUpdated, staleCreated] });
+    await loading;
+
+    expect(useSessionStore.getState().sessions).toContainEqual(
+      expect.objectContaining({
+        sessionId: staleUpdated.sessionId,
+        projectPath: staleUpdated.projectPath,
+        title: 'Live updated title',
+      })
+    );
+    expect(useSessionStore.getState().sessions).toContainEqual(liveCreated);
+    expect(useSessionStore.getState().sessionCatalogOverlays).toMatchObject({
+      [sessionRefKey(createRef(staleUpdated.sessionId, staleUpdated.projectPath))]: {
+        kind: 'upsert',
+        session: expect.objectContaining({ title: 'Live updated title' }),
+      },
+      [sessionRefKey(createRef(liveCreated.sessionId, liveCreated.projectPath))]: {
+        kind: 'upsert',
+        session: liveCreated,
+      },
+    });
+  });
+
+  it.each(['session.deleted', 'session.archived'] as const)(
+    'does not resurrect a session removed by %s during hydration',
+    async (eventType) => {
+      const actualLoadArchivedSessions =
+        useSessionStore.getState().loadArchivedSessions;
+      try {
+        const removed = createSession({
+          sessionId: `removed-${eventType}`,
+          projectPath: '/tmp/removed-during-hydration',
+        });
+        const ref = createRef(removed.sessionId, removed.projectPath);
+        const key = sessionRefKey(ref);
+        const finalPage = deferred<{ sessions: Session[]; nextCursor?: string }>();
+        vi.mocked(sessionService.listSessionPage)
+          .mockResolvedValueOnce({ sessions: [removed], nextCursor: 'next-page' })
+          .mockReturnValueOnce(finalPage.promise);
+        useSessionStore.setState({
+          sessions: [removed],
+          loadArchivedSessions: vi.fn().mockResolvedValue(undefined),
+        });
+
+        const loading = useSessionStore.getState().loadSessions();
+        await flushMicrotasks();
+        useSessionStore.getState().handleTaskEvent({
+          type: eventType,
+          properties: ref,
+        });
+
+        finalPage.resolve({ sessions: [removed] });
+        await loading;
+
+        expect(useSessionStore.getState().sessions).toEqual([]);
+        expect(useSessionStore.getState().sessionCatalogOverlays?.[key]).toEqual({
+          revision: 1,
+          kind: 'remove',
+        });
+      } finally {
+        useSessionStore.setState({ loadArchivedSessions: actualLoadArchivedSessions });
+      }
+    }
+  );
 
   it('loads archived sessions through an independently paginated catalog', async () => {
     const archived = createSession({
