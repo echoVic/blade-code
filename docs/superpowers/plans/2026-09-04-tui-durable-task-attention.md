@@ -49,7 +49,7 @@ expect(invalidSummary.taskCompletedAt).toBeUndefined();
 - [ ] Write RED tests for missing baseline, known non-terminal to completed/failed/
   interrupted, cancelled, same terminal signature, terminal-to-terminal change, exact
   acknowledgement, duplicate IDs across workspaces, parser bounds, deletion pruning,
-  and MRU compaction.
+  and stable newest-first catalog compaction.
 - [ ] Implement a version-1 store at
   `<BLADE_STORAGE_ROOT>/tui-task-attention-v1.json`.
 - [ ] Make the key a domain-separated SHA-256 digest of an explicit canonical locator
@@ -59,6 +59,10 @@ expect(invalidSummary.taskCompletedAt).toBeUndefined();
   acquiring the file lock, and write with `write-file-atomic`, mode `0600`, under a
   `0700` directory.
 - [ ] Add a real two-Bun-process fixture proving concurrent exact entries are not lost.
+- [ ] Reconcile acknowledged terminal entries by authoritative newest-first catalog
+  order on every complete pass, retaining the latest 1,024 plus every protected
+  null/unread entry. Repeat the same 1,025-entry catalog and add one newer terminal to
+  prove the retained set is stable and admits the new latest entry.
 - [ ] Run focused tests, type-check, Biome, and diff check; commit as
   `feat(tui): persist task attention`.
 

@@ -79,7 +79,7 @@ interface TuiTaskAttentionFileV1 {
 
 `key` is a domain-separated SHA-256 digest of the canonical `SessionLocatorV2`; the
 file never stores `projectPath`, `workspaceRef`, title, prompt, result, failure text,
-or model output. Entry order is MRU order. Parsers reject unknown versions, malformed
+or model output. Parsers reject unknown versions, malformed
 entries, invalid digests, non-canonical signatures, duplicate keys, and oversized
 files fail-soft to an empty state.
 
@@ -90,10 +90,17 @@ Session listing or activation: the controller retains the newly computed in-memo
 snapshot for the current process and reports only a bounded diagnostic through the
 logger.
 
-The store retains every active non-terminal and unread entry, plus the 1,024 newest
-acknowledged terminal entries. Because keys and signatures are fixed-size and task
-admission is already bounded, this keeps ordinary state compact without evicting an
-unread marker. Entries absent from a complete catalog are removed.
+The store retains every active non-terminal and unread entry, plus the 1,024 most
+recent acknowledged terminal Sessions according to the complete catalog's
+newest-first order. Reconciliation rebuilds that bounded acknowledged subset from the
+authoritative catalog on every pass, so an old compacted baseline cannot rotate back
+in and displace a newer Session. A newly discovered recent terminal is retained as a
+silent baseline; a terminal older than the bounded window may be immediately omitted.
+Explicit and visible acknowledgement still clears unread exactly, but the next
+complete reconciliation restores catalog-recency ordering. Because keys and
+signatures are fixed-size and task admission is already bounded, this keeps ordinary
+state compact without evicting an unread marker. Entries absent from a complete
+catalog are removed.
 
 ## Reconciliation State Machine
 
