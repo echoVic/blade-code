@@ -41,7 +41,10 @@ import { useMainInput } from '../hooks/useMainInput.js';
 import { useRefreshStatic } from '../hooks/useRefreshStatic.js';
 import { useTerminalInput } from '../input/TerminalInputRouter.js';
 import { SessionHistoryController } from '../services/SessionHistoryController.js';
-import { TuiTaskAttentionController } from '../services/TuiTaskAttentionController.js';
+import {
+  TuiTaskAttentionLifecycle,
+  useTuiTaskAttentionLifecycle,
+} from '../services/TuiTaskAttentionLifecycle.js';
 import { themeManager } from '../themes/ThemeManager.js';
 import { clearRawRenderer } from '../utils/rawStreamRenderer.js';
 import {
@@ -70,10 +73,10 @@ import { SideConversationPanel } from './SideConversationPanel.js';
 import { SkillsManager } from './SkillsManager.js';
 import { SubagentProgress } from './SubagentProgress.js';
 import {
-  commitLocalTaskAttention,
+  finishLocalTaskAttention,
   getMostRecentLocalSessionCandidate,
   initializeTuiTaskAttentionVisibility,
-  TuiTaskAttentionVisibilityCoordinator,
+  proveContinueFallbackVisibility,
 } from './sessionSelectorModel.js';
 import { TeamProgress } from './TeamProgress.js';
 import { ThemeSelector } from './ThemeSelector.js';
@@ -112,25 +115,16 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const readyAnnouncementSent = useRef(false);
   const lastInitializationError = useRef<string | null>(null);
   const pagerTransitionMountedRef = useRef(false);
-  const taskAttentionStartedRef = useRef(false);
   const sessionHistoryControllerRef = useRef<SessionHistoryController | null>(null);
   if (!sessionHistoryControllerRef.current) {
     sessionHistoryControllerRef.current = new SessionHistoryController();
   }
   const sessionHistoryController = sessionHistoryControllerRef.current;
-  const taskAttentionControllerRef = useRef<TuiTaskAttentionController | null>(null);
-  if (!taskAttentionControllerRef.current) {
-    taskAttentionControllerRef.current = new TuiTaskAttentionController();
+  const taskAttentionLifecycleRef = useRef<TuiTaskAttentionLifecycle | null>(null);
+  if (!taskAttentionLifecycleRef.current) {
+    taskAttentionLifecycleRef.current = new TuiTaskAttentionLifecycle();
   }
-  const taskAttentionController = taskAttentionControllerRef.current;
-  const taskAttentionVisibilityRef =
-    useRef<TuiTaskAttentionVisibilityCoordinator | null>(null);
-  if (!taskAttentionVisibilityRef.current) {
-    taskAttentionVisibilityRef.current = new TuiTaskAttentionVisibilityCoordinator(
-      taskAttentionController
-    );
-  }
-  const taskAttentionVisibility = taskAttentionVisibilityRef.current;
+  const taskAttentionLifecycle = taskAttentionLifecycleRef.current;
   const [sessionHistoryState, setSessionHistoryState] = useState(
     sessionHistoryController.getState()
   );
@@ -197,61 +191,43 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     dismissAll,
     invocationAgents,
     {
-      list: () => taskAttentionController.listAll(),
-      acknowledge: (summary) => taskAttentionController.acknowledge(summary),
+      list: () => taskAttentionLifecycle.listAll(),
+      acknowledge: (summary) => taskAttentionLifecycle.acknowledge(summary),
       setVisibleLocator: (locator) =>
         locator
-          ? taskAttentionVisibility.proveLocal(locator)
-          : taskAttentionController.setVisibleLocator(),
+          ? taskAttentionLifecycle.proveLocal(locator)
+          : taskAttentionLifecycle.setVisibleLocator(),
     }
   );
 
-  useEffect(
-    () =>
-      taskAttentionController.subscribe((state) => {
-        appActions.projectTaskAttentionState(state.status, state.unreadKeys);
-      }),
-    [appActions, taskAttentionController]
-  );
-
-  useEffect(() => {
-    if (!readyForChat || taskAttentionStartedRef.current) return;
-    taskAttentionStartedRef.current = true;
-    void initializeTuiTaskAttentionVisibility(
-      taskAttentionController,
-      taskAttentionVisibility,
-      {
-        continueSession: continueSession === true,
-        resume: otherProps.resume,
-        forkSession: otherProps.forkSession === true,
-        requestedSessionId: otherProps.sessionId,
-        locator: {
-          version: 2,
-          sessionId,
-          workspace: { kind: 'local', projectPath: workspaceRoot },
-        },
-      }
-    ).catch(() => {
-      logger.warn('[BladeInterface] Task attention startup unavailable');
+  const initializeTaskAttention = useMemoizedFn(async (lease) => {
+    await initializeTuiTaskAttentionVisibility(lease.controller, lease.visibility, {
+      continueSession: continueSession === true,
+      resume: otherProps.resume,
+      forkSession: otherProps.forkSession === true,
+      requestedSessionId: otherProps.sessionId,
+      locator: {
+        version: 2,
+        sessionId,
+        workspace: { kind: 'local', projectPath: workspaceRoot },
+      },
     });
-  }, [
-    continueSession,
-    otherProps.forkSession,
-    otherProps.resume,
-    otherProps.sessionId,
-    readyForChat,
-    sessionId,
-    taskAttentionController,
-    taskAttentionVisibility,
-    workspaceRoot,
-  ]);
-
-  useEffect(
-    () => () => {
-      void taskAttentionController.close();
-    },
-    [taskAttentionController]
+  });
+  const projectTaskAttention = useMemoizedFn((state) => {
+    appActions.projectTaskAttentionState(state.status, state.unreadKeys);
+  });
+  const reportTaskAttentionLifecycle = useMemoizedFn(
+    (phase: 'startup' | 'shutdown') => {
+      logger.warn(`[BladeInterface] Task attention ${phase} unavailable`);
+    }
   );
+  useTuiTaskAttentionLifecycle({
+    ready: readyForChat,
+    lifecycle: taskAttentionLifecycle,
+    initialize: initializeTaskAttention,
+    project: projectTaskAttention,
+    report: reportTaskAttentionLifecycle,
+  });
 
   useEffect(
     () => sessionHistoryController.subscribe(setSessionHistoryState),
@@ -260,7 +236,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   useEffect(
     () => () => {
-      void sessionHistoryController.close();
+      void sessionHistoryController.close().catch(() => {
+        logger.warn('[BladeInterface] Session history shutdown unavailable');
+      });
     },
     [sessionHistoryController]
   );
@@ -381,6 +359,18 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   });
 
+  const proveCurrentLocalFallback = useMemoizedFn(async () => {
+    try {
+      await proveContinueFallbackVisibility(taskAttentionLifecycle.visibility(), {
+        version: 2,
+        sessionId,
+        workspace: { kind: 'local', projectPath: workspaceRoot },
+      });
+    } catch {
+      logger.warn('[BladeInterface] Task attention fallback visibility unavailable');
+    }
+  });
+
   const activatePersistedSession = useMemoizedFn(
     async (
       session: SessionMetadata,
@@ -419,15 +409,23 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           },
           activateLocal: async (metadata, localIntent) => {
             await sessionHistoryController.closeView();
-            await activatePersistedSession(metadata, localIntent, options);
-            await commitLocalTaskAttention(localIntent, summary, {
-              acknowledge: (candidate) =>
-                taskAttentionController.acknowledge(candidate),
-              setVisibleLocator: (locator) =>
-                locator
-                  ? taskAttentionVisibility.proveLocal(locator)
-                  : taskAttentionController.setVisibleLocator(),
-            });
+            const activated = await activatePersistedSession(
+              metadata,
+              localIntent,
+              options
+            );
+            try {
+              await finishLocalTaskAttention(
+                localIntent,
+                summary,
+                activated,
+                taskAttentionLifecycle.visibility()
+              );
+            } catch {
+              logger.warn(
+                '[BladeInterface] Task attention local activation unavailable'
+              );
+            }
             appActions.closeModal();
           },
         },
@@ -445,7 +443,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       const sessions = await listSessionCandidatesForIntent(
         intent,
         workspace,
-        taskAttentionController
+        taskAttentionLifecycle
       );
       const matches = sessions.filter(
         (candidate) => candidate.locator.sessionId === sourceSessionId
@@ -490,7 +488,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       const sessions = await listSessionCandidatesForIntent(
         intent,
         workspaceRoot,
-        taskAttentionController
+        taskAttentionLifecycle
       );
 
       if (sessions.length === 0) {
@@ -500,6 +498,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           return;
         }
         sessionActions.addAssistantMessage('没有找到历史会话，开始新对话。');
+        await proveCurrentLocalFallback();
         return;
       }
 
@@ -511,6 +510,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           return;
         }
         sessionActions.addAssistantMessage('没有找到本地历史会话，开始新对话。');
+        await proveCurrentLocalFallback();
         return;
       }
       await activateSurfaceSession(mostRecentSession, intent, {
@@ -546,7 +546,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       const sessions = await listSessionCandidatesForIntent(
         intent,
         workspaceRoot,
-        taskAttentionController
+        taskAttentionLifecycle
       );
 
       if (sessions.length === 0) {
@@ -612,7 +612,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   });
 
   const closeModal = useMemoizedFn(() => {
-    void sessionHistoryController.closeView();
+    void sessionHistoryController.closeView().catch(() => {
+      logger.warn('[BladeInterface] Session history close unavailable');
+    });
     appActions.closeModal();
   });
 
@@ -635,7 +637,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   });
 
   const handleSessionCancel = useMemoizedFn(() => {
-    void sessionHistoryController.closeView();
+    void sessionHistoryController.closeView().catch(() => {
+      logger.warn('[BladeInterface] Session history close unavailable');
+    });
     if (otherProps.resume) {
       safeExit(0);
     } else {
@@ -645,7 +649,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   useEffect(() => {
     if (activeModal === 'sessionHistoryViewer' && sessionHistoryViewerState) {
-      const visibility = taskAttentionVisibility
+      const visibility = taskAttentionLifecycle
         .beginRemote(
           sessionHistoryViewerState,
           sessionHistoryController.getState().viewGeneration + 1
@@ -658,30 +662,34 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         sessionHistoryViewerState.intent
       );
       void visibility;
-      void activation;
+      void activation.catch(() => {
+        logger.warn('[BladeInterface] Session history activation unavailable');
+      });
       return;
     }
-    void taskAttentionVisibility.endRemote().catch(() => {
+    void taskAttentionLifecycle.endRemote().catch(() => {
       logger.warn('[BladeInterface] Task attention visibility unavailable');
     });
     if (sessionHistoryController.getState().status !== 'idle') {
-      void sessionHistoryController.closeView();
+      void sessionHistoryController.closeView().catch(() => {
+        logger.warn('[BladeInterface] Session history close unavailable');
+      });
     }
   }, [
     activeModal,
     sessionHistoryController,
     sessionHistoryViewerState,
-    taskAttentionVisibility,
+    taskAttentionLifecycle,
   ]);
 
   useEffect(() => {
     if (!sessionHistoryViewerState) return;
-    void taskAttentionVisibility
+    void taskAttentionLifecycle
       .updateRemote(sessionHistoryViewerState, sessionHistoryState)
       .catch(() => {
         logger.warn('[BladeInterface] Task attention acknowledgement unavailable');
       });
-  }, [sessionHistoryState, sessionHistoryViewerState, taskAttentionVisibility]);
+  }, [sessionHistoryState, sessionHistoryViewerState, taskAttentionLifecycle]);
 
   const handleModelEditRequest = useMemoizedFn((model: ModelConfig) => {
     appActions.showModelEditWizard(model);

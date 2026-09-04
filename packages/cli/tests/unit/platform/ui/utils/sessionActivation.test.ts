@@ -423,6 +423,7 @@ describe('activateSessionSelection', () => {
     ).resolves.toEqual({
       sessionId: 'resume-session-12345678',
       messages: childMessages,
+      projectPath: '/workspace/elsewhere',
     });
     expect(modelMocks.updateConfig).toHaveBeenCalledWith({
       permissionMode: 'plan',
@@ -497,6 +498,7 @@ describe('activateSessionSelection', () => {
     ).resolves.toEqual({
       sessionId: 'child-session-abcdefgh',
       messages: childMessages,
+      projectPath: '/workspace/parent',
     });
 
     expect(serviceMocks.forkSession).toHaveBeenCalledWith('parent-session-12345678', {
@@ -646,6 +648,7 @@ describe('activateSessionSelection', () => {
     ).resolves.toEqual({
       sessionId: 'resume-session-12345678',
       messages: childMessages,
+      projectPath: '/workspace/parent',
     });
 
     expect(serviceMocks.loadSession).toHaveBeenCalledWith(

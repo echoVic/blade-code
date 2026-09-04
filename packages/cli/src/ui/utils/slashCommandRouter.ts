@@ -9,6 +9,7 @@ import {
   type SessionSurfaceSummary,
   SessionSurfaceSummarySchema,
 } from '../../api/sessionSurfaceSchemas.js';
+import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message, UsageInfo } from '../../services/ChatServiceInterface.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
@@ -27,6 +28,8 @@ import {
   resolveLocalSessionSurface,
   toLocalSessionSurfaceSummary,
 } from './sessionActivation.js';
+
+const logger = createLogger(LogCategory.UI);
 
 // ==================== 类型定义 ====================
 
@@ -459,15 +462,25 @@ export async function processSlashCommand(
     const localSession = isSessionMetadata(slashResult.data.session)
       ? slashResult.data.session
       : await resolveLocalSessionSurface(surface);
-    await activateSessionSelection(
+    const activated = await activateSessionSelection(
       { ...slashResult.data, session: localSession },
       workspaceRoot,
       sessionActions,
       cleanupAgent
     );
-    if (slashResult.data.intent === 'resume') {
-      await sessionSurfaces?.acknowledge?.(surface);
-      await sessionSurfaces?.setVisibleLocator?.(surface.locator);
+    try {
+      if (slashResult.data.intent === 'resume') {
+        await sessionSurfaces?.acknowledge?.(surface);
+        await sessionSurfaces?.setVisibleLocator?.(surface.locator);
+      } else {
+        await sessionSurfaces?.setVisibleLocator?.({
+          version: 2,
+          sessionId: activated.sessionId,
+          workspace: { kind: 'local', projectPath: activated.projectPath },
+        });
+      }
+    } catch {
+      logger.warn('[slashCommandRouter] Task attention activation unavailable');
     }
     return { type: 'handled', commandResult: { success: true } };
   }

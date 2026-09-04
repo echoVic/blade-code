@@ -468,8 +468,13 @@ describe('session selector fork integration', () => {
     resetStore();
   });
 
-  it('never acknowledges or marks the source visible after a fork commits', async () => {
+  it('never acknowledges the source and marks only the child visible after a fork commits', async () => {
     const source = createLocalSurfaceSummary(createSessionMetadata());
+    const childLocator = {
+      version: 2 as const,
+      sessionId: 'fork-child-session',
+      workspace: { kind: 'local' as const, projectPath: getCwd() },
+    };
     const attention = {
       acknowledge: vi.fn(async (_summary: SessionSurfaceSummary) => undefined),
       setVisibleLocator: vi.fn(
@@ -477,10 +482,10 @@ describe('session selector fork integration', () => {
       ),
     };
 
-    await commitLocalTaskAttention('fork', source, attention);
+    await commitLocalTaskAttention('fork', source, attention, childLocator);
 
     expect(attention.acknowledge).not.toHaveBeenCalled();
-    expect(attention.setVisibleLocator).not.toHaveBeenCalled();
+    expect(attention.setVisibleLocator).toHaveBeenCalledWith(childLocator);
   });
 
   it('locks selection synchronously while activation is pending and ignores Escape', async () => {
@@ -743,6 +748,7 @@ describe('session selector fork integration', () => {
     activationMocks.activateSessionSelection.mockResolvedValue({
       sessionId: 'child-session-abcdefgh',
       messages: [] as Message[],
+      projectPath: getCwd(),
     });
 
     const appActions = getState().app.actions;

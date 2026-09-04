@@ -16,6 +16,7 @@ import {
   getSessionCandidateKey,
   getSessionSelectorCopy,
   getSessionSelectorLabel,
+  getTaskAttentionKey,
   getVisibleSessionCandidates,
 } from './sessionSelectorModel.js';
 
@@ -142,10 +143,22 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
     [intent, propSessions]
   );
   const copy = useMemo(() => getSessionSelectorCopy(intent), [intent]);
+  const taskAttentionUnreadKeySet = useMemo(
+    () => new Set(taskAttentionUnreadKeys),
+    [taskAttentionUnreadKeys]
+  );
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(sessions.length / PAGE_SIZE)),
+    [sessions.length]
+  );
+  const paginatedSessions = useMemo(() => {
+    const start = currentPage * PAGE_SIZE;
+    return sessions.slice(start, start + PAGE_SIZE);
+  }, [currentPage, sessions]);
 
-  // 转换为 SelectInput 的 items 格式
+  // 只为当前页构建标签，避免对完整 catalog 重复做格式化。
   const items = useMemo(() => {
-    return sessions.map((session) => {
+    return paginatedSessions.map((session) => {
       const timeStr = formatTimestamp(session.lastMessageTime);
 
       return {
@@ -153,31 +166,20 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
         label: getSessionSelectorLabel(
           session,
           timeStr,
-          intent,
-          taskAttentionUnreadKeys
+          intent === 'resume' &&
+            taskAttentionUnreadKeySet.has(getTaskAttentionKey(session))
         ),
         value: session,
       };
     });
-  }, [intent, sessions, taskAttentionUnreadKeys]);
-
-  // 分页计算
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(items.length / PAGE_SIZE)),
-    [items.length]
-  );
-
-  const paginatedItems = useMemo(() => {
-    const start = currentPage * PAGE_SIZE;
-    return items.slice(start, start + PAGE_SIZE);
-  }, [items, currentPage]);
+  }, [intent, paginatedSessions, taskAttentionUnreadKeySet]);
 
   const displayRange = useMemo(
     () => ({
       start: currentPage * PAGE_SIZE + 1,
-      end: Math.min((currentPage + 1) * PAGE_SIZE, items.length),
+      end: Math.min((currentPage + 1) * PAGE_SIZE, sessions.length),
     }),
-    [currentPage, items.length]
+    [currentPage, sessions.length]
   );
 
   // 会话变化时重置页码
@@ -228,7 +230,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
       </Text>
 
       <SelectInput
-        items={paginatedItems}
+        items={items}
         onSelect={handleSelect}
         isFocused={isFocused && !isActivating}
         indicatorComponent={Indicator}

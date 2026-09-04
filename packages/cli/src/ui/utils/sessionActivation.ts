@@ -176,7 +176,7 @@ export async function activateSessionSelection(
   _workspaceRoot: string,
   actions: SessionActivationActions,
   cleanupAgent: CleanupAgent
-): Promise<{ sessionId: string; messages: Message[] }> {
+): Promise<{ sessionId: string; messages: Message[]; projectPath: string }> {
   const { intent, session, newSessionId, announceFork, permissionModeOverride } =
     selection;
   const resolvedWorkspace = resolveWorkspace(session.projectPath);
@@ -219,6 +219,7 @@ export async function activateSessionSelection(
     return {
       sessionId: forked.sessionId,
       messages: modelContext,
+      projectPath: forked.metadata.projectPath,
     };
   }
 
@@ -240,5 +241,6 @@ export async function activateSessionSelection(
   return {
     sessionId: session.sessionId,
     messages: modelContext,
+    projectPath: session.projectPath,
   };
 }

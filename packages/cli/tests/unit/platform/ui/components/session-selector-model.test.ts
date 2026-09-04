@@ -131,7 +131,10 @@ describe('sessionSelectorModel', () => {
     const local = createLocalSummary();
 
     const initialization = initializeTuiTaskAttentionVisibility(
-      { start: vi.fn(() => started) },
+      {
+        start: vi.fn(() => started),
+        getState: () => ({ sessions: [] }),
+      },
       coordinator,
       {
         continueSession: false,
@@ -165,7 +168,10 @@ describe('sessionSelectorModel', () => {
     const local = createLocalSummary();
 
     await initializeTuiTaskAttentionVisibility(
-      { start: vi.fn(async () => undefined) },
+      {
+        start: vi.fn(async () => undefined),
+        getState: () => ({ sessions: [local] }),
+      },
       coordinator,
       {
         continueSession: false,
@@ -178,6 +184,55 @@ describe('sessionSelectorModel', () => {
 
     expect(acknowledge).not.toHaveBeenCalled();
     expect(setVisibleLocator).not.toHaveBeenCalled();
+  });
+
+  it('proves an explicit session id that is absent from the startup catalog', async () => {
+    const {
+      initializeTuiTaskAttentionVisibility,
+      TuiTaskAttentionVisibilityCoordinator,
+    } = await import('../../../../../src/ui/components/sessionSelectorModel.js');
+    const local = createLocalSummary();
+    const setVisibleLocator = vi.fn(
+      async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
+    );
+    const coordinator = new TuiTaskAttentionVisibilityCoordinator({
+      acknowledge: vi.fn(async (_summary: SessionSurfaceSummary) => undefined),
+      setVisibleLocator,
+    });
+
+    await initializeTuiTaskAttentionVisibility(
+      {
+        start: vi.fn(async () => undefined),
+        getState: () => ({ sessions: [] }),
+      },
+      coordinator,
+      {
+        continueSession: false,
+        resume: undefined,
+        forkSession: false,
+        requestedSessionId: local.locator.sessionId,
+        locator: local.locator,
+      }
+    );
+
+    expect(setVisibleLocator).toHaveBeenCalledWith(local.locator);
+  });
+
+  it('proves the new local identity when continue has no resumable local session', async () => {
+    const { proveContinueFallbackVisibility, TuiTaskAttentionVisibilityCoordinator } =
+      await import('../../../../../src/ui/components/sessionSelectorModel.js');
+    const local = createLocalSummary();
+    const setVisibleLocator = vi.fn(
+      async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
+    );
+    const coordinator = new TuiTaskAttentionVisibilityCoordinator({
+      acknowledge: vi.fn(async (_summary: SessionSurfaceSummary) => undefined),
+      setVisibleLocator,
+    });
+
+    await proveContinueFallbackVisibility(coordinator, local.locator);
+
+    expect(setVisibleLocator).toHaveBeenCalledWith(local.locator);
   });
 
   it('restores only a proven local locator when a remote viewer closes', async () => {
@@ -430,7 +485,7 @@ describe('sessionSelectorModel', () => {
   });
 
   it('keeps local rows on the familiar compact path label', async () => {
-    const { getSessionSelectorLabel, getTaskAttentionKey } = await import(
+    const { getSessionSelectorLabel } = await import(
       '../../../../../src/ui/components/sessionSelectorModel.js'
     );
     const session = createLocalSummary();
@@ -441,13 +496,12 @@ describe('sessionSelectorModel', () => {
     expect(label).toContain('| a |');
     expect(label).not.toContain('[remote');
 
-    const unreadKey = getTaskAttentionKey(session);
-    expect(
-      getSessionSelectorLabel(session, '今天 16:20', 'resume', [unreadKey])
-    ).toContain('[NEW] [DONE] Session One');
-    expect(
-      getSessionSelectorLabel(session, '今天 16:20', 'fork', [unreadKey])
-    ).not.toContain('[NEW]');
+    expect(getSessionSelectorLabel(session, '今天 16:20', true)).toContain(
+      '[NEW] [DONE] Session One'
+    );
+    expect(getSessionSelectorLabel(session, '今天 16:20', false)).not.toContain(
+      '[NEW]'
+    );
   });
 
   it('matches unread state by the exact locator when session ids collide', async () => {
@@ -464,13 +518,21 @@ describe('sessionSelectorModel', () => {
       displayCwd: '/workspace/b',
       title: 'Collision',
     });
-    const unreadKeys = [getTaskAttentionKey(unread)];
+    const unreadKeys = new Set([getTaskAttentionKey(unread)]);
 
     expect(
-      getSessionSelectorLabel(unread, '今天 16:20', 'resume', unreadKeys)
+      getSessionSelectorLabel(
+        unread,
+        '今天 16:20',
+        unreadKeys.has(getTaskAttentionKey(unread))
+      )
     ).toContain('[NEW]');
     expect(
-      getSessionSelectorLabel(collision, '今天 16:20', 'resume', unreadKeys)
+      getSessionSelectorLabel(
+        collision,
+        '今天 16:20',
+        unreadKeys.has(getTaskAttentionKey(collision))
+      )
     ).not.toContain('[NEW]');
   });
 

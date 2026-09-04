@@ -778,6 +778,7 @@ describe('processSlashCommand', () => {
       activationMocks.activateSessionSelection.mockResolvedValue({
         sessionId: session.sessionId,
         messages: [],
+        projectPath: session.projectPath,
       });
       executeSlashCommand.mockResolvedValue({
         success: true,
@@ -816,6 +817,7 @@ describe('processSlashCommand', () => {
       activationMocks.activateSessionSelection.mockResolvedValue({
         sessionId: session.sessionId,
         messages: [],
+        projectPath: session.projectPath,
       });
       executeSlashCommand.mockResolvedValue({
         success: true,
@@ -853,7 +855,14 @@ describe('processSlashCommand', () => {
       const session = createSessionMetadata();
       const summary = createLocalSurfaceSummary(session);
       const acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
-      const sessionSurfaces = { list: async () => [summary], acknowledge };
+      const setVisibleLocator = vi.fn(
+        async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
+      );
+      const sessionSurfaces = {
+        list: async () => [summary],
+        acknowledge,
+        setVisibleLocator,
+      };
       executeSlashCommand.mockResolvedValue({
         success: true,
         data: { action: 'activate_session', intent: 'resume', session },
@@ -892,6 +901,7 @@ describe('processSlashCommand', () => {
       activationMocks.activateSessionSelection.mockResolvedValueOnce({
         sessionId: 'forked-session',
         messages: [],
+        projectPath: session.projectPath,
       });
       await processSlashCommand(
         createResolvedInput('/fork parent-session'),
@@ -913,6 +923,55 @@ describe('processSlashCommand', () => {
         sessionSurfaces
       );
       expect(acknowledge).not.toHaveBeenCalled();
+      expect(setVisibleLocator).toHaveBeenCalledWith({
+        version: 2,
+        sessionId: 'forked-session',
+        workspace: { kind: 'local', projectPath: session.projectPath },
+      });
+    });
+
+    it('keeps a committed local activation successful when attention projection fails', async () => {
+      const session = createSessionMetadata();
+      const summary = createLocalSurfaceSummary(session);
+      activationMocks.activateSessionSelection.mockResolvedValue({
+        sessionId: session.sessionId,
+        messages: [],
+        projectPath: session.projectPath,
+      });
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: { action: 'activate_session', intent: 'resume', session },
+      });
+
+      await expect(
+        processSlashCommand(
+          createResolvedInput('/resume parent-session'),
+          createMockAppActions(),
+          createMockSessionActions(),
+          new AbortController().signal,
+          cleanupAgent,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          process.cwd(),
+          undefined,
+          {
+            list: async () => [summary],
+            acknowledge: async () => {
+              throw new Error('attention unavailable');
+            },
+          }
+        )
+      ).resolves.toEqual({
+        type: 'handled',
+        commandResult: { success: true },
+      });
     });
 
     it('routes a remote surface to the history viewer without local activation', async () => {

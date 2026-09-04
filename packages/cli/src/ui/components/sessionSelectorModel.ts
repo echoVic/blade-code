@@ -36,6 +36,7 @@ interface TaskAttentionVisibilityBoundary {
 
 interface TaskAttentionStarter {
   start(): Promise<void>;
+  getState(): { readonly sessions: readonly SessionSurfaceSummary[] };
 }
 
 interface TaskAttentionStartupIdentity {
@@ -55,22 +56,77 @@ export async function initializeTuiTaskAttentionVisibility(
   if (
     identity.continueSession ||
     identity.resume !== undefined ||
-    identity.forkSession ||
-    identity.requestedSessionId !== undefined
+    identity.forkSession
+  ) {
+    return;
+  }
+  if (
+    identity.requestedSessionId !== undefined &&
+    controller
+      .getState()
+      .sessions.some((session) => sameLocator(session.locator, identity.locator))
   ) {
     return;
   }
   await visibility.proveLocal(identity.locator);
 }
 
+function sameLocator(left: SessionLocatorV2, right: SessionLocatorV2): boolean {
+  if (
+    left.sessionId !== right.sessionId ||
+    left.workspace.kind !== right.workspace.kind
+  ) {
+    return false;
+  }
+  return left.workspace.kind === 'local' && right.workspace.kind === 'local'
+    ? left.workspace.projectPath === right.workspace.projectPath
+    : left.workspace.kind === 'acp-remote' &&
+        right.workspace.kind === 'acp-remote' &&
+        left.workspace.workspaceRef === right.workspace.workspaceRef;
+}
+
 export async function commitLocalTaskAttention(
   intent: SessionSelectionIntent,
   summary: SessionSurfaceSummary,
-  attention: TaskAttentionVisibilityBoundary
+  attention: TaskAttentionVisibilityBoundary,
+  activatedLocator?: SessionLocatorV2
 ): Promise<void> {
-  if (intent !== 'resume') return;
-  await attention.acknowledge(summary);
-  await attention.setVisibleLocator(summary.locator);
+  if (intent === 'resume') {
+    await attention.acknowledge(summary);
+    await attention.setVisibleLocator(summary.locator);
+    return;
+  }
+  if (activatedLocator) await attention.setVisibleLocator(activatedLocator);
+}
+
+export function finishLocalTaskAttention(
+  intent: SessionSelectionIntent,
+  source: SessionSurfaceSummary,
+  activated: { sessionId: string; projectPath: string },
+  visibility: TuiTaskAttentionVisibilityCoordinator
+): Promise<void> {
+  const locator: SessionLocatorV2 = {
+    version: 2,
+    sessionId: activated.sessionId,
+    workspace: { kind: 'local', projectPath: activated.projectPath },
+  };
+  return commitLocalTaskAttention(
+    intent,
+    source,
+    {
+      acknowledge: (summary) => visibility.acknowledge(summary),
+      setVisibleLocator: (visible) =>
+        visible ? visibility.proveLocal(visible) : Promise.resolve(),
+    },
+    locator
+  );
+}
+
+export function proveContinueFallbackVisibility(
+  visibility: TuiTaskAttentionVisibilityCoordinator,
+  locator: SessionLocatorV2
+): Promise<void> {
+  return visibility.proveLocal(locator);
 }
 
 export class TuiTaskAttentionVisibilityCoordinator {
@@ -83,6 +139,10 @@ export class TuiTaskAttentionVisibilityCoordinator {
     this.remote = new RemoteHistoryAttentionAcknowledger((summary) =>
       attention.acknowledge(summary)
     );
+  }
+
+  acknowledge(summary: SessionSurfaceSummary): Promise<void> {
+    return this.attention.acknowledge(summary);
   }
 
   async proveLocal(locator: SessionLocatorV2): Promise<void> {
@@ -212,15 +272,10 @@ export function getMostRecentLocalSessionCandidate(
 export function getSessionSelectorLabel(
   session: SessionSurfaceSummary,
   timestamp: string,
-  intent: SessionSelectionIntent = 'resume',
-  taskAttentionUnreadKeys: readonly string[] = []
+  hasUnreadAttention = false
 ): string {
   const title = getSessionDisplayTitle(session);
-  const attention =
-    intent === 'resume' &&
-    taskAttentionUnreadKeys.includes(getTaskAttentionKey(session))
-      ? '[NEW] '
-      : '';
+  const attention = hasUnreadAttention ? '[NEW] ' : '';
   if (session.locator.workspace.kind === 'acp-remote') {
     const archived = session.archivedAt ? ' · archived' : '';
     return `${attention}[remote · ${session.capabilities.connection} · history${archived}] ${title}\n${session.displayCwd} · ${session.messageCount} messages · ${timestamp}${session.hasErrors ? ' [!]' : ''}`;
