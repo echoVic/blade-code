@@ -871,6 +871,13 @@ describe('SessionRuntime', () => {
         recovered: true,
       }),
     ]);
+    const snapshot = await runtime.getFollowUpQueueSnapshot();
+    expect(snapshot).toMatchObject({ pending: 1, mutable: 1, locked: 0 });
+    await runtime.mutateFollowUpQueue({
+      expectedVersion: snapshot.version,
+      operation: { type: 'remove', messageId: 'recovered-interaction' },
+    });
+    expect(runtime.getPendingSteeringCount()).toBe(0);
     await runtime.dispose();
   });
 
@@ -2086,6 +2093,21 @@ describe('SessionRuntime', () => {
       hadSuccessfulToolResult: true,
       emptyFinalCorrectionSpent: true,
     });
+    const protectedQueue = await recovered.getFollowUpQueueSnapshot();
+    expect(protectedQueue.items).toEqual([
+      expect.objectContaining({
+        id: prepared.messageId,
+        state: 'locked',
+        mutable: false,
+        delivery: 'recovery',
+      }),
+    ]);
+    await expect(
+      recovered.mutateFollowUpQueue({
+        expectedVersion: protectedQueue.version,
+        operation: { type: 'remove', messageId: prepared.messageId },
+      })
+    ).rejects.toMatchObject({ code: 'already_claimed' });
     await recovered.acknowledgeStartupTurnRecovery();
     expect(recovered.getTurnRecoveryAssessment()).toEqual({ state: 'none' });
     expect(recovered.getStartupTurnRecovery()).toMatchObject({

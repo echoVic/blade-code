@@ -177,7 +177,7 @@ describe('ActiveTurnMailbox', () => {
       reason: 'no_active_turn',
     });
 
-    const turn = mailbox.beginTurn();
+    const turn = await mailbox.beginTurn();
     await expect(mailbox.enqueue('first')).resolves.toMatchObject({
       accepted: true,
       turnId: turn.id,
@@ -208,7 +208,7 @@ describe('ActiveTurnMailbox', () => {
       delivery: 'next_turn',
     });
 
-    const turn = mailbox.beginTurn();
+    const turn = await mailbox.beginTurn();
     const claimed = await mailbox.drain(turn);
     expect(claimed[0]?.content).toBe('startup guidance');
     await mailbox.acknowledge(claimed.map((message) => message.id));
@@ -220,7 +220,7 @@ describe('ActiveTurnMailbox', () => {
       accepted: true,
       delivery: 'next_turn',
     });
-    expect(() => mailbox.beginTurn()).toThrow('already has an active turn');
+    await expect(mailbox.beginTurn()).rejects.toThrow('already has an active turn');
 
     const nextTurn = await mailbox.finishTurn(turn, { continuePending: true });
     expect(nextTurn?.id).toBeTruthy();
@@ -294,7 +294,7 @@ describe('ActiveTurnMailbox', () => {
 
   it('fails closed when the pending steering budget is exhausted', async () => {
     const mailbox = await createMailbox();
-    const turn = mailbox.beginTurn();
+    const turn = await mailbox.beginTurn();
 
     for (let index = 0; index < 20; index++) {
       expect((await mailbox.enqueue(`message-${index}`)).accepted).toBe(true);
@@ -309,7 +309,7 @@ describe('ActiveTurnMailbox', () => {
 
   it('rejects one multimodal message above the durable content budget', async () => {
     const mailbox = await createMailbox('oversized-multimodal-session');
-    mailbox.beginTurn();
+    await mailbox.beginTurn();
 
     await expect(
       mailbox.enqueue([
@@ -328,7 +328,7 @@ describe('ActiveTurnMailbox', () => {
 
   it('enforces the pending limit under concurrent enqueue calls', async () => {
     const mailbox = await createMailbox('concurrent-session');
-    mailbox.beginTurn();
+    await mailbox.beginTurn();
 
     const results = await Promise.all(
       Array.from({ length: 25 }, (_, index) => mailbox.enqueue(`concurrent-${index}`))
@@ -383,7 +383,7 @@ describe('ActiveTurnMailbox', () => {
       queued: MAX_PENDING_BACKGROUND_COMPLETIONS,
     });
 
-    const turn = mailbox.beginTurn();
+    const turn = await mailbox.beginTurn();
     for (let index = 0; index < 20; index++) {
       expect((await mailbox.enqueue(`user-${index}`)).accepted).toBe(true);
     }
@@ -485,7 +485,7 @@ describe('ActiveTurnMailbox', () => {
 
   it('recovers accepted but unacknowledged guidance after restart', async () => {
     const first = await createMailbox('recovered-session');
-    const firstTurn = first.beginTurn();
+    const firstTurn = await first.beginTurn();
     await first.enqueue('retry this guidance');
     await first.finishTurn(firstTurn);
 
@@ -696,6 +696,123 @@ describe('ActiveTurnMailbox', () => {
     expect(snapshot.generation).toMatch(/^[a-f0-9-]{36}$/);
   });
 
+  it('removes and reorders pending user follow-ups with exact versions', async () => {
+    const mailbox = await createMailbox('mutable-follow-ups');
+    const turn = await mailbox.beginTurn();
+    for (const id of ['first', 'second', 'third']) {
+      await mailbox.enqueue(id, { messageId: id });
+    }
+    const before = await mailbox.getFollowUpQueueSnapshot();
+
+    const unchanged = await mailbox.mutateFollowUpQueue({
+      expectedVersion: before.version,
+      operation: { type: 'move', messageId: 'second', toPosition: 1 },
+    });
+    expect(unchanged.snapshot.version).toBe(before.version);
+
+    const moved = await mailbox.mutateFollowUpQueue({
+      expectedVersion: unchanged.snapshot.version,
+      operation: { type: 'move', messageId: 'third', toPosition: 1 },
+    });
+    expect(moved.snapshot.items.map((item) => item.id)).toEqual([
+      'first',
+      'third',
+      'second',
+    ]);
+    const removed = await mailbox.mutateFollowUpQueue({
+      expectedVersion: moved.snapshot.version,
+      operation: { type: 'remove', messageId: 'second' },
+    });
+    expect(removed.snapshot.items.map((item) => item.id)).toEqual(['first', 'third']);
+    await expect(
+      mailbox.mutateFollowUpQueue({
+        expectedVersion: before.version,
+        operation: { type: 'remove', messageId: 'first' },
+      })
+    ).rejects.toMatchObject({ code: 'revision_conflict' });
+    await mailbox.finishTurn(turn);
+  });
+
+  it('rejects mutation after a user follow-up is claimed', async () => {
+    const mailbox = await createMailbox('claimed-follow-up');
+    const turn = await mailbox.beginTurn();
+    await mailbox.enqueue('claimed', { messageId: 'claimed' });
+    const before = await mailbox.getFollowUpQueueSnapshot();
+    await mailbox.drain(turn);
+
+    await expect(
+      mailbox.mutateFollowUpQueue({
+        expectedVersion: before.version,
+        operation: { type: 'remove', messageId: 'claimed' },
+      })
+    ).rejects.toMatchObject({ code: 'revision_conflict' });
+    const claimed = await mailbox.getFollowUpQueueSnapshot();
+    await expect(
+      mailbox.mutateFollowUpQueue({
+        expectedVersion: claimed.version,
+        operation: { type: 'remove', messageId: 'claimed' },
+      })
+    ).rejects.toMatchObject({ code: 'already_claimed' });
+  });
+
+  it('does not move a user follow-up across an internal barrier', async () => {
+    const mailbox = await createMailbox('follow-up-barrier');
+    await mailbox.enqueue('first', {
+      allowBeforeTurn: true,
+      messageId: 'first',
+    });
+    await mailbox.enqueue('internal secret', {
+      allowBeforeTurn: true,
+      messageId: 'internal',
+      origin: 'interaction_recovery',
+    });
+    await mailbox.enqueue('third', {
+      allowBeforeTurn: true,
+      messageId: 'third',
+    });
+    const snapshot = await mailbox.getFollowUpQueueSnapshot();
+
+    await expect(
+      mailbox.mutateFollowUpQueue({
+        expectedVersion: snapshot.version,
+        operation: { type: 'move', messageId: 'third', toPosition: 0 },
+      })
+    ).rejects.toMatchObject({ code: 'immutable_boundary' });
+  });
+
+  it('invalidates an old snapshot when a turn reserves pending input', async () => {
+    const mailbox = await createMailbox('turn-mutation-race');
+    await mailbox.enqueue('first', { allowBeforeTurn: true, messageId: 'first' });
+    const before = await mailbox.getFollowUpQueueSnapshot();
+
+    const turn = await mailbox.beginTurn();
+    await expect(
+      mailbox.mutateFollowUpQueue({
+        expectedVersion: before.version,
+        operation: { type: 'remove', messageId: 'first' },
+      })
+    ).rejects.toMatchObject({ code: 'revision_conflict' });
+    await mailbox.finishTurn(turn);
+  });
+
+  it('never removes a hidden primary input by a visible follow-up position', async () => {
+    const mailbox = await createMailbox('hidden-primary-index');
+    const prepared = await mailbox.prepareInputTurn('primary');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    await mailbox.enqueue('follow-up', { messageId: 'follow-up' });
+    const snapshot = await mailbox.getFollowUpQueueSnapshot();
+    expect(snapshot.items.map((item) => item.id)).toEqual(['follow-up']);
+
+    await mailbox.mutateFollowUpQueue({
+      expectedVersion: snapshot.version,
+      operation: { type: 'remove', messageId: 'follow-up' },
+    });
+    expect(mailbox.pendingMessages().map((message) => message.id)).toEqual([
+      prepared.messageId,
+    ]);
+    await mailbox.finishTurn(prepared.handle);
+  });
+
   it('serializes concurrent writes from separate Bun processes', async () => {
     const sessionId = 'cross-process-inbox';
     const readyA = path.join(storageRoot, 'writer-a-ready');
@@ -818,7 +935,7 @@ describe('ActiveTurnMailbox', () => {
 
   it('retries transcript-committed guidance until a completion ack exists', async () => {
     const first = await createMailbox('reconciled-session');
-    const firstTurn = first.beginTurn();
+    const firstTurn = await first.beginTurn();
     await first.enqueue('committed guidance');
     const [claimed] = await first.drain(firstTurn);
     expect(claimed).toBeDefined();
@@ -836,6 +953,9 @@ describe('ActiveTurnMailbox', () => {
     const crashRecovered = await createMailbox('reconciled-session');
     expect(crashRecovered.pendingCount()).toBe(1);
     expect(crashRecovered.recoveredCount()).toBe(1);
+    expect(crashRecovered.pendingMessages()).toEqual([
+      expect.objectContaining({ id: claimed!.id, persisted: true }),
+    ]);
 
     await persistentStore.acknowledgeInboxMessages('reconciled-session', [claimed!.id]);
     const reconciled = await createMailbox('reconciled-session');

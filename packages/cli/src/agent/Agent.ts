@@ -860,6 +860,7 @@ export class Agent {
             queued: this.sessionRuntime.getPendingSteeringCount(),
             recovered: this.sessionRuntime.getRecoveredSteeringCount(),
             messages: pendingMessagesForEvent(),
+            queue: await this.sessionRuntime.getFollowUpQueueSnapshot(),
           };
         }
         if (goalContinuation && currentGoal) {
@@ -954,6 +955,7 @@ export class Agent {
                         messages: await enhancePendingMessages(result.messages),
                       };
                     },
+                    getSnapshot: () => this.sessionRuntime!.getFollowUpQueueSnapshot(),
                   }
                 : undefined,
             turnFinalization:
@@ -1095,9 +1097,15 @@ export class Agent {
               queued: this.sessionRuntime.getPendingSteeringCount(),
               recovered: this.sessionRuntime.getRecoveredSteeringCount(),
               messages: pendingMessagesForEvent(),
+              queue: await this.sessionRuntime.getFollowUpQueueSnapshot(),
             };
             continue;
           }
+
+          yield {
+            kind: 'follow_up_queue_changed',
+            queue: await this.sessionRuntime.getFollowUpQueueSnapshot(),
+          };
 
           if (!result.success || currentContext.signal?.aborted) {
             return result;

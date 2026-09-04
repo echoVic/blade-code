@@ -1,9 +1,15 @@
+import { randomUUID } from 'node:crypto';
 import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../api/attachmentLimits.js';
+import type {
+  FollowUpQueueMutationRequest,
+  FollowUpQueueMutationResult,
+  FollowUpQueueSnapshot,
+} from '../../api/followUpQueueSchemas.js';
 import type { SessionStateStorage } from '../../context/storage/SessionStateStorage.js';
 import type { MessagePersistenceMetadata } from '../../context/types.js';
 import type { JsonObject } from '../../store/types.js';
@@ -13,6 +19,11 @@ import {
   DurableSteeringInbox,
   type DurableSteeringMessage,
 } from './DurableSteeringInbox.js';
+import {
+  applyFollowUpQueueMutation,
+  FollowUpQueueMutationError,
+  projectFollowUpQueue,
+} from './FollowUpQueueProjection.js';
 
 export const MAX_PENDING_STEERS = 20;
 export const MAX_PENDING_BACKGROUND_COMPLETIONS = 100;
@@ -30,6 +41,7 @@ export interface SteeringEnqueueResult {
   reason?: 'no_active_turn' | 'turn_sealed' | 'queue_full';
   delivery?: 'current_turn' | 'next_turn';
   duplicate?: boolean;
+  queue?: FollowUpQueueSnapshot;
 }
 
 export interface ActiveTurnHandle {
@@ -56,6 +68,8 @@ export type InputTurnPreparation =
 interface ActiveTurnState {
   id: string;
   sealed: boolean;
+  reservedIds: Set<string>;
+  primaryInputIds: Set<string>;
 }
 
 export function getSteeringContentSize(content: UserMessageContent): number {
@@ -76,6 +90,9 @@ function getMetadataSize(metadata: MessagePersistenceMetadata | undefined): numb
 
 export class ActiveTurnMailbox {
   private readonly transitionMutex = new Mutex();
+  private readonly ownerEpoch = randomUUID();
+  private claimRevision = 0;
+  private recoveryProtectedIds = new Set<string>();
   private activeTurn?: ActiveTurnState;
   private claimed = new Map<string, SteeringMessage>();
 
@@ -91,12 +108,13 @@ export class ActiveTurnMailbox {
     );
   }
 
-  beginTurn(): ActiveTurnHandle {
-    if (this.activeTurn) {
-      throw new Error(`Session already has an active turn: ${this.activeTurn.id}`);
-    }
-
-    return this.createTurn();
+  async beginTurn(): Promise<ActiveTurnHandle> {
+    return this.transitionMutex.runExclusive(() => {
+      if (this.activeTurn) {
+        throw new Error(`Session already has an active turn: ${this.activeTurn.id}`);
+      }
+      return this.createTurn();
+    });
   }
 
   async enqueue(
@@ -170,7 +188,10 @@ export class ActiveTurnMailbox {
         };
       }
 
-      const handle = this.createTurn();
+      const handle = this.createTurn(
+        hadPendingInput ? this.inbox.list().map((item) => item.id) : [],
+        [queued.messageId]
+      );
       if (!hadPendingInput) {
         const message = this.inbox
           .list()
@@ -180,6 +201,8 @@ export class ActiveTurnMailbox {
           throw new Error(`Prepared input disappeared from inbox: ${queued.messageId}`);
         }
         this.claimed.set(message.id, message);
+        this.activeTurn!.reservedIds.add(message.id);
+        this.claimRevision++;
       }
 
       return {
@@ -203,6 +226,7 @@ export class ActiveTurnMailbox {
       for (const message of messages) {
         this.claimed.set(message.id, message);
       }
+      if (messages.length > 0) this.claimRevision++;
       return messages;
     });
   }
@@ -220,25 +244,38 @@ export class ActiveTurnMailbox {
         for (const message of messages) {
           this.claimed.set(message.id, message);
         }
+        this.claimRevision++;
         return { messages, sealed: false };
       }
 
       this.activeTurn!.sealed = true;
+      this.claimRevision++;
       return { messages: [], sealed: true };
     });
   }
 
   async acknowledge(ids: readonly string[]): Promise<void> {
-    await this.inbox.acknowledge(ids);
-    for (const id of ids) {
-      this.claimed.delete(id);
-    }
+    await this.transitionMutex.runExclusive(async () => {
+      await this.inbox.acknowledge(ids);
+      for (const id of ids) {
+        this.claimed.delete(id);
+        this.activeTurn?.reservedIds.delete(id);
+      }
+      if (ids.length > 0) this.claimRevision++;
+    });
   }
 
   async claimedMessageIds(handle: ActiveTurnHandle): Promise<string[]> {
     return this.transitionMutex.runExclusive(() => {
       this.assertOwner(handle);
       return [...this.claimed.keys()];
+    });
+  }
+
+  async reservedMessageIds(handle: ActiveTurnHandle): Promise<string[]> {
+    return this.transitionMutex.runExclusive(() => {
+      this.assertOwner(handle);
+      return [...this.activeTurn!.reservedIds];
     });
   }
 
@@ -250,11 +287,12 @@ export class ActiveTurnMailbox {
       this.assertOwner(handle);
       this.activeTurn = undefined;
       this.claimed.clear();
+      this.claimRevision++;
       if (!options.continuePending || this.inbox.count() === 0) {
         return undefined;
       }
 
-      return this.createTurn();
+      return this.createTurn(this.inbox.list().map((message) => message.id));
     });
   }
 
@@ -263,7 +301,7 @@ export class ActiveTurnMailbox {
       if (this.activeTurn || this.inbox.count() === 0) {
         return undefined;
       }
-      return this.createTurn();
+      return this.createTurn(this.inbox.list().map((message) => message.id));
     });
   }
 
@@ -285,6 +323,59 @@ export class ActiveTurnMailbox {
 
   recoveredCount(): number {
     return this.inbox.recoveredCount();
+  }
+
+  async getFollowUpQueueSnapshot(): Promise<FollowUpQueueSnapshot> {
+    return this.transitionMutex.runExclusive(async () => {
+      await this.inbox.refresh();
+      return this.snapshotLocked();
+    });
+  }
+
+  async mutateFollowUpQueue(
+    request: FollowUpQueueMutationRequest
+  ): Promise<FollowUpQueueMutationResult> {
+    return this.transitionMutex.runExclusive(async () => {
+      const durable = await this.inbox.refresh();
+      const snapshot = this.snapshotLocked();
+      if (request.expectedVersion !== snapshot.version) {
+        throw new FollowUpQueueMutationError('revision_conflict', snapshot);
+      }
+      const messages = applyFollowUpQueueMutation(
+        durable.messages,
+        request.operation,
+        snapshot
+      );
+      if (
+        messages.length === durable.messages.length &&
+        messages.every((message, index) => message.id === durable.messages[index]?.id)
+      ) {
+        return { snapshot };
+      }
+      const replacement = await this.inbox.replace(durable.generation, messages);
+      if (!replacement.replaced) {
+        throw new FollowUpQueueMutationError(
+          'revision_conflict',
+          this.snapshotLocked()
+        );
+      }
+      this.claimRevision++;
+      return { snapshot: this.snapshotLocked() };
+    });
+  }
+
+  async setRecoveryProtectedIds(ids: readonly string[]): Promise<void> {
+    await this.transitionMutex.runExclusive(() => {
+      const next = new Set(ids);
+      if (
+        next.size === this.recoveryProtectedIds.size &&
+        [...next].every((id) => this.recoveryProtectedIds.has(id))
+      ) {
+        return;
+      }
+      this.recoveryProtectedIds = next;
+      this.claimRevision++;
+    });
   }
 
   private assertOwner(handle: ActiveTurnHandle): void {
@@ -315,6 +406,7 @@ export class ActiveTurnMailbox {
         queued: this.inbox.count(),
         delivery,
         duplicate: true,
+        queue: this.snapshotLocked(),
       };
     }
     const message = {
@@ -374,6 +466,7 @@ export class ActiveTurnMailbox {
         turnId: this.activeTurn?.id,
         queued: this.inbox.count(),
         reason: 'queue_full',
+        queue: this.snapshotLocked(),
       };
     }
 
@@ -383,12 +476,37 @@ export class ActiveTurnMailbox {
       turnId: this.activeTurn?.id,
       queued: this.inbox.count(),
       delivery,
+      queue: this.snapshotLocked(),
     };
   }
 
-  private createTurn(): ActiveTurnHandle {
+  private snapshotLocked(): FollowUpQueueSnapshot {
+    const durable = this.inbox.snapshot();
+    return projectFollowUpQueue({
+      generation: durable.generation,
+      ownerEpoch: this.ownerEpoch,
+      claimRevision: this.claimRevision,
+      messages: durable.messages,
+      reservedIds: this.activeTurn?.reservedIds ?? new Set(),
+      claimedIds: new Set(this.claimed.keys()),
+      recoveryProtectedIds: this.recoveryProtectedIds,
+      primaryInputIds: this.activeTurn?.primaryInputIds ?? new Set(),
+      hasActiveTurn: this.isActive(),
+    });
+  }
+
+  private createTurn(
+    reservedIds: readonly string[] = [],
+    primaryInputIds: readonly string[] = []
+  ): ActiveTurnHandle {
     const handle = { id: nanoid(12) };
-    this.activeTurn = { id: handle.id, sealed: false };
+    this.activeTurn = {
+      id: handle.id,
+      sealed: false,
+      reservedIds: new Set(reservedIds),
+      primaryInputIds: new Set(primaryInputIds),
+    };
+    this.claimRevision++;
     return handle;
   }
 }

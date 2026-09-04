@@ -489,6 +489,8 @@ export function createLoopEventHandler(
           deps.commandActions.setRecoveredSteeringCount(event.recovered);
         }
         break;
+      case 'follow_up_queue_changed':
+        break;
       case 'goal_updated':
       case 'goal_continuation_started':
         break;

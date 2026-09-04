@@ -1899,6 +1899,7 @@ export async function runHeadless(
 
           case 'steering_applied':
           case 'follow_up_started':
+          case 'follow_up_queue_changed':
           case 'goal_continuation_started':
             break;
           case 'goal_updated':

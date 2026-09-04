@@ -3,6 +3,11 @@ import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
 import * as path from 'path';
 import { isAcpMode } from '../../acp/AcpServiceContext.js';
+import type {
+  FollowUpQueueMutationRequest,
+  FollowUpQueueMutationResult,
+  FollowUpQueueSnapshot,
+} from '../../api/followUpQueueSchemas.js';
 import {
   type BrowserScreenshotOptions,
   SessionBrowserRuntime,
@@ -1050,6 +1055,7 @@ export class SessionRuntime {
     }
     this.startupTurnRecoveryAcknowledged = true;
     this.startupTurnRecoveryAssessmentTaken = true;
+    await this.activeTurnMailbox?.setRecoveryProtectedIds([]);
   }
 
   async getRecoveredFinalResponse(): Promise<RecoveredFinalResponse | undefined> {
@@ -1685,7 +1691,7 @@ export class SessionRuntime {
   }
 
   async beginTurn(kind: SessionTurnKind = 'goal'): Promise<ActiveTurnHandle> {
-    const handle = this.getActiveTurnMailbox().beginTurn();
+    const handle = await this.getActiveTurnMailbox().beginTurn();
     try {
       await this.saveTurnStart(handle, kind);
       return handle;
@@ -1713,7 +1719,7 @@ export class SessionRuntime {
       await this.saveTurnStart(
         preparation.handle,
         preparation.mode === 'direct' ? 'user' : 'pending',
-        mailbox.pendingMessages().map((message) => message.id)
+        await mailbox.reservedMessageIds(preparation.handle)
       );
       return preparation;
     } catch (error) {
@@ -1894,6 +1900,9 @@ export class SessionRuntime {
       this.startupTurnRecovery = abortResult.recovery;
       this.startupTurnRecoveryAcknowledged = false;
       this.startupTurnRecoveryAssessmentTaken = false;
+      await this.getActiveTurnMailbox().setRecoveryProtectedIds(
+        abortResult.recovery?.inputMessageIds ?? []
+      );
       if (options.acknowledgeInput) {
         await this.getActiveTurnMailbox().acknowledge(
           abortResult.acknowledgedInputMessageIds
@@ -1907,9 +1916,7 @@ export class SessionRuntime {
       await this.saveTurnStart(
         next,
         'pending',
-        this.getActiveTurnMailbox()
-          .pendingMessages()
-          .map((message) => message.id)
+        await this.getActiveTurnMailbox().reservedMessageIds(next)
       );
       return next;
     } catch (error) {
@@ -1928,7 +1935,7 @@ export class SessionRuntime {
       await this.saveTurnStart(
         handle,
         'pending',
-        mailbox.pendingMessages().map((message) => message.id)
+        await mailbox.reservedMessageIds(handle)
       );
       return handle;
     } catch (error) {
@@ -1951,6 +1958,16 @@ export class SessionRuntime {
 
   getPendingSteeringMessages(): SteeringMessage[] {
     return this.activeTurnMailbox?.pendingMessages() ?? [];
+  }
+
+  async getFollowUpQueueSnapshot(): Promise<FollowUpQueueSnapshot> {
+    return this.getActiveTurnMailbox().getFollowUpQueueSnapshot();
+  }
+
+  async mutateFollowUpQueue(
+    request: FollowUpQueueMutationRequest
+  ): Promise<FollowUpQueueMutationResult> {
+    return this.getActiveTurnMailbox().mutateFollowUpQueue(request);
   }
 
   isIdleForResidency(): boolean {
@@ -2207,6 +2224,11 @@ export class SessionRuntime {
       this.sessionId,
       this.stateStorage
     );
+    await this.activeTurnMailbox.setRecoveryProtectedIds(
+      this.startupTurnRecovery?.outcome === 'aborted'
+        ? this.startupTurnRecovery.inputMessageIds
+        : []
+    );
   }
 
   private async recoverTeamLeadMessages(): Promise<void> {
@@ -2323,6 +2345,7 @@ export class SessionRuntime {
             allowBeforeTurn: true,
             messageId: executionId,
             persisted: true,
+            origin: 'user_shell',
           })
         : undefined;
       const result: SessionUserShellCommandResult = {
@@ -2534,6 +2557,11 @@ export class SessionRuntime {
               finalization: goalHandoff.finalization,
             }
           : undefined);
+      await this.activeTurnMailbox.setRecoveryProtectedIds(
+        this.startupTurnRecovery?.outcome === 'aborted'
+          ? this.startupTurnRecovery.inputMessageIds
+          : []
+      );
       if (this.startupTurnRecovery?.outcome === 'completed') {
         await this.reloadPendingInbox();
       }

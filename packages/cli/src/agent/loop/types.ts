@@ -4,6 +4,7 @@
  * 用于将 Agent.executeLoop() 重构为 AsyncGenerator 模式
  */
 
+import type { FollowUpQueueSnapshot } from '../../api/followUpQueueSchemas.js';
 import type { BladeConfig } from '../../config/index.js';
 import type { ContextTokenSource } from '../../context/ContextTokenTracker.js';
 import type {
@@ -122,13 +123,17 @@ export type DomainEvent =
       count: number;
       recovered: number;
       delivery: 'current_turn' | 'next_turn';
+      messages: SteeringMessage[];
+      queue: FollowUpQueueSnapshot;
     }
   | {
       kind: 'follow_up_started';
       queued: number;
       recovered: number;
       messages: Array<SteeringMessage & { persisted: boolean }>;
+      queue: FollowUpQueueSnapshot;
     }
+  | { kind: 'follow_up_queue_changed'; queue: FollowUpQueueSnapshot }
   | { kind: 'goal_updated'; goal: GoalSnapshot | null }
   | {
       kind: 'mcp_catalog_changed';

@@ -1312,6 +1312,15 @@ describe('createLoopEventHandler', () => {
         count: 2,
         recovered: 0,
         delivery: 'current_turn',
+        messages: [],
+        queue: {
+          version: '0'.repeat(64),
+          pending: 0,
+          mutable: 0,
+          locked: 0,
+          internal: 0,
+          items: [],
+        },
       });
 
       expect(deps.commandActions.dequeueCommand).toHaveBeenCalledTimes(2);
@@ -1327,6 +1336,15 @@ describe('createLoopEventHandler', () => {
         count: 1,
         recovered: 1,
         delivery: 'next_turn',
+        messages: [],
+        queue: {
+          version: '0'.repeat(64),
+          pending: 0,
+          mutable: 0,
+          locked: 0,
+          internal: 0,
+          items: [],
+        },
       });
 
       expect(deps.commandActions.setRecoveredSteeringCount).toHaveBeenCalledWith(1);
@@ -1346,6 +1364,14 @@ describe('createLoopEventHandler', () => {
         kind: 'follow_up_started',
         queued: 1,
         recovered: 1,
+        queue: {
+          version: '0'.repeat(64),
+          pending: 1,
+          mutable: 0,
+          locked: 1,
+          internal: 1,
+          items: [],
+        },
         messages: [
           {
             id: 'background-subagent-completion:agent-child',

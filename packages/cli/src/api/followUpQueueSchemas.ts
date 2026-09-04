@@ -92,6 +92,7 @@ export const FollowUpQueueMutationResponseSchema = Runtime(
 export type FollowUpQueueMutationResponse = Static<
   typeof FollowUpQueueMutationResponseSchema
 >;
+export type FollowUpQueueMutationResult = FollowUpQueueMutationResponse;
 
 export const FollowUpQueueErrorCodeSchema = StringEnum([
   'revision_conflict',

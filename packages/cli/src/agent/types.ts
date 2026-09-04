@@ -2,6 +2,7 @@
  * Agent核心类型定义
  */
 
+import type { FollowUpQueueSnapshot } from '../api/followUpQueueSchemas.js';
 import type { PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { SessionTurnRecoveryAssessment } from '../context/turnRecoveryAssessment.js';
@@ -167,6 +168,7 @@ export interface LoopOptions {
       messages: SteeringMessage[];
       sealed: boolean;
     }>;
+    getSnapshot: () => Promise<FollowUpQueueSnapshot>;
   };
   /** Runtime ownership needed to make a final assistant step recoverably terminal. */
   turnFinalization?: {

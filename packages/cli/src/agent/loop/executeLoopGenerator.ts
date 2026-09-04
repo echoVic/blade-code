@@ -1634,10 +1634,16 @@ validates the object and may return a bounded corrective error.`;
     const reactiveCompaction = new ReactiveCompaction();
     const contextTokenTracker = new ContextTokenTracker();
     const compactionState: LoopCompactionState = {};
+    const turnSteering = options?.turnSteering;
 
     const applySteeringMessages = async (
       messages: Array<SteeringMessage & { policyText?: string }>
-    ): Promise<{ messageIds: string[]; count: number; recovered: number }> => {
+    ): Promise<{
+      messageIds: string[];
+      count: number;
+      recovered: number;
+      messages: SteeringMessage[];
+    }> => {
       for (const steering of messages) {
         const steeringMetadata = {
           ...steering.metadata,
@@ -1723,6 +1729,7 @@ validates the object and may return a bounded corrective error.`;
         messageIds: messages.map((steering) => steering.id),
         count: messages.length,
         recovered: messages.filter((steering) => steering.recovered).length,
+        messages,
       };
     };
 
@@ -1756,7 +1763,7 @@ validates the object and may return a bounded corrective error.`;
           );
         }
 
-        const queuedSteering = (await options?.turnSteering?.drain()) ?? [];
+        const queuedSteering = (await turnSteering?.drain()) ?? [];
         if (queuedSteering.length > 0) {
           structuredOutput = undefined;
           structuredOutputAlreadyCompleted = false;
@@ -1765,6 +1772,7 @@ validates the object and may return a bounded corrective error.`;
             kind: 'steering_applied',
             ...(await applySteeringMessages(queuedSteering)),
             delivery: pendingTurnInputApplied ? 'current_turn' : 'next_turn',
+            queue: await turnSteering!.getSnapshot(),
           };
           restoredStructuredOutput = structuredOutputContract
             ? restoreStructuredOutput(state.getHistory(), structuredOutputContract)
@@ -2487,7 +2495,7 @@ validates the object and may return a bounded corrective error.`;
           (turnResult.toolCalls?.length ?? 0) === 0;
 
         if (deferTruncatedStructuredOutputToCompletionGates) {
-          const completionSteering = await options?.turnSteering?.drainOrSeal();
+          const completionSteering = await turnSteering?.drainOrSeal();
           if (completionSteering && completionSteering.messages.length > 0) {
             structuredOutput = undefined;
             structuredOutputAlreadyCompleted = false;
@@ -2511,6 +2519,7 @@ validates the object and may return a bounded corrective error.`;
               kind: 'steering_applied',
               ...(await applySteeringMessages(completionSteering.messages)),
               delivery: 'current_turn',
+              queue: await turnSteering!.getSnapshot(),
             };
             continue;
           }
@@ -2673,7 +2682,7 @@ validates the object and may return a bounded corrective error.`;
           if (stationarityRecovery) {
             yield { kind: 'action_stationarity', ...stationarityRecovery };
           }
-          const queuedSteering = (await options?.turnSteering?.drain()) ?? [];
+          const queuedSteering = (await turnSteering?.drain()) ?? [];
           if (queuedSteering.length > 0) {
             if (turnResult.finishReason !== 'length') {
               maxOutputRecoveryCount = 0;
@@ -2700,6 +2709,7 @@ validates the object and may return a bounded corrective error.`;
               kind: 'steering_applied',
               ...(await applySteeringMessages(queuedSteering)),
               delivery: 'current_turn',
+              queue: await turnSteering!.getSnapshot(),
             };
             continue;
           }
@@ -3034,7 +3044,7 @@ validates the object and may return a bounded corrective error.`;
             continue;
           }
 
-          const completionSteering = await options?.turnSteering?.drainOrSeal();
+          const completionSteering = await turnSteering?.drainOrSeal();
           if (completionSteering && completionSteering.messages.length > 0) {
             await invalidateGoalVerification(
               'Goal completion evidence invalidated by new user steering'
@@ -3061,6 +3071,7 @@ validates the object and may return a bounded corrective error.`;
               kind: 'steering_applied',
               ...(await applySteeringMessages(completionSteering.messages)),
               delivery: 'current_turn',
+              queue: await turnSteering!.getSnapshot(),
             };
             continue;
           }

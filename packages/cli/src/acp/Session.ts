@@ -1849,6 +1849,8 @@ export class AcpSession {
               break;
             case 'steering_applied':
               break;
+            case 'follow_up_queue_changed':
+              break;
             case 'follow_up_started': {
               let projectedRecoveredInputs = 0;
               for (const pending of event.messages) {

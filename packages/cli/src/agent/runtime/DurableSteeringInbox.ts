@@ -32,7 +32,12 @@ export interface DurableSteeringMessage {
   recovered: boolean;
   persisted?: boolean;
   outputSchema?: JsonObject;
-  origin?: 'user' | 'background_subagent' | 'team_message' | 'interaction_recovery';
+  origin?:
+    | 'user'
+    | 'background_subagent'
+    | 'team_message'
+    | 'interaction_recovery'
+    | 'user_shell';
   metadata?: MessagePersistenceMetadata;
 }
 
@@ -54,6 +59,11 @@ type InboxRecord = InboxRecordV1 | InboxRecordV2;
 export interface DurableSteeringInboxSnapshot {
   generation: string;
   messages: DurableSteeringMessage[];
+}
+
+export interface DurableSteeringInboxReplaceResult {
+  replaced: boolean;
+  snapshot: DurableSteeringInboxSnapshot;
 }
 
 type AtomicWriter = (
@@ -148,7 +158,8 @@ function parseInboxRecord(
         message.origin !== 'user' &&
         message.origin !== 'background_subagent' &&
         message.origin !== 'team_message' &&
-        message.origin !== 'interaction_recovery') ||
+        message.origin !== 'interaction_recovery' &&
+        message.origin !== 'user_shell') ||
       ('metadata' in message &&
         (message.metadata === null ||
           typeof message.metadata !== 'object' ||
@@ -210,6 +221,24 @@ function acknowledgedInboxIds(events: SessionEvent[]): Set<string> {
         return turnAbortAppliedAcknowledgements(events, index);
       }
       return [];
+    })
+  );
+}
+
+function persistedInboxIds(events: readonly SessionEvent[]): Set<string> {
+  return new Set(
+    events.flatMap((event) => {
+      if (event.type !== 'message_created' || event.data.role !== 'user') return [];
+      const metadata = event.data.metadata;
+      const inboxMessageId =
+        event.data.inboxMessageId !== undefined
+          ? event.data.inboxMessageId
+          : metadata !== null &&
+              typeof metadata === 'object' &&
+              !Array.isArray(metadata)
+            ? metadata.inboxMessageId
+            : undefined;
+      return typeof inboxMessageId === 'string' ? [inboxMessageId] : [];
     })
   );
 }
@@ -322,6 +351,38 @@ export class DurableSteeringInbox {
     });
   }
 
+  async replace(
+    expectedGeneration: string,
+    messages: readonly DurableSteeringMessage[]
+  ): Promise<DurableSteeringInboxReplaceResult> {
+    return this.mutex.runExclusive(async () => {
+      const result = await withDurableSteeringInboxLock(
+        this.stateStorage,
+        this.sessionId,
+        async (paths) => {
+          const current = await this.readAndReconcileAtPath(paths);
+          if (current.generation !== expectedGeneration) {
+            return { replaced: false, snapshot: current };
+          }
+          const generation = randomUUID();
+          const next = messages.map((message) => ({ ...message }));
+          const serialized = serializeInboxRecord(this.sessionId, generation, next);
+          if (Buffer.byteLength(serialized) > MAX_INBOX_FILE_BYTES) {
+            return { replaced: false, snapshot: current };
+          }
+          await this.persistAtPath(next, generation, paths, serialized);
+          return {
+            replaced: true,
+            snapshot: { generation, messages: next },
+          };
+        },
+        this.lockFile
+      );
+      this.install(result.snapshot);
+      return { replaced: result.replaced, snapshot: this.snapshot() };
+    });
+  }
+
   list(): DurableSteeringMessage[] {
     return this.messages.map((message) => ({
       ...message,
@@ -413,13 +474,14 @@ export class DurableSteeringInbox {
     }
 
     let acknowledged = new Set<string>();
+    let persisted = new Set<string>();
     try {
-      acknowledged = acknowledgedInboxIds(
-        parseSessionJSONL(
-          await fs.readFile(paths.transcriptPath, 'utf8'),
-          paths.transcriptPath
-        )
+      const events = parseSessionJSONL(
+        await fs.readFile(paths.transcriptPath, 'utf8'),
+        paths.transcriptPath
       );
+      acknowledged = acknowledgedInboxIds(events);
+      persisted = persistedInboxIds(events);
     } catch (error) {
       if (!isNodeError(error, 'ENOENT')) throw error;
     }
@@ -432,9 +494,12 @@ export class DurableSteeringInbox {
       .map((message) => ({
         ...message,
         recovered: knownRecovery.get(message.id) ?? true,
+        ...(message.persisted === true || persisted.has(message.id)
+          ? { persisted: true }
+          : {}),
       }));
     return {
-      generation: record?.version === 2 ? record.generation : randomUUID(),
+      generation: record?.version === 2 ? record.generation : this.generation,
       messages,
       ...(record?.version === 1 && messages.length > 0
         ? { migrationRequired: true }

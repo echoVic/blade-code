@@ -22,6 +22,15 @@ vi.mock('../../../../src/context/CompactionService.js', () => ({
   CompactionService: { compact: vi.fn() },
 }));
 
+const emptyFollowUpQueue = () => ({
+  version: '0'.repeat(64),
+  pending: 0,
+  mutable: 0,
+  locked: 0,
+  internal: 0,
+  items: [],
+});
+
 vi.mock('../../../../src/context/ReactiveCompaction.js', () => {
   const tryReactiveCompact = vi.fn();
   const canAttempt = vi.fn(() => true);
@@ -2255,6 +2264,7 @@ describe('executeLoopGenerator', () => {
           return drainCount === 2 ? [steeringMessage] : [];
         }),
         drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+        getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
       };
 
       const { events, result } = await drainGenerator(
@@ -2277,6 +2287,8 @@ describe('executeLoopGenerator', () => {
         count: 1,
         recovered: 0,
         delivery: 'current_turn',
+        messages: [steeringMessage],
+        queue: emptyFollowUpQueue(),
       });
       expect(contextManager.saveMessage).toHaveBeenCalledWith(
         'test-session',
@@ -2348,6 +2360,7 @@ describe('executeLoopGenerator', () => {
             : [];
         }),
         drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+        getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
       };
 
       const context = createMockContext();
@@ -2410,6 +2423,7 @@ describe('executeLoopGenerator', () => {
           ];
         }),
         drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+        getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
       };
 
       const { result } = await drainGenerator(
@@ -2464,6 +2478,7 @@ describe('executeLoopGenerator', () => {
           ];
         }),
         drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+        getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
       };
 
       const { events, result } = await drainGenerator(
@@ -2486,6 +2501,13 @@ describe('executeLoopGenerator', () => {
         count: 1,
         recovered: 1,
         delivery: 'next_turn',
+        messages: [
+          expect.objectContaining({
+            id: 'recovered-follow-up',
+            content: 'Reply with BETA_VALUE only.',
+          }),
+        ],
+        queue: emptyFollowUpQueue(),
       });
       expect(contextManager.saveMessage).toHaveBeenCalledWith(
         'test-session',
@@ -2537,6 +2559,7 @@ describe('executeLoopGenerator', () => {
           ];
         }),
         drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+        getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
       };
 
       const { result } = await drainGenerator(
@@ -3370,6 +3393,7 @@ describe('executeLoopGenerator', () => {
                 ];
               },
               drainOrSeal: async () => ({ messages: [], sealed: true }),
+              getSnapshot: async () => emptyFollowUpQueue(),
             },
             getRecoveredEmptyFinalState,
           } satisfies LoopOptions,
@@ -3422,6 +3446,7 @@ describe('executeLoopGenerator', () => {
                 ];
               },
               drainOrSeal: async () => ({ messages: [], sealed: true }),
+              getSnapshot: async () => emptyFollowUpQueue(),
             },
             getRecoveredEmptyFinalState: async () => ({
               hadSuccessfulToolResult: true,
