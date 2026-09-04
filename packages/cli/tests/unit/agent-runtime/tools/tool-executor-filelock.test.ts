@@ -1308,6 +1308,60 @@ describe('ToolExecutor — file lock logic', () => {
       expect(invocationSpy).not.toHaveBeenCalled();
     });
 
+    it('redacts errors thrown while deriving remote affected paths', async () => {
+      const rejectedPath = 'C:\\workspace\\derived.txt:$DATA';
+      const invocationSpy = vi.fn();
+      const tool = createTool({
+        name: 'mcp__safe__throwing_paths',
+        displayName: 'Throwing Paths',
+        kind: ToolKind.Execute,
+        isConcurrencySafe: true,
+        parallelism: 'shared',
+        schema: Type.Object({ target: Type.String() }),
+        description: { short: 'throwing affected path probe' },
+        affectedPaths: () => {
+          throw new Error(`cannot derive ${rejectedPath}`);
+        },
+        async execute() {
+          invocationSpy();
+          return { success: true, llmContent: 'should not run' };
+        },
+      });
+      const registry = new ToolRegistry();
+      registry.registerMcpTool(tool as Tool);
+      const scheduler = new ConcurrencyScheduler();
+      const scheduleSpy = vi.spyOn(scheduler, 'schedule');
+      const executor = new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+        scheduler,
+        workspaceToolPolicy: {
+          kind: 'acp-remote',
+          readTextFile: true,
+          writeTextFile: true,
+          terminal: false,
+          pathStyle: 'win32',
+        },
+        contextDefaults: {
+          sessionId: 'remote-throwing-paths',
+          workspaceKind: 'acp-remote',
+          workspaceRoot: '/private/remote-state',
+          executionRoot: 'C:\\workspace',
+        },
+      });
+
+      const result = await executor.execute(tool.name, { target: rejectedPath }, {});
+
+      expect(result).toMatchObject({
+        success: false,
+        llmContent: 'ACP remote file path is invalid',
+        error: { code: 'acp_remote_path_invalid' },
+        metadata: { sideEffectsUncertain: false },
+      });
+      expect(JSON.stringify(result)).not.toContain(rejectedPath);
+      expect(scheduleSpy).not.toHaveBeenCalled();
+      expect(invocationSpy).not.toHaveBeenCalled();
+    });
+
     it('rejects a hook-rewritten invalid remote path before scheduling or locking', async () => {
       const sessionId = 'remote-lock-session-a';
       const root = 'C:\\workspace';

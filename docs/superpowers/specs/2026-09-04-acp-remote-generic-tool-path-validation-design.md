@@ -64,8 +64,8 @@ scheduler、lock、tool invocation 或 ACP I/O 之前经过 frozen remote path s
 
 校验始终使用 `workspaceToolPolicy.pathStyle`，不接受 caller context 选择 path style。
 所有候选逐项调用 `parseAcpRemotePath()`；任何 `AcpRemotePathError` 都映射为统一
-`ToolResult`。`affectedPaths()` 自身抛出的非路径错误继续走既有 execution failure
-处理，不吞掉工具定义错误。
+`ToolResult`。`affectedPaths()` 自身抛出的错误也 fail closed 为同一个固定结果，避免
+不可信工具定义通过异常消息回显 raw remote path。
 
 ### 结果语义
 
@@ -88,6 +88,7 @@ scheduler、lock、tool invocation 或 ACP I/O 之前经过 frozen remote path s
 5. 拒绝发生前 hook（初始路径）、scheduler、host/opaque lock、invocation、ACP I/O 均为零；
 6. readonly MCP 的未声明业务 `path` 保持可用；
 7. local executor 对同一字符串保持既有行为。
+8. `affectedPaths()` 抛出包含原始路径的异常时，返回固定脱敏错误。
 
 完成门禁包括 focused unit/integration、TypeScript、Biome、`git diff --check`、全仓测试与
 现有 ACP remote real-API qualification。该 patch 不增加新的 UI 状态；CLI/TUI、Web、

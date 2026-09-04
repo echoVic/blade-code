@@ -843,7 +843,15 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
       pathCandidates.add(params.path);
     }
     if (!usesDedicatedRemotePathPreflight) {
-      for (const affectedPath of invocation.getAffectedPaths()) {
+      let affectedPaths: string[];
+      try {
+        affectedPaths = invocation.getAffectedPaths();
+      } catch {
+        return createInvalidAcpRemotePathResult({
+          mutation: tool.kind !== ToolKind.ReadOnly,
+        });
+      }
+      for (const affectedPath of affectedPaths) {
         if (typeof affectedPath === 'string') {
           pathCandidates.add(affectedPath);
         }
