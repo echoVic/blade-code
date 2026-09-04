@@ -43,6 +43,28 @@ C:\Repo · 42 messages · 9/2
 本地条目继续使用原来的恢复流程。选择远程条目后，会打开全屏历史查看器，并把当前
 本地交互会话完整保留在后台。`/fork` 也会使用同一选择器，但只列出可 fork 的会话。
 
+### 长任务提醒
+
+从 `0.10.133` 开始，TUI 会为已知的后台任务保留本机 durable attention 状态。若一个
+已知的 running Session 在 TUI 关闭期间进入 `completed`、`failed` 或 `interrupted`，
+下一次 `/resume` 会在该精确 Session 前显示 `[NEW]`：
+
+```text
+[NEW] [DONE] Build release artifacts
+```
+
+底部状态栏同时显示 `New tasks N · /resume`。只有成功打开对应的精确 Session 后，这条
+提醒才会清除；仅打开选择器、取消选择、打开其他同 ID 但不同项目的 Session，或 fork
+源 Session，都不会误清提醒。`/fork` 不显示 `[NEW]`，也不会把 source Session 标为已读。
+
+为避免升级后把全部历史任务误报为新任务，首次看到的既有终态 Session 只建立静默
+基线。`cancelled` 不产生提醒。若 catalog 或本地 ledger 暂时不可用，状态栏显示
+`Task sync unavailable`，已有提醒保持不变，不会因同步失败被错误确认。
+
+该 ledger 仅属于当前 TUI，不会读写 Web GUI 的已读状态。它只保存有界的终态签名、
+确认状态和不可逆的 locator 摘要；不保存 prompt、模型输出、失败文本、远程路径或
+workspace reference 原文。
+
 历史查看器按键：
 
 | 按键 | 操作 |

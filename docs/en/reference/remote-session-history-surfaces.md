@@ -54,6 +54,34 @@ full-height history viewer while preserving the current local interactive
 Session behind it. `/fork` uses the same selector but lists only forkable
 Sessions.
 
+### Long-task attention
+
+Starting with `0.10.133`, the TUI keeps local durable attention state for known
+background tasks. If a known running Session reaches `completed`, `failed`, or
+`interrupted` while the TUI is absent, the next `/resume` shows `[NEW]` on that
+exact Session:
+
+```text
+[NEW] [DONE] Build release artifacts
+```
+
+The status bar also shows `New tasks N · /resume`. The marker is cleared only
+after the exact Session opens successfully. Merely opening or cancelling the
+selector, opening a same-ID Session from another project, or forking the source
+does not acknowledge it. `/fork` does not render `[NEW]` and does not mark the
+source Session as read.
+
+To avoid reporting every historical task after an upgrade, a terminal Session
+seen for the first time becomes a silent baseline. `cancelled` does not create
+attention. If the catalog or local ledger is temporarily unavailable, the status
+bar shows `Task sync unavailable`; existing markers are retained and are not
+falsely acknowledged.
+
+This ledger belongs only to the TUI and does not read or write the Web GUI's
+acknowledgement state. It stores only bounded terminal signatures, acknowledgement
+state, and irreversible locator digests. It stores no prompts, model output,
+failure text, raw remote paths, or raw workspace references.
+
 History viewer keys:
 
 | Key | Action |
