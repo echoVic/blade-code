@@ -345,7 +345,6 @@ async function openCapacityCoordinator(
       throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
     }
     database.exec('PRAGMA locking_mode=NORMAL;');
-    database.exec('PRAGMA journal_mode=DELETE;');
     database.exec('PRAGMA synchronous=FULL;');
     database.exec('PRAGMA busy_timeout=30000;');
     if (process.platform !== 'win32') await chmod(databasePath, 0o600);

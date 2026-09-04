@@ -81,8 +81,8 @@ function wrapBunSqlite(db: BunDatabase): SqliteDb {
 }
 
 const PRAGMAS = [
-  'PRAGMA journal_mode=WAL;',
   'PRAGMA busy_timeout=5000;',
+  'PRAGMA journal_mode=WAL;',
   'PRAGMA synchronous=NORMAL;',
   'PRAGMA foreign_keys=ON;',
 ].join('\n');
