@@ -66,7 +66,6 @@ export class TuiTaskAttentionStore {
   private readonly writeFile: AtomicWriter;
   private readonly reportDiagnostic: (message: string) => void;
   private entries: AttentionEntry[] = [];
-  private hasSnapshot = false;
 
   constructor(options: TuiTaskAttentionStoreOptions = {}) {
     this.filePath = options.filePath ?? path.join(getBladeStorageRoot(), FILE_NAME);
@@ -111,12 +110,11 @@ export class TuiTaskAttentionStore {
         const latest = await readAttentionFile(this.filePath);
         next = compactEntries(operation(latest));
         this.entries = next;
-        this.hasSnapshot = true;
         const serialized = JSON.stringify({ version: VERSION, entries: next }, null, 2);
         await this.writeFile(this.filePath, serialized + '\n', { mode: 0o600 });
         await fs.chmod(this.filePath, 0o600);
       } catch {
-        if (next === undefined && !this.hasSnapshot) {
+        if (next === undefined) {
           next = compactEntries(operation(this.entries));
           this.entries = next;
         }
@@ -140,42 +138,41 @@ function reconcileEntries(
   sessions: readonly SessionSurfaceSummary[],
   visibleLocator: SessionLocatorV2 | undefined
 ): AttentionEntry[] {
-  const entries = new Map(current.map((entry) => [entry.key, entry]));
-  const activeKeys = new Set<string>();
+  const activeKeys = new Set(sessions.map((session) => digestLocator(session.locator)));
+  let entries = current.filter((entry) => activeKeys.has(entry.key));
   const visibleKey = visibleLocator ? digestLocator(visibleLocator) : undefined;
-  const orderedKeys: string[] = [];
+  let visibleSummary: SessionSurfaceSummary | undefined;
 
-  for (const session of sessions) {
+  for (const session of [...sessions].reverse()) {
     const key = digestLocator(session.locator);
     const signature = terminalSignature(session);
-    activeKeys.add(key);
-    orderedKeys.push(key);
-    const previous = entries.get(key);
+    if (visibleKey === key) {
+      visibleSummary = session;
+      continue;
+    }
+    const index = entries.findIndex((entry) => entry.key === key);
+    const previous = entries[index];
 
-    if (!previous || visibleKey === key) {
-      entries.set(key, { key, signature, unread: false });
+    if (!previous) {
+      entries.push({ key, signature, unread: false });
       continue;
     }
     if (signature === null) {
-      entries.set(key, { key, signature: null, unread: previous.unread });
+      entries[index] = { key, signature: null, unread: previous.unread };
       continue;
     }
     if (previous.signature !== signature) {
-      entries.set(key, { ...previous, unread: true });
+      entries[index] = { ...previous, unread: true };
     }
   }
-
-  const retained = current
-    .filter((entry) => activeKeys.has(entry.key))
-    .map((entry) => entries.get(entry.key))
-    .filter((entry): entry is AttentionEntry => entry !== undefined);
-  const retainedKeys = new Set(retained.map((entry) => entry.key));
-  for (const key of orderedKeys) {
-    if (retainedKeys.has(key)) continue;
-    const entry = entries.get(key);
-    if (entry) retained.push(entry);
+  if (visibleSummary) {
+    entries = moveToMru(entries, {
+      key: digestLocator(visibleSummary.locator),
+      signature: terminalSignature(visibleSummary),
+      unread: false,
+    });
   }
-  return retained;
+  return entries;
 }
 
 function compactEntries(entries: readonly AttentionEntry[]): AttentionEntry[] {

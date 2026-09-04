@@ -1,5 +1,5 @@
-import { writeFile } from 'node:fs/promises';
-import lockfile from 'proper-lockfile';
+import { stat, writeFile } from 'node:fs/promises';
+import writeFileAtomic from 'write-file-atomic';
 import type { SessionSurfaceSummary } from '../../src/api/sessionSurfaceSchemas.js';
 import { TuiTaskAttentionStore } from '../../src/ui/services/TuiTaskAttentionStore.js';
 
@@ -36,15 +36,31 @@ const summary: SessionSurfaceSummary = {
 
 const store = new TuiTaskAttentionStore({
   filePath: `${storageRoot}/tui-task-attention-v1.json`,
+  ...(selected === 'a'
+    ? {
+        writeFile: async (
+          filePath: string,
+          data: string,
+          options: { mode: number }
+        ) => {
+          await writeFile(`${storageRoot}/writer-a-lock-held`, 'held');
+          while (true) {
+            try {
+              await stat(`${storageRoot}/writer-a-release`);
+              break;
+            } catch {
+              await new Promise((resolve) => setTimeout(resolve, 5));
+            }
+          }
+          await writeFileAtomic(filePath, data, options);
+        },
+      }
+    : {}),
 });
-if (selected === 'a') {
-  const target = `${storageRoot}/tui-task-attention-v1.json`;
-  const release = await lockfile.lock(target, { realpath: false });
-  await writeFile(`${storageRoot}/writer-ready`, 'ready');
-  try {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  } finally {
-    await release();
-  }
+if (selected === 'b') {
+  await writeFile(`${storageRoot}/writer-b-attempt`, 'attempt');
 }
 await store.acknowledge(summary);
+if (selected === 'b') {
+  await writeFile(`${storageRoot}/writer-b-completed`, 'completed');
+}

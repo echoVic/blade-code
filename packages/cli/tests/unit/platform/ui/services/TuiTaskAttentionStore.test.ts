@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -100,6 +101,17 @@ function terminal(
   return { ...summary, taskStatus, taskCompletedAt };
 }
 
+function digestLocator(locator: SessionLocatorV2): string {
+  const canonical =
+    locator.workspace.kind === 'local'
+      ? [2, 'local', locator.workspace.projectPath, locator.sessionId]
+      : [2, 'acp-remote', locator.workspace.workspaceRef, locator.sessionId];
+  return createHash('sha256')
+    .update('blade-tui-task-attention-locator-v1\0')
+    .update(JSON.stringify(canonical))
+    .digest('hex');
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -157,6 +169,15 @@ async function waitForFile(target: string): Promise<void> {
   throw new Error('writer fixture did not become ready');
 }
 
+async function fileExists(target: string): Promise<boolean> {
+  try {
+    await stat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(
@@ -184,8 +205,8 @@ describe('TuiTaskAttentionStore', () => {
       expect.stringMatching(/^[a-f0-9]{64}$/),
     ]);
     expect(state.entries.map((entry) => entry.signature)).toEqual([
-      null,
       JSON.stringify(['completed', COMPLETED_AT]),
+      null,
     ]);
     expect(persisted).not.toContain('/workspace/private-a');
     expect(persisted).not.toContain('/remote/private-workspace');
@@ -310,6 +331,7 @@ describe('TuiTaskAttentionStore', () => {
     expect(entries.find((entry) => !entry.unread)?.signature).toBe(
       JSON.stringify(['completed', COMPLETED_AT])
     );
+    expect(entries.at(-1)?.key).toBe(digestLocator(remote.locator));
   });
 
   it('prunes entries absent from a complete catalog', async () => {
@@ -436,6 +458,32 @@ describe('TuiTaskAttentionStore', () => {
     expect(entries.filter((entry) => entry.signature !== null)).toHaveLength(1_024);
   });
 
+  it('retains the newest 1024 terminals from a newest-first complete catalog', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const store = new TuiTaskAttentionStore({ filePath: target });
+    const newestFirst = Array.from({ length: 1_025 }, (_, index) =>
+      terminal(
+        createLocalSummary({
+          locator: {
+            version: 2,
+            sessionId: `catalog-${index}`,
+            workspace: { kind: 'local', projectPath: `/workspace/catalog-${index}` },
+          },
+          rootId: `catalog-${index}`,
+        })
+      )
+    );
+
+    await store.reconcile(newestFirst);
+
+    const keys = (await readStoredFile(target)).entries.map((entry) => entry.key);
+    expect(keys).toHaveLength(1_024);
+    expect(keys).toContain(digestLocator(newestFirst[0]!.locator));
+    expect(keys).not.toContain(digestLocator(newestFirst.at(-1)!.locator));
+    expect(keys.at(-1)).toBe(digestLocator(newestFirst[0]!.locator));
+  });
+
   it('moves exact acknowledgements to the MRU end before terminal compaction', async () => {
     const root = await temporaryRoot();
     const target = filePath(root);
@@ -455,10 +503,11 @@ describe('TuiTaskAttentionStore', () => {
     await store.reconcile(acknowledged);
     const before = await readStoredFile(target);
     expect(before.entries).toHaveLength(1_024);
-    const oldestRetainedKey = before.entries[0]?.key;
+    const oldestRetained = acknowledged[1_023]!;
+    const oldestRetainedKey = digestLocator(oldestRetained.locator);
     expect(oldestRetainedKey).toBeDefined();
 
-    await store.acknowledge(acknowledged[1]!);
+    await store.acknowledge(oldestRetained);
 
     const after = await readStoredFile(target);
     expect(after.entries).toHaveLength(1_024);
@@ -533,7 +582,7 @@ describe('TuiTaskAttentionStore', () => {
     expect(diagnostics).toEqual(['TUI task attention persistence unavailable']);
   });
 
-  it('preserves a prior in-memory snapshot when a later lock attempt fails', async () => {
+  it('applies complete-catalog pruning to memory when a later lock attempt fails', async () => {
     const root = await temporaryRoot();
     const target = filePath(root);
     const diagnostics: string[] = [];
@@ -549,9 +598,45 @@ describe('TuiTaskAttentionStore', () => {
 
     const snapshot = await store.reconcile([]);
 
-    expect(snapshot.unreadKeys).toHaveLength(1);
+    expect(snapshot.unreadKeys).toEqual([]);
     expect(store.snapshot()).toEqual(snapshot);
     expect(diagnostics).toEqual(['TUI task attention persistence unavailable']);
+  });
+
+  it('applies exact acknowledgement to an existing unread snapshot when locking fails', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const store = new TuiTaskAttentionStore({ filePath: target });
+    const running = createLocalSummary();
+    const completed = terminal(running);
+    await store.reconcile([running]);
+    expect((await store.reconcile([completed])).unreadKeys).toHaveLength(1);
+    await rm(root, { recursive: true, force: true });
+    await writeFile(root, 'not a directory');
+
+    const snapshot = await store.acknowledge(completed);
+
+    expect(snapshot.unreadKeys).toEqual([]);
+    expect(store.snapshot()).toEqual(snapshot);
+  });
+
+  it('applies terminal transitions and complete-catalog pruning when locking fails', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const store = new TuiTaskAttentionStore({ filePath: target });
+    const first = createLocalSummary();
+    const second = createRemoteSummary();
+    await store.reconcile([first, second]);
+    expect((await store.reconcile([first, terminal(second)])).unreadKeys).toEqual([
+      digestLocator(second.locator),
+    ]);
+    await rm(root, { recursive: true, force: true });
+    await writeFile(root, 'not a directory');
+
+    const snapshot = await store.reconcile([terminal(first)]);
+
+    expect(snapshot.unreadKeys).toEqual([digestLocator(first.locator)]);
+    expect(store.snapshot()).toEqual(snapshot);
   });
 
   it('uses the storage root default and enforces private directory and file modes', async () => {
@@ -568,12 +653,20 @@ describe('TuiTaskAttentionStore', () => {
 
   it('preserves both exact digest mutations from concurrent Bun processes', async () => {
     const root = await temporaryRoot();
-    const readyPath = path.join(root, 'writer-ready');
+    const lockHeldPath = path.join(root, 'writer-a-lock-held');
+    const releasePath = path.join(root, 'writer-a-release');
+    const attemptPath = path.join(root, 'writer-b-attempt');
+    const completedPath = path.join(root, 'writer-b-completed');
 
     const firstWriter = runWriter(root, 'a');
-    await waitForFile(readyPath);
+    await waitForFile(lockHeldPath);
     const secondWriter = runWriter(root, 'b');
+    await waitForFile(attemptPath);
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(await fileExists(completedPath)).toBe(false);
+    await writeFile(releasePath, 'release');
     await Promise.all([firstWriter, secondWriter]);
+    expect(await fileExists(completedPath)).toBe(true);
 
     const entries = (await readStoredFile(filePath(root))).entries;
     expect(entries).toHaveLength(2);
