@@ -87,7 +87,10 @@ interface TaskTerminalReadLedgerV1 {
 - An entry is accepted only when its key is a valid compound session-ref key no
   longer than 16,384 code units and its signature is either `null` or the exact
   canonical encoding above. Unsupported versions and malformed entries are
-  ignored without throwing. Duplicate keys are last-wins.
+  ignored without throwing. A valid key decodes to an array of exactly two
+  non-empty strings, uses a POSIX absolute path, a drive-qualified Win32 absolute
+  path, or a Win32 UNC path as `projectPath`, and round-trips through
+  `sessionRefKey`. Duplicate keys are last-wins.
 - Entries are ordered least-recently acknowledged first. Compaction never evicts
   a `null` entry for a known non-terminal task or an entry whose key is unread;
   those entries are required to avoid a missed result. After preserving those
@@ -97,9 +100,12 @@ interface TaskTerminalReadLedgerV1 {
   unread set; this patch must not silently trade correctness for a fixed total cap.
 
 The helper API remains isolated in `taskAttention.ts`: parse/persist the ledger,
-derive a safe terminal signature, reconcile catalog state, acknowledge one
-session, acknowledge all unread sessions, and prune deleted sessions. UI
-components do not manipulate storage directly.
+derive a safe terminal signature from validated task-status fields, reconcile
+catalog state, acknowledge one exact `SessionRef` plus its task-status fields,
+acknowledge all unread sessions, and prune deleted sessions. The acknowledge API
+does not require a full `Session`, so an unknown terminal event can establish a
+safe baseline before its exact-session fetch completes. UI components do not
+manipulate storage directly.
 
 The parsed ledger is loaded into the Zustand task slice exactly once and that
 in-memory value is authoritative for the lifetime of the page. Every state
@@ -133,11 +139,13 @@ covered by the durable `null` baseline.
 ### Live task event
 
 Build the next session projection before evaluating attention. Every accepted
-`task.status` event increments a monotonic in-memory live revision and records the
-latest task projection for that exact compound key.
+`task.status` event increments a monotonic in-memory catalog-overlay revision and
+records the latest full session projection for that exact compound key.
 
 - If the exact session is visibly selected, acknowledge its next signature and do
   not mark it unread.
+- If the next state is non-terminal, advance the acknowledged baseline to `null`
+  so a later terminal result for the same exact session remains detectable.
 - If the next state is terminal and its signature differs from the acknowledged
   ledger value, mark the exact compound key unread.
 - Do not advance the ledger for an unread result.
@@ -168,6 +176,18 @@ not roll back a task event that arrived after the load began. The final attentio
 reconciliation runs against that merged complete snapshot. Tests must cover a live
 event between two catalog pages and a live event after the final page response but
 before the final store commit.
+
+The same overlay covers all global session lifecycle events, not only task status.
+An accepted `session.updated` or any completed exact sync, including the sync
+triggered by an unknown `task.status`, `session.created`, or
+`session.unarchived`, records a full-session upsert. A
+`session.deleted/session.archived` event records an exact-key tombstone before
+removing local state. A winning catalog load applies every overlay whose revision
+is newer than its start revision, so an older page cannot resurrect a deleted or
+archived session, drop a newly created session, or undo newer metadata. After the
+final commit, overlays at or before the load start are discarded; newer upserts
+and tombstones remain until a later complete catalog incorporates them. The map is
+also pruned when its exact mutation is superseded, preventing page-lifetime growth.
 
 For every active session:
 
@@ -206,8 +226,9 @@ result cannot reappear after the next resync.
 ## Concurrency and Failure Handling
 
 - The existing catalog generation guard remains authoritative. A stale paginated
-  load cannot reconcile or overwrite a newer load. The separate live revision
-  overlay prevents the winning catalog load from overwriting newer task events.
+  load cannot reconcile or overwrite a newer load. The separate catalog mutation
+  overlay prevents the winning catalog load from overwriting newer task or session
+  lifecycle events.
 - Storage parsing and writes fail soft. Corrupt or unavailable `localStorage`
   cannot break task rendering, navigation, or event processing.
 - Reconciliation is deterministic and idempotent for the same catalog snapshot.
@@ -258,6 +279,8 @@ The production browser journey must verify:
 - A stale paginated load generation cannot reconcile ledger state.
 - Live task events arriving between catalog pages or immediately before final
   commit override the older catalog projection.
+- Session create/update upserts and delete/archive tombstones arriving during
+  hydration survive the final catalog commit.
 - Deleted/archived sessions are pruned from both stores.
 - A visible current session is acknowledged rather than marked unread.
 - Clearing during loading or hydration is a no-op; clearing against a complete
