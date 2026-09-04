@@ -705,6 +705,38 @@ describe('TuiTaskAttentionStore', () => {
     );
   });
 
+  it('preserves running-to-terminal evidence across consecutive failed reconciles', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const first = createLocalSummary();
+    const second = createRemoteSummary();
+    const firstTerminal = terminal(first);
+    let writes = 0;
+    const store = new TuiTaskAttentionStore({
+      filePath: target,
+      writeFile: async (targetPath, data, options) => {
+        writes++;
+        if (writes <= 2) throw new Error('transient write failure');
+        await writeFileAtomic(targetPath, data, options);
+      },
+    });
+
+    expect((await store.reconcile([first, second])).unreadKeys).toEqual([]);
+    expect((await store.reconcile([firstTerminal, second])).unreadKeys).toEqual([
+      digestLocator(first.locator),
+    ]);
+    await new TuiTaskAttentionStore({ filePath: target }).acknowledge(second);
+
+    const snapshot = await store.acknowledge(second);
+
+    expect(snapshot.unreadKeys).toEqual([digestLocator(first.locator)]);
+    const persisted = await readStoredFile(target);
+    expect(persisted.entries).toHaveLength(2);
+    expect(
+      persisted.entries.find((entry) => entry.key === digestLocator(first.locator))
+    ).toMatchObject({ signature: null, unread: true });
+  });
+
   it('journals transient read failures without overwriting disk as empty', async () => {
     const root = await temporaryRoot();
     const target = filePath(root);
@@ -780,6 +812,85 @@ describe('TuiTaskAttentionStore', () => {
 
     expect((await store.reconcile([completed])).unreadKeys).toHaveLength(1);
     expect(write).toHaveBeenCalledOnce();
+  });
+
+  it('retains a mutation when compromise arrives while its writer is blocked', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const first = createLocalSummary();
+    const second = createRemoteSummary();
+    const firstTerminal = terminal(first);
+    const secondTerminal = terminal(second, 'failed');
+    await new TuiTaskAttentionStore({ filePath: target }).reconcile([first, second]);
+    let compromised: ((error: Error) => void) | undefined;
+    let releaseWrite!: () => void;
+    let signalWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      signalWriteStarted = resolve;
+    });
+    const blockedWrite = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let lockAttempts = 0;
+    const store = new TuiTaskAttentionStore({
+      filePath: target,
+      lockFile: async (targetPath, options) => {
+        lockAttempts++;
+        if (lockAttempts === 1) {
+          compromised = options.onCompromised;
+          return async () => undefined;
+        }
+        const lockfile = await import('proper-lockfile');
+        return lockfile.lock(targetPath, options);
+      },
+      writeFile: async (targetPath, data, options) => {
+        if (lockAttempts === 1) {
+          signalWriteStarted();
+          await blockedWrite;
+          return;
+        }
+        await writeFileAtomic(targetPath, data, options);
+      },
+    });
+
+    const firstMutation = store.reconcile([firstTerminal, second]);
+    await writeStarted;
+    compromised?.(new Error('asynchronous compromise'));
+    releaseWrite();
+    expect((await firstMutation).unreadKeys).toEqual([digestLocator(first.locator)]);
+    await new TuiTaskAttentionStore({ filePath: target }).reconcile([
+      first,
+      secondTerminal,
+    ]);
+
+    const snapshot = await store.acknowledge(secondTerminal);
+
+    expect(snapshot.unreadKeys).toEqual([digestLocator(first.locator)]);
+    expect((await readStoredFile(target)).entries).toHaveLength(2);
+  });
+
+  it('treats atomic write as commit even when permission hardening fails', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const running = createLocalSummary();
+    const completed = terminal(running);
+    await new TuiTaskAttentionStore({ filePath: target }).reconcile([running]);
+    let chmodAttempts = 0;
+    const store = new TuiTaskAttentionStore({
+      filePath: target,
+      chmodFile: async (targetPath, mode) => {
+        chmodAttempts++;
+        if (chmodAttempts === 1) throw new Error('chmod unavailable');
+        await chmod(targetPath, mode);
+      },
+    });
+
+    expect((await store.acknowledge(completed)).unreadKeys).toEqual([]);
+    await new TuiTaskAttentionStore({ filePath: target }).reconcile([running]);
+
+    const snapshot = await store.reconcile([completed]);
+
+    expect(snapshot.unreadKeys).toEqual([digestLocator(running.locator)]);
   });
 
   it('keeps a bounded failed-mutation journal fail closed after overflow', async () => {

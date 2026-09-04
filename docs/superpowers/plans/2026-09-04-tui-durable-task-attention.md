@@ -60,8 +60,9 @@ expect(invalidSummary.taskCompletedAt).toBeUndefined();
   `0700` directory.
 - [ ] Keep failed writes/locks/reads as a bounded, ordered semantic mutation journal
   without coalescing reconcile transitions; replay it once over the next locked latest
-  disk state. At 256 entries, become sticky fail-closed instead of dropping or
-  reordering operations. Treat only `ENOENT` and explicitly
+  disk state. The atomic write is the commit point; a later defensive chmod failure
+  must not replay the committed mutation. At 256 entries, become sticky fail-closed
+  instead of dropping or reordering operations. Treat only `ENOENT` and explicitly
   invalid v1 content as empty; other I/O failures must not be written back as empty.
   Use a non-throwing `onCompromised` callback and prevent writes after compromise.
 - [ ] Add a real two-Bun-process fixture proving concurrent exact entries are not lost.

@@ -45,6 +45,7 @@ type AttentionFileLocker = (
   filePath: string,
   options: LockOptions
 ) => Promise<() => Promise<void>>;
+type AttentionFileChmod = (filePath: string, mode: number) => Promise<void>;
 
 interface AttentionEntry {
   key: string;
@@ -74,6 +75,7 @@ export interface TuiTaskAttentionStoreOptions {
   writeFile?: AtomicWriter;
   openFile?: AttentionFileOpener;
   lockFile?: AttentionFileLocker;
+  chmodFile?: AttentionFileChmod;
   reportDiagnostic?: (message: string) => void;
 }
 
@@ -86,6 +88,7 @@ export class TuiTaskAttentionStore {
   private readonly writeFile: AtomicWriter;
   private readonly openFile: AttentionFileOpener;
   private readonly lockFile: AttentionFileLocker;
+  private readonly chmodFile: AttentionFileChmod;
   private readonly reportDiagnostic: (message: string) => void;
   private entries: AttentionEntry[] = [];
   private pending: AttentionMutation[] = [];
@@ -96,6 +99,7 @@ export class TuiTaskAttentionStore {
     this.writeFile = options.writeFile ?? writeFileAtomic;
     this.openFile = options.openFile ?? fs.open;
     this.lockFile = options.lockFile ?? lockAttentionFile;
+    this.chmodFile = options.chmodFile ?? fs.chmod;
     this.reportDiagnostic = options.reportDiagnostic ?? (() => undefined);
   }
 
@@ -116,9 +120,16 @@ export class TuiTaskAttentionStore {
 
   private async mutate(mutation: AttentionMutation): Promise<TuiTaskAttentionSnapshot> {
     return TuiTaskAttentionStore.operations.runExclusive(this.filePath, async () => {
+      if (this.journalOverflowed || this.pending.length >= MAX_PENDING_MUTATIONS) {
+        this.journalOverflowed = true;
+        this.entries = applyMutation(this.entries, mutation);
+        this.reportDiagnostic('TUI task attention persistence unavailable');
+        return snapshotFrom(this.entries);
+      }
       let release: (() => Promise<void>) | undefined;
       let next: AttentionEntry[] | undefined;
       let compromised = false;
+      let committed = false;
       try {
         await ensurePrivateDirectory(this.filePath);
         release = await this.lockFile(this.filePath, {
@@ -128,17 +139,20 @@ export class TuiTaskAttentionStore {
           },
         });
         const latest = await readAttentionFile(this.filePath, this.openFile);
-        if (this.journalOverflowed) {
-          throw new Error('attention mutation journal overflowed');
-        }
         next = applyMutations(latest, [...this.pending, mutation]);
         this.entries = next;
         if (compromised) throw new Error('attention file lock compromised');
         const serialized = JSON.stringify({ version: VERSION, entries: next }, null, 2);
         await this.writeFile(this.filePath, serialized + '\n', { mode: 0o600 });
-        await fs.chmod(this.filePath, 0o600);
+        if (compromised) throw new Error('attention file lock compromised');
+        committed = true;
         this.pending = [];
+        await this.chmodFile(this.filePath, 0o600);
       } catch {
+        if (committed) {
+          this.reportDiagnostic('TUI task attention persistence unavailable');
+          return snapshotFrom(this.entries);
+        }
         if (next === undefined) {
           next = applyMutation(this.entries, mutation);
           this.entries = next;
@@ -160,17 +174,11 @@ export class TuiTaskAttentionStore {
 
   private enqueue(mutation: AttentionMutation): void {
     if (this.journalOverflowed) return;
-    if (mutation.kind === 'reconcile') {
-      const last = this.pending.at(-1);
-      if (last?.kind === 'reconcile') this.pending[this.pending.length - 1] = mutation;
-      else this.pending.push(mutation);
-    } else {
-      this.pending.push(mutation);
-    }
-    if (this.pending.length > MAX_PENDING_MUTATIONS) {
-      this.pending.splice(0, this.pending.length - MAX_PENDING_MUTATIONS);
+    if (this.pending.length >= MAX_PENDING_MUTATIONS) {
       this.journalOverflowed = true;
+      return;
     }
+    this.pending.push(mutation);
   }
 }
 

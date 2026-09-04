@@ -93,10 +93,13 @@ reconcile mutations are not coalesced because an intermediate non-terminal to
 terminal transition is itself attention evidence. On the next
 successful lock/read cycle, Blade replays that journal over the latest disk state
 before applying the new mutation, preserving both this process's fail-soft decisions
-and another process's committed updates. The journal is cleared only after atomic
-write and permission hardening complete. At 256 pending mutations it becomes sticky
-fail-closed and stops attempting disk writes rather than dropping or reordering an
-attention transition.
+and another process's committed updates. The journal is cleared at the atomic-write
+commit point; the write already requests mode `0600`, so a later defensive `chmod`
+failure reports a fixed diagnostic without replaying a committed mutation. Lock
+compromise observed before or during the atomic write keeps the journal pending for
+idempotent replay from the next freshly locked disk state. At 256 pending mutations
+it becomes sticky fail-closed and stops attempting disk writes rather than dropping
+or reordering an attention transition.
 
 Only `ENOENT` and content that is explicitly invalid under the bounded v1 parser are
 treated as an empty ledger. Other stat/open/read failures abort the disk mutation and
