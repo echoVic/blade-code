@@ -820,6 +820,9 @@ describe('BladeInterface startup routing source contract', () => {
 
     expect(handleContinueSource).toContain('listSessionCandidatesForIntent(');
     expect(handleContinueSource).not.toContain('SessionService.listSessions(');
+    expect(
+      handleContinueSource.match(/await proveCurrentLocalFallback\(\);/g)
+    ).toHaveLength(3);
     expect(handleResumeSource).toContain('listSessionCandidatesForIntent(');
     expect(handleResumeSource).not.toContain('SessionService.listSessions({');
     expect(source).not.toContain('SessionService.findSessionMetadata(sourceSessionId)');

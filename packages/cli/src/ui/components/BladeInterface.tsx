@@ -524,6 +524,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         return;
       }
       sessionActions.addAssistantMessage('继续会话失败，开始新对话。');
+      await proveCurrentLocalFallback();
     }
   });
 
