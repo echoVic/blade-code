@@ -44,11 +44,15 @@ const store = new TuiTaskAttentionStore({
           options: { mode: number }
         ) => {
           await writeFile(`${storageRoot}/writer-a-lock-held`, 'held');
+          const deadline = Date.now() + 5_000;
           while (true) {
             try {
               await stat(`${storageRoot}/writer-a-release`);
               break;
             } catch {
+              if (Date.now() >= deadline) {
+                throw new Error('writer A release deadline exceeded');
+              }
               await new Promise((resolve) => setTimeout(resolve, 5));
             }
           }

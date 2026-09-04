@@ -1,10 +1,11 @@
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import writeFileAtomic from 'write-file-atomic';
 
 vi.unmock('node:child_process');
 
@@ -21,6 +22,7 @@ const WRITER_FIXTURE = fileURLToPath(
   new URL('../../../../fixtures/tui-task-attention-writer.ts', import.meta.url)
 );
 const temporaryRoots: string[] = [];
+const activeChildren = new Set<ChildProcess>();
 
 interface StoredAttentionEntry {
   key: string;
@@ -144,13 +146,25 @@ async function runWriter(root: string, session: 'a' | 'b'): Promise<void> {
     const child = spawn('bun', [WRITER_FIXTURE, root, session], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    activeChildren.add(child);
     let stderr = '';
+    const deadline = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('writer fixture exceeded deadline'));
+    }, 5_000);
+    deadline.unref();
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
       stderr += chunk;
     });
-    child.once('error', reject);
+    child.once('error', (error) => {
+      clearTimeout(deadline);
+      activeChildren.delete(child);
+      reject(error);
+    });
     child.once('exit', (code, signal) => {
+      clearTimeout(deadline);
+      activeChildren.delete(child);
       if (code === 0) resolve();
       else reject(new Error(`writer exited code=${code} signal=${signal}: ${stderr}`));
     });
@@ -180,6 +194,18 @@ async function fileExists(target: string): Promise<boolean> {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  const children = [...activeChildren];
+  for (const child of children) child.kill('SIGKILL');
+  await Promise.all(
+    children.map(
+      (child) =>
+        new Promise<void>((resolve) => {
+          if (child.exitCode !== null || child.signalCode !== null) resolve();
+          else child.once('exit', () => resolve());
+        })
+    )
+  );
+  activeChildren.clear();
   await Promise.all(
     temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
   );
@@ -615,6 +641,188 @@ describe('TuiTaskAttentionStore', () => {
     });
   });
 
+  it('replays a failed acknowledgement over another store update without reviving it', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const first = createLocalSummary();
+    const second = createRemoteSummary();
+    const firstTerminal = terminal(first);
+    const secondTerminal = terminal(second, 'failed');
+    const baseline = new TuiTaskAttentionStore({ filePath: target });
+    await baseline.reconcile([first, second]);
+    await baseline.reconcile([firstTerminal, second]);
+    let writes = 0;
+    const store = new TuiTaskAttentionStore({
+      filePath: target,
+      writeFile: async (targetPath, data, options) => {
+        writes++;
+        if (writes === 1) throw new Error('transient write failure');
+        await writeFileAtomic(targetPath, data, options);
+      },
+    });
+
+    expect((await store.acknowledge(firstTerminal)).unreadKeys).toEqual([]);
+    const otherStore = new TuiTaskAttentionStore({ filePath: target });
+    expect(
+      (await otherStore.reconcile([first, secondTerminal])).unreadKeys
+    ).toHaveLength(2);
+
+    const snapshot = await store.reconcile([firstTerminal, secondTerminal]);
+
+    expect(snapshot.unreadKeys).toEqual([digestLocator(second.locator)]);
+  });
+
+  it('replays a failed unread reconcile over another store update', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const first = createLocalSummary();
+    const second = createRemoteSummary();
+    const firstTerminal = terminal(first);
+    const secondTerminal = terminal(second, 'failed');
+    await new TuiTaskAttentionStore({ filePath: target }).reconcile([first, second]);
+    let writes = 0;
+    const store = new TuiTaskAttentionStore({
+      filePath: target,
+      writeFile: async (targetPath, data, options) => {
+        writes++;
+        if (writes === 1) throw new Error('transient write failure');
+        await writeFileAtomic(targetPath, data, options);
+      },
+    });
+
+    expect((await store.reconcile([firstTerminal, second])).unreadKeys).toEqual([
+      digestLocator(first.locator),
+    ]);
+    const otherStore = new TuiTaskAttentionStore({ filePath: target });
+    expect((await otherStore.reconcile([first, secondTerminal])).unreadKeys).toEqual([
+      digestLocator(second.locator),
+    ]);
+
+    const snapshot = await store.reconcile([firstTerminal, secondTerminal]);
+
+    expect(new Set(snapshot.unreadKeys)).toEqual(
+      new Set([digestLocator(first.locator), digestLocator(second.locator)])
+    );
+  });
+
+  it('journals transient read failures without overwriting disk as empty', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const first = createLocalSummary();
+    const second = createRemoteSummary();
+    const firstTerminal = terminal(first);
+    await new TuiTaskAttentionStore({ filePath: target }).reconcile([first, second]);
+    const store = new TuiTaskAttentionStore({ filePath: target });
+    await store.reconcile([first, second]);
+    const before = await readFile(target, 'utf8');
+    let opens = 0;
+    const close = vi.fn(async () => undefined);
+    const failingStore = new TuiTaskAttentionStore({
+      filePath: target,
+      openFile: async (targetPath, flags) => {
+        opens++;
+        if (opens === 2) {
+          return {
+            readFile: async () => {
+              const error = new Error('transient read failure');
+              Object.assign(error, { code: 'EIO' });
+              throw error;
+            },
+            close,
+          };
+        }
+        return open(targetPath, flags);
+      },
+    });
+    await failingStore.reconcile([first, second]);
+
+    expect((await failingStore.reconcile([firstTerminal, second])).unreadKeys).toEqual([
+      digestLocator(first.locator),
+    ]);
+    expect(await readFile(target, 'utf8')).toBe(before);
+    expect(close).toHaveBeenCalledOnce();
+    await new TuiTaskAttentionStore({ filePath: target }).acknowledge(second);
+
+    const snapshot = await failingStore.reconcile([firstTerminal, second]);
+
+    expect(snapshot.unreadKeys).toEqual([digestLocator(first.locator)]);
+    expect((await readStoredFile(target)).entries).toHaveLength(2);
+  });
+
+  it('journals a compromised lock mutation and prevents its guarded write', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const running = createLocalSummary();
+    const completed = terminal(running);
+    await new TuiTaskAttentionStore({ filePath: target }).reconcile([running]);
+    let lockAttempts = 0;
+    const write = vi.fn(
+      async (targetPath: string, data: string, options: { mode: number }) =>
+        writeFileAtomic(targetPath, data, options)
+    );
+    const diagnostics: string[] = [];
+    const store = new TuiTaskAttentionStore({
+      filePath: target,
+      writeFile: write,
+      lockFile: async (_targetPath, options) => {
+        lockAttempts++;
+        if (lockAttempts === 1) {
+          options.onCompromised?.(new Error('secret compromise details'));
+        }
+        return async () => undefined;
+      },
+      reportDiagnostic: (message) => diagnostics.push(message),
+    });
+
+    expect((await store.reconcile([completed])).unreadKeys).toHaveLength(1);
+    expect(write).not.toHaveBeenCalled();
+    expect(diagnostics).toEqual(['TUI task attention persistence unavailable']);
+
+    expect((await store.reconcile([completed])).unreadKeys).toHaveLength(1);
+    expect(write).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a bounded failed-mutation journal fail closed after overflow', async () => {
+    const root = await temporaryRoot();
+    const blockedPath = path.join(root, 'blocked');
+    await writeFile(blockedPath, 'not a directory');
+    const store = new TuiTaskAttentionStore({
+      filePath: path.join(blockedPath, 'attention.json'),
+    });
+    const summary = terminal(createLocalSummary());
+
+    for (let index = 0; index < 257; index++) {
+      await store.acknowledge({
+        ...summary,
+        taskCompletedAt: new Date(Date.parse(COMPLETED_AT) + index).toISOString(),
+      });
+    }
+    await rm(blockedPath, { force: true });
+
+    await expect(store.acknowledge(summary)).resolves.toEqual({ unreadKeys: [] });
+    await expect(
+      readFile(path.join(blockedPath, 'attention.json'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('deduplicates catalog locators by their first newest-first occurrence', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const store = new TuiTaskAttentionStore({ filePath: target });
+    const first = terminal(createLocalSummary(), 'completed', COMPLETED_AT);
+    const duplicate = terminal(first, 'failed', LATER_COMPLETED_AT);
+
+    await store.reconcile([first, duplicate]);
+
+    expect((await readStoredFile(target)).entries).toEqual([
+      {
+        key: digestLocator(first.locator),
+        signature: JSON.stringify(['completed', COMPLETED_AT]),
+        unread: false,
+      },
+    ]);
+  });
+
   it('keeps the exact attempted acknowledgement in memory after a write failure', async () => {
     const root = await temporaryRoot();
     const target = filePath(root);
@@ -732,13 +940,18 @@ describe('TuiTaskAttentionStore', () => {
     const completedPath = path.join(root, 'writer-b-completed');
 
     const firstWriter = runWriter(root, 'a');
-    await waitForFile(lockHeldPath);
-    const secondWriter = runWriter(root, 'b');
-    await waitForFile(attemptPath);
-    await new Promise((resolve) => setTimeout(resolve, 75));
-    expect(await fileExists(completedPath)).toBe(false);
-    await writeFile(releasePath, 'release');
-    await Promise.all([firstWriter, secondWriter]);
+    let secondWriter: Promise<void> | undefined;
+    try {
+      await waitForFile(lockHeldPath);
+      secondWriter = runWriter(root, 'b');
+      await waitForFile(attemptPath);
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      expect(await fileExists(completedPath)).toBe(false);
+    } finally {
+      await writeFile(releasePath, 'release').catch(() => undefined);
+    }
+    await firstWriter;
+    await secondWriter;
     expect(await fileExists(completedPath)).toBe(true);
 
     const entries = (await readStoredFile(filePath(root))).entries;

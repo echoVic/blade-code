@@ -16,6 +16,7 @@ const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_FILE_ENTRIES = 20_000;
 const MAX_ACKNOWLEDGED_TERMINAL_ENTRIES = 1_024;
+const MAX_PENDING_MUTATIONS = 256;
 const CANONICAL_TIMESTAMP_PATTERN =
   /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}Z$/;
 const LOCK_OPTIONS: LockOptions = {
@@ -35,6 +36,15 @@ type AtomicWriter = (
   data: string,
   options: { mode: number }
 ) => Promise<void>;
+type AttentionFileHandle = Pick<fs.FileHandle, 'readFile' | 'close'>;
+type AttentionFileOpener = (
+  filePath: string,
+  flags: string
+) => Promise<AttentionFileHandle>;
+type AttentionFileLocker = (
+  filePath: string,
+  options: LockOptions
+) => Promise<() => Promise<void>>;
 
 interface AttentionEntry {
   key: string;
@@ -47,6 +57,14 @@ interface AttentionFileV1 {
   entries: AttentionEntry[];
 }
 
+type AttentionMutation =
+  | {
+      kind: 'reconcile';
+      sessions: readonly SessionSurfaceSummary[];
+      visibleLocator?: SessionLocatorV2;
+    }
+  | { kind: 'acknowledge'; summary: SessionSurfaceSummary };
+
 export interface TuiTaskAttentionSnapshot {
   readonly unreadKeys: readonly string[];
 }
@@ -54,6 +72,8 @@ export interface TuiTaskAttentionSnapshot {
 export interface TuiTaskAttentionStoreOptions {
   filePath?: string;
   writeFile?: AtomicWriter;
+  openFile?: AttentionFileOpener;
+  lockFile?: AttentionFileLocker;
   reportDiagnostic?: (message: string) => void;
 }
 
@@ -64,12 +84,18 @@ export class TuiTaskAttentionStore {
 
   private readonly filePath: string;
   private readonly writeFile: AtomicWriter;
+  private readonly openFile: AttentionFileOpener;
+  private readonly lockFile: AttentionFileLocker;
   private readonly reportDiagnostic: (message: string) => void;
   private entries: AttentionEntry[] = [];
+  private pending: AttentionMutation[] = [];
+  private journalOverflowed = false;
 
   constructor(options: TuiTaskAttentionStoreOptions = {}) {
     this.filePath = options.filePath ?? path.join(getBladeStorageRoot(), FILE_NAME);
     this.writeFile = options.writeFile ?? writeFileAtomic;
+    this.openFile = options.openFile ?? fs.open;
+    this.lockFile = options.lockFile ?? lockAttentionFile;
     this.reportDiagnostic = options.reportDiagnostic ?? (() => undefined);
   }
 
@@ -77,47 +103,47 @@ export class TuiTaskAttentionStore {
     sessions: readonly SessionSurfaceSummary[],
     visibleLocator?: SessionLocatorV2
   ): Promise<TuiTaskAttentionSnapshot> {
-    return this.mutate((current) =>
-      reconcileEntries(current, sessions, visibleLocator)
-    );
+    return this.mutate({ kind: 'reconcile', sessions, visibleLocator });
   }
 
   acknowledge(summary: SessionSurfaceSummary): Promise<TuiTaskAttentionSnapshot> {
-    return this.mutate((current) => {
-      const key = digestLocator(summary.locator);
-      return moveToMru(current, {
-        key,
-        signature: terminalSignature(summary),
-        unread: false,
-      });
-    });
+    return this.mutate({ kind: 'acknowledge', summary });
   }
 
   snapshot(): TuiTaskAttentionSnapshot {
     return snapshotFrom(this.entries);
   }
 
-  private async mutate(
-    operation: (entries: readonly AttentionEntry[]) => AttentionEntry[]
-  ): Promise<TuiTaskAttentionSnapshot> {
+  private async mutate(mutation: AttentionMutation): Promise<TuiTaskAttentionSnapshot> {
     return TuiTaskAttentionStore.operations.runExclusive(this.filePath, async () => {
       let release: (() => Promise<void>) | undefined;
       let next: AttentionEntry[] | undefined;
+      let compromised = false;
       try {
         await ensurePrivateDirectory(this.filePath);
-        const lockfile = await getLockfile();
-        release = await lockfile.lock(this.filePath, LOCK_OPTIONS);
-        const latest = await readAttentionFile(this.filePath);
-        next = compactEntries(operation(latest));
+        release = await this.lockFile(this.filePath, {
+          ...LOCK_OPTIONS,
+          onCompromised: () => {
+            compromised = true;
+          },
+        });
+        const latest = await readAttentionFile(this.filePath, this.openFile);
+        if (this.journalOverflowed) {
+          throw new Error('attention mutation journal overflowed');
+        }
+        next = applyMutations(latest, [...this.pending, mutation]);
         this.entries = next;
+        if (compromised) throw new Error('attention file lock compromised');
         const serialized = JSON.stringify({ version: VERSION, entries: next }, null, 2);
         await this.writeFile(this.filePath, serialized + '\n', { mode: 0o600 });
         await fs.chmod(this.filePath, 0o600);
+        this.pending = [];
       } catch {
         if (next === undefined) {
-          next = compactEntries(operation(this.entries));
+          next = applyMutation(this.entries, mutation);
           this.entries = next;
         }
+        this.enqueue(mutation);
         this.reportDiagnostic('TUI task attention persistence unavailable');
       } finally {
         if (release) {
@@ -131,6 +157,52 @@ export class TuiTaskAttentionStore {
       return snapshotFrom(this.entries);
     });
   }
+
+  private enqueue(mutation: AttentionMutation): void {
+    if (this.journalOverflowed) return;
+    if (mutation.kind === 'reconcile') {
+      const last = this.pending.at(-1);
+      if (last?.kind === 'reconcile') this.pending[this.pending.length - 1] = mutation;
+      else this.pending.push(mutation);
+    } else {
+      this.pending.push(mutation);
+    }
+    if (this.pending.length > MAX_PENDING_MUTATIONS) {
+      this.pending.splice(0, this.pending.length - MAX_PENDING_MUTATIONS);
+      this.journalOverflowed = true;
+    }
+  }
+}
+
+function applyMutations(
+  entries: readonly AttentionEntry[],
+  mutations: readonly AttentionMutation[]
+): AttentionEntry[] {
+  return mutations.reduce<AttentionEntry[]>(
+    (state, mutation) => {
+      return applyMutation(state, mutation);
+    },
+    [...entries]
+  );
+}
+
+function applyMutation(
+  entries: readonly AttentionEntry[],
+  mutation: AttentionMutation
+): AttentionEntry[] {
+  if (mutation.kind === 'reconcile') {
+    return compactEntries(
+      reconcileEntries(entries, mutation.sessions, mutation.visibleLocator)
+    );
+  }
+  const key = digestLocator(mutation.summary.locator);
+  return compactEntries(
+    moveToMru(entries, {
+      key,
+      signature: terminalSignature(mutation.summary),
+      unread: false,
+    })
+  );
 }
 
 function reconcileEntries(
@@ -139,6 +211,7 @@ function reconcileEntries(
   visibleLocator: SessionLocatorV2 | undefined
 ): AttentionEntry[] {
   const currentByKey = new Map(current.map((entry) => [entry.key, entry]));
+  const seen = new Set<string>();
   const visibleKey = visibleLocator ? digestLocator(visibleLocator) : undefined;
   let visibleSummary: SessionSurfaceSummary | undefined;
   const protectedEntries: AttentionEntry[] = [];
@@ -146,6 +219,8 @@ function reconcileEntries(
 
   for (const session of sessions) {
     const key = digestLocator(session.locator);
+    if (seen.has(key)) continue;
+    seen.add(key);
     const signature = terminalSignature(session);
     if (visibleKey === key) {
       visibleSummary = session;
@@ -306,14 +381,29 @@ function parseAttentionFile(value: unknown): AttentionFileV1 | undefined {
   return { version: VERSION, entries };
 }
 
-async function readAttentionFile(filePath: string): Promise<AttentionEntry[]> {
+async function readAttentionFile(
+  filePath: string,
+  openFile: AttentionFileOpener
+): Promise<AttentionEntry[]> {
+  let handle: AttentionFileHandle | undefined;
   try {
-    const info = await fs.stat(filePath);
-    if (info.size > MAX_FILE_BYTES) return [];
-    const value: unknown = JSON.parse(await fs.readFile(filePath, 'utf8'));
+    handle = await openFile(filePath, 'r');
+    const content = await handle.readFile();
+    if (content.byteLength > MAX_FILE_BYTES) return [];
+    const value: unknown = JSON.parse(content.toString('utf8'));
     return parseAttentionFile(value)?.entries ?? [];
-  } catch {
-    return [];
+  } catch (error) {
+    if (
+      error instanceof SyntaxError ||
+      (error instanceof Error &&
+        'code' in error &&
+        (error as NodeJS.ErrnoException).code === 'ENOENT')
+    ) {
+      return [];
+    }
+    throw error;
+  } finally {
+    await handle?.close();
   }
 }
 
@@ -326,4 +416,12 @@ async function ensurePrivateDirectory(filePath: string): Promise<void> {
 async function getLockfile(): Promise<LockfileModule> {
   lockfileModule ??= await import('proper-lockfile');
   return lockfileModule;
+}
+
+async function lockAttentionFile(
+  filePath: string,
+  options: LockOptions
+): Promise<() => Promise<void>> {
+  const lockfile = await getLockfile();
+  return lockfile.lock(filePath, options);
 }
