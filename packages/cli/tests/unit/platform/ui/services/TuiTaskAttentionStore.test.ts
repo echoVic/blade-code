@@ -484,6 +484,77 @@ describe('TuiTaskAttentionStore', () => {
     expect(keys.at(-1)).toBe(digestLocator(newestFirst[0]!.locator));
   });
 
+  it('keeps newest-first terminal compaction stable across identical reconciles', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const store = new TuiTaskAttentionStore({ filePath: target });
+    const newestFirst = Array.from({ length: 1_025 }, (_, index) =>
+      terminal(
+        createLocalSummary({
+          locator: {
+            version: 2,
+            sessionId: `stable-${index}`,
+            workspace: { kind: 'local', projectPath: `/workspace/stable-${index}` },
+          },
+          rootId: `stable-${index}`,
+        })
+      )
+    );
+    await store.reconcile(newestFirst);
+    const firstKeys = (await readStoredFile(target)).entries.map((entry) => entry.key);
+
+    await store.reconcile(newestFirst);
+
+    const secondKeys = (await readStoredFile(target)).entries.map((entry) => entry.key);
+    expect(secondKeys).toEqual(firstKeys);
+    expect(secondKeys).toEqual(
+      newestFirst
+        .slice(0, 1_024)
+        .reverse()
+        .map((summary) => digestLocator(summary.locator))
+    );
+    expect(secondKeys).not.toContain(digestLocator(newestFirst[1_024]!.locator));
+  });
+
+  it('silently baselines a newly discovered terminal without creating unread', async () => {
+    const root = await temporaryRoot();
+    const target = filePath(root);
+    const store = new TuiTaskAttentionStore({ filePath: target });
+    const existingNewestFirst = Array.from({ length: 1_024 }, (_, index) =>
+      terminal(
+        createLocalSummary({
+          locator: {
+            version: 2,
+            sessionId: `existing-${index}`,
+            workspace: { kind: 'local', projectPath: `/workspace/existing-${index}` },
+          },
+          rootId: `existing-${index}`,
+        })
+      )
+    );
+    await store.reconcile(existingNewestFirst);
+    const recent = terminal(
+      createLocalSummary({
+        locator: {
+          version: 2,
+          sessionId: 'recent-terminal',
+          workspace: { kind: 'local', projectPath: '/workspace/recent-terminal' },
+        },
+        rootId: 'recent-terminal',
+        lastMessageTime: '2026-09-04T13:00:00.000Z',
+      }),
+      'completed',
+      '2026-09-04T13:00:00.000Z'
+    );
+
+    const snapshot = await store.reconcile([recent, ...existingNewestFirst]);
+
+    const keys = (await readStoredFile(target)).entries.map((entry) => entry.key);
+    expect(snapshot.unreadKeys).toEqual([]);
+    expect(keys).toHaveLength(1_024);
+    expect(store.snapshot().unreadKeys).toEqual([]);
+  });
+
   it('moves exact acknowledgements to the MRU end before terminal compaction', async () => {
     const root = await temporaryRoot();
     const target = filePath(root);

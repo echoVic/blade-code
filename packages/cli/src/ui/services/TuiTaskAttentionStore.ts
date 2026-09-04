@@ -142,8 +142,10 @@ function reconcileEntries(
   let entries = current.filter((entry) => activeKeys.has(entry.key));
   const visibleKey = visibleLocator ? digestLocator(visibleLocator) : undefined;
   let visibleSummary: SessionSurfaceSummary | undefined;
+  const missingTerminals: AttentionEntry[] = [];
+  const missingNonTerminals: AttentionEntry[] = [];
 
-  for (const session of [...sessions].reverse()) {
+  for (const session of sessions) {
     const key = digestLocator(session.locator);
     const signature = terminalSignature(session);
     if (visibleKey === key) {
@@ -154,7 +156,9 @@ function reconcileEntries(
     const previous = entries[index];
 
     if (!previous) {
-      entries.push({ key, signature, unread: false });
+      const baseline = { key, signature, unread: false };
+      if (signature === null) missingNonTerminals.push(baseline);
+      else missingTerminals.push(baseline);
       continue;
     }
     if (signature === null) {
@@ -165,6 +169,11 @@ function reconcileEntries(
       entries[index] = { ...previous, unread: true };
     }
   }
+  entries = [
+    ...missingTerminals.reverse(),
+    ...entries,
+    ...missingNonTerminals.reverse(),
+  ];
   if (visibleSummary) {
     entries = moveToMru(entries, {
       key: digestLocator(visibleSummary.locator),
