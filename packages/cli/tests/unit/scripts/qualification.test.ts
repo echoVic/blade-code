@@ -124,6 +124,33 @@ describe('production qualification contract', () => {
     expect(fs.existsSync(qualificationCore)).toBe(true);
   });
 
+  it('registers the production Chromium durable task unread trajectory', () => {
+    const testConfig = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/test-config.js'),
+      'utf8'
+    );
+    const trajectory = fs.readFileSync(
+      path.resolve(
+        __dirname,
+        '../../integration/real-api/durable-task-unread-trajectory.test.ts'
+      ),
+      'utf8'
+    );
+    const driver = fs.readFileSync(
+      path.resolve(__dirname, '../../support/durableTaskUnreadWebDriver.ts'),
+      'utf8'
+    );
+
+    expect(testConfig).toContain(
+      "'tests/integration/real-api/durable-task-unread-trajectory.test.ts'"
+    );
+    expect(trajectory).toContain('resolveRequiredDeepSeekQualificationModels');
+    expect(trajectory).toContain("process.env.REAL_API_RELEASE_MATRIX !== '1'");
+    expect(trajectory).toContain('maxRetries: 0');
+    expect(driver).toContain('../../dist/blade.js');
+    expect(driver).toContain('await chromium.launch({ headless: true })');
+  });
+
   it('resolves the monorepo root from the CLI scripts directory', () => {
     const scriptsDirectory = path.resolve(__dirname, '../../../scripts');
 
