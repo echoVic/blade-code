@@ -138,9 +138,10 @@ Each item is projected as one of:
   into conversation history, or protected by an unacknowledged crash-recovery receipt;
 - `system`: internal input whose content and ordering are not user-mutable.
 
-Only `origin=user`, non-persisted, `pending` items are mutable. Background-subagent
-completion, team message, interaction recovery, user-shell reference, and any item with
-an output schema are immutable. Unknown origins fail closed as system items.
+Only `origin=user`, non-persisted, inline, `pending` items without an output schema are
+mutable. Background-subagent completion, team message, interaction recovery, user-shell
+reference, artifact-backed prompt, and any item with an output schema are immutable.
+Unknown origins fail closed as system items.
 
 ### Reservation And Claim
 
@@ -217,11 +218,12 @@ Deletion removes only one eligible pending user item. It does not append an
 `inbox_acknowledged` event because the item was never applied. It also does not create a
 fake transcript message.
 
-Large prompt artifacts are not deleted in the queue commit transaction. After a
-successful mutation, artifact cleanup is best effort. Runtime initialization performs a
-second reference-based cleanup pass using both transcript and inbox references. Cleanup
-must never remove an artifact still referenced by either authority, and cleanup failure
-must not roll back or misreport a committed queue mutation.
+Artifact-backed prompts are immutable in this release. Their content remains bounded by
+the existing per-Session artifact quota and is removed by the existing Session deletion
+lifecycle. This avoids racing queue deletion against a materialization that has committed
+an artifact but has not yet committed its inbox reference. Reference-aware artifact
+garbage collection is a separate storage feature, not an implicit side effect of queue
+mutation.
 
 Reordering is allowed only within the contiguous mutable segment containing the selected
 item. Locked and system items are order barriers. A target across a barrier returns
@@ -239,10 +241,11 @@ mutateFollowUpQueue(
 ): Promise<FollowUpQueueMutationResult>;
 ~~~
 
-The Runtime restores any artifact-backed text needed for the bounded preview, but the
-snapshot never returns raw artifact references or image data. All surface callers must
-hold the normal Runtime residency lease. They may not instantiate an inbox directly for
-mutation.
+The Runtime builds previews from the bounded inline representation already present in
+the inbox. It does not restore full artifact-backed text merely to render a control
+surface, and the snapshot never returns raw artifact references or image data. All
+surface callers must hold the normal Runtime residency lease. They may not instantiate
+an inbox directly for mutation.
 
 Successful enqueue, mutation, reservation, claim, acknowledgement, and recovery reload
 produce a fresh snapshot for interested surfaces. Notifications occur only after the
@@ -388,7 +391,7 @@ Tests must cover:
 8. bounded parser, snapshot, item count, preview, permissions, and corrupted-file
    handling;
 9. restart recovery of order and protected state;
-10. artifact GC retaining every transcript or inbox reference;
+10. artifact-backed prompts remaining immutable and referenced after rejected mutation;
 11. process-local keyed-lock reclamation under success and failure.
 
 ### HTTP And SSE Tests
