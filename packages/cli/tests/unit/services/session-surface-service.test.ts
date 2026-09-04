@@ -147,7 +147,7 @@ describe('SessionSurfaceService', () => {
       sessionId,
       hostStateRoot,
       descriptor,
-      { taskCompletedAt: '2026-09-04 12:30:00Z' }
+      { taskCompletedAt: '2026-09-04T14:30:00+02:00' }
     );
 
     const first = await service.listPage({ archived: false, limit: 1 });

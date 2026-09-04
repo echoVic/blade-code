@@ -114,13 +114,72 @@ const SessionSurfaceRelationTypeSchema = StringEnum(['subagent', 'fork']);
 const SessionSurfaceCursorSchema = Type.String({ minLength: 1 });
 
 const SessionSurfaceSnapshotSchema = Type.String({ minLength: 1 });
+const SESSION_SURFACE_TIMESTAMP_MAX_LENGTH = 40;
+const SESSION_SURFACE_ISO_INSTANT_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-](\d{2}):(\d{2}))$/;
+const SESSION_SURFACE_CANONICAL_TIMESTAMP_PATTERN =
+  '^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T' +
+  '(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}Z$';
+
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return isLeapYear(year) ? 29 : 28;
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
 
 export function canonicalizeSessionSurfaceTimestamp(
   value: string | undefined
 ): string | undefined {
-  const timestamp = value === undefined ? Number.NaN : Date.parse(value);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+  if (
+    value === undefined ||
+    value.length < 20 ||
+    value.length > SESSION_SURFACE_TIMESTAMP_MAX_LENGTH
+  ) {
+    return undefined;
+  }
+  const match = SESSION_SURFACE_ISO_INSTANT_PATTERN.exec(value);
+  if (!match) return undefined;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offset = match[8];
+  const offsetHour = Number(match[9]);
+  const offsetMinute = Number(match[10]);
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth(year, month) ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    (offset !== 'Z' && (offsetHour > 23 || offsetMinute > 59))
+  ) {
+    return undefined;
+  }
+
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return undefined;
+  const canonical = new Date(timestamp).toISOString();
+  return canonical.length === 24 ? canonical : undefined;
 }
+
+const SessionSurfaceTaskCompletedAtSchema = Type.Refine(
+  Type.String({
+    minLength: 24,
+    maxLength: 24,
+    pattern: SESSION_SURFACE_CANONICAL_TIMESTAMP_PATTERN,
+  }),
+  (value) => canonicalizeSessionSurfaceTimestamp(value) === value,
+  () => 'must be a canonical ISO instant'
+);
 
 export const SessionSurfaceSummarySchema = Runtime(
   StrictObject({
@@ -132,7 +191,7 @@ export const SessionSurfaceSummarySchema = Runtime(
     parentId: Type.Optional(SessionIdSchema),
     relationType: Type.Optional(SessionSurfaceRelationTypeSchema),
     taskStatus: SessionTaskStatusSchema,
-    taskCompletedAt: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
+    taskCompletedAt: Type.Optional(SessionSurfaceTaskCompletedAtSchema),
     messageCount: Type.Integer({ minimum: 0 }),
     firstMessageTime: Type.String({ minLength: 1 }),
     lastMessageTime: Type.String({ minLength: 1 }),

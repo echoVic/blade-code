@@ -21,7 +21,11 @@ import {
   withValidatedAcpRemoteStateScope,
 } from '../../../../src/acp/AcpRemoteWorkspace.js';
 import { __setAcpRemoteWorkspaceReferenceHooksForTesting } from '../../../../src/acp/AcpRemoteWorkspaceReference.js';
-import { SessionSurfaceMessageSchema } from '../../../../src/api/sessionSurfaceSchemas.js';
+import {
+  SessionSurfaceMessageSchema,
+  type SessionSurfaceSummary,
+  SessionSurfaceSummarySchema,
+} from '../../../../src/api/sessionSurfaceSchemas.js';
 import { JSONLStore } from '../../../../src/context/storage/JSONLStore.js';
 import {
   getAcpRemoteSessionFilePath,
@@ -427,7 +431,7 @@ describe('SQLite projection sync', () => {
     expect(JSON.stringify(candidate)).not.toContain(privateModel);
   });
 
-  it('projects only parseable task completion timestamps in canonical form', () => {
+  it('projects only strict ISO task completion timestamps in canonical form', () => {
     const metadata: SessionMetadata = {
       sessionId,
       projectPath,
@@ -440,14 +444,98 @@ describe('SQLite projection sync', () => {
       hasErrors: false,
     };
 
-    const summary = projectSessionSurfaceSummaryFields(metadata);
-    const invalidSummary = projectSessionSurfaceSummaryFields({
-      ...metadata,
-      taskCompletedAt: 'legacy-not-a-timestamp',
-    });
+    expect(projectSessionSurfaceSummaryFields(metadata).taskCompletedAt).toBe(
+      '2026-09-04T12:30:00.000Z'
+    );
+    expect(
+      projectSessionSurfaceSummaryFields({
+        ...metadata,
+        taskCompletedAt: '2026-09-04T12:30:00Z',
+      }).taskCompletedAt
+    ).toBe('2026-09-04T12:30:00.000Z');
+    expect(
+      projectSessionSurfaceSummaryFields({
+        ...metadata,
+        taskCompletedAt: '2000-02-29T12:30:00+23:59',
+      }).taskCompletedAt
+    ).toBe('2000-02-28T12:31:00.000Z');
+    expect(
+      projectSessionSurfaceSummaryFields({
+        ...metadata,
+        taskCompletedAt: '2026-09-04T12:30:00-23:59',
+      }).taskCompletedAt
+    ).toBe('2026-09-05T12:29:00.000Z');
 
-    expect(summary.taskCompletedAt).toBe('2026-09-04T12:30:00.000Z');
-    expect(invalidSummary.taskCompletedAt).toBeUndefined();
+    for (const taskCompletedAt of [
+      '09/04/2026',
+      '2026-09-04T12:30:00',
+      '2026-02-29T00:00:00Z',
+      '1900-02-29T00:00:00Z',
+      '2026-09-04T24:00:00Z',
+      '2026-09-04T12:30:00+24:00',
+      '2026-09-04T12:30:00+23:60',
+    ]) {
+      expect(
+        projectSessionSurfaceSummaryFields({ ...metadata, taskCompletedAt })
+          .taskCompletedAt
+      ).toBeUndefined();
+    }
+
+    const parse = vi.spyOn(Date, 'parse');
+    const oversized = `2026-09-04T12:30:00.000Z${'0'.repeat(41)}`;
+    expect(
+      projectSessionSurfaceSummaryFields({
+        ...metadata,
+        taskCompletedAt: oversized,
+      }).taskCompletedAt
+    ).toBeUndefined();
+    expect(parse).not.toHaveBeenCalled();
+    parse.mockRestore();
+  });
+
+  it('accepts only canonical task completion timestamps in the surface schema', () => {
+    const summary: SessionSurfaceSummary = {
+      locator: {
+        version: 2,
+        sessionId,
+        workspace: { kind: 'local', projectPath },
+      },
+      displayCwd: projectPath,
+      rootId: sessionId,
+      taskStatus: 'completed',
+      taskCompletedAt: '2026-09-04T12:30:00.000Z',
+      messageCount: 0,
+      firstMessageTime: ts,
+      lastMessageTime: ts,
+      hasErrors: false,
+      capabilities: {
+        connection: 'local',
+        history: { read: true, fork: true },
+        turn: { start: true },
+        files: { readText: true, writeText: true, browse: 'tree' },
+        terminal: { mode: 'interactive', owner: 'local' },
+      },
+    };
+
+    expect(SessionSurfaceSummarySchema.parse(summary).taskCompletedAt).toBe(
+      summary.taskCompletedAt
+    );
+    for (const taskCompletedAt of [
+      '2026-09-04T14:30:00+02:00',
+      '2026-09-04T12:30:00Z',
+      '09/04/2026',
+      '2026-09-04T12:30:00',
+      '2026-02-29T00:00:00.000Z',
+      '1900-02-29T00:00:00.000Z',
+      '2026-09-04T24:00:00.000Z',
+      '2026-09-04T12:30:00.000+24:00',
+      '2026-09-04T12:30:00.000+23:60',
+      `2026-09-04T12:30:00.000Z${'0'.repeat(41)}`,
+    ]) {
+      expect(() =>
+        SessionSurfaceSummarySchema.parse({ ...summary, taskCompletedAt })
+      ).toThrow();
+    }
   });
 
   it('rejects private or malformed remote lineage identifiers before projection', () => {
