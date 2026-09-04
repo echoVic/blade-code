@@ -340,7 +340,7 @@ async function openCapacityCoordinator(
       referenceDirectoryPath
     );
     const identity = await identityHandle.stat({ bigint: true });
-    database = await openDb(databasePath);
+    database = await openDb(databasePath, { busyTimeoutMs: 30_000 });
     if (!database) {
       throw new AcpRemoteWorkspaceReferenceError('session_surface_state_invalid');
     }

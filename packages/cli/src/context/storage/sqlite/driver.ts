@@ -29,6 +29,10 @@ export interface SqliteDb {
   close(): void;
 }
 
+export interface OpenDbOptions {
+  readonly busyTimeoutMs?: number;
+}
+
 function isBunRuntime(): boolean {
   return typeof (globalThis as Record<string, unknown>).Bun !== 'undefined';
 }
@@ -80,19 +84,26 @@ function wrapBunSqlite(db: BunDatabase): SqliteDb {
   };
 }
 
-const PRAGMAS = [
-  'PRAGMA busy_timeout=5000;',
-  'PRAGMA journal_mode=WAL;',
-  'PRAGMA synchronous=NORMAL;',
-  'PRAGMA foreign_keys=ON;',
-].join('\n');
+function initializationPragmas(busyTimeoutMs: number): string {
+  return [
+    `PRAGMA busy_timeout=${busyTimeoutMs};`,
+    'PRAGMA journal_mode=WAL;',
+    'PRAGMA synchronous=NORMAL;',
+    'PRAGMA foreign_keys=ON;',
+  ].join('\n');
+}
 
 /**
  * 打开（或创建）一个 SQLite 数据库。失败返回 null（调用方回退 JSONL）。
  */
-export async function openDb(dbPath: string): Promise<SqliteDb | null> {
+export async function openDb(
+  dbPath: string,
+  options: OpenDbOptions = {}
+): Promise<SqliteDb | null> {
+  const busyTimeoutMs = options.busyTimeoutMs ?? 5_000;
+  if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 0) return null;
+  let db: SqliteDb | null = null;
   try {
-    let db: SqliteDb;
     if (isBunRuntime()) {
       // Computed specifier + @vite-ignore so bundlers (Vite/esbuild used by some
       // test configs) don't try to statically resolve the Bun-only builtin.
@@ -109,9 +120,14 @@ export async function openDb(dbPath: string): Promise<SqliteDb | null> {
       const Database = mod.default;
       db = wrapBetterSqlite(new Database(dbPath));
     }
-    db.exec(PRAGMAS);
+    db.exec(initializationPragmas(busyTimeoutMs));
     return db;
   } catch {
+    try {
+      db?.close();
+    } catch {
+      // Preserve the fail-soft contract when cleanup also fails.
+    }
     // 模块缺失 / 原生编译失败 / 无法打开：静默回退。
     return null;
   }
