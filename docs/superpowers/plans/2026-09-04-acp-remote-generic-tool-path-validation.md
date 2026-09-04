@@ -80,7 +80,7 @@ scheduler、lock、tool 和 ACP I/O 不运行，结果不含原始路径。
 cd packages/cli
 bun x vitest run --config vitest.config.ts --project=unit \
   tests/unit/agent-runtime/tools/tool-executor-filelock.test.ts \
-  tests/unit/tools/execution/workspace-tool-policy.test.ts
+  tests/unit/tooling/tools/execution/workspace-tool-policy.test.ts
 bun x vitest run --config vitest.config.ts --project=integration \
   tests/integration/tool-executor.test.ts \
   tests/integration/acp-remote-file-tools.test.ts

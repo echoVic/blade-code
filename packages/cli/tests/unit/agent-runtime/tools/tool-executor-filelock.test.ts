@@ -1674,8 +1674,9 @@ describe('ToolExecutor — file lock logic', () => {
       ).toThrow('ACP remote ToolExecutor requires runtime-owned context defaults');
     });
 
-    it('does not validate an unlocked concurrency-safe MCP file_path as a remote file', async () => {
+    it('validates an unlocked concurrency-safe MCP file_path as a declared remote file', async () => {
       initializeRemoteSession('remote-lock-session-a', 'C:\\workspace');
+      const rejectedPath = 'C:\\workspace\\metadata.txt:$DATA';
       const invocationSpy = vi.fn();
       const tool = createTool({
         name: 'mcp__safe__metadata',
@@ -1709,14 +1710,19 @@ describe('ToolExecutor — file lock logic', () => {
         },
       });
 
-      await expect(
-        executor.execute(
-          tool.name,
-          { file_path: 'opaque://metadata:not-a-filesystem-path' },
-          { workspaceKind: 'local' }
-        )
-      ).resolves.toMatchObject({ success: true, llmContent: 'metadata ok' });
-      expect(invocationSpy).toHaveBeenCalledTimes(1);
+      const result = await executor.execute(
+        tool.name,
+        { file_path: rejectedPath },
+        { workspaceKind: 'local' }
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { code: 'acp_remote_path_invalid' },
+      });
+      expect(result.metadata?.sideEffectsUncertain).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(rejectedPath);
+      expect(invocationSpy).not.toHaveBeenCalled();
     });
 
     it('rejects crafted host-only calls before schema validation despite a forged local context', async () => {

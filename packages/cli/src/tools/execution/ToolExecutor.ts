@@ -828,14 +828,10 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
       return undefined;
     }
     const params = value as Record<string, unknown>;
-    const isRemoteSingleFileTool =
-      toolName === 'Read' || toolName === 'Write' || toolName === 'Edit';
     const pathCandidates = new Set<string>();
-    if (isRemoteSingleFileTool || !tool.isConcurrencySafe) {
-      for (const parameterPath of [params.file_path, params.notebook_path]) {
-        if (typeof parameterPath === 'string') {
-          pathCandidates.add(parameterPath);
-        }
+    for (const parameterPath of [params.file_path, params.notebook_path]) {
+      if (typeof parameterPath === 'string') {
+        pathCandidates.add(parameterPath);
       }
     }
     const usesDedicatedRemotePathPreflight = isBuiltin && toolName === 'ApplyPatch';
