@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.131] - 2026-09-04
+
+### 修复
+- 为 Web 中已知后台任务补齐 durable unread 恢复：任务若在页面 reload 或断线期间进入终态，会按 exact 项目与 Session identity 的版本化已读终态 ledger 恢复提醒。
+- 仅在 winning Session catalog 完整加载后 reconcile attention，并通过 monotonic upsert/remove overlay 保留分页期间更新的 task 与 Session lifecycle 状态。
+- 首次发现的历史终态保持静默、已读结果不会再次复活、不同项目的同 ID 任务互不影响，级联归档也会清理尚未加载子任务的 attention 状态。
+
+### 测试
+- 新增 ledger、live event、分页、generation、lifecycle overlay、archive 与 no-revival 的因果覆盖，并加入完整 unread/reload/click 用户旅程的 production Chromium qualification。
+- 使用真实上游请求验证 `deepseek-v4-flash` 与 `deepseek-v4-pro`，framework 与 model retry 均为 0，并验证 exact compound Session 导航、sibling 隔离及 browser/server/credential-leak fault 全部为空。
+
 ## [0.10.130] - 2026-09-04
 
 ### 修复

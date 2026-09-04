@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.131] - 2026-09-04
+
+### Fixed
+- Recovered unread attention for known background tasks that reach a terminal state while the Web UI is reloading or disconnected, using a versioned acknowledged-terminal ledger keyed by exact project and Session identity.
+- Reconciled attention only after a complete winning Session catalog load, while preserving newer task and Session lifecycle changes through monotonic upsert/remove overlays.
+- Kept first-seen historical terminal tasks quiet, prevented acknowledged results from reviving, isolated same-ID tasks across projects, and pruned cascaded archive attention even when descendants were not loaded.
+
+### Tests
+- Added causal ledger, live-event, pagination, generation, lifecycle-overlay, archive, and no-revival coverage, plus production Chromium qualification for the complete unread/reload/click journey.
+- Qualified `deepseek-v4-flash` and `deepseek-v4-pro` through real upstream requests with framework and model retries disabled, exact compound Session navigation, sibling isolation, and zero browser, server, or credential-leak faults.
+
 ## [0.10.130] - 2026-09-04
 
 ### Fixed

@@ -51,6 +51,8 @@ Total  29.55s
 | deepseek-v4-flash | 14.203s | 14,046ms | 1 | 0 | 0 |
 | deepseek-v4-pro | 13.564s | 13,404ms | 1 | 0 | 0 |
 
+The same command was rerun fresh on the final release-metadata tree, with all production and source blobs unchanged: Flash passed in 14.324s (driver 14,159ms), Pro passed in 17.266s (driver 17,106ms), for 1 file / 2 passed / 1 skipped in 33.60s. All other structured evidence remained the same and fault/leak arrays stayed empty.
+
 The recording proxy delayed and forwarded the first real Provider request; it did not generate or replace a response. Both runs proved running → completed, persisted B's null baseline before closing the page, recovered B and a sibling as unread with title count 2, survived another reload, rendered New in the TaskSwitcher, navigated to the exact compound SessionRef, displayed terminal content and completed status, cleared only B, and produced empty browserFaults, serverFaults, and leakedSecrets.
 
 The first real matrix completed both Provider tasks, but hyphens in the default macOS temporary path did not round-trip through the existing Session storage path codec, leaving the fixture catalog empty. A hyphen-free isolated /tmp root passed. This patch does not claim to fix that separate path-codec behavior.
@@ -62,14 +64,33 @@ format:check  PASS — 1554 files
 lint          PASS — CLI 1352 files, Web 200 files, VSCode PASS
 type-check    PASS — CLI, Web, VSCode
 build         PASS
-main tests    474 files passed, 95 skipped
+code-head     474 files passed, 95 skipped
               5482 passed, 85 skipped, 362.63s
+release-head  473 files passed, 95 skipped (progressive skip)
+              5467 passed, 85 skipped, 363.38s
 performance   4 files passed, 1 skipped
-              9 passed, 1 skipped, 6.32s
+              9 passed, 1 skipped, 6.68s
 git diff      PASS
 ~~~
 
 The build emitted only the existing stale Browserslist data and >500 KiB chunk warnings.
+
+After the release-metadata commit, two complete `bun run test:all` attempts each
+reported one failure in the unchanged
+`remote-workspace-reference.test.ts`. The first returned
+`session_surface_state_invalid` after a killed coordinator owner; the second
+returned the same state error for the loser of the two-process capacity race
+instead of the expected retryable capacity result. Both the test and production
+implementation blobs are identical to `v0.10.130`. Each exact target passed in
+isolation, while a whole-file loop reproduced the timing-dependent failure. A
+temporary assertion diagnostic captured the outcomes and was then fully removed.
+
+The release head therefore used a documented progressive-skip pass: excluding the
+single unchanged reproducibly intermittent file, 473 of the remaining 568 main
+files passed and 95 followed their existing skips, for 5,467 passing and 85 skipped
+tests. Performance passed separately. These are recorded as “intermittent failures
+in unchanged sources”; an exact rerun is not presented as a root-cause fix, and the
+release-head `test:all` run is not claimed to be fully green.
 
 ## Final Review
 
@@ -101,4 +122,3 @@ sessionSlice.test.ts                     f3bd23d3ce80173c201d3131fb7121e0ab1abf3
 - No Provider credential or raw model output was printed, stored, or committed.
 - A screenshot is not the success oracle. DOM, title, exact URL/SessionRef, catalog, localStorage, real Provider requests, and fault/leak assertions jointly determine success.
 - Normal test:all skips paid real-API cells. The release-matrix command separately executed Flash and Pro.
-

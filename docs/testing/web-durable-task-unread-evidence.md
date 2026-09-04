@@ -51,6 +51,8 @@ Total  29.55s
 | deepseek-v4-flash | 14.203s | 14,046ms | 1 | 0 | 0 |
 | deepseek-v4-pro | 13.564s | 13,404ms | 1 | 0 | 0 |
 
+在最终 release metadata tree（production/source blobs 未变化）上 fresh 复跑同一命令：Flash 14.324s（driver 14,159ms），Pro 17.266s（driver 17,106ms），1 file / 2 passed / 1 skipped，33.60s；其余结构化证据保持相同，fault/leak 仍为空。
+
 两个模型均走真实 Provider 上游。recording proxy 只 hold 后透传首个请求，不生成或替换响应。两条轨迹均证明：running → completed；浏览器先持久化 B 的 null baseline，再关闭页面错过 terminal event；新 Chromium context 从完整 catalog 恢复 B unread，同时 sibling unread 保留且 title count 为 2；再次 reload 后状态不丢；TaskSwitcher DOM 显示 B 的 New；点击 B 后进入 exact compound SessionRef，terminal content 与 completed 状态可见，只清 B；browserFaults、serverFaults、leakedSecrets 均为空。
 
 初次真实矩阵中，两模型都真实完成，但 macOS 默认临时目录中的连字符路径无法被既有 Session 存储路径编码稳定 round-trip，导致测试 catalog 为空。资格 fixture 改用隔离且无连字符的 /tmp 根后通过。本 patch 不宣称修复该独立 path-codec 行为。
@@ -62,14 +64,28 @@ format:check  PASS — 1554 files
 lint          PASS — CLI 1352 files, Web 200 files, VSCode PASS
 type-check    PASS — CLI, Web, VSCode
 build         PASS
-main tests    474 files passed, 95 skipped
+code-head     474 files passed, 95 skipped
               5482 passed, 85 skipped, 362.63s
+release-head  473 files passed, 95 skipped (progressive skip)
+              5467 passed, 85 skipped, 363.38s
 performance   4 files passed, 1 skipped
-              9 passed, 1 skipped, 6.32s
+              9 passed, 1 skipped, 6.68s
 git diff      PASS
 ~~~
 
 Build 只有既有 Browserslist stale-data 与大于 500 KiB chunk warning。
+
+Release metadata 提交后的完整 `bun run test:all` 连续两次各出现 1 个失败，均位于
+未改源码 `remote-workspace-reference.test.ts`：第一次是 killed owner 后 coordinator
+返回 `session_surface_state_invalid`，第二次是双进程 capacity race 中 loser 返回同一
+state error 而非预期 retryable capacity。该测试与其 production 实现的 blob 都和
+`v0.10.130` 完全一致；两个目标用例单独运行均通过，而整文件循环可复现
+timing-dependent failure。临时增强失败消息确认实际 outcomes 后已完全撤回。
+
+因此 release-head 使用文档化 progressive skip：排除唯一未改且可复现不稳定的文件后，
+其余 568 个主测试文件中的 473 个通过、95 个按既有 gate 跳过，共 5,467 个测试通过、
+85 个跳过；performance 单独全绿。这里明确记录为 “intermittent failures in unchanged
+sources”，不把精确重跑通过描述成根因修复，也不宣称 release-head `test:all` 全绿。
 
 ## 最终审查
 
@@ -101,4 +117,3 @@ sessionSlice.test.ts                     f3bd23d3ce80173c201d3131fb7121e0ab1abf3
 - 没有输出、保存或提交 Provider credential 或真实模型原始输出。
 - screenshot 不是成功依据；DOM、title、exact URL/SessionRef、catalog、localStorage、真实 Provider 请求与 fault/leak 断言共同确定结果。
 - 普通 test:all 会跳过付费真实 API 单元格；真实 Flash/Pro 资格由上面的 release-matrix 命令单独执行。
-
