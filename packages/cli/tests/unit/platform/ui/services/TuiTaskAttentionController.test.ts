@@ -303,6 +303,38 @@ describe('TuiTaskAttentionController', () => {
     await controller.close();
   });
 
+  it('runs a lifecycle refresh queued from the ready listener after finalization', async () => {
+    const service = new DeferredCatalogClient();
+    const bus = new FakeBus();
+    const controller = new TuiTaskAttentionController({
+      service,
+      store: new FakeAttentionStore(),
+      bus,
+      timerApi: new FakeTimerApi(),
+    });
+    let emitted = false;
+    controller.subscribe((state) => {
+      if (state.status !== 'ready' || emitted) return;
+      emitted = true;
+      queueMicrotask(() => {
+        queueMicrotask(() => bus.emit('task.status'));
+      });
+    });
+
+    const started = controller.start();
+    await waitForRequest(service, 1);
+    service.requests[0]?.request.resolve(page([summary('first')]));
+    await started;
+    await waitForRequest(service, 2);
+    service.requests[1]?.request.resolve(page([summary('follow-up')]));
+    await vi.waitFor(() =>
+      expect(controller.getState().sessions).toEqual([summary('follow-up')])
+    );
+
+    expect(service.maxActiveRequests).toBe(1);
+    await controller.close();
+  });
+
   it('shares concurrent listAll calls without forcing a redundant follow-up scan', async () => {
     const service = new DeferredCatalogClient();
     const controller = new TuiTaskAttentionController({
@@ -512,6 +544,71 @@ describe('TuiTaskAttentionController', () => {
       status: 'idle',
       sessions: [],
       unreadKeys: ['existing-unread'],
+    });
+    await controller.close();
+  });
+
+  it('queues visibility behind reconciliation and reuses the newest complete catalog', async () => {
+    const service = new DeferredCatalogClient();
+    const store = new FakeAttentionStore();
+    store.deferReconcile = true;
+    const controller = new TuiTaskAttentionController({ service, store });
+    const oldSession = summary('old');
+    const newSession = summary('new');
+
+    const first = controller.listAll();
+    await waitForRequest(service, 1);
+    service.requests[0]?.request.resolve(page([oldSession]));
+    await vi.waitFor(() => expect(store.reconcileRequests).toHaveLength(1));
+    store.reconcileRequests[0]?.resolve({ unreadKeys: [] });
+    await first;
+
+    const refresh = controller.listAll();
+    await waitForRequest(service, 2);
+    service.requests[1]?.request.resolve(page([newSession]));
+    await vi.waitFor(() => expect(store.reconcileRequests).toHaveLength(2));
+    const visibility = controller.setVisibleLocator(newSession.locator);
+    await Promise.resolve();
+    expect(store.reconciliations).toHaveLength(2);
+
+    store.reconcileRequests[1]?.resolve({ unreadKeys: ['new'] });
+    await vi.waitFor(() => expect(store.reconcileRequests).toHaveLength(3));
+    expect(store.reconciliations[2]?.sessions).toEqual([newSession]);
+    expect(store.reconciliations[2]?.visibleLocator).toEqual(newSession.locator);
+    store.reconcileRequests[2]?.resolve({ unreadKeys: [] });
+    await Promise.all([refresh, visibility]);
+
+    expect(controller.getState()).toMatchObject({
+      status: 'ready',
+      sessions: [newSession],
+      unreadKeys: [],
+    });
+    await controller.close();
+  });
+
+  it('keeps an error catalog status when acknowledgement updates unread keys', async () => {
+    const service = new DeferredCatalogClient();
+    const store = new FakeAttentionStore();
+    const controller = new TuiTaskAttentionController({ service, store });
+    const known = summary('known');
+
+    const first = controller.listAll();
+    await waitForRequest(service, 1);
+    service.requests[0]?.request.resolve(page([known]));
+    await first;
+    const failed = controller.listAll();
+    await waitForRequest(service, 2);
+    service.requests[1]?.request.reject(new Error('catalog unavailable'));
+    await failed;
+    expect(controller.getState().status).toBe('error');
+
+    store.unreadKeys = [];
+    await controller.acknowledge(known);
+
+    expect(controller.getState()).toMatchObject({
+      status: 'error',
+      sessions: [known],
+      unreadKeys: [],
     });
     await controller.close();
   });

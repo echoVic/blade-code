@@ -144,7 +144,9 @@ export class TuiTaskAttentionController {
       return this.activeRefresh;
     }
     const refresh = this.runRefreshLoop().finally(() => {
-      if (this.activeRefresh === refresh) this.activeRefresh = null;
+      if (this.activeRefresh !== refresh) return;
+      this.activeRefresh = null;
+      if (!this.disposed && this.dirty) void this.requestRefresh(false);
     });
     this.activeRefresh = refresh;
     return refresh;
@@ -154,12 +156,14 @@ export class TuiTaskAttentionController {
     if (this.disposed) return;
     const snapshot = await this.store.acknowledge(summary);
     if (this.disposed) return;
-    this.publish('ready', this.state.sessions, snapshot.unreadKeys);
+    this.publish(this.state.status, this.state.sessions, snapshot.unreadKeys);
   }
 
   async setVisibleLocator(locator?: SessionLocatorV2): Promise<void> {
     if (this.disposed) return;
     this.visibleLocator = locator ? copyLocator(locator) : undefined;
+    await this.waitForActiveRefresh();
+    if (this.disposed) return;
     if (!this.hasCompleteCatalog) return;
     const snapshot = await this.store.reconcile(
       this.state.sessions,
@@ -167,6 +171,15 @@ export class TuiTaskAttentionController {
     );
     if (this.disposed) return;
     this.publish(this.state.status, this.state.sessions, snapshot.unreadKeys);
+  }
+
+  private async waitForActiveRefresh(): Promise<void> {
+    let active = this.activeRefresh;
+    while (active) {
+      await active;
+      if (this.disposed) return;
+      active = this.activeRefresh;
+    }
   }
 
   close(): Promise<void> {
