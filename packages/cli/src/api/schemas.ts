@@ -10,6 +10,7 @@ import {
 } from './attachmentLimits.js';
 
 export * from './sessionSurfaceSchemas.js';
+export * from './followUpQueueSchemas.js';
 
 import { MAX_SIDE_QUESTION_CHARS } from './sideConversation.js';
 
