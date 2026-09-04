@@ -177,6 +177,7 @@ function createMockAppActions(): AppActions {
     setTasks: vi.fn(),
     updateTask: vi.fn(),
     setAwaitingSecondCtrlC: vi.fn(),
+    projectTaskAttentionState: vi.fn(),
     setReasoningEffort: vi.fn(),
     setServiceTier: vi.fn(),
     setResponseVerbosity: vi.fn(),
@@ -806,6 +807,112 @@ describe('processSlashCommand', () => {
         sessionActions,
         cleanupAgent
       );
+    });
+
+    it('acknowledges an exact local resume only after activation commits', async () => {
+      const session = createSessionMetadata();
+      const summary = createLocalSurfaceSummary(session);
+      const acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
+      activationMocks.activateSessionSelection.mockResolvedValue({
+        sessionId: session.sessionId,
+        messages: [],
+      });
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: { action: 'activate_session', intent: 'resume', session },
+      });
+
+      await processSlashCommand(
+        createResolvedInput('/resume parent-session'),
+        createMockAppActions(),
+        createMockSessionActions(),
+        new AbortController().signal,
+        cleanupAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        process.cwd(),
+        undefined,
+        { list: async () => [summary], acknowledge }
+      );
+
+      expect(activationMocks.activateSessionSelection).toHaveBeenCalledOnce();
+      expect(acknowledge).toHaveBeenCalledWith(summary);
+      expect(
+        activationMocks.activateSessionSelection.mock.invocationCallOrder[0]
+      ).toBeLessThan(acknowledge.mock.invocationCallOrder[0]!);
+    });
+
+    it('does not acknowledge a failed local resume or a successful fork', async () => {
+      const session = createSessionMetadata();
+      const summary = createLocalSurfaceSummary(session);
+      const acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
+      const sessionSurfaces = { list: async () => [summary], acknowledge };
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: { action: 'activate_session', intent: 'resume', session },
+      });
+      activationMocks.activateSessionSelection.mockRejectedValueOnce(
+        new Error('restore failed')
+      );
+
+      await expect(
+        processSlashCommand(
+          createResolvedInput('/resume parent-session'),
+          createMockAppActions(),
+          createMockSessionActions(),
+          new AbortController().signal,
+          cleanupAgent,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          process.cwd(),
+          undefined,
+          sessionSurfaces
+        )
+      ).rejects.toThrow('restore failed');
+      expect(acknowledge).not.toHaveBeenCalled();
+
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: { action: 'activate_session', intent: 'fork', session },
+      });
+      activationMocks.activateSessionSelection.mockResolvedValueOnce({
+        sessionId: 'forked-session',
+        messages: [],
+      });
+      await processSlashCommand(
+        createResolvedInput('/fork parent-session'),
+        createMockAppActions(),
+        createMockSessionActions(),
+        new AbortController().signal,
+        cleanupAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        process.cwd(),
+        undefined,
+        sessionSurfaces
+      );
+      expect(acknowledge).not.toHaveBeenCalled();
     });
 
     it('routes a remote surface to the history viewer without local activation', async () => {

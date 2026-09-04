@@ -33,6 +33,8 @@ const initialAppState: AppState = {
   activeModal: 'none',
   sessionSelectorData: undefined,
   sessionHistoryViewerData: undefined,
+  taskAttentionStatus: 'idle',
+  taskAttentionUnreadKeys: [],
   modelEditorTarget: null,
   tasks: [],
   awaitingSecondCtrlC: false,
@@ -169,6 +171,16 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
     setAwaitingSecondCtrlC: (awaiting: boolean) => {
       set((state) => ({
         app: { ...state.app, awaitingSecondCtrlC: awaiting },
+      }));
+    },
+
+    projectTaskAttentionState: (status, unreadKeys) => {
+      set((state) => ({
+        app: {
+          ...state.app,
+          taskAttentionStatus: status,
+          taskAttentionUnreadKeys: [...unreadKeys],
+        },
       }));
     },
 

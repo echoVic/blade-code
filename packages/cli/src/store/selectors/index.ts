@@ -129,6 +129,12 @@ export const useSessionSelectorState = () =>
 export const useSessionHistoryViewerState = () =>
   useBladeStore((state) => state.app.sessionHistoryViewerData);
 
+export const useTaskAttentionStatus = () =>
+  useBladeStore((state) => state.app.taskAttentionStatus);
+
+export const useTaskAttentionUnreadKeys = () =>
+  useBladeStore((state) => state.app.taskAttentionUnreadKeys);
+
 /**
  * 获取是否等待第二次 Ctrl+C
  */

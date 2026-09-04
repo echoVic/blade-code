@@ -29,6 +29,7 @@ import { FocusId } from '../../../src/store/types.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { SessionHistoryViewer } from '../../../src/ui/components/SessionHistoryViewer.js';
 import { SessionSelector } from '../../../src/ui/components/SessionSelector.js';
+import { RemoteHistoryAttentionAcknowledger } from '../../../src/ui/components/sessionSelectorModel.js';
 import type { ResolvedInput } from '../../../src/ui/hooks/useInputBuffer.js';
 import { TerminalInputRouterProvider } from '../../../src/ui/input/TerminalInputRouter.js';
 import { SessionHistoryController } from '../../../src/ui/services/SessionHistoryController.js';
@@ -296,10 +297,13 @@ describe('TUI remote Session history surface', () => {
       throw new Error('remote selector state was not projected');
     }
     const activeSelector = selectorState;
+    const activeRemoteSummary = remoteSummary;
 
     const findLocalMetadata = vi.spyOn(SessionService, 'findSessionMetadata');
     const restoreLocalSession = vi.spyOn(liveSession.actions, 'restoreSession');
     const localActivation = vi.fn();
+    const acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
+    const attentionAcknowledger = new RemoteHistoryAttentionAcknowledger(acknowledge);
     const stdin = new TestInputStream();
     const stdout = new TestOutputStream();
     const stderr = new TestOutputStream();
@@ -311,6 +315,12 @@ describe('TUI remote Session history surface', () => {
       );
       const [history, setHistory] = useState(controller.getState());
       useEffect(() => controller.subscribe(setHistory), []);
+      useEffect(() => {
+        void attentionAcknowledger.update(
+          { intent: activeSelector.intent, session: activeRemoteSummary },
+          history
+        );
+      }, [history]);
       useEffect(() => {
         getState().focus.actions.setFocus(
           screen === 'history'
@@ -332,7 +342,12 @@ describe('TUI remote Session history surface', () => {
                 openHistory: async (summary, intent) => {
                   getState().app.actions.showSessionHistoryViewer(summary, intent);
                   setScreen('history');
-                  await controller.activate(summary, intent);
+                  const activation = controller.activate(summary, intent);
+                  attentionAcknowledger.begin(
+                    { intent, session: summary },
+                    controller.getState().viewGeneration
+                  );
+                  await activation;
                 },
                 activateLocal: async () => {
                   localActivation();
@@ -384,6 +399,7 @@ describe('TUI remote Session history surface', () => {
       await waitForAssertion(() => {
         expect(controller.getState().status).toBe('ready');
         expect(stdout.output).toContain('newest reply');
+        expect(acknowledge).toHaveBeenCalledWith(activeRemoteSummary);
       });
       expect(localActivation).not.toHaveBeenCalled();
       expect(cleanupAgent).not.toHaveBeenCalled();
@@ -438,6 +454,50 @@ describe('TUI remote Session history surface', () => {
       stdout.end();
       stderr.end();
     }
+  });
+
+  it('acknowledges only a ready exact remote resume view', async () => {
+    const remote = (await controller.listAll()).find(
+      (candidate) => candidate.locator.workspace.kind === 'acp-remote'
+    );
+    if (!remote) throw new Error('remote surface was not projected');
+    const acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
+    const attentionAcknowledger = new RemoteHistoryAttentionAcknowledger(acknowledge);
+    const ready = {
+      ...controller.getState(),
+      viewGeneration: 7,
+      status: 'ready' as const,
+      session: remote,
+    };
+    const collision = {
+      ...remote,
+      locator: {
+        ...remote.locator,
+        workspace: {
+          kind: 'acp-remote' as const,
+          workspaceRef: `acp-remote-workspace:${'S'.repeat(43)}`,
+        },
+      },
+    };
+
+    attentionAcknowledger.begin({ intent: 'fork', session: remote }, 7);
+    await attentionAcknowledger.update({ intent: 'fork', session: remote }, ready);
+    attentionAcknowledger.begin({ intent: 'resume', session: remote }, 7);
+    await attentionAcknowledger.update(
+      { intent: 'resume', session: remote },
+      { ...ready, status: 'error' }
+    );
+    await attentionAcknowledger.update({ intent: 'resume', session: collision }, ready);
+    await attentionAcknowledger.update(
+      { intent: 'resume', session: remote },
+      { ...ready, viewGeneration: 6 }
+    );
+    expect(acknowledge).not.toHaveBeenCalled();
+
+    await attentionAcknowledger.update({ intent: 'resume', session: remote }, ready);
+    await attentionAcknowledger.update({ intent: 'resume', session: remote }, ready);
+    expect(acknowledge).toHaveBeenCalledOnce();
+    expect(acknowledge).toHaveBeenCalledWith(remote);
   });
 
   it('aborts a real in-flight surface read and ignores its completion after close', async () => {

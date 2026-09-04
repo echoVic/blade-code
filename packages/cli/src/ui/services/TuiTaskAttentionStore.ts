@@ -203,7 +203,7 @@ function applyMutation(
       reconcileEntries(entries, mutation.sessions, mutation.visibleLocator)
     );
   }
-  const key = digestLocator(mutation.summary.locator);
+  const key = getTuiTaskAttentionKey(mutation.summary.locator);
   return compactEntries(
     moveToMru(entries, {
       key,
@@ -220,13 +220,15 @@ function reconcileEntries(
 ): AttentionEntry[] {
   const currentByKey = new Map(current.map((entry) => [entry.key, entry]));
   const seen = new Set<string>();
-  const visibleKey = visibleLocator ? digestLocator(visibleLocator) : undefined;
+  const visibleKey = visibleLocator
+    ? getTuiTaskAttentionKey(visibleLocator)
+    : undefined;
   let visibleSummary: SessionSurfaceSummary | undefined;
   const protectedEntries: AttentionEntry[] = [];
   const acknowledgedTerminals: AttentionEntry[] = [];
 
   for (const session of sessions) {
-    const key = digestLocator(session.locator);
+    const key = getTuiTaskAttentionKey(session.locator);
     if (seen.has(key)) continue;
     seen.add(key);
     const signature = terminalSignature(session);
@@ -259,7 +261,7 @@ function reconcileEntries(
   ];
   if (visibleSummary) {
     entries = moveToMru(entries, {
-      key: digestLocator(visibleSummary.locator),
+      key: getTuiTaskAttentionKey(visibleSummary.locator),
       signature: terminalSignature(visibleSummary),
       unread: false,
     });
@@ -299,7 +301,7 @@ function snapshotFrom(entries: readonly AttentionEntry[]): TuiTaskAttentionSnaps
   });
 }
 
-function digestLocator(locator: SessionLocatorV2): string {
+export function getTuiTaskAttentionKey(locator: SessionLocatorV2): string {
   const canonical =
     locator.workspace.kind === 'local'
       ? [2, 'local', locator.workspace.projectPath, locator.sessionId]

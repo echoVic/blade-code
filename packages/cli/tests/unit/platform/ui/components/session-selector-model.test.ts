@@ -194,15 +194,48 @@ describe('sessionSelectorModel', () => {
   });
 
   it('keeps local rows on the familiar compact path label', async () => {
-    const { getSessionSelectorLabel } = await import(
+    const { getSessionSelectorLabel, getTaskAttentionKey } = await import(
       '../../../../../src/ui/components/sessionSelectorModel.js'
     );
+    const session = createLocalSummary();
 
-    const label = getSessionSelectorLabel(createLocalSummary(), '今天 16:20');
+    const label = getSessionSelectorLabel(session, '今天 16:20');
 
     expect(label).toContain('[DONE]');
     expect(label).toContain('| a |');
     expect(label).not.toContain('[remote');
+
+    const unreadKey = getTaskAttentionKey(session);
+    expect(
+      getSessionSelectorLabel(session, '今天 16:20', 'resume', [unreadKey])
+    ).toContain('[NEW] [DONE] Session One');
+    expect(
+      getSessionSelectorLabel(session, '今天 16:20', 'fork', [unreadKey])
+    ).not.toContain('[NEW]');
+  });
+
+  it('matches unread state by the exact locator when session ids collide', async () => {
+    const { getSessionSelectorLabel, getTaskAttentionKey } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+    const unread = createLocalSummary();
+    const collision = createLocalSummary({
+      locator: {
+        version: 2,
+        sessionId: unread.locator.sessionId,
+        workspace: { kind: 'local', projectPath: '/workspace/b' },
+      },
+      displayCwd: '/workspace/b',
+      title: 'Collision',
+    });
+    const unreadKeys = [getTaskAttentionKey(unread)];
+
+    expect(
+      getSessionSelectorLabel(unread, '今天 16:20', 'resume', unreadKeys)
+    ).toContain('[NEW]');
+    expect(
+      getSessionSelectorLabel(collision, '今天 16:20', 'resume', unreadKeys)
+    ).not.toContain('[NEW]');
   });
 
   it('preserves local-only automatic continue when a remote row is newer', async () => {

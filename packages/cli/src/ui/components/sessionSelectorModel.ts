@@ -1,6 +1,8 @@
 import { basename } from 'node:path';
 import type { SessionSurfaceSummary } from '../../api/sessionSurfaceSchemas.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
+import type { SessionHistoryViewState } from '../services/SessionHistoryController.js';
+import { getTuiTaskAttentionKey } from '../services/TuiTaskAttentionStore.js';
 
 export function getSessionCandidateKey(session: SessionSurfaceSummary): string {
   const { locator } = session;
@@ -18,6 +20,76 @@ export function getSessionCandidateKey(session: SessionSurfaceSummary): string {
     locator.workspace.projectPath,
     locator.sessionId,
   ].join('\0');
+}
+
+export function getTaskAttentionKey(session: SessionSurfaceSummary): string {
+  return getTuiTaskAttentionKey(session.locator);
+}
+
+interface LocalTaskAttentionBoundary {
+  acknowledge(summary: SessionSurfaceSummary): Promise<void>;
+  setVisibleLocator(locator: SessionSurfaceSummary['locator']): Promise<void>;
+}
+
+export async function commitLocalTaskAttention(
+  intent: SessionSelectionIntent,
+  summary: SessionSurfaceSummary,
+  attention: LocalTaskAttentionBoundary
+): Promise<void> {
+  if (intent !== 'resume') return;
+  await attention.acknowledge(summary);
+  await attention.setVisibleLocator(summary.locator);
+}
+
+export class RemoteHistoryAttentionAcknowledger {
+  private acknowledgedView?: string;
+  private pendingView?: string;
+  private expectedView?: { key: string; generation: number };
+
+  constructor(
+    private readonly acknowledge: (summary: SessionSurfaceSummary) => Promise<void>
+  ) {}
+
+  begin(
+    viewer: { intent: SessionSelectionIntent; session: SessionSurfaceSummary },
+    generation: number
+  ): void {
+    this.expectedView =
+      viewer.intent === 'resume'
+        ? { key: getSessionCandidateKey(viewer.session), generation }
+        : undefined;
+  }
+
+  reset(): void {
+    this.expectedView = undefined;
+  }
+
+  async update(
+    viewer: { intent: SessionSelectionIntent; session: SessionSurfaceSummary },
+    history: SessionHistoryViewState
+  ): Promise<boolean> {
+    if (
+      viewer.intent !== 'resume' ||
+      history.status !== 'ready' ||
+      !history.session ||
+      !this.expectedView ||
+      history.viewGeneration !== this.expectedView.generation ||
+      getSessionCandidateKey(viewer.session) !== this.expectedView.key ||
+      getSessionCandidateKey(viewer.session) !== getSessionCandidateKey(history.session)
+    ) {
+      return false;
+    }
+    const view = `${history.viewGeneration}\0${getSessionCandidateKey(history.session)}`;
+    if (view === this.acknowledgedView || view === this.pendingView) return false;
+    this.pendingView = view;
+    try {
+      await this.acknowledge(history.session);
+      this.acknowledgedView = view;
+      return true;
+    } finally {
+      if (this.pendingView === view) this.pendingView = undefined;
+    }
+  }
 }
 
 export function getSessionDisplayTitle(session: SessionSurfaceSummary): string {
@@ -51,12 +123,19 @@ export function getMostRecentLocalSessionCandidate(
 
 export function getSessionSelectorLabel(
   session: SessionSurfaceSummary,
-  timestamp: string
+  timestamp: string,
+  intent: SessionSelectionIntent = 'resume',
+  taskAttentionUnreadKeys: readonly string[] = []
 ): string {
   const title = getSessionDisplayTitle(session);
+  const attention =
+    intent === 'resume' &&
+    taskAttentionUnreadKeys.includes(getTaskAttentionKey(session))
+      ? '[NEW] '
+      : '';
   if (session.locator.workspace.kind === 'acp-remote') {
     const archived = session.archivedAt ? ' · archived' : '';
-    return `[remote · ${session.capabilities.connection} · history${archived}] ${title}\n${session.displayCwd} · ${session.messageCount} messages · ${timestamp}${session.hasErrors ? ' [!]' : ''}`;
+    return `${attention}[remote · ${session.capabilities.connection} · history${archived}] ${title}\n${session.displayCwd} · ${session.messageCount} messages · ${timestamp}${session.hasErrors ? ' [!]' : ''}`;
   }
 
   const status = formatTaskStatus(session.taskStatus);
@@ -66,7 +145,7 @@ export function getSessionSelectorLabel(
       : session.relationType === 'fork'
         ? ' ↳ fork'
         : '';
-  return `[${status}] ${title} · ${timestamp} | ${basename(session.displayCwd)} | ${session.messageCount} 条消息${session.hasErrors ? ' [!]' : ''}${relation}`;
+  return `${attention}[${status}] ${title} · ${timestamp} | ${basename(session.displayCwd)} | ${session.messageCount} 条消息${session.hasErrors ? ' [!]' : ''}${relation}`;
 }
 
 export function getSessionSelectorCopy(intent: SessionSelectionIntent): {

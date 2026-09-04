@@ -10,6 +10,8 @@ const mockGetProjectRoot = vi.fn(() => '/repo-root');
 const mockRecoveredSteeringCount = vi.fn(() => 0);
 const mockCommunicationStyle = vi.fn(() => 'auto');
 const mockPromptCacheHitRate = vi.fn<() => number | undefined>(() => undefined);
+const mockTaskAttentionStatus = vi.fn(() => 'idle');
+const mockTaskAttentionUnreadKeys = vi.fn<() => readonly string[]>(() => []);
 
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) =>
@@ -32,6 +34,8 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useSessionCost: () => null,
   useSessionId: () => 'status-bar-session',
   useThinkingModeEnabled: () => false,
+  useTaskAttentionStatus: () => mockTaskAttentionStatus(),
+  useTaskAttentionUnreadKeys: () => mockTaskAttentionUnreadKeys(),
   useReasoningEffort: () => 'off',
   useServiceTier: () => 'auto',
   useResponseVerbosity: () => 'auto',
@@ -54,6 +58,8 @@ describe('ChatStatusBar', () => {
     mockRecoveredSteeringCount.mockReturnValue(0);
     mockCommunicationStyle.mockReturnValue('auto');
     mockPromptCacheHitRate.mockReturnValue(undefined);
+    mockTaskAttentionStatus.mockReturnValue('idle');
+    mockTaskAttentionUnreadKeys.mockReturnValue([]);
   });
 
   it('应该使用当前会话的 active workspace 获取分支', async () => {
@@ -108,5 +114,33 @@ describe('ChatStatusBar', () => {
     const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
 
     expect(markup).toContain('Cache —');
+  });
+
+  it('显示有界的新任务数量，不泄露任务内容', async () => {
+    mockTaskAttentionStatus.mockReturnValue('ready');
+    mockTaskAttentionUnreadKeys.mockReturnValue(['first-key', 'second-key']);
+    const { ChatStatusBar } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
+
+    expect(markup).toContain('New tasks 2 · /resume');
+    expect(markup).not.toContain('first-key');
+    expect(markup).not.toContain('second-key');
+  });
+
+  it('同步失败时保留旧数量并显示简洁警告', async () => {
+    mockTaskAttentionStatus.mockReturnValue('error');
+    mockTaskAttentionUnreadKeys.mockReturnValue(['retained-key']);
+    const { ChatStatusBar } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
+
+    expect(markup).toContain('New tasks 1 · /resume');
+    expect(markup).toContain('Task sync unavailable');
+    expect(markup).not.toContain('retained-key');
   });
 });

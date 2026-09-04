@@ -465,6 +465,10 @@ export async function processSlashCommand(
       sessionActions,
       cleanupAgent
     );
+    if (slashResult.data.intent === 'resume') {
+      await sessionSurfaces?.acknowledge?.(surface);
+      await sessionSurfaces?.setVisibleLocator?.(surface.locator);
+    }
     return { type: 'handled', commandResult: { success: true } };
   }
 

@@ -9,6 +9,10 @@ import type { SessionMetadata } from '../../../src/services/SessionService.js';
 import { FocusId } from '../../../src/store/types.js';
 import { getState, vanillaStore } from '../../../src/store/vanilla.js';
 import { SessionSelector } from '../../../src/ui/components/SessionSelector.js';
+import {
+  commitLocalTaskAttention,
+  getTaskAttentionKey,
+} from '../../../src/ui/components/sessionSelectorModel.js';
 import type { ResolvedInput } from '../../../src/ui/hooks/useInputBuffer.js';
 import { processSlashCommand } from '../../../src/ui/utils/slashCommandRouter.js';
 import { getCwd } from '../../../src/utils/cwd.js';
@@ -464,6 +468,21 @@ describe('session selector fork integration', () => {
     resetStore();
   });
 
+  it('never acknowledges or marks the source visible after a fork commits', async () => {
+    const source = createLocalSurfaceSummary(createSessionMetadata());
+    const attention = {
+      acknowledge: vi.fn(async (_summary: SessionSurfaceSummary) => undefined),
+      setVisibleLocator: vi.fn(
+        async (_locator: SessionSurfaceSummary['locator']) => undefined
+      ),
+    };
+
+    await commitLocalTaskAttention('fork', source, attention);
+
+    expect(attention.acknowledge).not.toHaveBeenCalled();
+    expect(attention.setVisibleLocator).not.toHaveBeenCalled();
+  });
+
   it('locks selection synchronously while activation is pending and ignores Escape', async () => {
     const session = createSessionMetadata();
     const activation = createDeferred();
@@ -635,6 +654,10 @@ describe('session selector fork integration', () => {
       <SessionSelector
         intent="fork"
         sessions={[ordinary, subagent, forked].map(createLocalSurfaceSummary)}
+        taskAttentionUnreadKeys={[
+          getTaskAttentionKey(createLocalSurfaceSummary(ordinary)),
+          getTaskAttentionKey(createLocalSurfaceSummary(forked)),
+        ]}
         onSelect={(session) => {
           selections.push(session);
         }}
@@ -659,6 +682,7 @@ describe('session selector fork integration', () => {
           expect(output).toContain(workspaceLabel);
           expect(output).toContain('[DONE]');
           expect(output).toContain('[QUEUED]');
+          expect(output).not.toContain('[NEW]');
           expect(output).toContain('↳ fork');
           expect(output).not.toContain('↳ subagent');
         },

@@ -7,7 +7,10 @@ import type {
   SessionMcpContentSnapshot,
 } from '../agent/runtime/SessionRuntime.js';
 import type { AgentSession } from '../agent/subagents/AgentSessionStore.js';
-import type { SessionSurfaceSummary } from '../api/sessionSurfaceSchemas.js';
+import type {
+  SessionLocatorV2,
+  SessionSurfaceSummary,
+} from '../api/sessionSurfaceSchemas.js';
 import type {
   McpCompletionInput,
   McpNormalizedCompletionResult,
@@ -193,6 +196,8 @@ export interface SlashCommandContext {
   /** Lifecycle-owned, UI-safe Session history catalog boundary. */
   sessionSurfaces?: {
     list: () => Promise<SessionSurfaceSummary[]>;
+    acknowledge?: (summary: SessionSurfaceSummary) => Promise<void>;
+    setVisibleLocator?: (locator: SessionLocatorV2) => Promise<void>;
   };
   /** 当前表面拥有的 session runtime rewind 边界 */
   rewind?: {

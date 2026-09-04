@@ -22,6 +22,7 @@ import {
 interface SessionSelectorProps {
   intent: SessionSelectionIntent;
   sessions: SessionSurfaceSummary[];
+  taskAttentionUnreadKeys?: readonly string[];
   onSelect: (session: SessionSurfaceSummary) => void | Promise<void>;
   onCancel?: () => void; // 可选，用于 --resume CLI 模式，在 /resume 斜杠命令模式下由全局处理器处理
 }
@@ -75,6 +76,7 @@ const PAGE_SIZE = 20;
 export const SessionSelector: React.FC<SessionSelectorProps> = ({
   intent,
   sessions: propSessions,
+  taskAttentionUnreadKeys = [],
   onSelect,
   onCancel,
 }) => {
@@ -148,11 +150,16 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
 
       return {
         key: getSessionCandidateKey(session),
-        label: getSessionSelectorLabel(session, timeStr),
+        label: getSessionSelectorLabel(
+          session,
+          timeStr,
+          intent,
+          taskAttentionUnreadKeys
+        ),
         value: session,
       };
     });
-  }, [sessions]);
+  }, [intent, sessions, taskAttentionUnreadKeys]);
 
   // 分页计算
   const totalPages = useMemo(

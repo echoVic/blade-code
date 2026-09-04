@@ -21,6 +21,8 @@ import {
   useServiceTier,
   useSessionCost,
   useSessionId,
+  useTaskAttentionStatus,
+  useTaskAttentionUnreadKeys,
   useThinkingModeEnabled,
   useWorkspaceRoot,
 } from '../../store/selectors/index.js';
@@ -55,6 +57,8 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const promptCacheHitRate = usePromptCacheHitRate();
   const pendingCommands = usePendingCommands();
   const recoveredSteeringCount = useRecoveredSteeringCount();
+  const taskAttentionStatus = useTaskAttentionStatus();
+  const taskAttentionUnreadKeys = useTaskAttentionUnreadKeys();
   const sessionId = useSessionId();
   const [goal, setGoal] = useState<GoalSnapshot | null>(null);
 
@@ -271,6 +275,22 @@ export const ChatStatusBar: React.FC = React.memo(() => {
               <>
                 <Text color="gray">·</Text>
                 <Text color="cyan">已恢复 {recoveredSteeringCount} 条指令</Text>
+              </>
+            )}
+
+            {taskAttentionUnreadKeys.length > 0 && (
+              <>
+                <Text color="gray">·</Text>
+                <Text color="cyan">
+                  New tasks {taskAttentionUnreadKeys.length} · /resume
+                </Text>
+              </>
+            )}
+
+            {taskAttentionStatus === 'error' && (
+              <>
+                <Text color="gray">·</Text>
+                <Text color="yellow">Task sync unavailable</Text>
               </>
             )}
 

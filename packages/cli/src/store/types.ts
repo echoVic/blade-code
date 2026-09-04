@@ -290,6 +290,8 @@ export interface AppState {
   activeModal: ActiveModal;
   sessionSelectorData: SessionSelectorState | undefined;
   sessionHistoryViewerData: SessionHistoryViewerState | undefined;
+  taskAttentionStatus: 'idle' | 'loading' | 'ready' | 'error';
+  taskAttentionUnreadKeys: readonly string[];
   modelEditorTarget: ModelConfig | null;
   tasks: TaskListItem[];
   awaitingSecondCtrlC: boolean; // 是否等待第二次 Ctrl+C 退出
@@ -323,6 +325,10 @@ export interface AppActions {
   setTasks: (tasks: TaskListItem[]) => void;
   updateTask: (task: TaskListItem) => void;
   setAwaitingSecondCtrlC: (awaiting: boolean) => void;
+  projectTaskAttentionState: (
+    status: AppState['taskAttentionStatus'],
+    unreadKeys: readonly string[]
+  ) => void;
   // Thinking 模式相关
   setReasoningEffort: (effort: ReasoningEffortSelection) => void;
   setServiceTier: (tier: ServiceTierSelection) => void;
