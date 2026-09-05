@@ -279,7 +279,11 @@ export class ProviderRecoveryState {
   clear(
     generation: ProviderRecoveryGeneration
   ): ProviderRecoveryProjection | undefined {
-    if (!this.isCurrent(generation) || this.projection?.snapshot === null) {
+    if (!this.isCurrent(generation)) {
+      return undefined;
+    }
+    if (this.projection?.snapshot === null) {
+      this.generation = '';
       return undefined;
     }
     this.layers = {};

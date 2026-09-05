@@ -272,4 +272,16 @@ describe('ProviderRecoveryState', () => {
     expect(state.observe(generation, retryScheduled)).toBeUndefined();
     expect(state.snapshot()).toMatchObject({ revision: 2, snapshot: null });
   });
+
+  it('invalidates a generation even when no recovery snapshot became visible', () => {
+    const state = new ProviderRecoveryState({
+      now: () => 3_000,
+      createGenerationId: () => 'generation-1',
+    });
+    const generation = state.begin();
+
+    expect(state.clear(generation)).toBeUndefined();
+    expect(state.observe(generation, retryScheduled)).toBeUndefined();
+    expect(state.snapshot()).toMatchObject({ revision: 0, snapshot: null });
+  });
 });
