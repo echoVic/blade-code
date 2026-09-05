@@ -51,6 +51,50 @@ background subagent、verification、compaction、provider health、标题生成
 durable transcript。TUI 与 Web 在原状态栏内显示尝试数和剩余预算；Headless JSONL 与
 ACP 使用结构化字段。
 
+## 统一 Provider 恢复状态
+
+`SessionRuntime` 现在拥有当前 root turn 的唯一恢复投影。准入等待、重试、熔断器、
+输出停滞和模型 fallback 不再由各个客户端各自推断，而是归并为同一个
+`ProviderRecoveryProjectionV1`：
+
+```ts
+interface ProviderRecoveryProjectionV1 {
+  version: 1;
+  generation: string;
+  revision: number;
+  snapshot: ProviderRecoverySnapshotV1 | null;
+}
+```
+
+`snapshot.activity` 只可能是 `admission_wait`、`retry_wait`、`retry_attempt`、
+`circuit_open`、`circuit_probe`、`stream_stall` 或 `fallback`。当多个底层状态同时存在时，
+展示优先级固定为：stall、circuit、retry、admission、fallback。fallback 信息可以作为
+上下文保留，例如 fallback candidate 正在 retry 时，主 activity 仍是 `retry_wait`。
+
+每个顶层 run 先发布一个 revision `0`、`snapshot: null` 的新 generation，之后每次状态
+变化递增 revision。Runtime 会拒绝旧 generation；Web 也只接收已由 revision `0` 锚定的
+新 live generation 和同 generation 的更大 revision。SSE `connected` 携带权威快照，可以
+替换本地旧状态；空闲且没有 resident Runtime 的 Session 明确返回 `null`。因此刷新或
+EventSource 重连可以恢复仍在进行的倒计时，同时迟到事件不能在终态后复活 banner。
+
+各入口使用同一投影：
+
+- TUI 的 `LoadingIndicator` 显示恢复原因、绝对 deadline 倒计时、尝试/预算/队列信息和
+  既有 `Esc` 停止提示，`ChatStatusBar` 保留紧凑摘要；
+- Web GUI 在 composer 上方显示带 `role=status`、`aria-live=polite` 的 banner，Stop
+  复用既有 abort API，StatusBar 显示紧凑摘要；
+- ACP 使用 `_meta['blade/providerRecovery']`；
+- Headless JSONL 使用 `type=provider_recovery`，clear 由 `snapshot: null` 表示。
+
+正常输出、工具开始、结构化输出、完成、失败、取消、consumer 提前关闭、Session
+切换和 Runtime dispose 都会清除瞬态状态。倒计时只从 Runtime 给出的绝对
+`nextActionAt` 在客户端本地计算，不会延长恢复预算，也不会产生每秒协议事件。
+
+模型切换同时提供 typed `model_fallback`，只包含规范化后的 source/target
+`{ provider, model }`、候选序号/总数和封闭的 trigger 分类。它不会覆盖统一恢复快照，
+也不会授予中途切换或重放权限。两种协议都使用封闭 TypeBox schema；API key、base URL、
+headers、请求/响应正文和原始错误不能进入投影、UI、transcript 或持久化 Session 数据。
+
 ## Provider 请求准入
 
 默认不创建 process-wide admission scheduler；primary、retry、fallback 与 HalfOpen

@@ -233,6 +233,13 @@ Bounded foreground Provider recovery 另固定运行 DeepSeek Flash/Pro × Headl
 - 保持 Provider payload、transcript 与最终 workspace 不出现重复副作用；
 - TUI 显示有界恢复与 Esc，ACP 只发 metadata，Web StatusBar 实时显示恢复并在完成后
   清除，reload 后保留最终结果；
+- Headless、ACP、raw PTY TUI 与 Web 必须观察同一个 generation/revision fenced
+  `provider_recovery` 投影；Web reload/reconnect 必须在 readiness 前接收权威快照，终态
+  clear 后未见 revision `0` 的迟到 live revision 不得复活状态；
+- Web composer 上方的可访问 banner 和 TUI loading/status 两个表面都必须呈现
+  circuit/retry 的有效主状态、绝对 deadline 倒计时和既有 Stop/Esc 取消入口；
+- typed `model_fallback` 必须携带精确、净化后的 source/target identity 和封闭 trigger，
+  且不能清空或覆盖 Runtime 权威快照；
 - 回收 Provider proxy/socket、ACP terminal/process、PTY、browser/page、SSE、server、
   port、临时 HOME/storage/workspace；
 - 不得把 Provider key、私有故障 body 或 raw error 写入 JSONL、SSE、ACP、DOM、终端

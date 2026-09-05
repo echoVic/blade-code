@@ -42,6 +42,60 @@ New `provider_retry` lifecycle fields:
 
 These fields belong only to runtime surface metadata and do not enter Provider payloads, assistant body text, or durable transcripts. TUI and Web display attempt count and remaining budget within the original status bar; Headless JSONL and ACP use structured fields.
 
+## Unified Provider Recovery State
+
+`SessionRuntime` now owns the single recovery projection for the current root turn.
+Admission waits, retries, circuit state, output stalls, and model fallback are no
+longer inferred independently by each client. They are reduced into one
+`ProviderRecoveryProjectionV1`:
+
+```ts
+interface ProviderRecoveryProjectionV1 {
+  version: 1;
+  generation: string;
+  revision: number;
+  snapshot: ProviderRecoverySnapshotV1 | null;
+}
+```
+
+`snapshot.activity` is one of `admission_wait`, `retry_wait`, `retry_attempt`,
+`circuit_open`, `circuit_probe`, `stream_stall`, or `fallback`. When multiple
+low-level states coexist, presentation precedence is fixed as stall, circuit, retry,
+admission, then fallback. Fallback identity can remain as context; for example, a
+fallback candidate waiting to retry still has `retry_wait` as its primary activity.
+
+Each top-level run first publishes a new generation at revision `0` with
+`snapshot: null`, then increments the revision for every state change. The Runtime
+rejects old generations. Web additionally accepts a new live generation only after
+its revision-zero anchor and accepts only larger revisions within that generation.
+SSE `connected` carries an authoritative snapshot that may replace stale local state;
+an idle Session without a resident Runtime explicitly returns `null`. A page refresh
+or EventSource reconnect can therefore restore an active countdown, while late events
+cannot revive a banner after terminal cleanup.
+
+Every entrypoint consumes the same projection:
+
+- TUI `LoadingIndicator` shows the recovery reason, countdown from the absolute
+  deadline, attempt/budget/queue details, and the existing Esc stop affordance;
+  `ChatStatusBar` retains a compact summary;
+- the Web GUI renders a `role=status`, `aria-live=polite` banner above the composer;
+  Stop reuses the existing abort API, and the StatusBar keeps a compact summary;
+- ACP uses `_meta['blade/providerRecovery']`;
+- Headless JSONL uses `type=provider_recovery`, with `snapshot: null` representing a
+  clear.
+
+Useful output, tool start, structured output, completion, failure, cancellation, early
+consumer close, Session replacement, and Runtime disposal all clear transient state.
+Clients derive countdowns locally from the Runtime's absolute `nextActionAt`; this
+does not extend the recovery budget or create per-second protocol events.
+
+Model switches also expose a typed `model_fallback` containing only normalized source
+and target `{ provider, model }` identities, candidate index/count, and a closed
+trigger classification. It does not overwrite the unified projection or authorize a
+mid-stream switch or replay. Both contracts use closed TypeBox schemas; API keys, base
+URLs, headers, request/response bodies, and raw errors cannot enter the projection, UI,
+transcript, or durable Session data.
+
 ## Provider Request Admission
 
 Blade does not create a process-wide admission scheduler by default. Primary,

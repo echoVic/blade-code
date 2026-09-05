@@ -121,6 +121,15 @@ Bounded foreground Provider recovery additionally fixedly runs DeepSeek Flash/Pr
 - Execute only one Edit and one Bash, with the host rerunning fixture tests;
 - Maintain that Provider payload, transcript, and final workspace show no duplicate side effects;
 - TUI displays bounded recovery and Esc, ACP only sends metadata, Web StatusBar shows recovery in real time and clears after completion, and reload preserves final result;
+- Headless, ACP, raw PTY TUI, and Web must observe the same generation/revision-fenced
+  `provider_recovery` projection. Web reload/reconnect must receive the authoritative
+  snapshot before readiness, and a late live revision without a revision-zero anchor
+  must not revive state after terminal clear;
+- Both the accessible banner above the Web composer and the TUI loading/status
+  surfaces must present the effective circuit/retry state, an absolute-deadline
+  countdown, and the existing Stop/Esc cancellation path;
+- typed `model_fallback` must carry exact sanitized source/target identity and a closed
+  trigger, without clearing or overwriting the authoritative Runtime snapshot;
 - Reclaim Provider proxy/socket, ACP terminal/process, PTY, browser/page, SSE, server, port, temporary HOME/storage/workspace;
 - Must not write Provider keys, private failure bodies, or raw errors into JSONL, SSE, ACP, DOM, terminal capture, transcript, or test evidence.
 

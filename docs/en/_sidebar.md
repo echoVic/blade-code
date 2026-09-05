@@ -68,6 +68,7 @@
   * [MCP Session Isolation](/en/reference/mcp-session-isolation.md)
   * [Scheduled Tasks](/en/reference/scheduled-tasks.md)
   * [Model Transport Recovery](/en/reference/model-transport-recovery.md)
+  * [Provider Recovery Surface Qualification Evidence](/en/testing/provider-recovery-surface-evidence.md)
   * [Surface Egress Backpressure & Ordering](/en/reference/surface-egress.md)
   * [Coordinated Runtime Shutdown](/en/reference/runtime-shutdown.md)
   * [Process Lifecycle](/en/reference/process-lifecycle.md)
