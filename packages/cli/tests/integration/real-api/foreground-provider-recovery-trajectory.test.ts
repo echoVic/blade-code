@@ -444,6 +444,18 @@ function assertHeadlessRetry(stdout: string): void {
       expect.objectContaining({ snapshot: null }),
     ])
   );
+  const recoveryGenerations = new Set(
+    recoveryEvents
+      .map((event) => event.generation)
+      .filter((generation): generation is string => typeof generation === 'string')
+  );
+  expect(recoveryGenerations).toHaveLength(1);
+  const recoveryRevisions = recoveryEvents
+    .map((event) => event.revision)
+    .filter((revision): revision is number => typeof revision === 'number');
+  expect(recoveryRevisions).toEqual(
+    [...recoveryRevisions].sort((left, right) => left - right)
+  );
 }
 
 async function runHeadless(input: {
@@ -729,6 +741,7 @@ async function runWeb(input: {
   });
   let browser: Browser | undefined;
   let probe: SessionEventProbe | undefined;
+  let reconnectProbe: SessionEventProbe | undefined;
   let secondaryProbe: SessionEventProbe | undefined;
   try {
     const origin = `http://127.0.0.1:${port}`;
@@ -783,6 +796,15 @@ async function runWeb(input: {
       timeout: 10_000,
     });
     expect(await recoveryBanner.textContent()).toContain('Provider isolated');
+    reconnectProbe = await openSessionEventProbe(origin, sessionId, input.workspace);
+    expect(reconnectProbe.events[0]).toMatchObject({
+      type: 'connected',
+      properties: {
+        providerRecovery: expect.objectContaining({
+          snapshot: expect.objectContaining({ activity: 'circuit_open' }),
+        }),
+      },
+    });
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.locator('textarea[data-blade-composer]').waitFor({ state: 'visible' });
     const reconnectedRecoveryBanner = page.locator('[data-provider-recovery-banner]');
@@ -886,6 +908,7 @@ async function runWeb(input: {
     const eventOutput = JSON.stringify({
       primary: probe.events,
       secondary: secondaryProbe.events,
+      reconnect: reconnectProbe.events,
     });
     const providerEvents = [...probe.events, ...secondaryProbe.events].filter(
       (event) => event.type === 'provider.retry' || event.type === 'provider.circuit'
@@ -902,6 +925,7 @@ async function runWeb(input: {
         html,
         primaryEvents: probe.events,
         secondaryEvents: secondaryProbe.events,
+        reconnectEvents: reconnectProbe.events,
         secondaryTranscript,
       },
       [input.secret]
@@ -911,6 +935,8 @@ async function runWeb(input: {
     probe = undefined;
     await secondaryProbe.close();
     secondaryProbe = undefined;
+    await reconnectProbe.close();
+    reconnectProbe = undefined;
     await browser.close();
     browser = undefined;
     child.kill('SIGTERM');
@@ -948,6 +974,7 @@ async function runWeb(input: {
     };
   } finally {
     await probe?.close().catch(() => undefined);
+    await reconnectProbe?.close().catch(() => undefined);
     await secondaryProbe?.close().catch(() => undefined);
     await browser?.close().catch(() => undefined);
     if (child.exitCode === null && child.signalCode === null) {

@@ -194,6 +194,8 @@ async function run(input: RunnerInput) {
     }
     if (
       !output.includes('blade/providerRecovery') ||
+      !output.includes('"generation"') ||
+      !output.includes('"revision"') ||
       !output.includes('\"activity\":\"retry_wait\"') ||
       !output.includes('\"snapshot\":null')
     ) {
