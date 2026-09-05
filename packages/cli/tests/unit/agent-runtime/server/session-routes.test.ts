@@ -6618,7 +6618,14 @@ describe('SessionRoutes runtime reuse', () => {
         fallbackMessagesTruncated: 1,
         failureReason: 'insufficient_reduction',
       };
-      yield { kind: 'model_fallback' };
+      yield {
+        kind: 'model_fallback',
+        from: { provider: 'primary', model: 'model-a' },
+        to: { provider: 'secondary', model: 'model-b' },
+        candidate: 1,
+        candidateCount: 1,
+        trigger: { source: 'retry', reason: 'server_error', statusCode: 503 },
+      };
       yield {
         kind: 'provider_admission',
         phase: 'queued',
@@ -6664,6 +6671,20 @@ describe('SessionRoutes runtime reuse', () => {
         warningAfterMs: 30_000,
         timeoutMs: 300_000,
         outputStarted: false,
+      };
+      yield {
+        kind: 'provider_recovery',
+        recovery: {
+          version: 1,
+          generation: 'generation-1',
+          revision: 1,
+          snapshot: {
+            activity: 'retry_wait',
+            reason: 'server_error',
+            updatedAt: 1_000,
+            retry: { attempt: 1, maxRetries: 2, delayMs: 750 },
+          },
+        },
       };
       yield { kind: 'thinking_delta', delta: 'inspect the failure' };
       yield {
@@ -6838,7 +6859,13 @@ describe('SessionRoutes runtime reuse', () => {
     expect(Bus.publish).toHaveBeenCalledWith(
       refFor('surface-events'),
       'model.fallback',
-      {}
+      {
+        from: { provider: 'primary', model: 'model-a' },
+        to: { provider: 'secondary', model: 'model-b' },
+        candidate: 1,
+        candidateCount: 1,
+        trigger: { source: 'retry', reason: 'server_error', statusCode: 503 },
+      }
     );
     expect(Bus.publish).toHaveBeenCalledWith(
       refFor('surface-events'),

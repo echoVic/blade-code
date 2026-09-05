@@ -6186,6 +6186,10 @@ async function executeRunAsync(
             outputStarted: event.outputStarted,
           });
           break;
+        case 'provider_recovery':
+          // SessionRuntime already publishes the authoritative projection on the
+          // Session Bus. Do not emit a duplicate from this direct consumer.
+          break;
         case 'action_stationarity':
           emit('action.stationarity', {
             phase: event.phase,
@@ -6393,7 +6397,13 @@ async function executeRunAsync(
           );
           break;
         case 'model_fallback':
-          emit('model.fallback', {});
+          emit('model.fallback', {
+            from: event.from,
+            to: event.to,
+            candidate: event.candidate,
+            candidateCount: event.candidateCount,
+            trigger: event.trigger,
+          });
           break;
 
         // --- 业务事件 ---
