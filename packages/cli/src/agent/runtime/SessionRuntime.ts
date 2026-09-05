@@ -8,6 +8,7 @@ import type {
   FollowUpQueueMutationResult,
   FollowUpQueueSnapshot,
 } from '../../api/followUpQueueSchemas.js';
+import type { ProviderRecoveryProjection } from '../../api/providerRecoverySchemas.js';
 import {
   type BrowserScreenshotOptions,
   SessionBrowserRuntime,
@@ -230,6 +231,10 @@ import {
   type BackgroundSubagentCompletionRegistration,
   backgroundSubagentCompletionDispatcher,
 } from './BackgroundSubagentCompletionDispatcher.js';
+import {
+  type ProviderRecoveryGeneration,
+  ProviderRecoveryState,
+} from './ProviderRecoveryState.js';
 import { SessionInUseError, SessionLease } from './SessionLease.js';
 import {
   createLocalSessionWorkspace,
@@ -394,6 +399,8 @@ export class SessionRuntime {
   private readonly userPromptArtifactStore: UserPromptArtifactStore;
   private browserRuntime?: SessionBrowserRuntime;
   private activeTurnMailbox?: ActiveTurnMailbox;
+  private readonly providerRecovery = new ProviderRecoveryState();
+  private providerRecoveryGeneration?: ProviderRecoveryGeneration;
 
   private chatService?: IChatService;
   private executionEngine?: ExecutionEngine;
@@ -958,6 +965,45 @@ export class SessionRuntime {
       throw new Error('Session runtime is not initialized');
     }
     return this.chatService;
+  }
+
+  beginProviderRecovery(): ProviderRecoveryGeneration {
+    const generation = this.providerRecovery.begin();
+    this.providerRecoveryGeneration = generation;
+    this.publishProviderRecovery(this.providerRecovery.snapshot());
+    return generation;
+  }
+
+  observeProviderRecovery(
+    generation: ProviderRecoveryGeneration,
+    event: LoopEvent
+  ): ProviderRecoveryProjection | undefined {
+    const projection = this.providerRecovery.observe(generation, event);
+    if (projection) this.publishProviderRecovery(projection);
+    return projection;
+  }
+
+  clearProviderRecovery(
+    generation: ProviderRecoveryGeneration
+  ): ProviderRecoveryProjection | undefined {
+    const projection = this.providerRecovery.clear(generation);
+    if (projection && this.providerRecoveryGeneration?.id === generation.id) {
+      this.providerRecoveryGeneration = undefined;
+    }
+    if (projection) this.publishProviderRecovery(projection);
+    return projection;
+  }
+
+  getProviderRecoveryProjection(): ProviderRecoveryProjection {
+    return this.providerRecovery.snapshot();
+  }
+
+  private publishProviderRecovery(recovery: ProviderRecoveryProjection): void {
+    Bus.publish(
+      { sessionId: this.sessionId, projectPath: this.workspaceRoot },
+      'provider.recovery',
+      { recovery }
+    );
   }
 
   getExecutionEngine(): ExecutionEngine {
@@ -2797,6 +2843,9 @@ export class SessionRuntime {
       const browserRuntime = this.browserRuntime;
       const backgroundSubagentCompletionRegistration =
         this.backgroundSubagentCompletionRegistration;
+      if (this.providerRecoveryGeneration) {
+        this.clearProviderRecovery(this.providerRecoveryGeneration);
+      }
       await attempt('stop side conversations', () =>
         this.sideConversationOperations.shutdown('session-runtime-dispose')
       );

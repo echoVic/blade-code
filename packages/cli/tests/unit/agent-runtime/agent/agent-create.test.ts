@@ -64,6 +64,7 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
 }
 
 function createGoalRuntimeMocks() {
+  const providerRecoveryGeneration = { id: 'provider-recovery-generation' };
   return {
     getAgentResources: vi.fn(() => ({
       projectRoot: process.cwd(),
@@ -100,6 +101,9 @@ function createGoalRuntimeMocks() {
     takeStartupTurnRecoveryAssessment: vi.fn(() => ({ state: 'none' as const })),
     takeStartupAdoptedToolResults: vi.fn(() => []),
     waitForBackgroundSubagentFollowUp: vi.fn().mockResolvedValue(false),
+    beginProviderRecovery: vi.fn(() => providerRecoveryGeneration),
+    observeProviderRecovery: vi.fn(() => undefined),
+    clearProviderRecovery: vi.fn(() => undefined),
   };
 }
 
@@ -125,6 +129,124 @@ describe('Agent.create', () => {
 });
 
 describe('Agent runLoop system prompt injection', () => {
+  it('publishes unified Provider recovery updates and a terminal clear', async () => {
+    const turnHandle = { id: 'provider-recovery-turn' };
+    const generation = { id: 'provider-recovery-generation' };
+    const recovery = {
+      version: 1 as const,
+      generation: generation.id,
+      revision: 1,
+      snapshot: {
+        activity: 'retry_wait' as const,
+        reason: 'rate_limit' as const,
+        updatedAt: 1_000,
+        retry: { attempt: 1, maxRetries: 12, delayMs: 2_000 },
+      },
+    };
+    const clear = {
+      version: 1 as const,
+      generation: generation.id,
+      revision: 2,
+      snapshot: null,
+    };
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      beginProviderRecovery: vi.fn(() => generation),
+      observeProviderRecovery: vi.fn((_generation, event: { kind: string }) =>
+        event.kind === 'provider_retry' ? recovery : undefined
+      ),
+      clearProviderRecovery: vi.fn(() => clear),
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: turnHandle,
+        messageId: 'provider-recovery-input',
+        queued: 1,
+        mode: 'direct',
+      })),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      { getRegistry: () => ({ getAll: () => [] }) } as unknown as ToolExecutor,
+      runtime as unknown as SessionRuntime
+    );
+    const testAgent = agent as unknown as {
+      isInitialized: boolean;
+      processAtMentionsForContent: (message: string) => Promise<string>;
+      runLoop: () => AsyncGenerator<
+        {
+          kind: 'provider_retry';
+          phase: 'scheduled';
+          attempt: number;
+          maxRetries: number;
+          reason: 'rate_limit';
+          delayMs: number;
+        },
+        {
+          success: true;
+          finalMessage: string;
+          metadata: { turnsCount: number; toolCallsCount: number; duration: number };
+        },
+        void
+      >;
+    };
+    testAgent.isInitialized = true;
+    testAgent.processAtMentionsForContent = vi.fn(async () => 'recover');
+    testAgent.runLoop = vi.fn(async function* (): AsyncGenerator<
+      {
+        kind: 'provider_retry';
+        phase: 'scheduled';
+        attempt: number;
+        maxRetries: number;
+        reason: 'rate_limit';
+        delayMs: number;
+      },
+      {
+        success: true;
+        finalMessage: string;
+        metadata: { turnsCount: number; toolCallsCount: number; duration: number };
+      },
+      void
+    > {
+      yield {
+        kind: 'provider_retry',
+        phase: 'scheduled',
+        attempt: 1,
+        maxRetries: 12,
+        reason: 'rate_limit',
+        delayMs: 2_000,
+      };
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const completed = await drainAgentStream(
+      agent.chatStream('recover', {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: process.cwd(),
+      })
+    );
+
+    expect(completed.events).toContainEqual({
+      kind: 'provider_recovery',
+      recovery,
+    });
+    expect(completed.events.at(-1)).toEqual({
+      kind: 'provider_recovery',
+      recovery: clear,
+    });
+    expect(runtime.beginProviderRecovery).toHaveBeenCalledOnce();
+    expect(runtime.clearProviderRecovery).toHaveBeenCalledWith(generation);
+  });
+
   it('uses the builder result directly instead of hand-prepending environment', async () => {
     const agent = new Agent(createConfig(), {}, {
       getRegistry: () => ({ getAll: () => [] }),
@@ -1139,6 +1261,9 @@ describe('Agent runLoop system prompt injection', () => {
       2,
       'interrupted',
       'Task stream closed before completion'
+    );
+    expect(runtime.clearProviderRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'provider-recovery-generation' })
     );
   });
 

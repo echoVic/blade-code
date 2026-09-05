@@ -1927,6 +1927,8 @@ export async function runHeadless(
           case 'provider_stall':
             eventWriter.providerStall(event);
             break;
+          case 'provider_recovery':
+            break;
           case 'action_stationarity':
             eventWriter.actionStationarity(event);
             break;

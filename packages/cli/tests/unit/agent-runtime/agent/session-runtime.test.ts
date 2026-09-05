@@ -4854,6 +4854,44 @@ describe('SessionRuntime', () => {
     expect(runtime.createToolExecutor()).toBeInstanceOf(ToolExecutor);
   });
 
+  it('publishes and clears its ephemeral Provider recovery projection', () => {
+    const runtime = new SessionRuntime({ permissions: {} } as never, {
+      sessionId: 'provider-recovery-runtime',
+      workspaceRoot: storageRoot,
+    });
+    const events: Array<{ type: string; properties: Record<string, unknown> }> = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (event.sessionId === 'provider-recovery-runtime') events.push(event);
+    });
+
+    try {
+      const generation = runtime.beginProviderRecovery();
+      const retry = runtime.observeProviderRecovery(generation, {
+        kind: 'provider_retry',
+        phase: 'scheduled',
+        attempt: 1,
+        maxRetries: 12,
+        reason: 'rate_limit',
+        delayMs: 2_000,
+      });
+      const clear = runtime.clearProviderRecovery(generation);
+
+      expect(retry?.snapshot).toMatchObject({
+        activity: 'retry_wait',
+        reason: 'rate_limit',
+      });
+      expect(clear?.snapshot).toBeNull();
+      expect(events.map((event) => event.type)).toEqual([
+        'provider.recovery',
+        'provider.recovery',
+        'provider.recovery',
+      ]);
+      expect(events.at(-1)?.properties.recovery).toMatchObject({ snapshot: null });
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('keeps prompt artifact reads available through explicit tool filters', async () => {
     const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
     const { createReadPromptArtifactTool } = await import(

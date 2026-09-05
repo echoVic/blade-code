@@ -75,6 +75,7 @@ import type {
   PreparedInputTurn,
   SteeringMessage,
 } from './runtime/ActiveTurnMailbox.js';
+import type { ProviderRecoveryGeneration } from './runtime/ProviderRecoveryState.js';
 import { SessionRuntime } from './runtime/SessionRuntime.js';
 import {
   TaskAdmissionCancelledError,
@@ -140,6 +141,21 @@ export class Agent {
   private subagentRegistry?: SubagentRegistry;
   private readonly activeOperations = new ActiveOperationGate();
   private destroyPromise?: Promise<void>;
+
+  private async *observeProviderRecovery(
+    stream: AsyncGenerator<LoopEvent, LoopResult, void>,
+    runtime: SessionRuntime,
+    generation: ProviderRecoveryGeneration
+  ): AsyncGenerator<LoopEvent, LoopResult, void> {
+    while (true) {
+      const step = await stream.next();
+      if (step.done) return step.value;
+      const event = step.value;
+      yield event;
+      const recovery = runtime.observeProviderRecovery(generation, event);
+      if (recovery) yield { kind: 'provider_recovery', recovery };
+    }
+  }
 
   constructor(
     config: BladeConfig,
@@ -442,6 +458,7 @@ export class Agent {
       let admissionPermit: TaskRunPermit | undefined;
       let ownsAdmission = false;
       let settled = false;
+      const providerRecoveryGeneration = runtime.beginProviderRecovery();
       const releaseOwnedAdmission = (
         taskStatus: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
       ): void => {
@@ -517,7 +534,15 @@ export class Agent {
         }
 
         await runtime.setTaskStatus('running');
-        const result = yield* this.chatStreamInternal(message, activeContext, options);
+        const result = yield* this.observeProviderRecovery(
+          this.chatStreamInternal(message, activeContext, options),
+          runtime,
+          providerRecoveryGeneration
+        );
+        const recoveryClear = runtime.clearProviderRecovery(providerRecoveryGeneration);
+        if (recoveryClear) {
+          yield { kind: 'provider_recovery', recovery: recoveryClear };
+        }
         const recoveryAttention = result.metadata?.recoveryAttention;
         if (recoveryAttention) {
           await runtime.setTaskStatus(
@@ -541,6 +566,10 @@ export class Agent {
         releaseOwnedAdmission(status);
         return result;
       } catch (error) {
+        const recoveryClear = runtime.clearProviderRecovery(providerRecoveryGeneration);
+        if (recoveryClear) {
+          yield { kind: 'provider_recovery', recovery: recoveryClear };
+        }
         const status = activeContext.signal?.aborted ? 'cancelled' : 'failed';
         try {
           await runtime.setTaskStatus(status, error);
@@ -551,6 +580,7 @@ export class Agent {
         releaseOwnedAdmission(status);
         throw error;
       } finally {
+        runtime.clearProviderRecovery(providerRecoveryGeneration);
         if (!settled) {
           await runtime
             .setTaskStatus('interrupted', 'Task stream closed before completion')
