@@ -96,6 +96,19 @@ describe('TurnActivityState', () => {
     ).toMatchObject({ phase: 'continuing' });
   });
 
+  it('normalizes non-finite turn limits as unlimited', () => {
+    const state = new TurnActivityState({
+      now: () => 1_500,
+      createGenerationId: () => 'activity-1',
+    });
+    const generation = state.begin();
+
+    expect(
+      state.observe(generation, { kind: 'turn_start', turn: 1, maxTurns: Infinity })
+        ?.snapshot
+    ).toMatchObject({ turn: 1, maxTurns: null });
+  });
+
   it('tracks parallel tools, bounded public entries, progress, and completion counts', () => {
     let now = 2_000;
     const state = new TurnActivityState({

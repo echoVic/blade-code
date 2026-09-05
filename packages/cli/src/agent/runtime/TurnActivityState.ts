@@ -161,7 +161,7 @@ export class TurnActivityState {
           this.state!.phase = 'thinking';
           this.state!.turn = Math.max(0, Math.min(MAX_ACTIVITY_COUNTER, event.turn));
           this.state!.maxTurns =
-            event.maxTurns < 0
+            !Number.isFinite(event.maxTurns) || event.maxTurns < 0
               ? null
               : Math.max(0, Math.min(MAX_ACTIVITY_COUNTER, event.maxTurns));
           return true;
