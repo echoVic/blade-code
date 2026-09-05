@@ -90,6 +90,7 @@ describe('Builtin Slash Commands', () => {
       expect(message).toContain('/help');
       expect(message).toContain('/branch');
       expect(message).toContain('/fork [sessionId]');
+      expect(message).toContain('/queue');
     });
   });
 

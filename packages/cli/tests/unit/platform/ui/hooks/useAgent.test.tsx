@@ -88,6 +88,8 @@ describe('useAgent runtime ownership', () => {
     refresh: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
     enqueueSteering: ReturnType<typeof vi.fn>;
+    getFollowUpQueueSnapshot: ReturnType<typeof vi.fn>;
+    mutateFollowUpQueue: ReturnType<typeof vi.fn>;
     askSideQuestion: ReturnType<typeof vi.fn>;
     listRewindCheckpoints: ReturnType<typeof vi.fn>;
     rewindSession: ReturnType<typeof vi.fn>;
@@ -212,6 +214,24 @@ describe('useAgent runtime ownership', () => {
         turnId: 'turn-1',
         queued: 1,
       })),
+      getFollowUpQueueSnapshot: vi.fn().mockResolvedValue({
+        version: 'a'.repeat(64),
+        pending: 0,
+        mutable: 0,
+        locked: 0,
+        internal: 0,
+        items: [],
+      }),
+      mutateFollowUpQueue: vi.fn().mockResolvedValue({
+        snapshot: {
+          version: 'b'.repeat(64),
+          pending: 0,
+          mutable: 0,
+          locked: 0,
+          internal: 0,
+          items: [],
+        },
+      }),
       askSideQuestion: vi.fn().mockResolvedValue({
         response: 'Side answer',
         durationMs: 8,
@@ -999,6 +1019,24 @@ describe('useAgent runtime ownership', () => {
     expect(runtime.enqueueSteering).toHaveBeenCalledWith('updated requirement', {
       allowBeforeTurn: true,
     });
+  });
+
+  it('reads and mutates the follow-up queue through the owned SessionRuntime', async () => {
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await expect(hook?.getFollowUpQueue()).resolves.toMatchObject({ pending: 0 });
+    const request = {
+      expectedVersion: 'a'.repeat(64),
+      operation: { type: 'remove' as const, messageId: 'queued-message' },
+    };
+    await expect(hook?.mutateFollowUpQueue(request)).resolves.toMatchObject({
+      snapshot: { pending: 0 },
+    });
+    expect(runtime.getFollowUpQueueSnapshot).toHaveBeenCalledOnce();
+    expect(runtime.mutateFollowUpQueue).toHaveBeenCalledWith(request);
   });
 
   it('asks a side question through the owned runtime with prompt overrides', async () => {

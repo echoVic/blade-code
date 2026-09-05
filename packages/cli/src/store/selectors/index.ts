@@ -247,11 +247,11 @@ export const useIsProcessing = () =>
  */
 export const useCommandActions = () => useBladeStore((state) => state.command.actions);
 
-/**
- * 获取待处理命令队列
- */
-export const usePendingCommands = () =>
-  useBladeStore((state) => state.command.pendingCommands);
+/** 获取 authoritative follow-up queue。 */
+export const useFollowUpQueue = () => useBladeStore((state) => state.app.followUpQueue);
+
+export const useFollowUpQueueMutation = () =>
+  useBladeStore((state) => state.app.followUpQueueMutation);
 
 export const useRecoveredSteeringCount = () =>
   useBladeStore((state) => state.command.recoveredSteeringCount);

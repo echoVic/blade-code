@@ -304,6 +304,13 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
           sessionId: state.session.sessionId, // 保持 sessionId
           isActive: true,
         },
+        app: {
+          ...state.app,
+          followUpQueue: null,
+          followUpQueueOwner: null,
+          followUpQueueMutation: { pending: false, supersededVersions: [] },
+        },
+        command: { ...state.command, followUpPresentations: {} },
       }));
     },
 
@@ -328,6 +335,13 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
           error: null,
           isActive: true,
         },
+        app: {
+          ...state.app,
+          followUpQueue: null,
+          followUpQueueOwner: null,
+          followUpQueueMutation: { pending: false, supersededVersions: [] },
+        },
+        command: { ...state.command, followUpPresentations: {} },
       }));
     },
 

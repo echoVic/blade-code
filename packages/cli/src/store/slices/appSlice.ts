@@ -35,6 +35,9 @@ const initialAppState: AppState = {
   sessionHistoryViewerData: undefined,
   taskAttentionStatus: 'idle',
   taskAttentionUnreadKeys: [],
+  followUpQueue: null,
+  followUpQueueOwner: null,
+  followUpQueueMutation: { pending: false, supersededVersions: [] },
   modelEditorTarget: null,
   tasks: [],
   awaitingSecondCtrlC: false,
@@ -182,6 +185,125 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
           taskAttentionUnreadKeys: [...unreadKeys],
         },
       }));
+    },
+
+    projectFollowUpQueue: (snapshot, owner) => {
+      set((state) => {
+        const currentSessionOwner = [
+          state.session.workspaceRoot,
+          state.session.sessionId,
+          '',
+        ].join('\0');
+        if (owner !== undefined && !owner.startsWith(currentSessionOwner)) {
+          return state;
+        }
+        if (
+          owner !== undefined &&
+          state.app.followUpQueueOwner !== null &&
+          state.app.followUpQueueOwner !== owner
+        ) {
+          return state;
+        }
+        const previousVersions =
+          state.app.followUpQueueMutation.supersededVersions ?? [];
+        if (previousVersions.includes(snapshot.version)) {
+          return state;
+        }
+        const supersededVersions =
+          state.app.followUpQueue &&
+          state.app.followUpQueue.version !== snapshot.version
+            ? [...previousVersions, state.app.followUpQueue.version].slice(-16)
+            : previousVersions;
+        return {
+          app: {
+            ...state.app,
+            followUpQueue: snapshot,
+            followUpQueueOwner: owner ?? state.app.followUpQueueOwner,
+            followUpQueueMutation: {
+              pending: state.app.followUpQueueMutation.pending,
+              ...(state.app.followUpQueueMutation.messageId
+                ? { messageId: state.app.followUpQueueMutation.messageId }
+                : {}),
+              supersededVersions,
+            },
+          },
+          command: {
+            ...state.command,
+            followUpPresentations: Object.fromEntries(
+              Object.entries(state.command.followUpPresentations).filter(
+                ([messageId]) => snapshot.items.some((item) => item.id === messageId)
+              )
+            ),
+          },
+        };
+      });
+    },
+
+    claimFollowUpQueueOwner: (owner) => {
+      set((state) => {
+        const currentSessionOwner = [
+          state.session.workspaceRoot,
+          state.session.sessionId,
+          '',
+        ].join('\0');
+        if (!owner.startsWith(currentSessionOwner)) return state;
+        if (state.app.followUpQueueOwner === owner) return state;
+        return {
+          app: {
+            ...state.app,
+            followUpQueue: null,
+            followUpQueueOwner: owner,
+            followUpQueueMutation: { pending: false, supersededVersions: [] },
+          },
+          command: { ...state.command, followUpPresentations: {} },
+        };
+      });
+    },
+
+    setFollowUpQueueMutation: (mutation, owner) => {
+      set((state) => {
+        const currentSessionOwner = [
+          state.session.workspaceRoot,
+          state.session.sessionId,
+          '',
+        ].join('\0');
+        if (owner !== undefined && !owner.startsWith(currentSessionOwner)) {
+          return state;
+        }
+        if (
+          owner !== undefined &&
+          state.app.followUpQueueOwner !== null &&
+          state.app.followUpQueueOwner !== owner
+        ) {
+          return state;
+        }
+        return {
+          app: {
+            ...state.app,
+            followUpQueueMutation: {
+              ...mutation,
+              supersededVersions:
+                mutation.supersededVersions ??
+                state.app.followUpQueueMutation.supersededVersions,
+            },
+          },
+        };
+      });
+    },
+
+    clearFollowUpQueue: (owner) => {
+      set((state) => {
+        if (owner !== undefined && state.app.followUpQueueOwner !== owner) return state;
+        return {
+          app: {
+            ...state.app,
+            followUpQueue: null,
+            followUpQueueOwner: null,
+            followUpQueueMutation: { pending: false, supersededVersions: [] },
+          },
+          command: { ...state.command, followUpPresentations: {} },
+        };
+      });
     },
 
     // ==================== Thinking 模式相关 actions ====================

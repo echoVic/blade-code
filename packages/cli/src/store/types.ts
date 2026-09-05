@@ -10,6 +10,10 @@
 
 import type { ActionStationarityEvent } from '../agent/loop/actionStationarity.js';
 import type { TeamSnapshot } from '../agent/teams/TeamRuntime.js';
+import type {
+  FollowUpQueueErrorCode,
+  FollowUpQueueSnapshot,
+} from '../api/followUpQueueSchemas.js';
 import type { SessionSurfaceSummary } from '../api/sessionSurfaceSchemas.js';
 import type {
   CommunicationStyleSelection,
@@ -238,6 +242,7 @@ export type ActiveModal =
   | 'permissionsManager'
   | 'sessionSelector'
   | 'sessionHistoryViewer'
+  | 'followUpQueue'
   | 'taskPanel'
   | 'shortcuts'
   | 'modelSelector'
@@ -292,6 +297,9 @@ export interface AppState {
   sessionHistoryViewerData: SessionHistoryViewerState | undefined;
   taskAttentionStatus: 'idle' | 'loading' | 'ready' | 'error';
   taskAttentionUnreadKeys: readonly string[];
+  followUpQueue: FollowUpQueueSnapshot | null;
+  followUpQueueOwner: string | null;
+  followUpQueueMutation: FollowUpQueueMutationState;
   modelEditorTarget: ModelConfig | null;
   tasks: TaskListItem[];
   awaitingSecondCtrlC: boolean; // 是否等待第二次 Ctrl+C 退出
@@ -329,6 +337,13 @@ export interface AppActions {
     status: AppState['taskAttentionStatus'],
     unreadKeys: readonly string[]
   ) => void;
+  projectFollowUpQueue: (snapshot: FollowUpQueueSnapshot, owner?: string) => void;
+  claimFollowUpQueueOwner: (owner: string) => void;
+  setFollowUpQueueMutation: (
+    mutation: FollowUpQueueMutationState,
+    owner?: string
+  ) => void;
+  clearFollowUpQueue: (owner?: string) => void;
   // Thinking 模式相关
   setReasoningEffort: (effort: ReasoningEffortSelection) => void;
   setServiceTier: (tier: ServiceTierSelection) => void;
@@ -368,6 +383,7 @@ export enum FocusId {
   TRANSCRIPT_PAGER = 'transcript-pager',
   SESSION_SELECTOR = 'session-selector',
   SESSION_HISTORY_VIEWER = 'session-history-viewer',
+  FOLLOW_UP_QUEUE = 'follow-up-queue',
   CONFIRMATION_PROMPT = 'confirmation-prompt',
   THEME_SELECTOR = 'theme-selector',
   MODEL_SELECTOR = 'model-selector',
@@ -408,7 +424,7 @@ export interface FocusSlice extends FocusState {
 /**
  * 待处理命令（支持图片）
  */
-export interface PendingCommand {
+export interface FollowUpPresentation {
   /** 显示文本（带图片占位符，用于 UI 显示） */
   displayText: string;
   /** 纯文本内容（不含图片占位符） */
@@ -422,13 +438,21 @@ export interface PendingCommand {
   >;
 }
 
+export interface FollowUpQueueMutationState {
+  pending: boolean;
+  messageId?: string;
+  errorCode?: FollowUpQueueErrorCode;
+  errorMessage?: string;
+  supersededVersions?: readonly string[];
+}
+
 /**
  * 命令执行状态
  */
 export interface CommandState {
   isProcessing: boolean; // 临时状态 - 不持久化
   abortController: AbortController | null; // 不持久化
-  pendingCommands: PendingCommand[]; // 待处理命令队列 - 不持久化
+  followUpPresentations: Record<string, FollowUpPresentation>; // 仅用于等待 durable apply 的展示缓存
   recoveredSteeringCount: number;
 }
 
@@ -450,9 +474,12 @@ export interface CommandActions {
    */
   clearAbortController: (expectedController?: AbortController) => void;
   abort: (reason?: string) => void;
-  enqueueCommand: (command: PendingCommand) => void;
-  dequeueCommand: () => PendingCommand | undefined;
-  clearQueue: () => void;
+  rememberFollowUpPresentation: (
+    messageId: string,
+    command: FollowUpPresentation
+  ) => void;
+  takeFollowUpPresentation: (messageId: string) => FollowUpPresentation | undefined;
+  clearFollowUpPresentations: () => void;
   setRecoveredSteeringCount: (count: number) => void;
 }
 

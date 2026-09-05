@@ -14,7 +14,7 @@ import type {
   BladeStore,
   CommandSlice,
   CommandState,
-  PendingCommand,
+  FollowUpPresentation,
 } from '../types.js';
 
 /**
@@ -23,7 +23,7 @@ import type {
 const initialCommandState: CommandState = {
   isProcessing: false,
   abortController: null,
-  pendingCommands: [],
+  followUpPresentations: {},
   recoveredSteeringCount: 0,
 };
 
@@ -121,13 +121,12 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
         abortController.abort(reason ?? 'user-cancel');
       }
 
-      // 重置 command 状态并清空队列（保留 abortController 供后续检测）
+      // 重置 command 状态（保留 abortController 和已提交的 durable queue 展示缓存）
       set((state) => ({
         command: {
           ...state.command,
           isProcessing: false,
           // 不清空 abortController，让后续代码能检测 signal.aborted
-          pendingCommands: [],
         },
         session: {
           ...state.session,
@@ -140,46 +139,44 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
       }));
     },
 
-    /**
-     * 将命令加入待处理队列（支持图片）
-     */
-    enqueueCommand: (command: PendingCommand) => {
+    rememberFollowUpPresentation: (
+      messageId: string,
+      command: FollowUpPresentation
+    ) => {
       set((state) => ({
         command: {
           ...state.command,
-          pendingCommands: [...state.command.pendingCommands, command],
+          followUpPresentations: Object.fromEntries(
+            [
+              ...Object.entries(state.command.followUpPresentations),
+              [messageId, command],
+            ].slice(-20)
+          ),
         },
       }));
     },
 
-    /**
-     * 从队列取出下一个命令
-     */
-    dequeueCommand: (): PendingCommand | undefined => {
-      const { pendingCommands } = get().command;
-      if (pendingCommands.length === 0) {
-        return undefined;
-      }
-
-      const [nextCommand, ...rest] = pendingCommands;
+    takeFollowUpPresentation: (messageId: string): FollowUpPresentation | undefined => {
+      const command = get().command.followUpPresentations[messageId];
+      if (!command) return undefined;
       set((state) => ({
         command: {
           ...state.command,
-          pendingCommands: rest,
+          followUpPresentations: Object.fromEntries(
+            Object.entries(state.command.followUpPresentations).filter(
+              ([candidate]) => candidate !== messageId
+            )
+          ),
         },
       }));
-
-      return nextCommand;
+      return command;
     },
 
-    /**
-     * 清空待处理队列
-     */
-    clearQueue: () => {
+    clearFollowUpPresentations: () => {
       set((state) => ({
         command: {
           ...state.command,
-          pendingCommands: [],
+          followUpPresentations: {},
         },
       }));
     },

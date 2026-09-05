@@ -88,6 +88,7 @@ export type SlashCommandAction =
   | 'show_skills_manager'
   | 'show_hooks_manager'
   | 'show_plugins_manager'
+  | 'show_follow_up_queue'
   | 'invoke_skill'
   | 'invoke_custom_command'
   | 'invoke_plugin_command'

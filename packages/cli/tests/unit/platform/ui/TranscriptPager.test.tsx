@@ -77,7 +77,6 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
     version: view.streamingTail.length,
   }),
   useCurrentThinkingContent: () => view.thinking,
-  usePendingCommands: () => [],
   useCurrentFocus: () => view.focus,
   useTheme: () => ({
     colors: {

@@ -16,6 +16,7 @@ import {
 import type { AgentSession } from '../../agent/subagents/AgentSessionStore.js';
 import type { SubagentConfig } from '../../agent/subagents/types.js';
 import type { UserMessageContent } from '../../agent/types.js';
+import type { FollowUpQueueMutationRequest } from '../../api/followUpQueueSchemas.js';
 import type {
   CommunicationStyleSelection,
   PermissionMode,
@@ -1296,6 +1297,24 @@ export function useAgent(options: AgentOptions) {
     }
   );
 
+  const getFollowUpQueue = useMemoizedFn(async () => {
+    const targetSessionId = options.sessionId;
+    if (!targetSessionId) throw new Error('Follow-up queue requires a Session');
+    return (
+      await getOrCreateSessionRuntime(targetSessionId)
+    ).getFollowUpQueueSnapshot();
+  });
+
+  const mutateFollowUpQueue = useMemoizedFn(
+    async (request: FollowUpQueueMutationRequest) => {
+      const targetSessionId = options.sessionId;
+      if (!targetSessionId) throw new Error('Follow-up queue requires a Session');
+      return (await getOrCreateSessionRuntime(targetSessionId)).mutateFollowUpQueue(
+        request
+      );
+    }
+  );
+
   const askSideQuestion = useMemoizedFn(
     async (question: string, signal?: AbortSignal): Promise<SideConversationResult> => {
       const targetSessionId = options.sessionId;
@@ -1386,6 +1405,8 @@ export function useAgent(options: AgentOptions) {
     cleanupAgent,
     steerActiveTurn,
     enqueueSessionInput,
+    getFollowUpQueue,
+    mutateFollowUpQueue,
     askSideQuestion,
     runCodeReview,
     executeUserShellCommand,

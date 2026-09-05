@@ -13,7 +13,6 @@ import {
   useCurrentStreamingMessageId,
   useCurrentThinkingContent,
   useMessages,
-  usePendingCommands,
   useTheme,
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
@@ -183,7 +182,6 @@ export const TranscriptPager: React.FC<TranscriptPagerProps> = React.memo(
     const currentStreamingMessageId = useCurrentStreamingMessageId();
     const currentThinkingContent = useCurrentThinkingContent();
     const streamingBuffer = useCurrentStreamingBuffer();
-    const pendingCommands = usePendingCommands();
     const currentFocus = useCurrentFocus();
     const theme = useTheme();
     const { stdout } = useStdout();
@@ -216,7 +214,6 @@ export const TranscriptPager: React.FC<TranscriptPagerProps> = React.memo(
           streamingLines: streamingBuffer.lines,
           streamingTail: streamingBuffer.tail,
           currentThinkingContent,
-          pendingCommands,
         }),
       [
         messages,
@@ -224,7 +221,6 @@ export const TranscriptPager: React.FC<TranscriptPagerProps> = React.memo(
         streamingBuffer.lines,
         streamingBuffer.tail,
         currentThinkingContent,
-        pendingCommands,
       ]
     );
     const lines = useMemo(() => {

@@ -293,6 +293,9 @@ function handleSlashMessage(
     case 'show_plugins_manager':
       appActions.setActiveModal('pluginsManager');
       return true;
+    case 'show_follow_up_queue':
+      appActions.setActiveModal('followUpQueue');
+      return true;
     case 'show_agent_creation_wizard':
       appActions.setActiveModal('agentCreationWizard');
       return true;

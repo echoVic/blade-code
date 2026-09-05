@@ -79,6 +79,7 @@ ${REMOTE_SAFE_SLASH_COMMAND_NAMES.map(
 **/mcp** - 显示 MCP 服务器状态和可用工具
 **/help** - 显示此帮助信息
 **/btw <question>** - 在不改变主对话的情况下询问一个旁路问题
+**/queue** - 查看、删除或调整当前 Session 的后续指令队列
 **/team [action]** - 查看团队状态、发送消息或删除团队
 **/clear** - 清除屏幕内容
 **/resume** - 恢复历史会话

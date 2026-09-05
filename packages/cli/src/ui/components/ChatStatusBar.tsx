@@ -10,9 +10,9 @@ import {
   useCommunicationStyle,
   useContextRemaining,
   useCurrentModel,
+  useFollowUpQueue,
   useIsCompacting,
   useIsReady,
-  usePendingCommands,
   usePermissionMode,
   usePromptCacheHitRate,
   useReasoningEffort,
@@ -55,7 +55,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const communicationStyle = useCommunicationStyle();
   const sessionCost = useSessionCost();
   const promptCacheHitRate = usePromptCacheHitRate();
-  const pendingCommands = usePendingCommands();
+  const followUpQueue = useFollowUpQueue();
   const recoveredSteeringCount = useRecoveredSteeringCount();
   const taskAttentionStatus = useTaskAttentionStatus();
   const taskAttentionUnreadKeys = useTaskAttentionUnreadKeys();
@@ -264,10 +264,12 @@ export const ChatStatusBar: React.FC = React.memo(() => {
               </>
             )}
 
-            {pendingCommands.length > 0 && (
+            {(followUpQueue?.pending ?? 0) > 0 && (
               <>
                 <Text color="gray">·</Text>
-                <Text color="yellow">已排队 {pendingCommands.length}</Text>
+                <Text color="yellow">
+                  Queued {followUpQueue?.pending ?? 0} · /queue
+                </Text>
               </>
             )}
 

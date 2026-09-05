@@ -11,7 +11,7 @@ import {
 } from '../../../../../src/ui/transcript/TranscriptProjection.js';
 
 describe('TranscriptProjection', () => {
-  it('projects committed, live, and queued input as structured blocks', () => {
+  it('projects committed and live input without a second queued-input mirror', () => {
     const blocks = projectTranscriptBlocks({
       messages: [
         {
@@ -43,14 +43,6 @@ describe('TranscriptProjection', () => {
       streamingLines: ['first line'],
       streamingTail: 'second line',
       currentThinkingContent: 'live reasoning',
-      pendingCommands: [
-        {
-          text: 'follow up',
-          displayText: 'follow up',
-          images: [],
-          parts: [{ type: 'text', text: 'follow up' }],
-        },
-      ],
     });
 
     expect(blocks.map((block) => block.id)).toEqual([
@@ -58,12 +50,10 @@ describe('TranscriptProjection', () => {
       'assistant-live:thinking',
       'assistant-live',
       'tool-1',
-      'pending:0:follow up',
     ]);
     expect(blocks[1]?.content).toBe('live reasoning');
     expect(blocks[2]?.content).toBe('first line\nsecond line');
     expect(blocks[3]?.detail).toBe('hidden dependency details');
-    expect(blocks[4]?.pending).toBe(true);
   });
 
   it('reflows raw structured content at the requested width', () => {
@@ -149,7 +139,6 @@ describe('TranscriptProjection', () => {
         streamingLines: [],
         streamingTail: '',
         currentThinkingContent: null,
-        pendingCommands: [],
       })[0]!.revision;
 
     expect(project('abc')).not.toBe(project('xyz'));
@@ -181,7 +170,6 @@ describe('TranscriptProjection', () => {
       streamingLines: [],
       streamingTail: '',
       currentThinkingContent: null,
-      pendingCommands: [],
     });
 
     const collapsed = layoutTranscriptBlocks(blocks, 40);
@@ -217,7 +205,6 @@ describe('TranscriptProjection', () => {
       streamingLines: [],
       streamingTail: '',
       currentThinkingContent: null,
-      pendingCommands: [],
     });
     const matches = searchTranscriptBlocks(blocks, 'NEEDLE');
     const lines = layoutTranscriptBlocks(blocks, 14, new Set(['tool-1']));

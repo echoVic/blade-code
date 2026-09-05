@@ -4,6 +4,7 @@ import { act, Suspense, startTransition } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoopEvent } from '../../../../../src/agent/loop/types.js';
+import { FollowUpQueueMutationError } from '../../../../../src/agent/runtime/FollowUpQueueProjection.js';
 import { stablePendingResumeRetryDelay } from '../../../../../src/agent/runtime/PendingResumeRecoveryPolicy.js';
 import type { LoopResult } from '../../../../../src/agent/types.js';
 import { taskFailureForCode } from '../../../../../src/context/taskFailure.js';
@@ -22,10 +23,18 @@ const mocks = vi.hoisted(() => {
     storeSessionId: 'recovered-cli-session',
     storeWorkspaceRoot: '/active-workspace',
     activeModal: 'none' as 'none' | 'sessionHistoryViewer',
+    followUpQueue: null as
+      | import('../../../../../src/api/followUpQueueSchemas.js').FollowUpQueueSnapshot
+      | null,
+    followUpQueueMutation: {
+      pending: false,
+    } as import('../../../../../src/store/types.js').FollowUpQueueMutationState,
     createAgent: vi.fn(),
     cleanupAgent: vi.fn(),
     steerActiveTurn: vi.fn(),
     enqueueSessionInput: vi.fn(),
+    getFollowUpQueue: vi.fn(),
+    mutateFollowUpQueue: vi.fn(),
     askSideQuestion: vi.fn(),
     getMcpContentCatalog: vi.fn(),
     refreshMcpContentCatalogs: vi.fn(),
@@ -58,7 +67,13 @@ const mocks = vi.hoisted(() => {
     hasRecoverableTurn: vi.fn(),
     resolvePendingWithHandler: vi.fn(),
     cancelPendingNonInteractive: vi.fn(),
-    enqueueCommand: vi.fn(),
+    rememberFollowUpPresentation: vi.fn(),
+    clearFollowUpPresentations: vi.fn(),
+    takeFollowUpPresentation: vi.fn(),
+    projectFollowUpQueue: vi.fn(),
+    claimFollowUpQueueOwner: vi.fn(),
+    setFollowUpQueueMutation: vi.fn(),
+    clearFollowUpQueue: vi.fn(),
     addUserMessage: vi.fn(),
     addAssistantMessage: vi.fn(),
     addMessage: vi.fn(),
@@ -109,6 +124,8 @@ vi.mock('../../../../../src/ui/hooks/useAgent.js', () => ({
     cleanupAgent: mocks.cleanupAgent,
     steerActiveTurn: mocks.steerActiveTurn,
     enqueueSessionInput: mocks.enqueueSessionInput,
+    getFollowUpQueue: mocks.getFollowUpQueue,
+    mutateFollowUpQueue: mocks.mutateFollowUpQueue,
     askSideQuestion: mocks.askSideQuestion,
     getMcpContentCatalog: mocks.getMcpContentCatalog,
     refreshMcpContentCatalogs: mocks.refreshMcpContentCatalogs,
@@ -165,6 +182,11 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
     failSideConversation: mocks.failSideConversation,
     dismissSideConversation: mocks.dismissSideConversation,
     setTeams: vi.fn(),
+    setActiveModal: vi.fn(),
+    projectFollowUpQueue: mocks.projectFollowUpQueue,
+    claimFollowUpQueueOwner: mocks.claimFollowUpQueueOwner,
+    setFollowUpQueueMutation: mocks.setFollowUpQueueMutation,
+    clearFollowUpQueue: mocks.clearFollowUpQueue,
   }),
   useCommandActions: () => ({
     createAbortController: mocks.createAbortController,
@@ -172,7 +194,9 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
     clearAbortController: mocks.clearAbortController,
     setProcessing: mocks.setProcessing,
     setRecoveredSteeringCount: vi.fn(),
-    enqueueCommand: mocks.enqueueCommand,
+    rememberFollowUpPresentation: mocks.rememberFollowUpPresentation,
+    takeFollowUpPresentation: mocks.takeFollowUpPresentation,
+    clearFollowUpPresentations: mocks.clearFollowUpPresentations,
     abort: mocks.abort,
   }),
 }));
@@ -180,7 +204,12 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
 vi.mock('../../../../../src/store/vanilla.js', () => ({
   ensureStoreInitialized: vi.fn().mockResolvedValue(undefined),
   getState: () => ({
-    app: { activeModal: mocks.activeModal },
+    app: {
+      activeModal: mocks.activeModal,
+      followUpQueue: mocks.followUpQueue,
+      followUpQueueOwner: null,
+      followUpQueueMutation: mocks.followUpQueueMutation,
+    },
     command: { isProcessing: mocks.storeProcessing },
     session: {
       sessionId: mocks.storeSessionId,
@@ -375,6 +404,8 @@ describe('useCommandHandler durable recovery', () => {
     mocks.storeSessionId = 'recovered-cli-session';
     mocks.storeWorkspaceRoot = '/active-workspace';
     mocks.activeModal = 'none';
+    mocks.followUpQueue = null;
+    mocks.followUpQueueMutation = { pending: false };
     mocks.isProcessing = false;
     mocks.storeProcessing = false;
     mocks.sideConversation = null;
@@ -384,8 +415,23 @@ describe('useCommandHandler durable recovery', () => {
     });
     mocks.steerActiveTurn.mockResolvedValue({
       accepted: true,
+      messageId: 'queued-message',
       queued: 1,
       delivery: 'next_turn',
+      queue: {
+        version: 'a'.repeat(64),
+        pending: 1,
+        mutable: 1,
+        locked: 0,
+        internal: 0,
+        items: [],
+      },
+    });
+    mocks.projectFollowUpQueue.mockImplementation((snapshot) => {
+      mocks.followUpQueue = snapshot;
+    });
+    mocks.setFollowUpQueueMutation.mockImplementation((mutation) => {
+      mocks.followUpQueueMutation = mutation;
     });
     mocks.processSlashCommand.mockResolvedValue({
       type: 'handled',
@@ -1560,8 +1606,11 @@ describe('useCommandHandler durable recovery', () => {
       expect(mocks.createAgent).toHaveBeenCalledOnce();
     });
     expect(mocks.steerActiveTurn).toHaveBeenCalledWith('run after the previous answer');
-    expect(mocks.enqueueCommand).toHaveBeenCalledOnce();
-    expect(mocks.addUserMessage).toHaveBeenCalledWith('run after the previous answer');
+    expect(mocks.rememberFollowUpPresentation).toHaveBeenCalledWith(
+      'queued-message',
+      expect.objectContaining({ displayText: 'run after the previous answer' })
+    );
+    expect(mocks.addUserMessage).not.toHaveBeenCalled();
   });
 
   it('coalesces concurrent next-turn wakeups into one recovery run', async () => {
@@ -1636,6 +1685,72 @@ describe('useCommandHandler durable recovery', () => {
     expect(mocks.abort).not.toHaveBeenCalled();
     expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
       '活动回合中不能执行 slash command；请先停止任务或等待完成。'
+    );
+  });
+
+  it('allows /queue during an active turn without steering or aborting', async () => {
+    mocks.isProcessing = true;
+    mocks.storeProcessing = true;
+    mocks.processSlashCommand.mockResolvedValueOnce({
+      type: 'handled',
+      commandResult: { success: true },
+    });
+
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    const resolved = {
+      text: '/queue',
+      displayText: '/queue',
+      images: [],
+      parts: [{ type: 'text' as const, text: '/queue' }],
+    };
+    await hook?.executeCommand(resolved);
+
+    expect(mocks.processSlashCommand).toHaveBeenCalledOnce();
+    expect(mocks.processSlashCommand.mock.calls[0]?.[0]).toBe(resolved);
+    expect(mocks.createAbortController).not.toHaveBeenCalled();
+    expect(mocks.steerActiveTurn).not.toHaveBeenCalled();
+    expect(mocks.abort).not.toHaveBeenCalled();
+  });
+
+  it('uses the exact queue version and installs a conflict snapshot without retrying', async () => {
+    const before = {
+      version: 'a'.repeat(64),
+      pending: 1,
+      mutable: 1,
+      locked: 0,
+      internal: 0,
+      items: [],
+    };
+    const latest = { ...before, version: 'b'.repeat(64), pending: 0, mutable: 0 };
+    mocks.followUpQueue = before;
+    mocks.mutateFollowUpQueue.mockRejectedValueOnce(
+      new FollowUpQueueMutationError('revision_conflict', latest)
+    );
+
+    await renderHarness();
+    await expect(
+      hook?.controlFollowUpQueue({ type: 'remove', messageId: 'queued-message' })
+    ).resolves.toBe(false);
+
+    expect(mocks.mutateFollowUpQueue).toHaveBeenCalledOnce();
+    expect(mocks.mutateFollowUpQueue).toHaveBeenCalledWith({
+      expectedVersion: before.version,
+      operation: { type: 'remove', messageId: 'queued-message' },
+    });
+    expect(mocks.projectFollowUpQueue).toHaveBeenCalledWith(
+      latest,
+      expect.stringContaining('/active-workspace\0recovered-cli-session\0')
+    );
+    expect(mocks.setFollowUpQueueMutation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        pending: false,
+        errorCode: 'revision_conflict',
+      }),
+      expect.any(String)
     );
   });
 

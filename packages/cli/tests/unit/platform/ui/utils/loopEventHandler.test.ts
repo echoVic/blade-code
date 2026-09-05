@@ -72,6 +72,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       setCurrentThinkingContent: vi.fn(),
       appendAssistantContent: vi.fn(() => 'msg-1'),
       appendThinkingContent: vi.fn(),
+      addUserMessage: vi.fn(),
       replaceLastAssistantMessage: vi.fn(),
       addToolMessage: vi.fn(),
       updateTokenUsage: vi.fn(),
@@ -86,9 +87,10 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
     } as any,
     appActions: {
       setTasks: vi.fn(),
+      projectFollowUpQueue: vi.fn(),
     } as any,
     commandActions: {
-      dequeueCommand: vi.fn(),
+      takeFollowUpPresentation: vi.fn(),
       setRecoveredSteeringCount: vi.fn(),
     } as any,
     streamingBuffer: {
@@ -1302,8 +1304,23 @@ describe('createLoopEventHandler', () => {
       );
     });
 
-    it('steering_applied 应该移除已注入的排队输入', () => {
+    it('steering_applied 应该按 durable ID 提升本地展示输入并替换队列快照', () => {
       const deps = createMockDeps();
+      const addUserMessage = vi.mocked(deps.sessionActions.addUserMessage);
+      const takeFollowUpPresentation = vi
+        .mocked(deps.commandActions.takeFollowUpPresentation)
+        .mockReturnValueOnce({
+          displayText: 'first local input',
+          text: 'first local input',
+          images: [],
+          parts: [{ type: 'text', text: 'first local input' }],
+        })
+        .mockReturnValueOnce({
+          displayText: 'second local input',
+          text: 'second local input',
+          images: [],
+          parts: [{ type: 'text', text: 'second local input' }],
+        });
       const handler = createLoopEventHandler(deps, createMockStats());
 
       handler({
@@ -1312,7 +1329,20 @@ describe('createLoopEventHandler', () => {
         count: 2,
         recovered: 0,
         delivery: 'current_turn',
-        messages: [],
+        messages: [
+          {
+            id: 'steer-1',
+            content: 'first transformed',
+            queuedAt: 1,
+            recovered: false,
+          },
+          {
+            id: 'steer-2',
+            content: 'second transformed',
+            queuedAt: 2,
+            recovered: false,
+          },
+        ],
         queue: {
           version: '0'.repeat(64),
           pending: 0,
@@ -1323,7 +1353,14 @@ describe('createLoopEventHandler', () => {
         },
       });
 
-      expect(deps.commandActions.dequeueCommand).toHaveBeenCalledTimes(2);
+      expect(takeFollowUpPresentation).toHaveBeenNthCalledWith(1, 'steer-1');
+      expect(takeFollowUpPresentation).toHaveBeenNthCalledWith(2, 'steer-2');
+      expect(addUserMessage).toHaveBeenNthCalledWith(1, 'first local input');
+      expect(addUserMessage).toHaveBeenNthCalledWith(2, 'second local input');
+      expect(deps.appActions.projectFollowUpQueue).toHaveBeenCalledWith(
+        expect.objectContaining({ pending: 0 }),
+        undefined
+      );
     });
 
     it('steering_applied 应该显示崩溃后恢复的指令数量', () => {
@@ -1348,6 +1385,80 @@ describe('createLoopEventHandler', () => {
       });
 
       expect(deps.commandActions.setRecoveredSteeringCount).toHaveBeenCalledWith(1);
+    });
+
+    it('steering_applied 从可信事件恢复未持久化的用户展示内容', () => {
+      const deps = createMockDeps();
+      const addUserMessage = vi.mocked(deps.sessionActions.addUserMessage);
+      const handler = createLoopEventHandler(deps, createMockStats());
+
+      handler({
+        kind: 'steering_applied',
+        messageIds: ['recovered-user'],
+        count: 1,
+        recovered: 1,
+        delivery: 'next_turn',
+        messages: [
+          {
+            id: 'recovered-user',
+            content: [
+              { type: 'text', text: 'recovered text' },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,hidden' } },
+            ],
+            queuedAt: 1,
+            recovered: true,
+          },
+        ],
+        queue: {
+          version: '0'.repeat(64),
+          pending: 0,
+          mutable: 0,
+          locked: 0,
+          internal: 0,
+          items: [],
+        },
+      });
+
+      expect(addUserMessage).toHaveBeenCalledWith('recovered text\n[Image]');
+    });
+
+    it('follow_up_started 只更新队列，不会在 steering_applied 前提升消息', () => {
+      const deps = createMockDeps();
+      const addUserMessage = vi.mocked(deps.sessionActions.addUserMessage);
+      const takeFollowUpPresentation = vi.mocked(
+        deps.commandActions.takeFollowUpPresentation
+      );
+      const handler = createLoopEventHandler(deps, createMockStats());
+
+      handler({
+        kind: 'follow_up_started',
+        queued: 1,
+        recovered: 0,
+        queue: {
+          version: '0'.repeat(64),
+          pending: 1,
+          mutable: 0,
+          locked: 1,
+          internal: 0,
+          items: [],
+        },
+        messages: [
+          {
+            id: 'queued-next',
+            content: 'transformed queue content',
+            queuedAt: 1,
+            recovered: false,
+            persisted: false,
+          },
+        ],
+      });
+
+      expect(takeFollowUpPresentation).not.toHaveBeenCalled();
+      expect(addUserMessage).not.toHaveBeenCalled();
+      expect(deps.appActions.projectFollowUpQueue).toHaveBeenCalledWith(
+        expect.objectContaining({ pending: 1 }),
+        undefined
+      );
     });
 
     it('不把 recovered background completion 渲染成用户消息', () => {

@@ -17,6 +17,8 @@ import {
   useActiveModal,
   useAppActions,
   useFocusActions,
+  useFollowUpQueue,
+  useFollowUpQueueMutation,
   useInitializationError,
   useInitializationStatus,
   useModelEditorTarget,
@@ -61,6 +63,7 @@ import { AgentsManager } from './AgentsManager.js';
 import { ChatStatusBar } from './ChatStatusBar.js';
 import { CommandSuggestions } from './CommandSuggestions.js';
 import { ConfirmationPrompt } from './ConfirmationPrompt.js';
+import { FollowUpQueuePanel } from './FollowUpQueuePanel.js';
 import { HooksManager } from './HooksManager.js';
 import { InputArea } from './InputArea.js';
 import { LoadingIndicator } from './LoadingIndicator.js';
@@ -142,6 +145,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const sessionSelectorState = useSessionSelectorState();
   const sessionHistoryViewerState = useSessionHistoryViewerState();
   const taskAttentionUnreadKeys = useTaskAttentionUnreadKeys();
+  const followUpQueue = useFollowUpQueue();
+  const followUpQueueMutation = useFollowUpQueueMutation();
   const modelEditorTarget = useModelEditorTarget();
   const appActions = useAppActions();
 
@@ -187,7 +192,14 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     dismissAll,
   } = useConfirmation();
 
-  const { executeCommand, handleAbort, isProcessing, cleanupAgent } = useCommandHandler(
+  const {
+    executeCommand,
+    handleAbort,
+    isProcessing,
+    cleanupAgent,
+    refreshFollowUpQueue,
+    controlFollowUpQueue,
+  } = useCommandHandler(
     otherProps.systemPrompt,
     otherProps.appendSystemPrompt,
     confirmationHandler,
@@ -481,6 +493,12 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   }, [inputBuffer.value, activeModal, appActions]);
 
+  useEffect(() => {
+    if (activeModal === 'followUpQueue') {
+      void refreshFollowUpQueue();
+    }
+  }, [activeModal, refreshFollowUpQueue]);
+
   const handleContinue = useMemoizedFn(async () => {
     readyAnnouncementSent.current = true;
     try {
@@ -719,6 +737,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       focusActions.setFocus(FocusId.SESSION_SELECTOR);
     } else if (activeModal === 'sessionHistoryViewer') {
       focusActions.setFocus(FocusId.SESSION_HISTORY_VIEWER);
+    } else if (activeModal === 'followUpQueue') {
+      focusActions.setFocus(FocusId.FOLLOW_UP_QUEUE);
     } else if (activeModal === 'themeSelector') {
       // 显示主题选择器时，焦点转移到选择器
       focusActions.setFocus(FocusId.THEME_SELECTOR);
@@ -947,6 +967,14 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         state={sessionHistoryState}
         onLoadOlder={(target) => sessionHistoryController.loadOlder(target)}
         onFork={(target) => sessionHistoryController.fork(target)}
+        onClose={closeModal}
+      />
+    ) : activeModal === 'followUpQueue' ? (
+      <FollowUpQueuePanel
+        queue={followUpQueue}
+        mutation={followUpQueueMutation}
+        onMutate={controlFollowUpQueue}
+        onRefresh={refreshFollowUpQueue}
         onClose={closeModal}
       />
     ) : activeModal === 'hooksManager' ? (

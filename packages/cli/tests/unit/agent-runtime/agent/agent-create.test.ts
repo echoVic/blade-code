@@ -88,11 +88,32 @@ function createGoalRuntimeMocks() {
     ),
     restoreUserMessage: vi.fn(async (content: UserMessageContent) => content),
     getPendingSteeringMessages: vi.fn(() => []),
+    getFollowUpQueueSnapshot: vi.fn().mockResolvedValue({
+      version: '0'.repeat(64),
+      pending: 0,
+      mutable: 0,
+      locked: 0,
+      internal: 0,
+      items: [],
+    }),
     getTurnRecoveryAssessment: vi.fn(() => ({ state: 'none' as const })),
     takeStartupTurnRecoveryAssessment: vi.fn(() => ({ state: 'none' as const })),
     takeStartupAdoptedToolResults: vi.fn(() => []),
     waitForBackgroundSubagentFollowUp: vi.fn().mockResolvedValue(false),
   };
+}
+
+async function drainAgentStream<T>(stream: AsyncGenerator<unknown, T, void>): Promise<{
+  events: unknown[];
+  result: T;
+}> {
+  const events: unknown[] = [];
+  let step = await stream.next();
+  while (!step.done) {
+    events.push(step.value);
+    step = await stream.next();
+  }
+  return { events, result: step.value };
 }
 
 describe('Agent.create', () => {
@@ -229,10 +250,11 @@ describe('Agent runLoop system prompt injection', () => {
       sessionId: 'session-1',
       workspaceRoot: process.cwd(),
     });
-    expect(await iterator.next()).toMatchObject({
-      done: true,
-      value: { success: true, finalMessage: 'done' },
-    });
+    const completed = await drainAgentStream(iterator);
+    expect(completed.result).toMatchObject({ success: true, finalMessage: 'done' });
+    expect(completed.events).toContainEqual(
+      expect.objectContaining({ kind: 'follow_up_queue_changed' })
+    );
 
     expect(runtime.prepareInputTurn).toHaveBeenCalledWith('hello');
     expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
@@ -319,7 +341,7 @@ describe('Agent runLoop system prompt injection', () => {
       done: false,
       value: { kind: 'content_delta', delta: 'started' },
     });
-    const completion = stream.next();
+    const completion = drainAgentStream(stream);
     let destroySettled = false;
     const destroy = agent.destroy().then(() => {
       destroySettled = true;
@@ -332,8 +354,7 @@ describe('Agent runLoop system prompt injection', () => {
 
     releaseTurn();
     await expect(completion).resolves.toMatchObject({
-      done: true,
-      value: { success: false, error: { type: 'aborted' } },
+      result: { success: false, error: { type: 'aborted' } },
     });
     await expect(destroy).resolves.toBeUndefined();
     expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
@@ -459,6 +480,7 @@ describe('Agent runLoop system prompt injection', () => {
         kind: 'follow_up_started',
         messages: [expect.objectContaining({ id: completionMessage.id })],
       }),
+      expect.objectContaining({ kind: 'follow_up_queue_changed' }),
     ]);
     expect(runtime.waitForBackgroundSubagentFollowUp).toHaveBeenCalledTimes(2);
     expect(
@@ -528,8 +550,8 @@ describe('Agent runLoop system prompt injection', () => {
       };
     });
 
-    const result = await agent
-      .chatStream('execute', {
+    const { result } = await drainAgentStream(
+      agent.chatStream('execute', {
         messages: [],
         userId: 'user-1',
         sessionId: 'session-1',
@@ -539,12 +561,9 @@ describe('Agent runLoop system prompt injection', () => {
           order.push(`surface:${permissionMode}`);
         },
       })
-      .next();
+    );
 
-    expect(result).toMatchObject({
-      done: true,
-      value: { success: true, finalMessage: 'done' },
-    });
+    expect(result).toMatchObject({ success: true, finalMessage: 'done' });
     expect(order).toEqual(['persist:autoEdit', 'surface:autoEdit', 'execute']);
     expect(persist).toHaveBeenCalledWith(
       'session-1',
@@ -614,24 +633,24 @@ describe('Agent runLoop system prompt injection', () => {
     const second = createTaskAgent('task-second');
 
     try {
-      const firstResult = first.agent
-        .chatStream('run', {
+      const firstResult = drainAgentStream(
+        first.agent.chatStream('run', {
           messages: [],
           userId: 'user-1',
           sessionId: 'task-first',
           workspaceRoot: process.cwd(),
         })
-        .next();
+      );
       await vi.waitFor(() => expect(started).toEqual(['task-first']));
 
-      const secondResult = second.agent
-        .chatStream('run', {
+      const secondResult = drainAgentStream(
+        second.agent.chatStream('run', {
           messages: [],
           userId: 'user-1',
           sessionId: 'task-second',
           workspaceRoot: process.cwd(),
         })
-        .next();
+      );
       await vi.waitFor(() =>
         expect(second.runtime.setTaskAdmission).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -644,14 +663,8 @@ describe('Agent runLoop system prompt injection', () => {
       expect(taskRunScheduler.getStats().pendingBytes).toBeGreaterThan(0);
 
       releaseFirst();
-      await expect(firstResult).resolves.toMatchObject({
-        done: true,
-        value: { success: true },
-      });
-      await expect(secondResult).resolves.toMatchObject({
-        done: true,
-        value: { success: true },
-      });
+      await expect(firstResult).resolves.toMatchObject({ result: { success: true } });
+      await expect(secondResult).resolves.toMatchObject({ result: { success: true } });
       expect(started).toEqual(['task-first', 'task-second']);
       expect(first.runtime.publishTaskAdmissionCapacity).toHaveBeenCalledWith(
         'completed'
@@ -786,8 +799,8 @@ describe('Agent runLoop system prompt injection', () => {
       };
     });
 
-    const result = await agent
-      .chatStream(
+    const { result } = await drainAgentStream(
+      agent.chatStream(
         'hello',
         {
           messages: [],
@@ -797,9 +810,9 @@ describe('Agent runLoop system prompt injection', () => {
         },
         { preparedInputTurn }
       )
-      .next();
+    );
 
-    expect(result.done).toBe(true);
+    expect(result).toMatchObject({ success: true });
     expect(runtime.prepareInputTurn).not.toHaveBeenCalled();
     expect(receivedOptions?.inputMessageId).toBe('prepared-input');
     expect(runtime.acknowledgeTurn).not.toHaveBeenCalled();
@@ -907,16 +920,16 @@ describe('Agent runLoop system prompt injection', () => {
       };
     });
 
-    const result = await agent
-      .chatStream('hello', {
+    const { result } = await drainAgentStream(
+      agent.chatStream('hello', {
         messages: [],
         userId: 'user-1',
         sessionId: 'session-1',
         workspaceRoot: process.cwd(),
       })
-      .next();
+    );
 
-    expect(result.done).toBe(true);
+    expect(result).toMatchObject({ success: false });
     expect((agent as any).runLoop).toHaveBeenCalledOnce();
     expect(runtime.acknowledgeTurn).not.toHaveBeenCalled();
     expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
@@ -994,16 +1007,16 @@ describe('Agent runLoop system prompt injection', () => {
       };
     });
 
-    const result = await agent
-      .chatStream('hello', {
+    const { result } = await drainAgentStream(
+      agent.chatStream('hello', {
         messages: [],
         userId: 'user-1',
         sessionId: 'session-1',
         workspaceRoot: process.cwd(),
       })
-      .next();
+    );
 
-    expect(result.done).toBe(true);
+    expect(result).toMatchObject({ success: false });
     expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
       continuePending: false,
       acknowledgeInput: true,
@@ -1055,15 +1068,15 @@ describe('Agent runLoop system prompt injection', () => {
     const controller = new AbortController();
     controller.abort();
 
-    await agent
-      .chatStream('stop', {
+    await drainAgentStream(
+      agent.chatStream('stop', {
         messages: [],
         userId: 'user-1',
         sessionId: 'session-1',
         workspaceRoot: process.cwd(),
         signal: controller.signal,
       })
-      .next();
+    );
 
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(2, 'cancelled', undefined);
@@ -1200,12 +1213,14 @@ describe('Agent runLoop system prompt injection', () => {
       { message: 'hello', pendingInputOnly: false },
       { message: '', pendingInputOnly: true },
     ]);
-    expect(events).toContainEqual({
-      kind: 'follow_up_started',
-      queued: 1,
-      recovered: 1,
-      messages: [],
-    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'follow_up_started',
+        queued: 1,
+        recovered: 1,
+        messages: [],
+      })
+    );
     expect(step.value).toMatchObject({
       success: true,
       finalMessage: 'follow-up',

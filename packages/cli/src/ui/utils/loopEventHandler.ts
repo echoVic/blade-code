@@ -11,6 +11,7 @@
  */
 
 import type { LoopEvent } from '../../agent/loop/types.js';
+import type { SteeringMessage } from '../../agent/runtime/ActiveTurnMailbox.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { streamDebug } from '../../logging/StreamDebugLogger.js';
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../services/StructuredOutputService.js';
@@ -76,6 +77,7 @@ export interface LoopEventDeps {
   getStreamingMessageId: () => string | null;
   signal: AbortSignal;
   streamSession?: TuiStreamSession;
+  followUpQueueOwner?: string;
 }
 
 export interface LoopEventStats {
@@ -107,6 +109,27 @@ export function createLoopEventHandler(
       discardStreamingMessage: deps.sessionActions.discardStreamingMessage,
       clearThinking: () => deps.sessionActions.setCurrentThinkingContent(null),
     });
+
+  const promoteFollowUpMessages = (
+    messages: readonly (SteeringMessage & { persisted?: boolean })[]
+  ): void => {
+    for (const message of messages) {
+      if ((message.origin ?? 'user') !== 'user') continue;
+      const presentation = deps.commandActions.takeFollowUpPresentation(message.id);
+      if (presentation) {
+        deps.sessionActions.addUserMessage(presentation.displayText);
+        continue;
+      }
+      if (!message.recovered || message.persisted) continue;
+      const display =
+        typeof message.content === 'string'
+          ? message.content
+          : message.content
+              .map((part) => (part.type === 'text' ? part.text : '[Image]'))
+              .join('\n');
+      deps.sessionActions.addUserMessage(display);
+    }
+  };
 
   return (event: LoopEvent) => {
     switch (event.kind) {
@@ -466,30 +489,21 @@ export function createLoopEventHandler(
       }
 
       case 'steering_applied':
-        for (let index = 0; index < event.count; index++) {
-          deps.commandActions.dequeueCommand();
-        }
+        promoteFollowUpMessages(event.messages);
+        deps.appActions.projectFollowUpQueue(event.queue, deps.followUpQueueOwner);
         if (event.recovered > 0) {
           deps.commandActions.setRecoveredSteeringCount(event.recovered);
         }
         break;
 
       case 'follow_up_started':
-        for (const message of event.messages) {
-          if (!message.recovered || message.persisted) continue;
-          const display =
-            typeof message.content === 'string'
-              ? message.content
-              : message.content
-                  .map((part) => (part.type === 'text' ? part.text : '[Image]'))
-                  .join('\n');
-          deps.sessionActions.addUserMessage(display);
-        }
+        deps.appActions.projectFollowUpQueue(event.queue, deps.followUpQueueOwner);
         if (event.recovered > 0) {
           deps.commandActions.setRecoveredSteeringCount(event.recovered);
         }
         break;
       case 'follow_up_queue_changed':
+        deps.appActions.projectFollowUpQueue(event.queue, deps.followUpQueueOwner);
         break;
       case 'goal_updated':
       case 'goal_continuation_started':

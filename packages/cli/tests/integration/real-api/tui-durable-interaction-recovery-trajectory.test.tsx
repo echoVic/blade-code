@@ -210,7 +210,7 @@ describeReal('TUI durable pending-resume retry trajectory (real API)', () => {
             ...state.command,
             isProcessing: false,
             abortController: null,
-            pendingCommands: [],
+            followUpPresentations: {},
           },
         }));
 

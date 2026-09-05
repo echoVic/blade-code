@@ -12,6 +12,11 @@ const mockCommunicationStyle = vi.fn(() => 'auto');
 const mockPromptCacheHitRate = vi.fn<() => number | undefined>(() => undefined);
 const mockTaskAttentionStatus = vi.fn(() => 'idle');
 const mockTaskAttentionUnreadKeys = vi.fn<() => readonly string[]>(() => []);
+const mockFollowUpQueue = vi.fn<
+  () =>
+    | import('../../../../src/api/followUpQueueSchemas.js').FollowUpQueueSnapshot
+    | null
+>(() => null);
 
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) =>
@@ -27,7 +32,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useCurrentModel: () => null,
   useIsCompacting: () => false,
   useIsReady: () => true,
-  usePendingCommands: () => [],
+  useFollowUpQueue: () => mockFollowUpQueue(),
   usePermissionMode: () => 'default',
   usePromptCacheHitRate: () => mockPromptCacheHitRate(),
   useRecoveredSteeringCount: () => mockRecoveredSteeringCount(),
@@ -60,6 +65,7 @@ describe('ChatStatusBar', () => {
     mockPromptCacheHitRate.mockReturnValue(undefined);
     mockTaskAttentionStatus.mockReturnValue('idle');
     mockTaskAttentionUnreadKeys.mockReturnValue([]);
+    mockFollowUpQueue.mockReturnValue(null);
   });
 
   it('应该使用当前会话的 active workspace 获取分支', async () => {
@@ -82,6 +88,24 @@ describe('ChatStatusBar', () => {
     const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
 
     expect(markup).toContain('已恢复 2 条指令');
+  });
+
+  it('显示 authoritative follow-up queue 数量和 /queue 入口', async () => {
+    mockFollowUpQueue.mockReturnValue({
+      version: 'a'.repeat(64),
+      pending: 2,
+      mutable: 2,
+      locked: 0,
+      internal: 0,
+      items: [],
+    });
+    const { ChatStatusBar } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
+
+    expect(markup).toContain('Queued 2 · /queue');
   });
 
   it('应该显示当前 Session 的显式沟通风格', async () => {

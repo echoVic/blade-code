@@ -13,16 +13,19 @@
  * PendingResumeCoordinator 合并来自 UI、Team 和 Subagent 的恢复唤醒。
  */
 
+import { randomUUID } from 'node:crypto';
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useMemo, useRef } from 'react';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
+import { FollowUpQueueMutationError } from '../../agent/runtime/FollowUpQueueProjection.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import { getSubagentRegistry } from '../../agent/subagents/SubagentRegistry.js';
 import type { SubagentConfig } from '../../agent/subagents/types.js';
 import { isTeamMessageMetadata, TeamMailbox } from '../../agent/teams/TeamMailbox.js';
 import { TeamRuntime } from '../../agent/teams/TeamRuntime.js';
 import type { LoopResult } from '../../agent/types.js';
+import type { FollowUpQueueMutation } from '../../api/followUpQueueSchemas.js';
 import { parseSideConversationCommand } from '../../api/sideConversation.js';
 import type { PermissionMode } from '../../config/types.js';
 import { getBladeStorageRoot } from '../../context/storage/pathUtils.js';
@@ -80,6 +83,16 @@ import { useStreamingBuffer } from './useStreamingBuffer.js';
 
 const logger = createLogger(LogCategory.UI);
 
+function retainSupersededVersion(
+  versions: readonly string[] | undefined,
+  version: string
+): string[] {
+  return [
+    ...(versions ?? []).filter((candidate) => candidate !== version),
+    version,
+  ].slice(-16);
+}
+
 function isLoopCancellation(result: LoopResult): boolean {
   return (
     result.error?.type === 'canceled' ||
@@ -132,6 +145,8 @@ export const useCommandHandler = (
     cleanupAgent,
     steerActiveTurn,
     enqueueSessionInput,
+    getFollowUpQueue,
+    mutateFollowUpQueue,
     listRewindCheckpoints,
     rewindSession,
     listSubagents,
@@ -172,6 +187,124 @@ export const useCommandHandler = (
     communicationStyle,
     agents,
   });
+
+  const queueOwner = useMemo(
+    () => [workspaceRoot, sessionId, randomUUID()].join('\0'),
+    [sessionId, workspaceRoot]
+  );
+
+  const refreshFollowUpQueue = useMemoizedFn(async () => {
+    const expectedVersion = getState().app.followUpQueue?.version;
+    const previousMutation = getState().app.followUpQueueMutation;
+    try {
+      const snapshot = await getFollowUpQueue();
+      const currentVersion = getState().app.followUpQueue?.version;
+      const responseIsCurrent =
+        currentVersion === expectedVersion || currentVersion === snapshot.version;
+      if (responseIsCurrent) {
+        appActions.projectFollowUpQueue(snapshot, queueOwner);
+      }
+      const versions = getState().app.followUpQueueMutation.supersededVersions;
+      appActions.setFollowUpQueueMutation(
+        previousMutation.errorCode === 'revision_conflict'
+          ? {
+              pending: false,
+              errorCode: previousMutation.errorCode,
+              errorMessage: previousMutation.errorMessage,
+              supersededVersions: responseIsCurrent
+                ? versions
+                : retainSupersededVersion(versions, snapshot.version),
+            }
+          : {
+              pending: false,
+              supersededVersions: responseIsCurrent
+                ? versions
+                : retainSupersededVersion(versions, snapshot.version),
+            },
+        queueOwner
+      );
+    } catch {
+      appActions.setFollowUpQueueMutation(
+        {
+          pending: false,
+          errorMessage: 'Follow-up queue is unavailable',
+        },
+        queueOwner
+      );
+    }
+  });
+
+  const controlFollowUpQueue = useMemoizedFn(
+    async (operation: FollowUpQueueMutation): Promise<boolean> => {
+      const snapshot = getState().app.followUpQueue;
+      if (!snapshot || getState().app.followUpQueueMutation.pending) return false;
+      appActions.setFollowUpQueueMutation(
+        { pending: true, messageId: operation.messageId },
+        queueOwner
+      );
+      try {
+        const result = await mutateFollowUpQueue({
+          expectedVersion: snapshot.version,
+          operation,
+        });
+        const currentVersion = getState().app.followUpQueue?.version;
+        if (
+          currentVersion === snapshot.version ||
+          currentVersion === result.snapshot.version
+        ) {
+          appActions.projectFollowUpQueue(result.snapshot, queueOwner);
+        }
+        const responseIsCurrent =
+          currentVersion === snapshot.version ||
+          currentVersion === result.snapshot.version;
+        const versions = getState().app.followUpQueueMutation.supersededVersions;
+        appActions.setFollowUpQueueMutation(
+          {
+            pending: false,
+            supersededVersions: responseIsCurrent
+              ? versions
+              : retainSupersededVersion(versions, result.snapshot.version),
+          },
+          queueOwner
+        );
+        if (operation.type === 'remove') {
+          commandActions.takeFollowUpPresentation(operation.messageId);
+        }
+        return true;
+      } catch (error) {
+        if (error instanceof FollowUpQueueMutationError) {
+          const currentVersion = getState().app.followUpQueue?.version;
+          const responseIsCurrent =
+            currentVersion === snapshot.version ||
+            currentVersion === error.snapshot.version;
+          if (responseIsCurrent) {
+            appActions.projectFollowUpQueue(error.snapshot, queueOwner);
+          }
+          const versions = getState().app.followUpQueueMutation.supersededVersions;
+          appActions.setFollowUpQueueMutation(
+            {
+              pending: false,
+              errorCode: error.code,
+              errorMessage: error.message,
+              supersededVersions: responseIsCurrent
+                ? versions
+                : retainSupersededVersion(versions, error.snapshot.version),
+            },
+            queueOwner
+          );
+        } else {
+          appActions.setFollowUpQueueMutation(
+            {
+              pending: false,
+              errorMessage: 'Follow-up queue is unavailable',
+            },
+            queueOwner
+          );
+        }
+        return false;
+      }
+    }
+  );
 
   const streamingBuffer = useStreamingBuffer(sessionActions);
   const createStreamSession = useMemoizedFn(
@@ -396,6 +529,7 @@ export const useCommandHandler = (
           getStreamingMessageId: () => getState().session.currentStreamingMessageId,
           signal: abortController.signal,
           streamSession,
+          followUpQueueOwner: queueOwner,
         },
         stats
       );
@@ -866,6 +1000,13 @@ export const useCommandHandler = (
     };
   }, [pendingResumeCoordinator]);
 
+  useEffect(() => {
+    appActions.claimFollowUpQueueOwner(queueOwner);
+    return () => {
+      appActions.clearFollowUpQueue(queueOwner);
+    };
+  }, [appActions, queueOwner]);
+
   // ==================== executeCommand ====================
   const executeCommand = useMemoizedFn(async (resolved: ResolvedInput) => {
     if (getState().app.activeModal === 'sessionHistoryViewer') {
@@ -904,16 +1045,18 @@ export const useCommandHandler = (
     // Esc/Ctrl+C 仍由 handleAbort 提供真正的中止语义。
     if (isProcessing) {
       if (resolved.text.trimStart().startsWith('/')) {
-        if (/^\/goal(?:\s|$)/i.test(resolved.text.trim())) {
+        const slash = resolved.text.trim();
+        if (/^\/(?:goal|queue)(?:\s|$)/i.test(slash)) {
           await ensureStoreInitialized();
-          const abortController =
-            commandActions.getAbortController() ??
-            commandActions.createAbortController();
+          const existingController = commandActions.getAbortController();
+          const signal = /^\/queue(?:\s|$)/i.test(slash)
+            ? (existingController?.signal ?? new AbortController().signal)
+            : (existingController ?? commandActions.createAbortController()).signal;
           await processSlashCommand(
             resolved,
             appActions,
             sessionActions,
-            abortController.signal,
+            signal,
             cleanupAgent,
             sessionId,
             undefined,
@@ -983,8 +1126,12 @@ export const useCommandHandler = (
         return;
       }
 
-      commandActions.enqueueCommand(resolved);
-      sessionActions.addUserMessage(resolved.displayText);
+      if (steering.messageId) {
+        commandActions.rememberFollowUpPresentation(steering.messageId, resolved);
+      }
+      if (steering.queue) {
+        appActions.projectFollowUpQueue(steering.queue, queueOwner);
+      }
       if (steering.delivery === 'next_turn') {
         pendingResumeCoordinator.request();
       }
@@ -1136,5 +1283,7 @@ export const useCommandHandler = (
     handleAbort,
     isProcessing: isProcessing || sideConversation?.status === 'loading',
     cleanupAgent,
+    refreshFollowUpQueue,
+    controlFollowUpQueue,
   };
 };

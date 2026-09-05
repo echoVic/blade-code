@@ -178,6 +178,10 @@ function createMockAppActions(): AppActions {
     updateTask: vi.fn(),
     setAwaitingSecondCtrlC: vi.fn(),
     projectTaskAttentionState: vi.fn(),
+    projectFollowUpQueue: vi.fn(),
+    claimFollowUpQueueOwner: vi.fn(),
+    setFollowUpQueueMutation: vi.fn(),
+    clearFollowUpQueue: vi.fn(),
     setReasoningEffort: vi.fn(),
     setServiceTier: vi.fn(),
     setResponseVerbosity: vi.fn(),
@@ -646,6 +650,26 @@ describe('processSlashCommand', () => {
   // ==================== UI 消息路由 ====================
 
   describe('UI 消息路由', () => {
+    it('show_follow_up_queue 应该打开 queue modal', async () => {
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        message: 'show_follow_up_queue',
+        data: { action: 'show_follow_up_queue' },
+      });
+      const appActions = createMockAppActions();
+
+      const result = await processSlashCommand(
+        createResolvedInput('/queue'),
+        appActions,
+        createMockSessionActions(),
+        new AbortController().signal,
+        cleanupAgent
+      );
+
+      expect(result.type).toBe('handled');
+      expect(appActions.setActiveModal).toHaveBeenCalledWith('followUpQueue');
+    });
+
     it('show_model_selector 应该返回 handled', async () => {
       executeSlashCommand.mockResolvedValue({
         success: true,

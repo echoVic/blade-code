@@ -1,4 +1,4 @@
-import type { PendingCommand, SessionMessage } from '../../store/types.js';
+import type { SessionMessage } from '../../store/types.js';
 import { wrapCellText } from '../utils/markdown.js';
 
 export type TranscriptBlockKind = 'message' | 'thinking' | 'tool';
@@ -21,7 +21,6 @@ export interface TranscriptProjectionInput {
   streamingLines: readonly string[];
   streamingTail: string;
   currentThinkingContent?: string | null;
-  pendingCommands: readonly PendingCommand[];
 }
 
 export interface TranscriptLine {
@@ -71,7 +70,6 @@ export function projectTranscriptBlocks({
   streamingLines,
   streamingTail,
   currentThinkingContent,
-  pendingCommands,
 }: TranscriptProjectionInput): TranscriptBlock[] {
   const liveContent = streamingContent(streamingLines, streamingTail);
   const blocks: TranscriptBlock[] = [];
@@ -142,19 +140,6 @@ export function projectTranscriptBlocks({
       kind: 'message',
       content: liveContent,
       revision: `stream:${contentRevision(liveContent)}`,
-      collapsible: false,
-    });
-  }
-
-  for (const [index, command] of pendingCommands.entries()) {
-    blocks.push({
-      id: `pending:${index}:${command.displayText}`,
-      messageId: `pending:${index}`,
-      role: 'user',
-      kind: 'message',
-      content: command.displayText,
-      revision: `pending:${contentRevision(command.displayText)}`,
-      pending: true,
       collapsible: false,
     });
   }

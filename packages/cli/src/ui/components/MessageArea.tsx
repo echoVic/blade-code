@@ -11,7 +11,6 @@ import {
   useHistoryExpanded,
   useIsProcessing,
   useMessages,
-  usePendingCommands,
   useSessionActions,
   useShowTaskPanel,
   useTaskList,
@@ -56,7 +55,6 @@ const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => 
   const isProcessing = useIsProcessing();
   const tasks = useTaskList();
   const showTaskPanel = useShowTaskPanel();
-  const pendingCommands = usePendingCommands();
   const currentThinkingContent = useCurrentThinkingContent();
   const thinkingExpanded = useThinkingExpanded();
   const clearCount = useClearCount();
@@ -460,16 +458,6 @@ const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => 
             <TaskPanel tasks={tasks} visible={true} compact={false} />
           </Box>
         )}
-
-        {pendingCommands.map((cmd, index) => (
-          <Box key={`pending-${index}`} flexDirection="column">
-            <MessageRenderer
-              content={cmd.displayText}
-              role="user"
-              terminalWidth={terminalWidth}
-            />
-          </Box>
-        ))}
       </Box>
     </Box>
   );

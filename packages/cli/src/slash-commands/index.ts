@@ -25,6 +25,7 @@ import initCommand from './init.js';
 import modelCommand from './model.js';
 import permissionsCommand from './permissions.js';
 import pluginsCommand from './plugins.js';
+import queueCommand from './queue.js';
 import reviewCommand from './review.js';
 import scheduleCommand from './schedule.js';
 import searchCommand from './search.js';
@@ -59,6 +60,7 @@ const slashCommands: SlashCommandRegistry = {
   tasks: tasksCommand,
   team: teamCommand,
   plugins: pluginsCommand,
+  queue: queueCommand,
   review: reviewCommand,
   schedule: scheduleCommand,
   trust: trustCommand,

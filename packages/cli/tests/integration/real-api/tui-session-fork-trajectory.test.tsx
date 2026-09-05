@@ -166,7 +166,7 @@ function resetStore(parentId: string): void {
       ...state.command,
       isProcessing: false,
       abortController: null,
-      pendingCommands: [],
+      followUpPresentations: {},
       recoveredSteeringCount: 0,
     },
     app: {
@@ -377,7 +377,7 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
           expect(childEvents.length).toBeGreaterThan(childSnapshot.length);
           expect(getState().command).toMatchObject({
             isProcessing: false,
-            pendingCommands: [],
+            followUpPresentations: {},
             abortController: null,
           });
           expect(getState().session.error).toBeNull();
