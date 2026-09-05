@@ -226,14 +226,20 @@ describe('Agent runLoop system prompt injection', () => {
       };
     });
 
-    const completed = await drainAgentStream(
-      agent.chatStream('recover', {
-        messages: [],
-        userId: 'user-1',
-        sessionId: 'session-1',
-        workspaceRoot: process.cwd(),
-      })
+    const stream = agent.chatStream('recover', {
+      messages: [],
+      userId: 'user-1',
+      sessionId: 'session-1',
+      workspaceRoot: process.cwd(),
+    });
+    const first = await stream.next();
+    expect(first.value).toMatchObject({ kind: 'provider_retry' });
+    expect(runtime.observeProviderRecovery).toHaveBeenCalledWith(
+      generation,
+      first.value
     );
+    const completed = await drainAgentStream(stream);
+    completed.events.unshift(first.value);
 
     expect(completed.events).toContainEqual({
       kind: 'provider_recovery',

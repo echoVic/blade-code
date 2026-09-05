@@ -151,8 +151,8 @@ export class Agent {
       const step = await stream.next();
       if (step.done) return step.value;
       const event = step.value;
-      yield event;
       const recovery = runtime.observeProviderRecovery(generation, event);
+      yield event;
       if (recovery) yield { kind: 'provider_recovery', recovery };
     }
   }
