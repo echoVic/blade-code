@@ -13,7 +13,10 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import type { LockOptions } from 'proper-lockfile';
+import writeFileAtomic from 'write-file-atomic';
 import { getProjectStoragePath } from '../context/storage/pathUtils.js';
+import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
 import {
   AutoMemoryConfig,
   DEFAULT_AUTO_MEMORY_CONFIG,
@@ -22,8 +25,90 @@ import {
 
 const MEMORY_DIR = 'memory';
 const INDEX_FILE = 'MEMORY.md';
+const MANAGED_TOPICS_START = '<!-- blade:auto-memory-topics:start -->';
+const MANAGED_TOPICS_END = '<!-- blade:auto-memory-topics:end -->';
+const LOCK_OPTIONS: LockOptions = {
+  realpath: false,
+  retries: {
+    retries: 5,
+    factor: 1.2,
+    minTimeout: 20,
+    maxTimeout: 100,
+    randomize: true,
+  },
+};
+
+type LockfileModule = typeof import('proper-lockfile');
+
+export interface MemoryBatchWriteResult {
+  written: number;
+  duplicate: number;
+  topics: string[];
+}
+
+const memoryLocks = new KeyedMutexRegistry<string>();
+let lockfileModule: LockfileModule | undefined;
+
+function normalizeMemoryEntry(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+function storedEntryPayload(line: string): string {
+  return normalizeMemoryEntry(line.replace(/^- \[\d{4}-\d{2}-\d{2}\] /, ''));
+}
+
+function managedTopicsBlock(topics: readonly string[]): string {
+  return [
+    MANAGED_TOPICS_START,
+    '## Auto-consolidated topics',
+    ...topics.map((topic) => `- [${topic}](${topic}.md)`),
+    MANAGED_TOPICS_END,
+  ].join('\n');
+}
+
+function updateManagedTopicsIndex(existing: string, topics: readonly string[]): string {
+  const block = managedTopicsBlock(topics);
+  const start = existing.indexOf(MANAGED_TOPICS_START);
+  const end = existing.indexOf(MANAGED_TOPICS_END, Math.max(0, start));
+  if (start >= 0 && end >= start) {
+    return (
+      existing.slice(0, start) + block + existing.slice(end + MANAGED_TOPICS_END.length)
+    );
+  }
+  if (!existing) return `${block}\n`;
+  const separator = existing.endsWith('\n') ? '\n' : '\n\n';
+  return `${existing}${separator}${block}\n`;
+}
+
+function topicsFromManagedIndex(content: string): Set<string> {
+  const start = content.indexOf(MANAGED_TOPICS_START);
+  const end = content.indexOf(MANAGED_TOPICS_END, Math.max(0, start));
+  if (start < 0 || end < start) return new Set();
+  const topics = new Set<string>();
+  const block = content.slice(start, end);
+  for (const match of block.matchAll(/^- \[([^\]\r\n]+)\]\([^\r\n]+\.md\)$/gm)) {
+    const topic = match[1];
+    if (topic) topics.add(topic);
+  }
+  return topics;
+}
+
+async function readOptionalFile(filePath: string): Promise<string> {
+  try {
+    return await fs.readFile(filePath, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+    throw error;
+  }
+}
+
+async function getLockfile(): Promise<LockfileModule> {
+  lockfileModule ??= await import('proper-lockfile');
+  return lockfileModule;
+}
 
 export class AutoMemoryManager {
+  private static readonly locks = memoryLocks;
   private readonly memoryDir: string;
   private readonly config: AutoMemoryConfig;
   private initialized = false;
@@ -155,6 +240,71 @@ export class AutoMemoryManager {
     } else {
       await fs.writeFile(indexPath, content, 'utf-8');
     }
+  }
+
+  async appendUniqueEntries(
+    entriesByTopic: ReadonlyMap<string, readonly string[]>
+  ): Promise<MemoryBatchWriteResult> {
+    await this.initialize();
+    const canonicalMemoryDir = await fs.realpath(this.memoryDir);
+
+    return AutoMemoryManager.locks.runExclusive(canonicalMemoryDir, async () => {
+      const lockfile = await getLockfile();
+      const release = await lockfile.lock(canonicalMemoryDir, LOCK_OPTIONS);
+      try {
+        const changedTopics: string[] = [];
+        let written = 0;
+        let duplicate = 0;
+        const timestamp = new Date().toISOString().slice(0, 10);
+
+        for (const topic of [...entriesByTopic.keys()].sort()) {
+          const entries = entriesByTopic.get(topic) ?? [];
+          const filePath = this.resolveTopicPath(topic);
+          const existing = await readOptionalFile(filePath);
+          const known = new Set(
+            existing.split(/\r?\n/).map(storedEntryPayload).filter(Boolean)
+          );
+          const additions: string[] = [];
+          for (const rawEntry of entries) {
+            const entry = normalizeMemoryEntry(rawEntry);
+            if (!entry || known.has(entry)) {
+              duplicate++;
+              continue;
+            }
+            known.add(entry);
+            additions.push(`- [${timestamp}] ${entry}`);
+          }
+          if (additions.length === 0) continue;
+
+          const separator = existing && !existing.endsWith('\n') ? '\n' : '';
+          await writeFileAtomic(
+            filePath,
+            `${existing}${separator}${additions.join('\n')}\n`,
+            { mode: 0o600 }
+          );
+          changedTopics.push(topic.replace(/\.md$/, ''));
+          written += additions.length;
+        }
+
+        if (changedTopics.length > 0) {
+          const indexPath = path.join(this.memoryDir, INDEX_FILE);
+          const existingIndex = await readOptionalFile(indexPath);
+          const indexedTopics = topicsFromManagedIndex(existingIndex);
+          for (const topic of changedTopics) indexedTopics.add(topic);
+          const nextIndex = updateManagedTopicsIndex(
+            existingIndex,
+            [...indexedTopics].sort()
+          );
+          if (nextIndex !== existingIndex) {
+            await writeFileAtomic(indexPath, nextIndex, { mode: 0o600 });
+          }
+        }
+
+        return { written, duplicate, topics: changedTopics.sort() };
+      } finally {
+        await release();
+      }
+    });
   }
 
   /**

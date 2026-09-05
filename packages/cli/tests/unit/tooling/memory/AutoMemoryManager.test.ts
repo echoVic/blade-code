@@ -2,11 +2,22 @@
  * AutoMemoryManager 单元测试
  */
 
+import { execFile } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { promisify } from 'node:util';
+import lockfile from 'proper-lockfile';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AutoMemoryManager } from '../../../../src/memory/AutoMemoryManager.js';
+
+vi.unmock('node:child_process');
+
+const execFileAsync = promisify(execFile);
+const concurrentWriter = path.resolve(
+  import.meta.dirname,
+  '../../../support/memoryConsolidationConcurrentWriter.ts'
+);
 
 describe('AutoMemoryManager', () => {
   let tmpDir: string;
@@ -140,6 +151,127 @@ describe('AutoMemoryManager', () => {
       const result = await manager.readTopic('MEMORY');
       expect(result).toContain('# Memory');
       expect(result).toContain('- New entry');
+    });
+  });
+
+  describe('appendUniqueEntries', () => {
+    it('normalizes and deduplicates entries while keeping topic order stable', async () => {
+      const result = await manager.appendUniqueEntries(
+        new Map([
+          ['lessons', ['Second lesson']],
+          ['debugging', ['First fix', 'First   fix', 'Another fix']],
+        ])
+      );
+
+      expect(result).toEqual({
+        written: 3,
+        duplicate: 1,
+        topics: ['debugging', 'lessons'],
+      });
+      const debugging = await manager.readTopic('debugging');
+      expect(debugging).toMatch(/^- \[\d{4}-\d{2}-\d{2}\] First fix$/m);
+      expect(debugging).toMatch(/^- \[\d{4}-\d{2}-\d{2}\] Another fix$/m);
+      expect(debugging?.match(/First fix/g)).toHaveLength(1);
+    });
+
+    it('does not rewrite files when every entry already exists', async () => {
+      await manager.appendUniqueEntries(new Map([['debugging', ['Stable fix']]]));
+      const topicPath = path.join(memDir, 'debugging.md');
+      const indexPath = path.join(memDir, 'MEMORY.md');
+      const before = {
+        topic: await fs.stat(topicPath),
+        index: await fs.stat(indexPath),
+      };
+
+      const result = await manager.appendUniqueEntries(
+        new Map([['debugging', [' Stable   fix ']]])
+      );
+      const after = {
+        topic: await fs.stat(topicPath),
+        index: await fs.stat(indexPath),
+      };
+
+      expect(result).toEqual({ written: 0, duplicate: 1, topics: [] });
+      expect(after.topic.ino).toBe(before.topic.ino);
+      expect(after.index.ino).toBe(before.index.ino);
+    });
+
+    it('maintains one managed index block without changing user-authored content', async () => {
+      const userContent = '# Project Memory\n\nKeep this paragraph exactly.\n';
+      await manager.updateIndex(userContent, 'overwrite');
+
+      await manager.appendUniqueEntries(
+        new Map([
+          ['lessons', ['One lesson']],
+          ['debugging', ['One fix']],
+        ])
+      );
+      await manager.appendUniqueEntries(new Map([['debugging', ['Second fix']]]));
+
+      const index = await manager.readTopic('MEMORY');
+      expect(index?.startsWith(userContent)).toBe(true);
+      expect(index?.match(/blade:auto-memory-topics:start/g)).toHaveLength(1);
+      expect(index?.match(/\[debugging\]\(debugging\.md\)/g)).toHaveLength(1);
+      expect(index?.match(/\[lessons\]\(lessons\.md\)/g)).toHaveLength(1);
+      expect(index?.indexOf('[debugging]')).toBeLessThan(
+        index?.indexOf('[lessons]') ?? 0
+      );
+    });
+
+    it('writes private topic and index files', async () => {
+      await manager.appendUniqueEntries(new Map([['debugging', ['Private fix']]]));
+
+      expect((await fs.stat(path.join(memDir, 'debugging.md'))).mode & 0o777).toBe(
+        0o600
+      );
+      expect((await fs.stat(path.join(memDir, 'MEMORY.md'))).mode & 0o777).toBe(0o600);
+    });
+
+    it('serializes path aliases in the current process', async () => {
+      const aliasManager = new AutoMemoryManager(
+        tmpDir,
+        undefined,
+        path.join(memDir, '.')
+      );
+
+      await Promise.all([
+        manager.appendUniqueEntries(new Map([['debugging', ['First writer']]])),
+        aliasManager.appendUniqueEntries(new Map([['debugging', ['Second writer']]])),
+      ]);
+
+      const content = await manager.readTopic('debugging');
+      expect(content).toContain('First writer');
+      expect(content).toContain('Second writer');
+    });
+
+    it('serializes writers from separate processes without losing updates', async () => {
+      await fs.mkdir(memDir, { recursive: true });
+
+      await Promise.all([
+        execFileAsync('bun', [concurrentWriter, memDir, 'debugging', 'Child first']),
+        execFileAsync('bun', [concurrentWriter, memDir, 'debugging', 'Child second']),
+      ]);
+
+      const content = await manager.readTopic('debugging');
+      const index = await manager.readTopic('MEMORY');
+      expect(content).toContain('Child first');
+      expect(content).toContain('Child second');
+      expect(index?.match(/\[debugging\]\(debugging\.md\)/g)).toHaveLength(1);
+    });
+
+    it('fails within a bounded interval when another process owns the lock', async () => {
+      await fs.mkdir(memDir, { recursive: true });
+      const release = await lockfile.lock(memDir, { realpath: false });
+      const startedAt = Date.now();
+
+      try {
+        await expect(
+          manager.appendUniqueEntries(new Map([['debugging', ['Blocked write']]]))
+        ).rejects.toMatchObject({ code: 'ELOCKED' });
+        expect(Date.now() - startedAt).toBeLessThan(5_000);
+      } finally {
+        await release();
+      }
     });
   });
 
