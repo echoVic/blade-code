@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.139] - 2026-09-05
+
+### Added
+- Added process-wide, failure-domain-scoped cooldowns that open the existing Provider circuit immediately after the first authoritative `429` with a valid positive `Retry-After` directive.
+- Added rate-limit-specific TUI and Web recovery wording while preserving the shared Runtime projection, Web reload hydration, ACP metadata, and Headless JSONL contracts.
+
+### Fixed
+- Prevented concurrent Sessions on the same Provider channel from issuing additional physical requests during a server-declared cooldown, while retaining one bounded HalfOpen probe and the existing retry deadline.
+- Kept missing, zero, negative, non-finite, non-429, quota, billing, cancellation, and timeout cases on their existing classification and circuit policies.
+
+### Tests
+- Added deterministic local HTTP coverage for request suppression and three consecutive production-surface runs across Headless, real ACP stdio, raw PTY TUI, and Chromium Web, including Web reload, tool activity, terminal clear, and privacy checks.
+- Qualified `deepseek-v4-flash` and `deepseek-v4-pro` through an eight-cell real-API matrix with framework retries disabled, one injected `429`, zero early same-domain traffic, one recovery probe, exact Edit/Bash artifacts, bounded cleanup, and no credential or private-body disclosure.
+
 ## [0.10.138] - 2026-09-05
 
 ### Added

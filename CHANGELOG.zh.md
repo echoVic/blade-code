@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.139] - 2026-09-05
+
+### 新增
+- 新增进程级、按 failure domain 隔离的共享冷却：首次收到带有效正数 `Retry-After` 的权威 `429` 后，立即打开既有 Provider circuit。
+- 新增限流专用 TUI 与 Web 恢复文案，同时保持 Runtime 统一投影、Web reload 恢复、ACP metadata 与 Headless JSONL 契约不变。
+
+### 修复
+- 阻止相同 Provider channel 的并发 Session 在服务端声明的冷却期内继续发起物理请求，同时保留唯一、有界的 HalfOpen probe 与既有 retry deadline。
+- 缺失、零、负数、非有限、非 429、quota、billing、取消与 timeout 情况继续遵循原有分类和熔断策略。
+
+### 测试
+- 新增本地 HTTP 请求抑制覆盖，并连续三次验证 Headless、真实 ACP stdio、raw PTY TUI 与 Chromium Web production 表面，包含 Web reload、工具活动、终态 clear 与隐私检查。
+- 在关闭 framework retry 的条件下，使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 完成八格真实 API 矩阵，验证单次注入 429、同域零提前流量、唯一恢复 probe、精确 Edit/Bash 产物、有界清理以及零 credential/private-body 泄漏。
+
 ## [0.10.138] - 2026-09-05
 
 ### 新增
