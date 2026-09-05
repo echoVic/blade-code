@@ -32,6 +32,7 @@ import { ProviderRecoveryBanner } from './ProviderRecoveryBanner';
 import { SideConversationPanel } from './SideConversationPanel';
 import { StatusBar } from './StatusBar';
 import { TeamPanel } from './TeamPanel';
+import { TurnActivityStrip } from './TurnActivityStrip';
 
 interface RecoveryDraft {
   revision: number;
@@ -137,6 +138,7 @@ export function ChatView() {
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const isStopping = useSessionStore((state) => state.isStopping);
   const providerRecovery = useSessionStore((state) => state.providerRecovery);
+  const turnActivity = useSessionStore((state) => state.turnActivity);
   const sessionEventConnectionState = useSessionStore(
     (state) => state.sessionEventConnectionState
   );
@@ -402,6 +404,15 @@ export function ChatView() {
           recovery={historyOnly ? null : providerRecovery}
           stopping={isStopping}
           onStop={handleAbort}
+        />
+        <TurnActivityStrip
+          activity={
+            historyOnly ||
+            providerRecovery?.snapshot ||
+            currentSession?.pendingInteraction
+              ? null
+              : turnActivity
+          }
         />
         <ChatInput
           key={composerDraftKey}

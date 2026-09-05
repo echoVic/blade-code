@@ -646,6 +646,15 @@ export const en = {
     'Candidate {candidate}/{candidateCount} · from {from}',
   'chat.providerRecovery.fallbackCompact': 'Provider switch · {to}',
   'chat.providerRecovery.stop': 'Stop',
+  'chat.turnActivity.starting': 'Starting task',
+  'chat.turnActivity.thinking': 'Thinking',
+  'chat.turnActivity.responding': 'Writing response',
+  'chat.turnActivity.executingTools': 'Running {count} tools',
+  'chat.turnActivity.compacting': 'Compacting context',
+  'chat.turnActivity.continuing': 'Advancing to the next step',
+  'chat.turnActivity.toolCount': '{completed}/{started} tools',
+  'chat.turnActivity.turn': 'turn {turn}',
+  'chat.turnActivity.turnBounded': 'turn {turn}/{maxTurns}',
 
   // Chat · Code review report
   'chat.review.title': 'Code Review',

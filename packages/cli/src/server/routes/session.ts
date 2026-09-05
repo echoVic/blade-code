@@ -4965,6 +4965,7 @@ export const createSessionRouteController = (): SessionRouteController => {
                   recovered: runtime?.getRecoveredSteeringCount() ?? 0,
                   followUpQueue,
                   providerRecovery: runtime?.getProviderRecoveryProjection() ?? null,
+                  turnActivity: runtime?.getTurnActivityProjection() ?? null,
                 },
               }),
             });
@@ -6187,6 +6188,10 @@ async function executeRunAsync(
           });
           break;
         case 'provider_recovery':
+          // SessionRuntime already publishes the authoritative projection on the
+          // Session Bus. Do not emit a duplicate from this direct consumer.
+          break;
+        case 'turn_activity':
           // SessionRuntime already publishes the authoritative projection on the
           // Session Bus. Do not emit a duplicate from this direct consumer.
           break;

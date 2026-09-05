@@ -254,6 +254,23 @@ const runtimeState = vi.hoisted(() => ({
         retry: { attempt: 1, maxRetries: 12, delayMs: 2_000 },
       },
     })),
+    getTurnActivityProjection: vi.fn(() => ({
+      version: 1 as const,
+      generation: 'turn-activity-generation',
+      revision: 2,
+      snapshot: {
+        phase: 'executing_tools' as const,
+        startedAt: 1_000,
+        updatedAt: 2_000,
+        turn: 1,
+        maxTurns: 20,
+        outputStarted: true,
+        toolCallsStarted: 1,
+        toolCallsCompleted: 0,
+        activeTools: [{ name: 'Bash', kind: 'execute' as const, startedAt: 1_500 }],
+        activeToolOverflow: 0,
+      },
+    })),
     mutateFollowUpQueue: vi.fn(async () => ({
       snapshot: makeFollowUpQueueSnapshot({
         version: 'b'.repeat(64),
@@ -3133,6 +3150,12 @@ describe('SessionRoutes runtime reuse', () => {
           generation: 'provider-recovery-generation',
           revision: 1,
           snapshot: { activity: 'retry_wait', reason: 'rate_limit' },
+        },
+        turnActivity: {
+          version: 1,
+          generation: 'turn-activity-generation',
+          revision: 2,
+          snapshot: { phase: 'executing_tools', activeTools: [{ name: 'Bash' }] },
         },
       },
     });

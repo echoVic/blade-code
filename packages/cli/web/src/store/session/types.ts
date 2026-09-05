@@ -2,14 +2,15 @@ import type {
   FollowUpQueueErrorCode,
   FollowUpQueueMutation,
   FollowUpQueueSnapshot,
-  ProviderRecoveryProjection,
   McpElicitationDetails,
+  ProviderRecoveryProjection,
   SessionLocatorV2,
   SessionRef,
   SessionSurfaceCapabilities,
   SessionSurfaceErrorCode,
   SessionSurfaceMessage,
   SessionSurfaceSummary,
+  TurnActivityProjection,
 } from '@api/schemas';
 import type { StateCreator } from 'zustand';
 import type {
@@ -54,6 +55,7 @@ export type {
   TaskEventConnectionState,
   TaskUpdateInput,
   TeamSnapshot,
+  TurnActivityProjection,
   WorkspaceInfo,
 };
 
@@ -542,6 +544,7 @@ export interface StreamingSlice {
   pendingResume: PendingResumeInfo | null;
   providerStall: ProviderStallInfo | null;
   providerRecovery: ProviderRecoveryProjection | null;
+  turnActivity: TurnActivityProjection | null;
   actionStationarity: ActionStationarityInfo | null;
   turnRecovery: TurnRecoveryInfo | null;
   sessionEventConnectionState: TaskEventConnectionState | 'idle';

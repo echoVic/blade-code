@@ -53,6 +53,11 @@ vi.mock('../../../src/components/chat/StatusBar', () => ({
   StatusBar: () => <div data-testid="status-bar">Status details</div>,
 }));
 
+vi.mock('../../../src/components/chat/TurnActivityStrip', () => ({
+  TurnActivityStrip: ({ activity }: { activity: unknown }) =>
+    activity ? <div data-testid="turn-activity-strip" /> : null,
+}));
+
 import { ChatView } from '../../../src/components/chat/ChatView';
 import { setLocale } from '../../../src/i18n';
 import { useAppStore } from '../../../src/store/AppStore';
@@ -106,9 +111,52 @@ describe('ChatView session event recovery', () => {
       followUpQueue: null,
       followUpQueueMutation: { pending: false, supersededVersions: [] },
       providerRecovery: null,
+      turnActivity: null,
       mutateFollowUpQueue,
       refreshFollowUpQueue,
     });
+  });
+
+  it('shows active turn activity only when specialized recovery is absent', async () => {
+    useSessionStore.setState({
+      sessionEventConnectionState: 'connected',
+      turnActivity: {
+        version: 1,
+        generation: 'activity-1',
+        revision: 1,
+        snapshot: {
+          phase: 'thinking',
+          startedAt: 1_000,
+          updatedAt: 2_000,
+          turn: 1,
+          maxTurns: 20,
+          outputStarted: false,
+          toolCallsStarted: 0,
+          toolCallsCompleted: 0,
+          activeTools: [],
+          activeToolOverflow: 0,
+        },
+      },
+    });
+    await act(async () => root.render(<ChatView />));
+    expect(container.querySelector('[data-testid="turn-activity-strip"]')).toBeTruthy();
+
+    act(() => {
+      useSessionStore.setState({
+        providerRecovery: {
+          version: 1,
+          generation: 'recovery-1',
+          revision: 1,
+          snapshot: {
+            activity: 'retry_attempt',
+            reason: 'transport',
+            updatedAt: 2_000,
+            retry: { attempt: 1, maxRetries: 2 },
+          },
+        },
+      });
+    });
+    expect(container.querySelector('[data-testid="turn-activity-strip"]')).toBeNull();
   });
 
   afterEach(() => {

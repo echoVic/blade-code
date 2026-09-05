@@ -4,6 +4,7 @@ import {
   type Goal,
   type McpElicitationDetails,
   ProviderRecoveryProjectionSchema,
+  TurnActivityProjectionSchema,
 } from '@api/schemas';
 import { taskFailureCode } from '@/lib/taskFailure';
 import type { Message as ServiceMessage, StreamEvent } from '@/services';
@@ -1951,6 +1952,28 @@ const handleProviderRecovery: EventHandler = (props, get, set) => {
   set({ providerRecovery: parsed.data });
 };
 
+const handleTurnActivity: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  if (props.activity === null && props.authoritative === true) {
+    set({ turnActivity: null });
+    return;
+  }
+  const parsed = TurnActivityProjectionSchema.safeParse(props.activity);
+  if (!parsed.success) return;
+  const current = get().turnActivity;
+  if (props.authoritative !== true && !current && parsed.data.revision !== 0) return;
+  if (
+    props.authoritative !== true &&
+    current &&
+    ((current.generation === parsed.data.generation &&
+      current.revision >= parsed.data.revision) ||
+      (current.generation !== parsed.data.generation && parsed.data.revision !== 0))
+  ) {
+    return;
+  }
+  set({ turnActivity: parsed.data });
+};
+
 const isFiniteNonnegative = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
 
@@ -2243,6 +2266,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       pendingResume: null,
       providerStall: null,
       providerRecovery: null,
+      turnActivity: null,
       actionStationarity: null,
       currentRunId: null,
       pendingSteeringCount: 0,
@@ -2284,6 +2308,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       pendingResume: null,
       providerStall: null,
       providerRecovery: null,
+      turnActivity: null,
       actionStationarity: null,
       currentRunId: null,
       pendingSteeringCount: 0,
@@ -2478,6 +2503,7 @@ const handleSessionRewound: EventHandler = (props, get, set) => {
     pendingResume: null,
     providerStall: null,
     providerRecovery: null,
+    turnActivity: null,
     actionStationarity: null,
     currentRunId: null,
     pendingSteeringCount: 0,
@@ -2601,6 +2627,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'provider.circuit': handleProviderCircuit,
   'provider.retry': handleProviderRetry,
   'provider.recovery': handleProviderRecovery,
+  'turn.activity': handleTurnActivity,
   'pending.resume': handlePendingResume,
   'provider.stall': handleProviderStall,
   'action.stationarity': handleActionStationarity,

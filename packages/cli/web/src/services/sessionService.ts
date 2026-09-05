@@ -1127,6 +1127,15 @@ export const sessionService = {
                   authoritative: true,
                 },
               });
+              onEvent({
+                type: 'turn.activity',
+                properties: {
+                  sessionId: ref.sessionId,
+                  projectPath: ref.projectPath,
+                  activity: event.properties.turnActivity ?? null,
+                  authoritative: true,
+                },
+              });
               markReady();
             }
             return;

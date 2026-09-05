@@ -3,6 +3,7 @@ import type {
   ProviderRecoveryProjection,
   SessionLocatorV2,
   SessionRef,
+  TurnActivityProjection,
 } from '@api/schemas';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
@@ -83,6 +84,29 @@ function createProviderRecovery(
   };
 }
 
+function createTurnActivity(
+  generation: string,
+  revision: number
+): TurnActivityProjection {
+  return {
+    version: 1,
+    generation,
+    revision,
+    snapshot: {
+      phase: 'executing_tools',
+      startedAt: 1_000,
+      updatedAt: 2_000,
+      turn: 1,
+      maxTurns: 20,
+      outputStarted: true,
+      toolCallsStarted: 1,
+      toolCallsCompleted: 0,
+      activeTools: [{ name: 'Bash', kind: 'execute', startedAt: 1_500 }],
+      activeToolOverflow: 0,
+    },
+  };
+}
+
 function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreState {
   const messages: Message[] = overrides.messages ?? [
     {
@@ -138,6 +162,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     pendingResume: null,
     providerStall: null,
     providerRecovery: null,
+    turnActivity: null,
     turnRecovery: overrides.turnRecovery ?? null,
     sessionEventConnectionState: 'idle',
     currentRunId: null,
@@ -2237,6 +2262,72 @@ describe('eventHandlers', () => {
       },
     });
     expect(state.providerRecovery).toBeNull();
+  });
+
+  test('fences live turn activity and lets reconnect replace or clear it', () => {
+    const state = createState();
+    const set = vi.fn((partial) => {
+      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'turn.activity',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        activity: createTurnActivity('activity-1', 0),
+      },
+    });
+    dispatch({
+      type: 'turn.activity',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        activity: createTurnActivity('activity-1', 2),
+      },
+    });
+    dispatch({
+      type: 'turn.activity',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        activity: createTurnActivity('activity-1', 1),
+      },
+    });
+    expect(state.turnActivity).toEqual(createTurnActivity('activity-1', 2));
+
+    dispatch({
+      type: 'turn.activity',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        activity: createTurnActivity('late-generation', 7),
+      },
+    });
+    expect(state.turnActivity).toEqual(createTurnActivity('activity-1', 2));
+
+    dispatch({
+      type: 'turn.activity',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        activity: createTurnActivity('activity-2', 0),
+        authoritative: true,
+      },
+    });
+    expect(state.turnActivity?.generation).toBe('activity-2');
+
+    dispatch({
+      type: 'turn.activity',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        activity: null,
+        authoritative: true,
+      },
+    });
+    expect(state.turnActivity).toBeNull();
   });
 
   test('rejects malformed Provider recovery projections', () => {

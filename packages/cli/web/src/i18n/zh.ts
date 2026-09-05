@@ -603,6 +603,15 @@ export const zh: Dict = {
     '候选 {candidate}/{candidateCount} · 来源 {from}',
   'chat.providerRecovery.fallbackCompact': 'Provider 切换 · {to}',
   'chat.providerRecovery.stop': '停止',
+  'chat.turnActivity.starting': '正在启动任务',
+  'chat.turnActivity.thinking': '正在思考',
+  'chat.turnActivity.responding': '正在生成回复',
+  'chat.turnActivity.executingTools': '正在执行 {count} 个工具',
+  'chat.turnActivity.compacting': '正在压缩上下文',
+  'chat.turnActivity.continuing': '正在推进下一步',
+  'chat.turnActivity.toolCount': '工具 {completed}/{started}',
+  'chat.turnActivity.turn': '回合 {turn}',
+  'chat.turnActivity.turnBounded': '回合 {turn}/{maxTurns}',
 
   // 对话 · 代码评审报告
   'chat.review.title': '代码评审',
