@@ -1,4 +1,5 @@
 import type {
+  FollowUpQueueSnapshot,
   Goal,
   Session,
   SessionLocatorV2,
@@ -26,6 +27,8 @@ import type {
 } from '../../../src/store/session/types';
 
 vi.mock('../../../src/services', () => ({
+  isFollowUpQueueMutationHttpError: (error: unknown) =>
+    error instanceof Error && error.name === 'FollowUpQueueMutationHttpError',
   sessionService: {
     listSessions: vi.fn(),
     listSessionPage: vi.fn(),
@@ -40,6 +43,8 @@ vi.mock('../../../src/services', () => ({
     getSession: vi.fn(),
     getMessages: vi.fn(),
     getGoal: vi.fn(),
+    getFollowUpQueue: vi.fn(),
+    mutateFollowUpQueue: vi.fn(),
     createGoal: vi.fn(),
     updateGoal: vi.fn(),
     clearGoal: vi.fn(),
@@ -126,6 +131,33 @@ function createGoal(overrides: Partial<Goal> = {}): Goal {
     createdAt: '2026-08-05T00:00:00.000Z',
     updatedAt: '2026-08-05T00:00:00.000Z',
     ...overrides,
+  };
+}
+
+function createFollowUpQueue(
+  version = 'a'.repeat(64),
+  preview = 'Queued follow-up'
+): FollowUpQueueSnapshot {
+  return {
+    version,
+    pending: 1,
+    mutable: 1,
+    locked: 0,
+    internal: 0,
+    items: [
+      {
+        id: 'queued-message',
+        position: 0,
+        queuedAt: '2026-09-05T00:00:00.000Z',
+        kind: 'user',
+        state: 'pending',
+        delivery: 'current_turn',
+        mutable: true,
+        preview,
+        previewTruncated: false,
+        attachmentCount: 0,
+      },
+    ],
   };
 }
 
@@ -268,6 +300,9 @@ describe('sessionSlice multimodal sendMessage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(sessionService.getGoal).mockResolvedValue(null);
+    vi.mocked(sessionService.getFollowUpQueue).mockResolvedValue(
+      createFollowUpQueue('0'.repeat(64), '')
+    );
     vi.mocked(teamService.list).mockResolvedValue([]);
     useSettingsStore.setState({ agentTeamsEnabled: true });
 
@@ -311,6 +346,8 @@ describe('sessionSlice multimodal sendMessage', () => {
       error: null,
       errorContext: null,
       sideConversation: null,
+      followUpQueue: null,
+      followUpQueueMutation: { pending: false, supersededVersions: [] },
       unreadTaskKeys: [],
       taskTerminalReadLedger: { version: 1, entries: [] },
       catalogOverlayRevision: 0,
@@ -962,6 +999,7 @@ describe('sessionSlice multimodal sendMessage', () => {
   it('keeps the active SSE subscription and records queued steering depth', async () => {
     useConfigStore.setState({ currentModelId: 'model-next-turn' });
     const subscribeToEvents = vi.fn();
+    const previousQueue = createFollowUpQueue('0'.repeat(64), 'Old queue');
     useSessionStore.setState({
       currentSessionId: 'session-active',
       currentSessionRef: createRef('session-active', '/tmp/project-active'),
@@ -969,12 +1007,15 @@ describe('sessionSlice multimodal sendMessage', () => {
       isStreaming: true,
       currentRunId: 'run-active',
       pendingSteeringCount: 0,
+      followUpQueue: previousQueue,
+      followUpQueueMutation: { pending: false, supersededVersions: [] },
       subscribeToEvents,
     });
     vi.mocked(sessionService.sendMessage).mockResolvedValue({
       runId: 'run-active',
       status: 'steering_queued',
       queued: 2,
+      followUpQueue: createFollowUpQueue(),
     });
 
     await useSessionStore.getState().sendMessage({
@@ -991,14 +1032,26 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState()).toMatchObject({
       currentRunId: 'run-active',
       isStreaming: true,
-      pendingSteeringCount: 2,
+      pendingSteeringCount: 1,
       pendingInputDelivery: 'current_turn',
+      followUpQueue: createFollowUpQueue(),
     });
+    expect(useSessionStore.getState().messages).toEqual([]);
+    useSessionStore.getState().handleEvent({
+      type: 'follow_up.queue.changed',
+      properties: {
+        sessionId: 'session-active',
+        projectPath: '/tmp/project-active',
+        queue: previousQueue,
+      },
+    });
+    expect(useSessionStore.getState().followUpQueue).toEqual(createFollowUpQueue());
 
     vi.mocked(sessionService.sendMessage).mockResolvedValue({
       runId: 'run-active',
       status: 'follow_up_queued',
       queued: 1,
+      followUpQueue: createFollowUpQueue('b'.repeat(64), 'Run this next'),
     });
     await useSessionStore.getState().sendMessage({
       content: 'Run this after the current answer.',
@@ -1006,7 +1059,146 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState()).toMatchObject({
       pendingSteeringCount: 1,
       pendingInputDelivery: 'next_turn',
+      followUpQueue: createFollowUpQueue('b'.repeat(64), 'Run this next'),
     });
+    expect(useSessionStore.getState().messages).toEqual([]);
+  });
+
+  it('loads and resets the queue with exact Session navigation', async () => {
+    const first = createSession({ sessionId: 'queue-a', projectPath: '/tmp/a' });
+    const second = createSession({ sessionId: 'queue-b', projectPath: '/tmp/b' });
+    const snapshot = createFollowUpQueue('c'.repeat(64));
+    vi.mocked(sessionService.getMessages).mockResolvedValue([]);
+    vi.mocked(sessionService.getSession).mockImplementation(async (ref) =>
+      ref.sessionId === first.sessionId ? first : second
+    );
+    useSessionStore.setState({
+      prepareEventSubscription: vi.fn(
+        async (_ref: SessionRef, onEvent?: (event: StreamEvent) => void) => {
+          onEvent?.({
+            type: 'follow_up.queue.changed',
+            properties: {
+              sessionId: first.sessionId,
+              projectPath: first.projectPath,
+              queue: snapshot,
+            },
+          });
+          return () => undefined;
+        }
+      ),
+    });
+
+    await useSessionStore.getState().selectSession(createRef('queue-a', '/tmp/a'));
+    expect(useSessionStore.getState().followUpQueue).toEqual(snapshot);
+
+    const nextQueue = createFollowUpQueue('d'.repeat(64), 'Second queue');
+    useSessionStore.setState({
+      prepareEventSubscription: vi.fn(
+        async (_ref: SessionRef, onEvent?: (event: StreamEvent) => void) => {
+          onEvent?.({
+            type: 'follow_up.queue.changed',
+            properties: {
+              sessionId: second.sessionId,
+              projectPath: second.projectPath,
+              queue: nextQueue,
+            },
+          });
+          return () => undefined;
+        }
+      ),
+    });
+    await useSessionStore.getState().selectSession(createRef('queue-b', '/tmp/b'));
+    expect(useSessionStore.getState().followUpQueue).toEqual(nextQueue);
+    expect(useSessionStore.getState().followUpQueueMutation).toEqual({
+      pending: false,
+      supersededVersions: [],
+    });
+  });
+
+  it('installs a stale-conflict snapshot without retrying the mutation', async () => {
+    const currentRef = createRef('queue-conflict', '/tmp/queue-conflict');
+    const before = createFollowUpQueue('a'.repeat(64));
+    const latest = createFollowUpQueue('b'.repeat(64), 'Server order');
+    useSessionStore.setState({
+      currentSessionId: currentRef.sessionId,
+      currentSessionRef: currentRef,
+      isTemporarySession: false,
+      followUpQueue: before,
+    });
+    vi.mocked(sessionService.mutateFollowUpQueue).mockRejectedValue(
+      Object.assign(new Error('Queue changed'), {
+        name: 'FollowUpQueueMutationHttpError',
+        code: 'revision_conflict',
+        snapshot: latest,
+      })
+    );
+
+    await expect(
+      useSessionStore.getState().mutateFollowUpQueue({
+        type: 'remove',
+        messageId: 'queued-message',
+      })
+    ).resolves.toBe(false);
+
+    expect(sessionService.mutateFollowUpQueue).toHaveBeenCalledOnce();
+    expect(useSessionStore.getState()).toMatchObject({
+      followUpQueue: latest,
+      followUpQueueMutation: {
+        pending: false,
+        errorCode: 'revision_conflict',
+      },
+    });
+  });
+
+  it('keeps a newer SSE queue when an older mutation response arrives', async () => {
+    const currentRef = createRef('queue-race', '/tmp/queue-race');
+    const before = createFollowUpQueue('a'.repeat(64), 'Before');
+    const responseQueue = createFollowUpQueue('b'.repeat(64), 'HTTP result');
+    const newerQueue = createFollowUpQueue('c'.repeat(64), 'SSE result');
+    const mutation = deferred<FollowUpQueueSnapshot>();
+    useSessionStore.setState({
+      currentSessionId: currentRef.sessionId,
+      currentSessionRef: currentRef,
+      isTemporarySession: false,
+      followUpQueue: before,
+      followUpQueueMutation: { pending: false, supersededVersions: [] },
+    });
+    vi.mocked(sessionService.mutateFollowUpQueue).mockReturnValue(mutation.promise);
+
+    const pending = useSessionStore.getState().mutateFollowUpQueue({
+      type: 'remove',
+      messageId: 'queued-message',
+    });
+    useSessionStore.setState({ followUpQueue: newerQueue });
+    mutation.resolve(responseQueue);
+    await pending;
+
+    expect(useSessionStore.getState().followUpQueue).toEqual(newerQueue);
+    expect(
+      useSessionStore.getState().followUpQueueMutation.supersededVersions
+    ).toContain(responseQueue.version);
+  });
+
+  it('ignores a queue refresh that completes after navigation changes', async () => {
+    const firstRef = createRef('queue-refresh-a', '/tmp/a');
+    const secondRef = createRef('queue-refresh-b', '/tmp/b');
+    const before = createFollowUpQueue('a'.repeat(64), 'Before');
+    const stale = createFollowUpQueue('b'.repeat(64), 'Stale refresh');
+    const refresh = deferred<FollowUpQueueSnapshot>();
+    useSessionStore.setState({
+      currentSessionId: firstRef.sessionId,
+      currentSessionRef: firstRef,
+      isTemporarySession: false,
+      followUpQueue: before,
+    });
+    vi.mocked(sessionService.getFollowUpQueue).mockReturnValue(refresh.promise);
+
+    const pending = useSessionStore.getState().refreshFollowUpQueue();
+    useSessionStore.getState().setCurrentSession(secondRef);
+    refresh.resolve(stale);
+    await pending;
+
+    expect(useSessionStore.getState().followUpQueue).toBeNull();
   });
 
   it('rolls back rejected steering without stopping the active run', async () => {
@@ -1959,6 +2151,149 @@ describe('sessionSlice multimodal sendMessage', () => {
     >('../../../src/services/sessionService');
 
     await expect(actualSessionService.listSessions()).rejects.toThrow();
+  });
+
+  it('strictly parses follow-up queue transport and preserves typed conflicts', async () => {
+    const ref = createRef('queue-transport', '/tmp/queue-transport');
+    const snapshot = createFollowUpQueue('f'.repeat(64));
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(snapshot), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: { code: 'revision_conflict', message: 'Queue changed' },
+            snapshot,
+          }),
+          { status: 409, headers: { 'content-type': 'application/json' } }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ...snapshot, leaked: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ snapshot: { ...snapshot, leaked: true } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const actual = await vi.importActual<
+      typeof import('../../../src/services/sessionService')
+    >('../../../src/services/sessionService');
+
+    await expect(actual.sessionService.getFollowUpQueue(ref)).resolves.toEqual(
+      snapshot
+    );
+    await expect(
+      actual.sessionService.mutateFollowUpQueue(ref, {
+        expectedVersion: 'a'.repeat(64),
+        operation: { type: 'remove', messageId: 'queued-message' },
+      })
+    ).rejects.toMatchObject({
+      name: 'FollowUpQueueMutationHttpError',
+      status: 409,
+      code: 'revision_conflict',
+      snapshot,
+    });
+    await expect(actual.sessionService.getFollowUpQueue(ref)).rejects.toThrow();
+    await expect(
+      actual.sessionService.mutateFollowUpQueue(ref, {
+        expectedVersion: snapshot.version,
+        operation: { type: 'remove', messageId: 'queued-message' },
+      })
+    ).rejects.toThrow();
+    expect(fetchMock.mock.calls[1]).toEqual([
+      '/sessions/queue-transport/follow-ups/mutate?projectPath=%2Ftmp%2Fqueue-transport',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expectedVersion: 'a'.repeat(64),
+          operation: { type: 'remove', messageId: 'queued-message' },
+        }),
+      },
+    ]);
+  });
+
+  it('projects the initial SSE follow-up snapshot before readiness', async () => {
+    class QueueEventSource {
+      static instance: QueueEventSource | undefined;
+      static readonly CLOSED = 2;
+
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readyState = 0;
+
+      constructor(readonly url: string) {
+        QueueEventSource.instance = this;
+      }
+
+      close(): void {
+        this.readyState = QueueEventSource.CLOSED;
+      }
+    }
+    const previousDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'EventSource'
+    );
+    Object.defineProperty(globalThis, 'EventSource', {
+      configurable: true,
+      writable: true,
+      value: QueueEventSource,
+    });
+    const onEvent = vi.fn();
+    const snapshot = createFollowUpQueue('e'.repeat(64));
+    const actual = await vi.importActual<
+      typeof import('../../../src/services/sessionService')
+    >('../../../src/services/sessionService');
+
+    try {
+      const ready = actual.sessionService.openEventSubscription(
+        createRef('queue-connected', '/tmp/queue-connected'),
+        onEvent
+      );
+      QueueEventSource.instance?.onmessage?.({
+        data: JSON.stringify({
+          type: 'connected',
+          properties: {
+            sessionId: 'queue-connected',
+            projectPath: '/tmp/queue-connected',
+            status: 'running',
+            followUpQueue: snapshot,
+          },
+        }),
+      });
+      const unsubscribe = await ready;
+      expect(onEvent).toHaveBeenNthCalledWith(1, {
+        type: 'session.status',
+        properties: expect.objectContaining({ status: 'running' }),
+      });
+      expect(onEvent).toHaveBeenNthCalledWith(2, {
+        type: 'follow_up.queue.changed',
+        properties: {
+          sessionId: 'queue-connected',
+          projectPath: '/tmp/queue-connected',
+          queue: snapshot,
+        },
+      });
+      unsubscribe();
+    } finally {
+      if (previousDescriptor) {
+        Object.defineProperty(globalThis, 'EventSource', previousDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, 'EventSource');
+      }
+    }
   });
 
   it('calls all V2 surface routes with opaque locators and validates responses', async () => {

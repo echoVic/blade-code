@@ -24,5 +24,9 @@ export type {
   TaskUpdateInput,
   WorkspaceInfo,
 } from './sessionService';
-export { sessionService } from './sessionService';
+export {
+  FollowUpQueueMutationHttpError,
+  isFollowUpQueueMutationHttpError,
+  sessionService,
+} from './sessionService';
 export type { TeamSnapshot } from './teamService';

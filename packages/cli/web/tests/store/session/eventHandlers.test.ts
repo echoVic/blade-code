@@ -1,4 +1,4 @@
-import type { SessionLocatorV2, SessionRef } from '@api/schemas';
+import type { FollowUpQueueSnapshot, SessionLocatorV2, SessionRef } from '@api/schemas';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import type { Message as ServiceMessage, StreamEvent } from '../../../src/services';
@@ -33,6 +33,30 @@ function createEmptyAgentContent() {
     subagents: [],
     confirmation: null,
     question: null,
+  };
+}
+
+function createFollowUpQueue(version = 'a'.repeat(64)): FollowUpQueueSnapshot {
+  return {
+    version,
+    pending: 1,
+    mutable: 1,
+    locked: 0,
+    internal: 0,
+    items: [
+      {
+        id: 'queued-message',
+        position: 0,
+        queuedAt: '2026-09-05T00:00:00.000Z',
+        kind: 'user',
+        state: 'pending',
+        delivery: 'current_turn',
+        mutable: true,
+        preview: 'Queued follow-up',
+        previewTruncated: false,
+        attachmentCount: 0,
+      },
+    ],
   };
 }
 
@@ -78,6 +102,8 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     errorContext: null,
     goal: null,
     sideConversation: null,
+    followUpQueue: null,
+    followUpQueueMutation: { pending: false, supersededVersions: [] },
     teams: [],
     messages,
     isStreaming: false,
@@ -152,6 +178,8 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     resumeGoal: vi.fn(async () => undefined),
     editGoal: vi.fn(async () => undefined),
     clearGoal: vi.fn(async () => undefined),
+    refreshFollowUpQueue: vi.fn(async () => undefined),
+    mutateFollowUpQueue: vi.fn(async () => true),
     setMessages: vi.fn(),
     addMessage: vi.fn((message: Message) => {
       state.messages.push(message);
@@ -2688,6 +2716,65 @@ describe('eventHandlers', () => {
       pendingInputDelivery: null,
       recoveredSteeringCount: 1,
     });
+  });
+
+  test('replaces the follow-up queue from connected and mutation events', () => {
+    const state = createState();
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+    const connectedQueue = createFollowUpQueue('a'.repeat(64));
+    const changedQueue = createFollowUpQueue('b'.repeat(64));
+
+    dispatch({
+      type: 'session.status',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        status: 'running',
+        followUpQueue: connectedQueue,
+      },
+    });
+    expect(state.followUpQueue).toEqual(connectedQueue);
+
+    dispatch({
+      type: 'follow_up.queue.changed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        queue: changedQueue,
+      },
+    });
+    expect(state.followUpQueue).toEqual(changedQueue);
+
+    dispatch({
+      type: 'follow_up.queue.changed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        queue: connectedQueue,
+      },
+    });
+    expect(state.followUpQueue).toEqual(changedQueue);
+
+    const superseded = createFollowUpQueue('c'.repeat(64));
+    state.followUpQueueMutation.supersededVersions.push(superseded.version);
+    dispatch({
+      type: 'follow_up.queue.changed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        queue: superseded,
+      },
+    });
+    expect(state.followUpQueue).toEqual(changedQueue);
   });
 
   test('restores the complete active run snapshot from session status', () => {

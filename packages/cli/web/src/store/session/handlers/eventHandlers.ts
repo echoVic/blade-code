@@ -1,4 +1,9 @@
-import type { Goal, McpElicitationDetails } from '@api/schemas';
+import {
+  type FollowUpQueueSnapshot,
+  FollowUpQueueSnapshotSchema,
+  type Goal,
+  type McpElicitationDetails,
+} from '@api/schemas';
 import { taskFailureCode } from '@/lib/taskFailure';
 import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import { useAppStore } from '@/store/AppStore';
@@ -55,6 +60,39 @@ type EventHandler = (
   get: GetState,
   set: SetState
 ) => void;
+
+function followUpQueueFrom(value: unknown): FollowUpQueueSnapshot | undefined {
+  const parsed = FollowUpQueueSnapshotSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function applyFollowUpQueueSnapshot(
+  snapshot: FollowUpQueueSnapshot,
+  get: GetState,
+  set: SetState
+): void {
+  const state = get();
+  const mutation = state.followUpQueueMutation;
+  if (mutation.supersededVersions.includes(snapshot.version)) return;
+  const supersededVersions = state.followUpQueue
+    ? [...mutation.supersededVersions, state.followUpQueue.version].slice(-16)
+    : mutation.supersededVersions;
+  set({
+    followUpQueue: snapshot,
+    followUpQueueMutation: {
+      pending: mutation.pending,
+      ...(mutation.messageId ? { messageId: mutation.messageId } : {}),
+      supersededVersions,
+    },
+    pendingSteeringCount: snapshot.pending,
+    pendingInputDelivery:
+      snapshot.pending > 0
+        ? snapshot.items[0]?.delivery === 'current_turn'
+          ? 'current_turn'
+          : 'next_turn'
+        : null,
+  });
+}
 
 function interactiveEventTarget(state: SessionStoreState) {
   // A history-only locator is deliberately a sibling state branch. SSE events
@@ -2169,6 +2207,8 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
   const { currentSessionId } = get();
   if (props.sessionId !== currentSessionId) return;
 
+  const followUpQueue = followUpQueueFrom(props.followUpQueue);
+
   if (props.status === 'idle') {
     set({
       isStreaming: false,
@@ -2225,6 +2265,13 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       pendingInputDelivery: null,
     });
   }
+  if (followUpQueue) applyFollowUpQueueSnapshot(followUpQueue, get, set);
+};
+
+const handleFollowUpQueueChanged: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  const snapshot = followUpQueueFrom(props.queue);
+  if (snapshot) applyFollowUpQueueSnapshot(snapshot, get, set);
 };
 
 const handleRunCancelled: EventHandler = (props, get, set) => {
@@ -2543,6 +2590,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'steering.queued': handleSteeringQueued,
   'follow_up.queued': handleFollowUpQueued,
   'follow_up.started': handleFollowUpStarted,
+  'follow_up.queue.changed': handleFollowUpQueueChanged,
   'steering.applied': handleSteeringApplied,
   'goal.updated': handleGoalUpdated,
   'goal.frontier.updated': handleGoalFrontierUpdated,

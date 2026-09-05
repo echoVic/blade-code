@@ -1,4 +1,7 @@
 import type {
+  FollowUpQueueErrorCode,
+  FollowUpQueueMutation,
+  FollowUpQueueSnapshot,
   McpElicitationDetails,
   SessionLocatorV2,
   SessionRef,
@@ -32,6 +35,9 @@ import type { TaskTerminalReadLedgerV1 } from './taskAttention';
 export type {
   BoundProject,
   CodeReviewDispatchInput,
+  FollowUpQueueErrorCode,
+  FollowUpQueueMutation,
+  FollowUpQueueSnapshot,
   Goal,
   ImageAttachmentInput,
   MessageContent,
@@ -362,6 +368,14 @@ export interface SideConversationState {
   modelId?: string;
 }
 
+export interface FollowUpQueueMutationState {
+  pending: boolean;
+  messageId?: string;
+  errorCode?: FollowUpQueueErrorCode;
+  errorMessage?: string;
+  supersededVersions: string[];
+}
+
 export interface SessionSlice {
   sessions: Session[];
   archivedSessions: Session[];
@@ -378,6 +392,8 @@ export interface SessionSlice {
   errorContext: SessionErrorContext | null;
   goal: Goal | null;
   sideConversation: SideConversationState | null;
+  followUpQueue: FollowUpQueueSnapshot | null;
+  followUpQueueMutation: FollowUpQueueMutationState;
   teams: TeamSnapshot[];
 
   setSessions: (sessions: Session[]) => void;
@@ -409,6 +425,8 @@ export interface SessionSlice {
   resumeGoal: () => Promise<void>;
   editGoal: (objective: string) => Promise<void>;
   clearGoal: () => Promise<void>;
+  refreshFollowUpQueue: () => Promise<void>;
+  mutateFollowUpQueue: (operation: FollowUpQueueMutation) => Promise<boolean>;
   dismissSideConversation: () => void;
   loadTeams: (ref?: SessionRef) => Promise<void>;
 }

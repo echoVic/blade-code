@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { SessionRef } from '@api/schemas';
+import type { FollowUpQueueSnapshot, SessionRef } from '@api/schemas';
 import { act, StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -68,12 +68,16 @@ describe('ChatView session event recovery', () => {
   const reconnectSessionEvents = vi.fn(async () => undefined);
   const unsubscribeFromEvents = vi.fn();
   const retryTask = vi.fn(async () => undefined);
+  const mutateFollowUpQueue = vi.fn(async () => true);
+  const refreshFollowUpQueue = vi.fn(async () => undefined);
 
   beforeEach(() => {
     setLocale('en');
     reconnectSessionEvents.mockClear();
     unsubscribeFromEvents.mockClear();
     retryTask.mockClear();
+    mutateFollowUpQueue.mockClear();
+    refreshFollowUpQueue.mockClear();
     useAppStore.setState({
       isSettingsOpen: false,
       settingsSection: 'general',
@@ -99,6 +103,10 @@ describe('ChatView session event recovery', () => {
       retryTask,
       retryingTaskKeys: [],
       sessions: [],
+      followUpQueue: null,
+      followUpQueueMutation: { pending: false, supersededVersions: [] },
+      mutateFollowUpQueue,
+      refreshFollowUpQueue,
     });
   });
 
@@ -161,6 +169,46 @@ describe('ChatView session event recovery', () => {
     expect(disclosure?.open).toBe(true);
     expect(container.querySelectorAll('[data-testid="chat-list"]')).toHaveLength(2);
     expect(container.querySelectorAll('[data-testid="status-bar"]')).toHaveLength(2);
+  });
+
+  it('keeps Stop enabled while the follow-up queue mutates', async () => {
+    const followUpQueue: FollowUpQueueSnapshot = {
+      version: 'a'.repeat(64),
+      pending: 1,
+      mutable: 1,
+      locked: 0,
+      internal: 0,
+      items: [
+        {
+          id: 'queued-message',
+          position: 0,
+          queuedAt: '2026-09-05T00:00:00.000Z',
+          kind: 'user',
+          state: 'pending',
+          delivery: 'current_turn',
+          mutable: true,
+          preview: 'Queued input',
+          previewTruncated: false,
+          attachmentCount: 0,
+        },
+      ],
+    };
+    useSessionStore.setState({
+      sessionEventConnectionState: 'connected',
+      followUpQueue,
+      followUpQueueMutation: {
+        pending: true,
+        messageId: 'queued-message',
+        supersededVersions: [],
+      },
+    });
+
+    await act(async () => root.render(<ChatView />));
+
+    expect(container.querySelector('[data-blade-follow-up-queue]')).toBeTruthy();
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="chat-abort"]')?.disabled
+    ).toBe(false);
   });
 
   it('keeps the store-owned event subscription across StrictMode effect replay', async () => {

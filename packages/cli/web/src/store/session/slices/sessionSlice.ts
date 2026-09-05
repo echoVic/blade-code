@@ -1,8 +1,9 @@
+import type { FollowUpQueueMutation } from '@api/schemas';
 import { deriveSessionTitle } from '@api/sessionTitle';
 import { parseSideConversationCommand } from '@api/sideConversation';
 import { isHttpResponseError } from '@/lib/http';
 import { projectPathOf } from '@/lib/projectIdentity';
-import { sessionService } from '@/services';
+import { isFollowUpQueueMutationHttpError, sessionService } from '@/services';
 import { DEFAULT_WEB_PERMISSION_MODE, useConfigStore } from '@/store/ConfigStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { initialTokenUsage, TEMP_SESSION_ID } from '../constants';
@@ -154,6 +155,14 @@ const resetStreamingState = () => ({
   hasToolCalls: false,
 });
 
+const resetFollowUpQueueState = () => ({
+  followUpQueue: null,
+  followUpQueueMutation: {
+    pending: false,
+    supersededVersions: [] as string[],
+  },
+});
+
 const waitForCatalogContinuation = (): Promise<void> =>
   new Promise((resolve) => {
     globalThis.setTimeout(() => {
@@ -248,6 +257,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     errorContext: null,
     goal: null,
     sideConversation: null,
+    ...resetFollowUpQueueState(),
     teams: [],
 
     setSessions: (sessions) => set({ sessions }),
@@ -294,6 +304,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           sideConversation: isCurrent ? null : currentState.sideConversation,
           teams: isCurrent ? [] : currentState.teams,
           forkingSessionRef: cancelsFork ? null : currentState.forkingSessionRef,
+          ...(isCurrent ? resetFollowUpQueueState() : {}),
           ...(isCurrent ? resetStreamingState() : {}),
         };
       });
@@ -312,6 +323,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         sideConversation: null,
         teams: [],
         pendingResume: null,
+        ...resetFollowUpQueueState(),
       });
     },
 
@@ -356,6 +368,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         tokenUsage: { ...initialTokenUsage },
         error: null,
         errorContext: null,
+        ...resetFollowUpQueueState(),
         ...resetStreamingState(),
       });
     },
@@ -559,6 +572,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           messages,
           goal,
           teams,
+          ...resetFollowUpQueueState(),
           isLoading: false,
           tokenUsage: { ...initialTokenUsage },
           isStreaming: false,
@@ -718,6 +732,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             currentSessionRef: archivesCurrent ? null : currentState.currentSessionRef,
             messages: archivesCurrent ? [] : currentState.messages,
             goal: archivesCurrent ? null : currentState.goal,
+            ...(archivesCurrent ? resetFollowUpQueueState() : {}),
             ...(archivesCurrent ? resetStreamingState() : {}),
           };
         });
@@ -821,6 +836,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
               : currentState.currentSessionRef,
             messages: shouldClearCurrent ? [] : currentState.messages,
             goal: shouldClearCurrent ? null : currentState.goal,
+            ...(shouldClearCurrent ? resetFollowUpQueueState() : {}),
             ...(shouldClearCurrent ? resetStreamingState() : {}),
           };
         });
@@ -899,6 +915,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           isTemporarySession: false,
           messages,
           goal: null,
+          ...resetFollowUpQueueState(),
           tokenUsage: { ...initialTokenUsage },
           error: null,
           forkingSessionRef: null,
@@ -1265,15 +1282,17 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           return true;
         }
 
-        optimisticMessageId = `temp-${Date.now()}-${Math.random()
-          .toString(36)
-          .slice(2, 8)}`;
-        addMessage({
-          id: optimisticMessageId,
-          role: 'user',
-          content: buildOptimisticUserContent(payload),
-          timestamp: Date.now(),
-        });
+        if (!isStreaming) {
+          optimisticMessageId = `temp-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`;
+          addMessage({
+            id: optimisticMessageId,
+            role: 'user',
+            content: buildOptimisticUserContent(payload),
+            timestamp: Date.now(),
+          });
+        }
 
         set({
           isStreaming: true,
@@ -1299,19 +1318,34 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           currentMode
         );
         if (!isCurrentSend()) return false;
-        set({
+        set((state) => ({
           currentRunId: response.runId,
-          pendingSteeringCount:
-            response.status === 'steering_queued' ||
-            response.status === 'follow_up_queued'
+          pendingSteeringCount: response.followUpQueue
+            ? response.followUpQueue.pending
+            : response.status === 'steering_queued' ||
+                response.status === 'follow_up_queued'
               ? Math.max(0, response.queued ?? 1)
-              : get().pendingSteeringCount,
+              : state.pendingSteeringCount,
           pendingInputDelivery:
             response.status === 'steering_queued'
               ? 'current_turn'
               : response.status === 'follow_up_queued'
                 ? 'next_turn'
-                : get().pendingInputDelivery,
+                : state.pendingInputDelivery,
+          ...(response.followUpQueue ? { followUpQueue: response.followUpQueue } : {}),
+          ...(response.followUpQueue
+            ? {
+                followUpQueueMutation: {
+                  pending: false,
+                  supersededVersions: state.followUpQueue
+                    ? [
+                        ...state.followUpQueueMutation.supersededVersions,
+                        state.followUpQueue.version,
+                      ].slice(-16)
+                    : state.followUpQueueMutation.supersededVersions,
+                },
+              }
+            : {}),
           sessions:
             (selectedModelId ||
               selectedReasoningEffort ||
@@ -1319,7 +1353,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
               selectedResponseVerbosity ||
               selectedCommunicationStyle) &&
             !isStreaming
-              ? get().sessions.map((session) =>
+              ? state.sessions.map((session) =>
                   session.sessionId === sessionRef.sessionId &&
                   session.projectPath === sessionRef.projectPath
                     ? {
@@ -1340,8 +1374,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
                       }
                     : session
                 )
-              : get().sessions,
-        });
+              : state.sessions,
+        }));
         return true;
       } catch (err) {
         if (preparedUnsubscribe) {
@@ -1371,6 +1405,136 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             : state.messages,
           ...originalStreamingState,
         }));
+        return false;
+      }
+    },
+
+    refreshFollowUpQueue: async () => {
+      const ref = get().currentSessionRef;
+      if (!ref || isHistorySurfaceActive(get().historySurfaceSelection)) return;
+      const generation = navigationGeneration;
+      const expectedVersion = get().followUpQueue?.version;
+      try {
+        const snapshot = await sessionService.getFollowUpQueue(ref);
+        const current = get();
+        if (
+          isCurrentNavigation(generation) &&
+          sameSessionRef(current.currentSessionRef, ref) &&
+          current.followUpQueue?.version === expectedVersion
+        ) {
+          set((latest) => ({
+            followUpQueue: snapshot,
+            followUpQueueMutation: {
+              pending: latest.followUpQueueMutation.pending,
+              supersededVersions: latest.followUpQueue
+                ? [
+                    ...latest.followUpQueueMutation.supersededVersions,
+                    latest.followUpQueue.version,
+                  ].slice(-16)
+                : latest.followUpQueueMutation.supersededVersions,
+            },
+          }));
+        }
+      } catch (error) {
+        if (
+          isCurrentNavigation(generation) &&
+          sameSessionRef(get().currentSessionRef, ref)
+        ) {
+          set((latest) => ({
+            followUpQueueMutation: {
+              pending: latest.followUpQueueMutation.pending,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              supersededVersions: latest.followUpQueueMutation.supersededVersions,
+            },
+          }));
+        }
+      }
+    },
+
+    mutateFollowUpQueue: async (operation: FollowUpQueueMutation) => {
+      const state = get();
+      const ref = state.currentSessionRef;
+      const snapshot = state.followUpQueue;
+      if (
+        !ref ||
+        !snapshot ||
+        state.followUpQueueMutation.pending ||
+        isHistorySurfaceActive(state.historySurfaceSelection)
+      ) {
+        return false;
+      }
+      const generation = navigationGeneration;
+      set({
+        followUpQueueMutation: {
+          pending: true,
+          messageId: operation.messageId,
+          supersededVersions: state.followUpQueueMutation.supersededVersions,
+        },
+      });
+      try {
+        const next = await sessionService.mutateFollowUpQueue(ref, {
+          expectedVersion: snapshot.version,
+          operation,
+        });
+        if (
+          !isCurrentNavigation(generation) ||
+          !sameSessionRef(get().currentSessionRef, ref)
+        ) {
+          return false;
+        }
+        set((latest) => {
+          const currentVersion = latest.followUpQueue?.version;
+          const responseIsCurrent =
+            currentVersion === snapshot.version || currentVersion === next.version;
+          return {
+            ...(responseIsCurrent ? { followUpQueue: next } : {}),
+            followUpQueueMutation: {
+              pending: false,
+              supersededVersions: [
+                ...latest.followUpQueueMutation.supersededVersions,
+                snapshot.version,
+                ...(responseIsCurrent ? [] : [next.version]),
+              ].slice(-16),
+            },
+          };
+        });
+        return true;
+      } catch (error) {
+        if (
+          !isCurrentNavigation(generation) ||
+          !sameSessionRef(get().currentSessionRef, ref)
+        ) {
+          return false;
+        }
+        if (isFollowUpQueueMutationHttpError(error)) {
+          set((latest) => {
+            const currentVersion = latest.followUpQueue?.version;
+            const responseIsCurrent =
+              currentVersion === snapshot.version ||
+              currentVersion === error.snapshot.version;
+            return {
+              ...(responseIsCurrent ? { followUpQueue: error.snapshot } : {}),
+              followUpQueueMutation: {
+                pending: false,
+                errorCode: error.code,
+                errorMessage: error.message,
+                supersededVersions: [
+                  ...latest.followUpQueueMutation.supersededVersions,
+                  snapshot.version,
+                  ...(responseIsCurrent ? [] : [error.snapshot.version]),
+                ].slice(-16),
+              },
+            };
+          });
+          return false;
+        }
+        set({
+          followUpQueueMutation: {
+            pending: false,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            supersededVersions: state.followUpQueueMutation.supersededVersions,
+          },
+        });
         return false;
       }
     },

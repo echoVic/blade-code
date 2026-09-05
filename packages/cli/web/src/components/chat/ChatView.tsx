@@ -25,6 +25,7 @@ import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
 import type { ComposerImageAttachment } from './ChatInput';
 import { ChatInput } from './ChatInput';
 import { ChatList } from './ChatList';
+import { FollowUpQueuePanel } from './FollowUpQueuePanel';
 import { GoalControlBar } from './GoalControlBar';
 import { PendingInteractionBar } from './PendingInteractionBar';
 import { SideConversationPanel } from './SideConversationPanel';
@@ -141,6 +142,13 @@ export function ChatView() {
   const pendingInputDelivery = useSessionStore((state) => state.pendingInputDelivery);
   const recoveredSteeringCount = useSessionStore(
     (state) => state.recoveredSteeringCount
+  );
+  const followUpQueue = useSessionStore((state) => state.followUpQueue);
+  const followUpQueueMutation = useSessionStore((state) => state.followUpQueueMutation);
+  const mutateFollowUpQueue = useSessionStore((state) => state.mutateFollowUpQueue);
+  const refreshFollowUpQueue = useSessionStore((state) => state.refreshFollowUpQueue);
+  const historyOnly = useSessionStore((state) =>
+    Boolean(state.historySurfaceSelection)
   );
   const isLoading = useSessionStore((state) => state.isLoading);
   const error = useSessionStore((state) => state.error);
@@ -382,6 +390,12 @@ export function ChatView() {
         />
         <PendingInteractionBar />
         <GoalControlBar />
+        <FollowUpQueuePanel
+          queue={historyOnly ? null : followUpQueue}
+          mutation={followUpQueueMutation}
+          onMutate={mutateFollowUpQueue}
+          onRefresh={refreshFollowUpQueue}
+        />
         <ChatInput
           key={composerDraftKey}
           draftKey={composerDraftKey}

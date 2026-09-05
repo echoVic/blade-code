@@ -513,6 +513,23 @@ export const en = {
   'chat.input.steering.queued': 'Guidance accepted · {count} pending',
   'chat.input.steering.enterHint': ' · Enter sends guidance',
   'chat.input.followUp.queued': 'Follow-up accepted · {count} queued for the next turn',
+  'chat.followUpQueue.title': 'Follow-up queue',
+  'chat.followUpQueue.show': 'Show follow-up queue',
+  'chat.followUpQueue.hide': 'Hide follow-up queue',
+  'chat.followUpQueue.count': '{count} queued',
+  'chat.followUpQueue.lockedCount': '{count} locked',
+  'chat.followUpQueue.internal': 'Internal runtime item',
+  'chat.followUpQueue.attachmentOnly': 'Attachment-only follow-up',
+  'chat.followUpQueue.locked': 'Locked',
+  'chat.followUpQueue.delivery.current_turn': 'Current turn',
+  'chat.followUpQueue.delivery.next_turn': 'Next turn',
+  'chat.followUpQueue.delivery.recovery': 'Recovery',
+  'chat.followUpQueue.moveUp': 'Move {id} up',
+  'chat.followUpQueue.moveDown': 'Move {id} down',
+  'chat.followUpQueue.remove': 'Remove follow-up {id}',
+  'chat.followUpQueue.refresh': 'Refresh follow-up queue',
+  'chat.followUpQueue.stale':
+    'Queue changed elsewhere. The latest order is shown; review it before retrying.',
   'chat.input.steering.recoveredOne':
     'Recovered {count} queued instruction after restart',
   'chat.input.steering.recoveredMany':

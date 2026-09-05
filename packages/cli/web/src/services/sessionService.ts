@@ -9,6 +9,12 @@ import {
   type CreateScheduleRequest,
   type CreateTaskResponse,
   CreateTaskResponseSchema,
+  type FollowUpQueueErrorCode,
+  FollowUpQueueErrorResponseSchema,
+  type FollowUpQueueMutationRequest,
+  FollowUpQueueMutationResponseSchema,
+  type FollowUpQueueSnapshot,
+  FollowUpQueueSnapshotSchema,
   type ForkSessionResponse,
   ForkSessionResponseSchema,
   type Goal,
@@ -86,7 +92,53 @@ export type TaskEventConnectionState =
 export interface SendMessageResponse {
   runId: string;
   status: string;
+  messageId?: string;
   queued?: number;
+  followUpQueue?: FollowUpQueueSnapshot;
+}
+
+const SendMessageResponseSchema = Type.Object(
+  {
+    runId: Type.String(),
+    status: Type.String(),
+    messageId: Type.Optional(Type.String()),
+    queued: Type.Optional(Type.Integer({ minimum: 0 })),
+    followUpQueue: Type.Optional(FollowUpQueueSnapshotSchema),
+    queuePosition: Type.Optional(Type.Integer({ minimum: 0 })),
+    queueDepth: Type.Optional(Type.Integer({ minimum: 0 })),
+    maxConcurrentTasks: Type.Optional(Type.Integer({ minimum: 1 })),
+  },
+  { additionalProperties: false }
+);
+
+export class FollowUpQueueMutationHttpError extends Error {
+  override readonly name = 'FollowUpQueueMutationHttpError';
+
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: FollowUpQueueErrorCode,
+    readonly snapshot: FollowUpQueueSnapshot
+  ) {
+    super(message);
+  }
+}
+
+export function isFollowUpQueueMutationHttpError(
+  error: unknown
+): error is FollowUpQueueMutationHttpError {
+  if (!(error instanceof Error) || error.name !== 'FollowUpQueueMutationHttpError') {
+    return false;
+  }
+  if (!('code' in error) || !('snapshot' in error)) return false;
+  const candidate = error as Error & { code: unknown; snapshot: unknown };
+  return (
+    typeof candidate.code === 'string' &&
+    FollowUpQueueErrorResponseSchema.safeParse({
+      error: { code: candidate.code, message: candidate.message },
+      snapshot: candidate.snapshot,
+    }).success
+  );
 }
 
 export interface GoalRunResponse {
@@ -655,7 +707,43 @@ export const sessionService = {
         body?.error?.code
       );
     }
-    return res.json();
+    return parseSchema(SendMessageResponseSchema, await res.json());
+  },
+
+  getFollowUpQueue: async (ref: SessionRef): Promise<FollowUpQueueSnapshot> => {
+    return FollowUpQueueSnapshotSchema.parse(
+      await requestJson<unknown>(
+        withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/follow-ups`, ref)
+      )
+    );
+  },
+
+  mutateFollowUpQueue: async (
+    ref: SessionRef,
+    request: FollowUpQueueMutationRequest
+  ): Promise<FollowUpQueueSnapshot> => {
+    const response = await fetch(
+      withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/follow-ups/mutate`, ref),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      }
+    );
+    const payload = await response.json().catch(() => undefined);
+    if (!response.ok) {
+      const parsed = FollowUpQueueErrorResponseSchema.safeParse(payload);
+      if (parsed.success) {
+        throw new FollowUpQueueMutationHttpError(
+          parsed.data.error.message,
+          response.status,
+          parsed.data.error.code,
+          parsed.data.snapshot
+        );
+      }
+      throw new HttpResponseError('Failed to mutate follow-up queue', response.status);
+    }
+    return FollowUpQueueMutationResponseSchema.parse(payload).snapshot;
   },
 
   askSideQuestion: async (
@@ -1018,6 +1106,16 @@ export const sessionService = {
                 onEvent({
                   type: 'session.status',
                   properties: event.properties,
+                });
+              }
+              if (event.properties.followUpQueue !== undefined) {
+                onEvent({
+                  type: 'follow_up.queue.changed',
+                  properties: {
+                    sessionId: ref.sessionId,
+                    projectPath: ref.projectPath,
+                    queue: event.properties.followUpQueue,
+                  },
                 });
               }
               markReady();
