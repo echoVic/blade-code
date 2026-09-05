@@ -42,6 +42,10 @@ import {
   MAX_USER_MESSAGE_TEXT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../api/attachmentLimits.js';
+import {
+  type FollowUpQueueSnapshot,
+  FollowUpQueueSnapshotSchema,
+} from '../api/followUpQueueSchemas.js';
 import { parseSideConversationCommand } from '../api/sideConversation.js';
 import {
   type BladeConfig,
@@ -301,6 +305,16 @@ function acpPendingResumeFailure(
     toolExecutionStarted: data.toolExecutionStarted,
     toolCallsCount: data.toolCallsCount as number,
     outputStarted: data.outputStarted,
+  };
+}
+
+function followUpQueueMetadata(snapshot: FollowUpQueueSnapshot) {
+  return {
+    version: snapshot.version,
+    pending: snapshot.pending,
+    mutable: snapshot.mutable,
+    locked: snapshot.locked,
+    internal: snapshot.internal,
   };
 }
 
@@ -604,6 +618,11 @@ export class AcpSession {
         this.requestPendingResume();
         return;
       }
+      if (event.type === 'follow_up.queue.changed') {
+        const snapshot = FollowUpQueueSnapshotSchema.safeParse(event.properties.queue);
+        if (snapshot.success) this.sendFollowUpQueueSnapshot(snapshot.data);
+        return;
+      }
       if (event.type === 'task.delivery') {
         if (
           !event.properties.taskDelivery ||
@@ -644,6 +663,7 @@ export class AcpSession {
               metadata,
             });
             if (!steering?.accepted) return;
+            if (steering.queue) this.sendFollowUpQueueSnapshot(steering.queue);
             await new TeamMailbox(teamName, getBladeStorageRoot()).markDelivered([
               messageId,
             ]);
@@ -772,9 +792,7 @@ export class AcpSession {
     }
   }
 
-  /**
-   * 发送可用的 slash commands 给 IDE（公开方法，由 BladeAgent 调用）
-   */
+  /** 在 session/new 或 session/load 响应后发送初始 Session 投影。 */
   sendAvailableCommandsDelayed(): void {
     if (this.destroyed || this.connection.signal.aborted) return;
     if (this.availableCommandsTimer !== null) {
@@ -789,8 +807,20 @@ export class AcpSession {
     this.availableCommandsTimer = setTimeout(() => {
       this.availableCommandsTimer = null;
       if (this.destroyed || this.connection.signal.aborted) return;
-      void this.sendAvailableCommands();
+      void this.sendInitialSessionUpdates();
     }, 500);
+  }
+
+  private async sendInitialSessionUpdates(): Promise<void> {
+    try {
+      const runtime = this.runtime;
+      if (runtime) {
+        this.sendFollowUpQueueSnapshot(await runtime.getFollowUpQueueSnapshot());
+      }
+    } catch {
+      logger.warn('[AcpSession ' + this.id + '] Initial follow-up queue unavailable');
+    }
+    await this.sendAvailableCommands();
   }
 
   /**
@@ -1338,6 +1368,9 @@ export class AcpSession {
       logger.debug(
         `[AcpSession ${this.id}] Queued steering for active turn (${steering.queued})`
       );
+      this.sendFollowUpQueueSnapshot(
+        steering.queue ?? (await this.runtime.getFollowUpQueueSnapshot())
+      );
       if (steering.delivery === 'next_turn') {
         this.requestPendingResume();
       }
@@ -1848,10 +1881,13 @@ export class AcpSession {
               this.sendPlanUpdate(event.tasks);
               break;
             case 'steering_applied':
+              this.sendFollowUpQueueSnapshot(event.queue);
               break;
             case 'follow_up_queue_changed':
+              this.sendFollowUpQueueSnapshot(event.queue);
               break;
             case 'follow_up_started': {
+              this.sendFollowUpQueueSnapshot(event.queue);
               let projectedRecoveredInputs = 0;
               for (const pending of event.messages) {
                 if (!pending.recovered || pending.persisted) continue;
@@ -2164,6 +2200,7 @@ export class AcpSession {
       };
       this.messages.push(message);
       this.contextMessages.push(message);
+      if (result.queue) this.sendFollowUpQueueSnapshot(result.queue);
       if (result.delivery === 'next_turn') this.requestPendingResume();
       if (!(await this.flushUpdates())) {
         controller.abort('acp-egress-failed');
@@ -3053,6 +3090,18 @@ export class AcpSession {
         },
       },
     };
+  }
+
+  private sendFollowUpQueueSnapshot(snapshot: unknown): void {
+    const parsed = FollowUpQueueSnapshotSchema.safeParse(snapshot);
+    if (!parsed.success) return;
+    this.sendUpdate({
+      sessionUpdate: 'session_info_update',
+      updatedAt: new Date().toISOString(),
+      _meta: {
+        'blade/followUpQueue': followUpQueueMetadata(parsed.data),
+      },
+    });
   }
 
   private sendUpdate(update: SessionNotification['update']): void {

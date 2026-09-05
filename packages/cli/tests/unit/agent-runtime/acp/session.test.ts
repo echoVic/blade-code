@@ -2,7 +2,7 @@
  * AcpSession 测试
  */
 
-import type { ClientCapabilities } from '@agentclientprotocol/sdk';
+import type { ClientCapabilities, SessionNotification } from '@agentclientprotocol/sdk';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { createAcpRemotePathProfile } from '../../../../src/acp/AcpRemotePath.js';
 import {
@@ -17,6 +17,7 @@ import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../../../src/api/attachmentLimits.js';
+import type { FollowUpQueueSnapshot } from '../../../../src/api/followUpQueueSchemas.js';
 import { Bus } from '../../../../src/server/bus.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { ProviderAdmissionError } from '../../../../src/services/pi/providerRequestAdmission.js';
@@ -34,6 +35,34 @@ type AgentMockInstance = MockAgent & {
   switchModel: Mock<(modelId: string) => Promise<void>>;
 };
 
+function followUpQueue(
+  version: string,
+  pending: number,
+  overrides: Partial<FollowUpQueueSnapshot> = {}
+): FollowUpQueueSnapshot {
+  return {
+    version,
+    pending,
+    mutable: pending,
+    locked: 0,
+    internal: 0,
+    items: [],
+    ...overrides,
+  };
+}
+
+function followUpQueueUpdates(connection: {
+  readonly sessionUpdates: readonly SessionNotification[];
+}): Array<Record<string, unknown>> {
+  return connection.sessionUpdates.flatMap(({ update }) => {
+    if (update.sessionUpdate !== 'session_info_update') return [];
+    const value = update._meta?.['blade/followUpQueue'];
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? [value as Record<string, unknown>]
+      : [];
+  });
+}
+
 const agentMockState = vi.hoisted((): { current: AgentMockInstance | null } => ({
   current: null,
 }));
@@ -49,13 +78,16 @@ const runtimeState = vi.hoisted(() => ({
     sessionId: 'test-session-id',
     dispose: vi.fn().mockResolvedValue(undefined),
     discardPendingInput: vi.fn().mockResolvedValue(undefined),
-    enqueueSteering: vi.fn(() => ({
+    enqueueSteering: vi.fn<SessionRuntime['enqueueSteering']>(async () => ({
       accepted: true,
       turnId: 'turn-1',
       queued: 1,
     })),
     getPendingSteeringCount: vi.fn(() => 0),
     getPendingSteeringMessages: vi.fn(() => []),
+    getFollowUpQueueSnapshot: vi
+      .fn<() => Promise<FollowUpQueueSnapshot>>()
+      .mockResolvedValue(followUpQueue('0'.repeat(64), 0)),
     isIdleForResidency: vi.fn<() => ReturnType<SessionRuntime['isIdleForResidency']>>(
       () => true
     ),
@@ -281,6 +313,9 @@ describe('AcpSession', () => {
     runtimeState.runtime.getCurrentModelId.mockReturnValue('model-1');
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.getPendingSteeringMessages.mockReturnValue([]);
+    runtimeState.runtime.getFollowUpQueueSnapshot
+      .mockReset()
+      .mockResolvedValue(followUpQueue('0'.repeat(64), 0));
     runtimeState.runtime.isIdleForResidency.mockReturnValue(true);
     runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({ state: 'none' });
     runtimeState.runtime.getGoal.mockReset().mockResolvedValue(null);
@@ -343,6 +378,103 @@ describe('AcpSession', () => {
   });
 
   describe('initialize', () => {
+    it('projects an initial counts-only follow-up queue summary', async () => {
+      vi.useFakeTimers();
+      const privateMarkers = [
+        'PRIVATE_QUEUE_PROMPT_MARKER',
+        'data:image/png;base64,PRIVATE_IMAGE_MARKER',
+        '/private/workspace/PRIVATE_PATH_MARKER',
+        'PRIVATE_OUTPUT_SCHEMA_MARKER',
+        'Bearer PRIVATE_CREDENTIAL_MARKER',
+      ];
+      runtimeState.runtime.getFollowUpQueueSnapshot.mockResolvedValueOnce(
+        followUpQueue('a'.repeat(64), 1, {
+          mutable: 1,
+          items: [
+            {
+              id: 'private-id',
+              position: 0,
+              queuedAt: '2026-09-05T00:00:00.000Z',
+              kind: 'user',
+              state: 'pending',
+              delivery: 'next_turn',
+              mutable: true,
+              preview: privateMarkers.join(' '),
+              previewTruncated: false,
+              attachmentCount: 1,
+            },
+          ],
+        })
+      );
+
+      try {
+        await session.initialize();
+        session.sendAvailableCommandsDelayed();
+        await vi.advanceTimersByTimeAsync(500);
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(followUpQueueUpdates(mockConnection)).toHaveLength(1);
+      expect(followUpQueueUpdates(mockConnection)[0]).toEqual({
+        version: 'a'.repeat(64),
+        pending: 1,
+        mutable: 1,
+        locked: 0,
+        internal: 0,
+      });
+      const serialized = JSON.stringify(followUpQueueUpdates(mockConnection));
+      for (const marker of privateMarkers) {
+        expect(serialized).not.toContain(marker);
+      }
+      expect(serialized).not.toContain('private-id');
+    });
+
+    it('projects a fresh opaque queue version after Session replacement', async () => {
+      vi.useFakeTimers();
+      const replacementClient = new ControlledFileClient();
+      const replacementHarness = createPairedAcpHarness(replacementClient);
+      try {
+        runtimeState.runtime.getFollowUpQueueSnapshot.mockResolvedValueOnce(
+          followUpQueue('a'.repeat(64), 0)
+        );
+        await session.initialize();
+        session.sendAvailableCommandsDelayed();
+        await vi.advanceTimersByTimeAsync(500);
+        await session.destroy();
+
+        runtimeState.runtime.getFollowUpQueueSnapshot.mockResolvedValueOnce(
+          followUpQueue('b'.repeat(64), 0)
+        );
+        session = new AcpSession(
+          'test-session-id',
+          createLocalAcpSessionRoots('/tmp/test'),
+          replacementHarness.agentConnection,
+          undefined
+        );
+        await session.initialize();
+        session.sendAvailableCommandsDelayed();
+        await vi.advanceTimersByTimeAsync(500);
+        await vi.waitFor(() =>
+          expect(followUpQueueUpdates(replacementClient)).toHaveLength(1)
+        );
+
+        expect(followUpQueueUpdates(replacementClient)).toEqual([
+          {
+            version: 'b'.repeat(64),
+            pending: 0,
+            mutable: 0,
+            locked: 0,
+            internal: 0,
+          },
+        ]);
+      } finally {
+        vi.useRealTimers();
+        await session.destroy();
+        await replacementHarness.close();
+      }
+    });
+
     it('应该正确初始化会话', async () => {
       await session.initialize();
 
@@ -2965,6 +3097,7 @@ describe('AcpSession', () => {
   describe('prompt', () => {
     beforeEach(async () => {
       await session.initialize();
+      mockConnection.sessionUpdates = [];
     });
 
     it('应该处理文本提示', async () => {
@@ -4604,6 +4737,15 @@ describe('AcpSession', () => {
     it('活动回合中的第二个 prompt 应转为 steering 而不是中止前一个回合', async () => {
       const activeController = new AbortController();
       (session as any).pendingPrompt = activeController;
+      const queued = followUpQueue('b'.repeat(64), 1);
+      runtimeState.runtime.enqueueSteering.mockResolvedValueOnce({
+        accepted: true,
+        messageId: 'queued-message',
+        turnId: 'turn-1',
+        queued: 1,
+        delivery: 'current_turn',
+        queue: queued,
+      });
 
       const result = await session.prompt({
         sessionId: 'test-session-id',
@@ -4617,6 +4759,80 @@ describe('AcpSession', () => {
         { allowBeforeTurn: true }
       );
       expect((session as any).pendingPrompt).toBe(activeController);
+      await vi.waitFor(() =>
+        expect(followUpQueueUpdates(mockConnection)).toContainEqual({
+          version: queued.version,
+          pending: 1,
+          mutable: 1,
+          locked: 0,
+          internal: 0,
+        })
+      );
+    });
+
+    it('projects claim and acknowledgement queue lifecycle without item content', async () => {
+      const secret = 'PRIVATE_ACP_FOLLOW_UP_MARKER';
+      const locked = followUpQueue('c'.repeat(64), 1, {
+        mutable: 0,
+        locked: 1,
+        items: [
+          {
+            id: 'secret-id',
+            position: 0,
+            queuedAt: '2026-09-05T00:00:00.000Z',
+            kind: 'user',
+            state: 'locked',
+            delivery: 'current_turn',
+            mutable: false,
+            preview: secret,
+            previewTruncated: false,
+            attachmentCount: 1,
+          },
+        ],
+      });
+      const empty = followUpQueue('d'.repeat(64), 0);
+      const mockAgent = getMockAgent();
+      mockAgent.events = [
+        {
+          kind: 'steering_applied',
+          messageIds: ['secret-id'],
+          count: 1,
+          recovered: 0,
+          delivery: 'current_turn',
+          messages: [],
+          queue: locked,
+        },
+        { kind: 'follow_up_queue_changed', queue: empty },
+      ];
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'continue' }],
+      });
+
+      await vi.waitFor(() =>
+        expect(followUpQueueUpdates(mockConnection)).toHaveLength(2)
+      );
+      expect(followUpQueueUpdates(mockConnection)).toEqual([
+        {
+          version: locked.version,
+          pending: 1,
+          mutable: 0,
+          locked: 1,
+          internal: 0,
+        },
+        {
+          version: empty.version,
+          pending: 0,
+          mutable: 0,
+          locked: 0,
+          internal: 0,
+        },
+      ]);
+      const serialized = JSON.stringify(followUpQueueUpdates(mockConnection));
+      expect(serialized).not.toContain(secret);
+      expect(serialized).not.toContain('secret-id');
+      expect(serialized).not.toContain('items');
     });
 
     it('活动回合中的 ACP 图片应以多模态 steering 入队', async () => {
@@ -5240,6 +5456,56 @@ describe('AcpSession', () => {
 
       // 验证取消成功（没有抛出错误）
       expect(() => session.cancel()).not.toThrow();
+    });
+
+    it('cancels the active prompt without deleting its queued follow-up', async () => {
+      let started!: () => void;
+      const activeStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const queued = followUpQueue('e'.repeat(64), 1);
+      runtimeState.runtime.enqueueSteering.mockResolvedValueOnce({
+        accepted: true,
+        messageId: 'queued-after-cancel',
+        turnId: 'turn-1',
+        queued: 1,
+        delivery: 'current_turn',
+        queue: queued,
+      });
+      getMockAgent().chatStream = vi.fn(async function* (_message, context) {
+        started();
+        await new Promise<void>((resolve) => {
+          context.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return {
+          success: false,
+          error: { type: 'aborted', message: 'cancelled' },
+        };
+      }) as AgentMockInstance['chatStream'];
+
+      const active = session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'keep working' }],
+      });
+      await activeStarted;
+      await expect(
+        session.prompt({
+          sessionId: 'test-session-id',
+          prompt: [{ type: 'text', text: 'retain this follow-up' }],
+        })
+      ).resolves.toEqual({ stopReason: 'end_turn' });
+
+      session.cancel();
+
+      await expect(active).resolves.toEqual({ stopReason: 'cancelled' });
+      expect(runtimeState.runtime.discardPendingInput).not.toHaveBeenCalled();
+      expect(followUpQueueUpdates(mockConnection).at(-1)).toEqual({
+        version: queued.version,
+        pending: 1,
+        mutable: 1,
+        locked: 0,
+        internal: 0,
+      });
     });
   });
 
@@ -5867,6 +6133,7 @@ describe('AcpSession', () => {
       '$name 等待 active prompt 且丢弃旧 generator 更新',
       async ({ destroyOptions, shouldDiscardPendingInput }) => {
         await session.initialize();
+        mockConnection.sessionUpdates = [];
         const mockAgent = getMockAgent();
         let releaseLateEvents: (() => void) | undefined;
         const lateEventsReady = new Promise<void>((resolve) => {

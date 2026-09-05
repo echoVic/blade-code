@@ -460,6 +460,8 @@ describe('BladeAgent', () => {
         fork: {},
         close: {},
       });
+      expect(JSON.stringify(agentCapabilities)).not.toContain('followUpQueue');
+      expect(JSON.stringify(agentCapabilities)).not.toContain('queueMutation');
     });
 
     it('应该保存客户端能力', async () => {
