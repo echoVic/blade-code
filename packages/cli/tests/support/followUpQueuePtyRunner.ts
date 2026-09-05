@@ -105,6 +105,8 @@ async function main(): Promise<void> {
   let output = '';
   let plainOutput = '';
   let stageOutput = '';
+  let scanTail = '';
+  let finalMarkerSeen = false;
   let exited = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit(() => {
@@ -113,6 +115,9 @@ async function main(): Promise<void> {
     });
   });
   terminal.onData((chunk) => {
+    const scan = `${scanTail}${stripVTControlCharacters(chunk)}`;
+    finalMarkerSeen ||= scan.includes(input.expectedOutput);
+    scanTail = scan.slice(-Math.max(0, input.expectedOutput.length - 1));
     output = appendBoundedPtyEvidence(output, chunk, 48_000);
     plainOutput = appendBoundedPtyEvidence(
       plainOutput,
@@ -131,7 +136,6 @@ async function main(): Promise<void> {
   let deleted = false;
   let resized = false;
   let reopened = false;
-  let finalMarkerSeen = false;
   try {
     await waitFor(
       () =>
@@ -267,11 +271,10 @@ async function main(): Promise<void> {
       180_000
     );
     await waitFor(
-      () => stageOutput.includes(input.expectedOutput),
+      () => finalMarkerSeen,
       'TUI did not render the final Provider response',
       60_000
     );
-    finalMarkerSeen = true;
   } catch (error) {
     process.stdout.write(
       JSON.stringify({
