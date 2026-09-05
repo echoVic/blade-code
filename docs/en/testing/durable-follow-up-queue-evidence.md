@@ -80,14 +80,39 @@ and exits normally through `session/close` and stdin EOF.
 These values are refreshed from a clean production build before the release commit:
 
 ~~~text
-format:check  PENDING
-lint          PENDING
-type-check    PASS — CLI focused; final root gate pending
-build         PASS — production CLI/Web
-test:all      PENDING
-coverage      PENDING
+format:check  PASS — 1,588 files
+lint          PASS — CLI 1,384 files, Web 202 files, VSCode PASS
+type-check    PASS — CLI, Web, VSCode
+build         PASS — production CLI/Web and VSCode
+test:all      PASS — 487 files passed, 97 skipped; 5,665 tests passed, 87 skipped
+performance   PASS — 4 files passed, 1 skipped; 9 tests passed, 1 skipped
+coverage      PASS — 487 files passed, 97 skipped; 5,665 tests passed, 87 skipped
+                statements 73.64%, branches 67.05%, functions 75.57%, lines 75.01%
 git diff      PASS
 ~~~
+
+The first `test:all` run correctly found that the new runner was not yet in the raw-PTY
+inventory. After that fix, the second run had only a cross-process ready timeout in the
+unchanged `remote-workspace-reference.test.ts`; its worktree and HEAD hash were both
+`d49b21104fc8f825aafb003a59090b8fdf096cd3`, and its exact rerun passed 15/15. A fresh
+final `test:all` then passed: 319.82 seconds for the main stage, 5.30 seconds for
+performance, and 331.38 seconds total.
+
+## Completion audit
+
+| Requirement | Inspectable implementation or evidence | Result |
+| --- | --- | --- |
+| Runtime durability | Inbox V2, cross-instance lock, atomic write, restart generation tests | PASS |
+| Performance and size bounds | 20 user entries, 160 public items, 8 MiB file cap, bounded previews | PASS |
+| Long-running turns | Active enqueue, safe-boundary claim, acknowledgement clearing | PASS |
+| TUI | `/queue`, complete key map, resize/reopen raw PTY | PASS |
+| Web GUI | Production Chromium, buttons/drag, reload, stale snapshot | PASS |
+| ACP | Real SDK stdio, five-field read-only metadata, no mutation capability | PASS |
+| Real models | Flash/Pro × Web/TUI/ACP, six trajectories | PASS |
+| Retry | Vitest `--retry=0`; each model has `maxRetries=0` | PASS |
+| Request count | One setup plus one queue-consumption request per trajectory | PASS |
+| Privacy | Metadata allowlist, stream scanning, no credential/deleted marker leaks | PASS |
+| Docs and release | Bilingual reference/evidence, source changelogs, CLI-only package bump | PASS |
 
 This page never records Provider credentials, raw responses, or complete request bodies.
 Final evidence retains only model, surface, request counts, retry budgets, marker order,

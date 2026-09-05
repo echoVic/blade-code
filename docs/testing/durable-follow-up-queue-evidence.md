@@ -73,14 +73,38 @@ metadata、reload 后再次投影，并以 `session/close` 和 stdin EOF 正常�
 以下结果须在版本提交前从干净 production build 重新记录：
 
 ~~~text
-format:check  PENDING
-lint          PENDING
-type-check    PASS — CLI focused; final root gate pending
-build         PASS — production CLI/Web
-test:all      PENDING
-coverage      PENDING
+format:check  PASS — 1,588 files
+lint          PASS — CLI 1,384 files, Web 202 files, VSCode PASS
+type-check    PASS — CLI, Web, VSCode
+build         PASS — production CLI/Web and VSCode
+test:all      PASS — 487 files passed, 97 skipped; 5,665 tests passed, 87 skipped
+performance   PASS — 4 files passed, 1 skipped; 9 tests passed, 1 skipped
+coverage      PASS — 487 files passed, 97 skipped; 5,665 tests passed, 87 skipped
+                statements 73.64%, branches 67.05%, functions 75.57%, lines 75.01%
 git diff      PASS
 ~~~
+
+首次 `test:all` 在新增 runner inventory 尚未提交时按预期发现该缺口；修复后，第二轮
+仅遇到未改动的 `remote-workspace-reference.test.ts` 跨进程 ready 超时。该文件的工作树
+hash 与 HEAD 均为 `d49b21104fc8f825aafb003a59090b8fdf096cd3`，精确复跑 15/15
+通过。随后从头执行的最终 `test:all` 全绿：主阶段 319.82 秒，performance 5.30 秒，
+总计 331.38 秒。
+
+## 完成审计
+
+| 要求 | 可复核实现或证据 | 结论 |
+| --- | --- | --- |
+| Runtime durability | inbox V2、跨实例锁、atomic write、restart generation 测试 | PASS |
+| 性能与大小边界 | 20 条用户队列、160 条公开快照、8 MiB 文件上限、有界 preview | PASS |
+| 长任务行为 | active-turn enqueue、safe-boundary claim、ack 后清空 | PASS |
+| TUI | `/queue`、完整快捷键、resize/reopen raw PTY | PASS |
+| Web GUI | production Chromium、按钮/drag、reload、stale snapshot | PASS |
+| ACP | 真实 SDK stdio、五字段只读 metadata、无 mutation capability | PASS |
+| 真实模型 | Flash/Pro × Web/TUI/ACP，6 条轨迹 | PASS |
+| retry | Vitest `--retry=0`，每个模型 `maxRetries=0` | PASS |
+| 请求计数 | 每条 1 setup + 1 queue-consumption request | PASS |
+| 隐私 | metadata allowlist、stream scanner、无 credential/删除 marker 泄漏 | PASS |
+| 文档与发布 | 双语 reference/evidence、source changelog、仅 CLI package bump | PASS |
 
 本页不会记录 Provider credential、原始响应或完整 request body。最终 evidence 只保留模型、
 表面、请求数量、retry budget、marker 顺序、删除缺失、清理与 secret-scan 结果。
