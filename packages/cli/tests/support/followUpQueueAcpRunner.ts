@@ -3,6 +3,7 @@ import { access, writeFile } from 'node:fs/promises';
 import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
+import { createTuiTaskAttentionSecretScanner } from './tuiTaskAttentionPtyDriver.js';
 
 const CREDENTIAL_ENV_NAME =
   /(?:^|_)(?:API_?KEY|PRIVATE_KEY|AUTH_TOKEN|ACCESS_TOKEN|TOKEN|SECRET|PASSWORD|CREDENTIALS?)(?:_|$)/i;
@@ -143,7 +144,9 @@ async function run(input: RunnerInput) {
     throw new Error('Follow-up ACP stdio was unavailable');
   }
   let stderr = '';
+  const stderrScanner = createTuiTaskAttentionSecretScanner([input.secret]);
   child.stderr?.on('data', (chunk: Buffer | string) => {
+    stderrScanner.observe(chunk);
     stderr = `${stderr}${chunk.toString()}`.slice(-32_000);
   });
   const client = new ChildBackedRecordingAcpClient();
@@ -250,7 +253,7 @@ async function run(input: RunnerInput) {
     if (JSON.stringify(client.sessionUpdates).includes(input.secret)) {
       throw new Error('ACP session updates leaked a credential');
     }
-    if (stderr.includes(input.secret)) {
+    if (stderrScanner.leakedSecretLabels().length > 0) {
       throw new Error('ACP stderr leaked a credential');
     }
     for (const marker of [
@@ -279,7 +282,6 @@ async function run(input: RunnerInput) {
       sessionId,
       initialProjected: true,
       pendingProjected: true,
-      cancelPreservedQueue: true,
       reloadProjected: true,
       lockedProjected: metadata.some((entry) => entry.locked > 0),
       emptyProjected: true,

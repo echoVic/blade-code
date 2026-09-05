@@ -10,6 +10,7 @@ import {
   isExpectedBrowserRequestFailure,
   stopForegroundGuiLauncher,
 } from './foregroundBoundedOutputWebDriver.js';
+import { createTuiTaskAttentionSecretScanner } from './tuiTaskAttentionPtyDriver.js';
 
 const CREDENTIAL_ENV_NAME =
   /(?:^|_)(?:API_?KEY|PRIVATE_KEY|AUTH_TOKEN|ACCESS_TOKEN|TOKEN|SECRET|PASSWORD|CREDENTIALS?)(?:_|$)/i;
@@ -142,10 +143,13 @@ export async function runFollowUpQueueWebDriver(input: {
   );
   let identity: ProcessIdentity | undefined;
   let serverOutput = '';
+  const serverSecretScanner = createTuiTaskAttentionSecretScanner(input.secrets);
   child.stdout?.on('data', (chunk: Buffer | string) => {
+    serverSecretScanner.observe(chunk);
     serverOutput = `${serverOutput}${chunk.toString()}`.slice(-32_000);
   });
   child.stderr?.on('data', (chunk: Buffer | string) => {
+    serverSecretScanner.observe(chunk);
     serverOutput = `${serverOutput}${chunk.toString()}`.slice(-32_000);
   });
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -290,11 +294,16 @@ export async function runFollowUpQueueWebDriver(input: {
     const browserText = (await page.locator('body').textContent()) ?? '';
     const serverFaults = inspectServerFaults(serverOutput);
     const leakSources = [browserText, serverOutput, JSON.stringify(faults)];
-    const leakedSecrets = input.secrets.flatMap((secret, index) =>
-      secret && leakSources.some((source) => source.includes(secret))
-        ? [`secret-${index + 1}`]
-        : []
-    );
+    const leakedSecrets = [
+      ...new Set([
+        ...serverSecretScanner.leakedSecretLabels(),
+        ...input.secrets.flatMap((secret, index) =>
+          secret && leakSources.some((source) => source.includes(secret))
+            ? [`secret-${index + 1}`]
+            : []
+        ),
+      ]),
+    ];
     if (faults.length > 0) throw new Error(`Browser faults: ${JSON.stringify(faults)}`);
     if (serverFaults.length > 0) {
       throw new Error(`Server faults: ${JSON.stringify(serverFaults)}`);
