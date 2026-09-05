@@ -19,10 +19,12 @@ const FALLBACK_TRUNCATION_MARKER =
 interface FallbackMessageCandidate {
   message: Message;
   modified: boolean;
+  sourceIndex: number;
 }
 
 export interface FallbackMessagePlan {
   messages: Message[];
+  omittedSourceIndexes: number[];
   targetTokens: number;
   messagesOmitted: number;
   messagesTruncated: number;
@@ -60,7 +62,10 @@ export function compactionMessageUnits(messages: readonly Message[]): Message[][
   return units;
 }
 
-function normalizeFallbackMessage(message: Message): FallbackMessageCandidate {
+function normalizeFallbackMessage(
+  message: Message,
+  sourceIndex: number
+): FallbackMessageCandidate {
   const normalized: Message = {
     ...message,
     content: compactionMessageText(message),
@@ -70,28 +75,35 @@ function normalizeFallbackMessage(message: Message): FallbackMessageCandidate {
   return {
     message: normalized,
     modified: Array.isArray(message.content) || removedReasoning,
+    sourceIndex,
   };
 }
 
 function normalizeFallbackUnit(
-  messages: readonly Message[]
+  entries: readonly { message: Message; sourceIndex: number }[]
 ): FallbackMessageCandidate[] {
-  const first = messages[0];
+  const first = entries[0]?.message;
   if (!first || first.role === 'tool') return [];
 
-  const normalized = messages.map(normalizeFallbackMessage);
+  const normalized = entries.map(({ message, sourceIndex }) =>
+    normalizeFallbackMessage(message, sourceIndex)
+  );
   if (first.role !== 'assistant' || !first.tool_calls?.length) {
     return normalized;
   }
 
   const resultIds = new Set(
-    messages
+    entries
       .slice(1)
       .filter(
-        (message): message is Message & { tool_call_id: string } =>
-          message.role === 'tool' && Boolean(message.tool_call_id)
+        (
+          entry
+        ): entry is {
+          message: Message & { tool_call_id: string };
+          sourceIndex: number;
+        } => entry.message.role === 'tool' && Boolean(entry.message.tool_call_id)
       )
-      .map((message) => message.tool_call_id)
+      .map((entry) => entry.message.tool_call_id)
   );
   const matchedCalls = first.tool_calls.filter((call) => resultIds.has(call.id));
   const matchedIds = new Set(matchedCalls.map((call) => call.id));
@@ -185,6 +197,7 @@ function limitFallbackUnitContent(
         content: truncated,
       },
       modified: entry.modified || truncated !== content,
+      sourceIndex: entry.sourceIndex,
     };
   });
 }
@@ -284,11 +297,30 @@ export function planFallbackMessages(
           compactionMessageText(message) === options.preservedActiveTask
       )
     : -1;
-  const units = compactionMessageUnits(
-    duplicateActiveTaskIndex < 0
-      ? messages
-      : messages.filter((_, index) => index !== duplicateActiveTaskIndex)
-  );
+  const indexedMessages = messages
+    .map((message, sourceIndex) => ({ message, sourceIndex }))
+    .filter(({ sourceIndex }) => sourceIndex !== duplicateActiveTaskIndex);
+  const units: Array<Array<{ message: Message; sourceIndex: number }>> = [];
+  for (let index = 0; index < indexedMessages.length; index++) {
+    const entry = indexedMessages[index]!;
+    const unit = [entry];
+    if (entry.message.role === 'assistant' && entry.message.tool_calls?.length) {
+      const callIds = new Set(entry.message.tool_calls.map((call) => call.id));
+      while (index + 1 < indexedMessages.length) {
+        const candidate = indexedMessages[index + 1]!;
+        if (
+          candidate.message.role !== 'tool' ||
+          !candidate.message.tool_call_id ||
+          !callIds.has(candidate.message.tool_call_id)
+        ) {
+          break;
+        }
+        unit.push(candidate);
+        index++;
+      }
+    }
+    units.push(unit);
+  }
   for (let index = units.length - 1; index >= 0; index--) {
     const unit = normalizeFallbackUnit(units[index]!);
     if (unit.length === 0) continue;
@@ -315,8 +347,14 @@ export function planFallbackMessages(
   }
 
   const selected = selectedUnits.flat();
+  const selectedSourceIndexes = new Set(selected.map((entry) => entry.sourceIndex));
   return {
     messages: selected.map((entry) => entry.message),
+    omittedSourceIndexes: messages.flatMap((_, index) =>
+      index !== duplicateActiveTaskIndex && !selectedSourceIndexes.has(index)
+        ? [index]
+        : []
+    ),
     targetTokens,
     messagesOmitted: Math.max(0, messages.length - selected.length),
     messagesTruncated: selected.filter((entry) => entry.modified).length,

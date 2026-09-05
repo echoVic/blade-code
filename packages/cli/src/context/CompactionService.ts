@@ -9,7 +9,11 @@ import { nanoid } from 'nanoid';
 import { PermissionMode } from '../config/types.js';
 import { HookManager } from '../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import { consolidateAfterCompaction } from '../memory/MemoryConsolidation.js';
+import {
+  EMPTY_MEMORY_CONSOLIDATION_PLAN,
+  type MemoryConsolidationPlan,
+  planMemoryConsolidation,
+} from '../memory/MemoryConsolidation.js';
 import {
   createChatServiceAsync,
   type Message,
@@ -111,6 +115,8 @@ export interface CompactionResult {
   fallbackMessagesTruncated?: number;
   /** fallback 的稳定失败分类 */
   failureReason?: CompactionFailureReason;
+  /** Internal project-memory candidates; never persist or expose their content. */
+  memoryPlan?: MemoryConsolidationPlan;
 }
 
 const sessionFailures = new Map<string, number>();
@@ -685,15 +691,10 @@ export class CompactionService {
 
       sessionFailures.delete(sessionKey);
 
-      // 非阻塞记忆巩固：从被丢弃的消息中提取 learnings
       const discardedMessages = sourceMessages.slice(
         0,
         sourceMessages.length - retainCount
       );
-      consolidateAfterCompaction(discardedMessages, {
-        workspaceRoot: options.workspaceRoot ?? getCwd(),
-        workspaceAccess: options.workspaceAccess,
-      }).catch((_) => void _);
 
       return {
         success: true,
@@ -711,6 +712,10 @@ export class CompactionService {
         messagesOmitted: generated.messagesOmitted,
         filesOmitted: generated.filesOmitted,
         imagesOmitted,
+        memoryPlan:
+          options.workspaceAccess === 'none'
+            ? EMPTY_MEMORY_CONSOLIDATION_PLAN
+            : planMemoryConsolidation(discardedMessages),
       };
     } catch (error) {
       // AbortError（宽口径）: 用户取消/interrupt，不应计入失败次数也不应走 fallback
@@ -1170,6 +1175,12 @@ export class CompactionService {
       fallbackMessagesOmitted: fallbackPlan.messagesOmitted,
       fallbackMessagesTruncated: fallbackPlan.messagesTruncated,
       failureReason,
+      memoryPlan:
+        options.workspaceAccess === 'none'
+          ? EMPTY_MEMORY_CONSOLIDATION_PLAN
+          : planMemoryConsolidation(
+              fallbackPlan.omittedSourceIndexes.map((index) => messages[index]!)
+            ),
     };
   }
 }

@@ -219,6 +219,7 @@ describe('ReactiveCompaction', () => {
       preTokens: expect.any(Number),
       postTokens: expect.any(Number),
     });
+    expect(result.memoryPlan).toBeUndefined();
   });
 
   it('uses the deterministic CompactionService fallback as a durable checkpoint', async () => {

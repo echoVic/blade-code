@@ -5,6 +5,7 @@
  * 每轮最多尝试一次，作为最后一道防线。
  */
 
+import type { MemoryConsolidationPlan } from '../memory/MemoryConsolidation.js';
 import type { Message, UsageInfo } from '../services/ChatServiceInterface.js';
 import { isAbortError } from '../utils/abort.js';
 import { CompactionService, isCompactionBlockedError } from './CompactionService.js';
@@ -47,6 +48,7 @@ export interface ReactiveCompactResult {
   failureReason?: CompactionFailureReason;
   filesIncluded?: string[];
   usage?: UsageInfo;
+  memoryPlan?: MemoryConsolidationPlan;
 }
 
 const SNIP_RECOVERY_SUMMARY =
@@ -116,6 +118,7 @@ export class ReactiveCompaction {
           failureReason: compactResult.failureReason,
           filesIncluded: compactResult.filesIncluded,
           usage: compactResult.usage,
+          memoryPlan: compactResult.memoryPlan,
         };
       }
       if (snipResult.snippedCount > 0) {

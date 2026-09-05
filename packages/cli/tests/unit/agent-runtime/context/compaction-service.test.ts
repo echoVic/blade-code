@@ -99,6 +99,70 @@ const markerCompactionOptions: CompactionOptions = {
 };
 
 describe('CompactionService - 输出协议', () => {
+  test('LLM compaction 只为未保留的前缀生成 memory plan', async () => {
+    const messages: Message[] = [
+      { role: 'user', content: 'convention: persist the omitted prefix' },
+      ...Array.from({ length: 7 }, (_, index) => ({
+        role: index % 2 === 0 ? ('assistant' as const) : ('user' as const),
+        content: `history-${index}`,
+      })),
+      { role: 'user', content: 'lesson: do not persist retained tail' },
+      { role: 'assistant', content: 'latest response' },
+    ];
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>bounded summary</summary>',
+    });
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      sessionId: 'memory-plan-success',
+    });
+
+    expect(result.memoryPlan).toEqual({
+      entries: [{ topic: 'conventions', content: 'persist the omitted prefix' }],
+      rejectedSensitive: 0,
+    });
+  });
+
+  test('fallback memory plan excludes retained and truncated source messages', async () => {
+    const messages: Message[] = [
+      { role: 'user', content: 'convention: persist the fully omitted prefix' },
+      { role: 'assistant', content: 'old filler '.repeat(500) },
+      { role: 'user', content: `lesson: ${'retained boundary '.repeat(600)}` },
+    ];
+    compactChat.mockRejectedValueOnce(
+      Object.assign(new Error('invalid summary request'), { status: 400 })
+    );
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      maxContextTokens: 1_000,
+      sessionId: 'memory-plan-fallback',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.fallbackMessagesTruncated).toBeGreaterThan(0);
+    expect(result.memoryPlan).toEqual({
+      entries: [{ topic: 'conventions', content: 'persist the fully omitted prefix' }],
+      rejectedSensitive: 0,
+    });
+  });
+
+  test('remote full compaction does not inspect source messages for memory', async () => {
+    compactChat.mockResolvedValueOnce({ content: '<summary>remote summary</summary>' });
+
+    const result = await CompactionService.compact(
+      [{ role: 'user', content: 'convention: never persist remote host content' }],
+      {
+        ...markerCompactionOptions,
+        sessionId: 'memory-plan-remote',
+        workspaceAccess: 'none',
+      }
+    );
+
+    expect(result.memoryPlan).toEqual({ entries: [], rejectedSensitive: 0 });
+  });
+
   test('摘要请求应移除 token-budget marker', async () => {
     const marker = projectedHandoff();
     const sourceMessages = markerRetainedSourceMessages(marker);
