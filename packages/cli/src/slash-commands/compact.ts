@@ -5,6 +5,10 @@
 import { CompactionService } from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { TokenCounter } from '../context/TokenCounter.js';
+import {
+  commitMemoryConsolidation,
+  type MemoryConsolidationProjection,
+} from '../memory/MemoryConsolidation.js';
 import { resolveModelConfig } from '../services/pi/resolveModelConfig.js';
 import { getConfig, getCurrentModel, getState } from '../store/vanilla.js';
 import {
@@ -96,11 +100,16 @@ async function compactCommandHandler(
     });
 
     // Apply the replacement context only after its durable checkpoint commits.
+    let memory: MemoryConsolidationProjection = {
+      outcome: 'disabled',
+      entries: 0,
+      topics: [],
+    };
     if (sessionId) {
       const contextMgr = new ContextManager({
         projectPath: context.workspaceRoot ?? context.cwd,
       });
-      await contextMgr.saveCompaction(
+      const checkpointId = await contextMgr.saveCompaction(
         sessionId,
         result.summary,
         {
@@ -124,6 +133,16 @@ async function compactCommandHandler(
         null
       );
       console.log('[/compact] 压缩数据已保存到 JSONL');
+      if (checkpointId && result.memoryPlan) {
+        try {
+          memory = await commitMemoryConsolidation(result.memoryPlan, {
+            workspaceRoot: context.workspaceRoot ?? context.cwd,
+            workspaceAccess: 'full',
+          });
+        } catch {
+          memory = { outcome: 'failed', entries: 0, topics: [] };
+        }
+      }
     }
 
     if (result.success) {
@@ -146,6 +165,9 @@ async function compactCommandHandler(
       }
 
       successMessage += '\n\n对话历史已压缩，但完整记录仍保存在会话文件中。';
+      if (memory.outcome === 'written') {
+        successMessage += `\n已保存 ${memory.entries} 条项目记忆。`;
+      }
       ui.sendMessage(successMessage);
 
       // 返回特殊消息，通知 UI 更新消息列表
@@ -169,6 +191,7 @@ async function compactCommandHandler(
           fallbackMessagesOmitted: result.fallbackMessagesOmitted,
           fallbackMessagesTruncated: result.fallbackMessagesTruncated,
           maxContextTokens: tokenLimit,
+          memory,
         },
       };
     } else {
@@ -210,6 +233,7 @@ async function compactCommandHandler(
           fallbackMessagesTruncated: result.fallbackMessagesTruncated,
           failureReason: result.failureReason,
           maxContextTokens: tokenLimit,
+          memory,
         },
       };
     }

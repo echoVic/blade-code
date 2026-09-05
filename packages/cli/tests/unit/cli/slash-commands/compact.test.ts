@@ -44,6 +44,14 @@ const compactionState = vi.hoisted(
   })
 );
 
+const memoryConsolidationState = vi.hoisted(() => ({
+  commit: vi.fn(),
+}));
+
+vi.mock('../../../../src/memory/MemoryConsolidation.js', () => ({
+  commitMemoryConsolidation: memoryConsolidationState.commit,
+}));
+
 const storeState = vi.hoisted(() => ({
   getConfig: vi.fn(),
   getCurrentModel: vi.fn(),
@@ -117,6 +125,11 @@ describe('/compact slash command', () => {
     vi.clearAllMocks();
     contextManagerState.constructorOptions.length = 0;
     contextManagerState.saveCompaction.mockResolvedValue('summary-id');
+    memoryConsolidationState.commit.mockResolvedValue({
+      outcome: 'nothing_to_store',
+      entries: 0,
+      topics: [],
+    });
     storeState.getConfig.mockReturnValue({
       maxContextTokens: 10_000,
       temperature: 0,
@@ -148,6 +161,10 @@ describe('/compact slash command', () => {
       messagesOmitted: 0,
       filesOmitted: 0,
       imagesOmitted: 2,
+      memoryPlan: {
+        entries: [{ topic: 'conventions', content: 'keep this convention' }],
+        rejectedSensitive: 0,
+      },
     });
   });
 
@@ -219,6 +236,85 @@ describe('/compact slash command', () => {
       }),
       null
     );
+    expect(memoryConsolidationState.commit).toHaveBeenCalledWith(
+      expect.objectContaining({ entries: expect.any(Array) }),
+      { workspaceRoot: '/workspace/managed-worktree', workspaceAccess: 'full' }
+    );
+  });
+
+  it('commits memory after the checkpoint and reports successful writes', async () => {
+    const order: string[] = [];
+    contextManagerState.saveCompaction.mockImplementationOnce(async () => {
+      order.push('checkpoint');
+      return 'summary-id';
+    });
+    memoryConsolidationState.commit.mockImplementationOnce(async () => {
+      order.push('memory');
+      return { outcome: 'written', entries: 1, topics: ['conventions'] };
+    });
+    const sendMessage = vi.fn();
+    const { default: compactCommand } = await import(
+      '../../../../src/slash-commands/compact.js'
+    );
+
+    const result = await compactCommand.handler([], {
+      cwd: '/workspace/original',
+      workspaceRoot: '/workspace/managed-worktree',
+      sessionId: 'shared-session',
+      messages: [{ role: 'user', content: 'convention: keep this convention' }],
+      acp: { sendMessage },
+    });
+
+    expect(order).toEqual(['checkpoint', 'memory']);
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining('已保存 1 条项目记忆')
+    );
+    expect(result.data).toMatchObject({
+      memory: { outcome: 'written', entries: 1, topics: ['conventions'] },
+    });
+    expect(JSON.stringify(result.data)).not.toContain('keep this convention');
+  });
+
+  it('skips memory when the manual checkpoint fails', async () => {
+    contextManagerState.saveCompaction.mockRejectedValueOnce(
+      new Error('checkpoint failed')
+    );
+    const { default: compactCommand } = await import(
+      '../../../../src/slash-commands/compact.js'
+    );
+
+    const result = await compactCommand.handler([], {
+      cwd: '/workspace/original',
+      sessionId: 'shared-session',
+      messages: [{ role: 'user', content: 'convention: do not save' }],
+      acp: { sendMessage: vi.fn() },
+    });
+
+    expect(result.success).toBe(false);
+    expect(memoryConsolidationState.commit).not.toHaveBeenCalled();
+  });
+
+  it('does not persist automatic memory without a durable session checkpoint', async () => {
+    storeState.getState.mockReturnValueOnce({
+      session: {
+        sessionId: null,
+        messages: [{ role: 'user', content: 'convention: no session' }],
+      },
+    });
+    const { default: compactCommand } = await import(
+      '../../../../src/slash-commands/compact.js'
+    );
+
+    const result = await compactCommand.handler([], {
+      cwd: '/workspace/original',
+      messages: [{ role: 'user', content: 'convention: no session' }],
+      acp: { sendMessage: vi.fn() },
+    });
+
+    expect(memoryConsolidationState.commit).not.toHaveBeenCalled();
+    expect(result.data).toMatchObject({
+      memory: { outcome: 'disabled', entries: 0, topics: [] },
+    });
   });
 
   it('保留缩减不足 fallback 的 usage 与稳定分类', async () => {
@@ -251,6 +347,7 @@ describe('/compact slash command', () => {
       fallbackMessagesOmitted: 8,
       fallbackMessagesTruncated: 1,
       failureReason: 'insufficient_reduction',
+      memoryPlan: { entries: [], rejectedSensitive: 0 },
     });
     const sendMessage = vi.fn();
 
@@ -320,6 +417,7 @@ describe('/compact slash command', () => {
       compactedMessages: boundaryReplacement,
       boundaryMessage: { role: 'system', content: 'boundary' },
       summaryMessage: { role: 'user', content: 'ledger summary' },
+      memoryPlan: { entries: [], rejectedSensitive: 0 },
     });
     const context: SlashCommandContext = {
       cwd: '/workspace/original',
