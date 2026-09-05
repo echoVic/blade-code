@@ -9,9 +9,10 @@ import {
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from './attachmentLimits.js';
 
-export * from './sessionSurfaceSchemas.js';
 export * from './followUpQueueSchemas.js';
 export * from './providerRecoverySchemas.js';
+export * from './sessionSurfaceSchemas.js';
+export * from './turnActivitySchemas.js';
 
 import { MAX_SIDE_QUESTION_CHARS } from './sideConversation.js';
 
