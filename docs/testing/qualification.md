@@ -1190,3 +1190,13 @@ keyless 测试替代。Chromium preflight 使用 `blade browser status`；缺失
 真实 API 门禁会产生费用，因此不会被 `test:all` 或普通 CI 单元门禁隐式触发；发布候选、跨 provider 改动和 Agent runtime 核心改动必须显式运行。
 
 当前生产准出覆盖桌面 TUI、CLI/headless、Web 和 ACP。移动端没有明确使用场景，暂不纳入实现与测试范围。
+
+## 当前回合活动状态
+
+当前回合活动的 release-blocking 矩阵固定运行 DeepSeek Flash/Pro × Headless、真实 ACP
+stdio、raw PTY TUI 与 production Chromium Web，共八格。每格要求 framework retry `0`、
+model `maxRetries=0`、一次 Bash 调用、连续 thinking/tool/responding/clear 状态和精确终答。
+Web 必须在工具仍被 host barrier 阻塞时 reload，并从 SSE `connected.turnActivity` 恢复
+活动状态；PTY 必须从真实 terminal capture 观察状态，不得读取内部 store 代替。详细命令、
+逐格耗时、隐私与清理结果见
+[当前回合活动状态资格验证证据](./turn-activity-surface-evidence.md)。

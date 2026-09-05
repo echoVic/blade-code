@@ -480,3 +480,14 @@ Each independent patch retains at minimum the following evidence:
 The real API gate incurs costs, so it is not implicitly triggered by `test:all` or ordinary CI unit gates; release candidates, cross-provider changes, and Agent runtime core changes must run it explicitly.
 
 Current production qualification covers desktop TUI, CLI/headless, Web, and ACP. Mobile has no clear usage scenarios at this time and is not included in implementation or testing scope.
+
+## Active turn activity
+
+The release-blocking active-turn matrix runs DeepSeek Flash/Pro across Headless, real
+ACP stdio, raw PTY TUI, and production Chromium Web for eight cells. Every cell
+requires framework retry `0`, model `maxRetries=0`, one Bash call, ordered
+thinking/tool/responding/clear activity, and an exact final response. Web must reload
+while a host barrier keeps the tool active and restore activity from SSE
+`connected.turnActivity`; PTY must observe the state in a real terminal capture rather
+than reading an internal store. Commands, per-cell timings, privacy, and cleanup are in
+[Active Turn Activity Qualification Evidence](./turn-activity-surface-evidence.md).

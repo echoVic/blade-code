@@ -45,6 +45,8 @@
   * [Trusted Contextual Project Rules](/en/reference/trusted-contextual-project-rules.md)
   * [Session User Shell Command](/en/reference/session-user-shell-command.md)
   * [TUI Terminal Input](/en/reference/tui-terminal-input.md)
+  * [Active Turn Activity](/en/reference/turn-activity.md)
+  * [Active Turn Activity Qualification Evidence](/en/testing/turn-activity-surface-evidence.md)
   * [Fresh Independent Verification](/en/reference/fresh-independent-verification.md)
   * [Goal Completion Verification](/en/reference/goal-completion-verification.md)
   * [Workspace Agent Resources](/en/reference/workspace-agent-resources.md)
