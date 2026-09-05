@@ -66,10 +66,14 @@ function snapshotFromLayers(
   },
   now: number
 ): ProviderRecoverySnapshot | null {
+  const retryWaiting =
+    layers.retry !== undefined &&
+    layers.retry.delayMs !== undefined &&
+    layers.retry.delayMs > 0;
   const common = {
     updatedAt: now,
-    ...(layers.retry?.delayMs !== undefined
-      ? { nextActionAt: now + layers.retry.delayMs }
+    ...(retryWaiting
+      ? { nextActionAt: now + (layers.retry?.delayMs ?? 0) }
       : layers.circuit?.nextProbeAt !== undefined
         ? { nextActionAt: layers.circuit.nextProbeAt }
         : {}),
@@ -91,7 +95,7 @@ function snapshotFromLayers(
   }
   if (layers.retry) {
     return {
-      activity: layers.retry.delayMs !== undefined ? 'retry_wait' : 'retry_attempt',
+      activity: retryWaiting ? 'retry_wait' : 'retry_attempt',
       reason: reasons.retry ?? 'transport',
       ...common,
     };

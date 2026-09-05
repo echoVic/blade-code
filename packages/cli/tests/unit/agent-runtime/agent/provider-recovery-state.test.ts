@@ -160,6 +160,25 @@ describe('ProviderRecoveryState', () => {
     ).toBeUndefined();
   });
 
+  it('treats a zero-delay retry as an active attempt instead of a wait', () => {
+    const state = new ProviderRecoveryState({
+      now: () => 2_000,
+      createGenerationId: () => 'generation-1',
+    });
+    const generation = state.begin();
+
+    expect(
+      state.observe(generation, {
+        ...retryScheduled,
+        delayMs: 0,
+        nextRetryAt: 2_000,
+      })?.snapshot
+    ).toMatchObject({
+      activity: 'retry_attempt',
+      reason: 'rate_limit',
+    });
+  });
+
   it('preserves fallback context after a recovered stall', () => {
     const state = new ProviderRecoveryState({
       now: () => 5_000,
