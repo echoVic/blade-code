@@ -195,6 +195,27 @@ describe('ProviderRecoveryState', () => {
     ).toBe(4_000);
   });
 
+  it('keeps retry waiting during a heartbeat without a repeated delay', () => {
+    const state = new ProviderRecoveryState({
+      now: () => 2_500,
+      createGenerationId: () => 'generation-1',
+    });
+    const generation = state.begin();
+    state.observe(generation, retryScheduled);
+
+    expect(
+      state.observe(generation, {
+        ...retryScheduled,
+        phase: 'waiting',
+        delayMs: undefined,
+        nextRetryAt: 4_000,
+      })?.snapshot
+    ).toMatchObject({
+      activity: 'retry_wait',
+      nextActionAt: 4_000,
+    });
+  });
+
   it('preserves fallback context after a recovered stall', () => {
     const state = new ProviderRecoveryState({
       now: () => 5_000,

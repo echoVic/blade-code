@@ -27,6 +27,7 @@ interface RecoveryLayers {
   stall?: ProviderRecoveryStall;
   fallback?: ProviderRecoverySnapshot['fallback'];
   nextRetryAt?: number;
+  retryWaiting?: boolean;
 }
 
 function cloneProjection(
@@ -67,10 +68,7 @@ function snapshotFromLayers(
   },
   now: number
 ): ProviderRecoverySnapshot | null {
-  const retryWaiting =
-    layers.retry !== undefined &&
-    layers.retry.delayMs !== undefined &&
-    layers.retry.delayMs > 0;
+  const retryWaiting = layers.retry !== undefined && layers.retryWaiting === true;
   const common = {
     updatedAt: now,
     ...(retryWaiting
@@ -184,6 +182,7 @@ export class ProviderRecoveryState {
         if (event.phase === 'recovered') {
           this.layers.retry = undefined;
           this.layers.nextRetryAt = undefined;
+          this.layers.retryWaiting = undefined;
           this.layers.circuit = undefined;
           this.reasons.retry = undefined;
           this.reasons.circuit = undefined;
@@ -204,6 +203,9 @@ export class ProviderRecoveryState {
               : {}),
           };
           this.layers.nextRetryAt = event.nextRetryAt;
+          this.layers.retryWaiting =
+            event.phase === 'waiting' ||
+            (event.phase === 'scheduled' && (event.delayMs ?? 0) > 0);
           this.reasons.retry = event.reason;
         }
         break;
