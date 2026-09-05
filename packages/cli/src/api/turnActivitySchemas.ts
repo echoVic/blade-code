@@ -50,22 +50,30 @@ export const TurnActivityToolSchema = Type.Refine(
 );
 export type TurnActivityTool = Static<typeof TurnActivityToolSchema>;
 
-export const TurnActivitySnapshotSchema = Type.Object(
-  {
-    phase: TurnActivityPhaseSchema,
-    startedAt: TimestampSchema,
-    updatedAt: TimestampSchema,
-    turn: BoundedCounterSchema,
-    maxTurns: Type.Union([BoundedCounterSchema, Type.Null()]),
-    outputStarted: Type.Boolean(),
-    toolCallsStarted: BoundedCounterSchema,
-    toolCallsCompleted: BoundedCounterSchema,
-    activeTools: Type.Array(TurnActivityToolSchema, {
-      maxItems: TURN_ACTIVITY_ACTIVE_TOOL_LIMIT,
-    }),
-    activeToolOverflow: BoundedCounterSchema,
-  },
-  { additionalProperties: false }
+export const TurnActivitySnapshotSchema = Type.Refine(
+  Type.Object(
+    {
+      phase: TurnActivityPhaseSchema,
+      startedAt: TimestampSchema,
+      updatedAt: TimestampSchema,
+      turn: BoundedCounterSchema,
+      maxTurns: Type.Union([BoundedCounterSchema, Type.Null()]),
+      outputStarted: Type.Boolean(),
+      toolCallsStarted: BoundedCounterSchema,
+      toolCallsCompleted: BoundedCounterSchema,
+      activeTools: Type.Array(TurnActivityToolSchema, {
+        maxItems: TURN_ACTIVITY_ACTIVE_TOOL_LIMIT,
+      }),
+      activeToolOverflow: BoundedCounterSchema,
+    },
+    { additionalProperties: false }
+  ),
+  (snapshot) =>
+    snapshot.startedAt <= snapshot.updatedAt &&
+    snapshot.toolCallsCompleted <= snapshot.toolCallsStarted &&
+    snapshot.activeTools.length + snapshot.activeToolOverflow <=
+      snapshot.toolCallsStarted - snapshot.toolCallsCompleted,
+  () => 'turn activity snapshot counters and timestamps are inconsistent'
 );
 export type TurnActivitySnapshot = Static<typeof TurnActivitySnapshotSchema>;
 

@@ -94,6 +94,8 @@ describe('Turn activity schemas', () => {
       { ...base.snapshot, updatedAt: 8_640_000_000_000_001 },
       { ...base.snapshot, turn: 1.5 },
       { ...base.snapshot, toolCallsStarted: -1 },
+      { ...base.snapshot, toolCallsStarted: 0, toolCallsCompleted: 1 },
+      { ...base.snapshot, startedAt: base.snapshot.updatedAt + 1 },
       {
         ...base.snapshot,
         activeTools: Array.from({ length: 9 }, (_, index) => ({

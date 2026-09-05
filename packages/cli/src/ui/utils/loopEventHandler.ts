@@ -510,6 +510,7 @@ export function createLoopEventHandler(
         break;
       case 'goal_updated':
       case 'goal_continuation_started':
+      case 'turn_activity':
         break;
 
       case 'subagent_spawned':

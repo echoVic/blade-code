@@ -6,6 +6,7 @@
 
 import type { FollowUpQueueSnapshot } from '../../api/followUpQueueSchemas.js';
 import type { ProviderRecoveryProjection } from '../../api/providerRecoverySchemas.js';
+import type { TurnActivityProjection } from '../../api/turnActivitySchemas.js';
 import type { BladeConfig } from '../../config/index.js';
 import type { ContextTokenSource } from '../../context/ContextTokenTracker.js';
 import type {
@@ -100,6 +101,7 @@ export type SystemEvent =
   | ({ kind: 'provider_retry' } & ProviderRetryEvent)
   | ({ kind: 'provider_stall' } & ProviderStallEvent)
   | { kind: 'provider_recovery'; recovery: ProviderRecoveryProjection }
+  | { kind: 'turn_activity'; activity: TurnActivityProjection }
   | ({ kind: 'action_stationarity' } & ActionStationarityEvent);
 
 /** 业务事件 */

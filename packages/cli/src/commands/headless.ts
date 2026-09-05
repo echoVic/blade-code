@@ -2041,6 +2041,8 @@ export async function runHeadless(
           case 'provider_recovery':
             eventWriter.providerRecovery(event);
             break;
+          case 'turn_activity':
+            break;
           case 'action_stationarity':
             eventWriter.actionStationarity(event);
             break;

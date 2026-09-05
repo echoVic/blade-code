@@ -9,6 +9,7 @@ import type {
   FollowUpQueueSnapshot,
 } from '../../api/followUpQueueSchemas.js';
 import type { ProviderRecoveryProjection } from '../../api/providerRecoverySchemas.js';
+import type { TurnActivityProjection } from '../../api/turnActivitySchemas.js';
 import {
   type BrowserScreenshotOptions,
   SessionBrowserRuntime,
@@ -242,6 +243,7 @@ import {
   type SessionWorkspace,
 } from './SessionWorkspace.js';
 import { type TaskAdmissionSnapshot, taskRunScheduler } from './TaskRunScheduler.js';
+import { type TurnActivityGeneration, TurnActivityState } from './TurnActivityState.js';
 import {
   type MaterializedUserPrompt,
   UserPromptArtifactStore,
@@ -401,6 +403,8 @@ export class SessionRuntime {
   private activeTurnMailbox?: ActiveTurnMailbox;
   private readonly providerRecovery = new ProviderRecoveryState();
   private providerRecoveryGeneration?: ProviderRecoveryGeneration;
+  private readonly turnActivity = new TurnActivityState();
+  private turnActivityGeneration?: TurnActivityGeneration;
 
   private chatService?: IChatService;
   private executionEngine?: ExecutionEngine;
@@ -1003,6 +1007,45 @@ export class SessionRuntime {
       { sessionId: this.sessionId, projectPath: this.workspaceRoot },
       'provider.recovery',
       { recovery }
+    );
+  }
+
+  beginTurnActivity(): TurnActivityGeneration {
+    const generation = this.turnActivity.begin();
+    this.turnActivityGeneration = generation;
+    this.publishTurnActivity(this.turnActivity.snapshot());
+    return generation;
+  }
+
+  observeTurnActivity(
+    generation: TurnActivityGeneration,
+    event: LoopEvent
+  ): TurnActivityProjection | undefined {
+    const projection = this.turnActivity.observe(generation, event);
+    if (projection) this.publishTurnActivity(projection);
+    return projection;
+  }
+
+  clearTurnActivity(
+    generation: TurnActivityGeneration
+  ): TurnActivityProjection | undefined {
+    const projection = this.turnActivity.clear(generation);
+    if (this.turnActivityGeneration?.id === generation.id) {
+      this.turnActivityGeneration = undefined;
+    }
+    if (projection) this.publishTurnActivity(projection);
+    return projection;
+  }
+
+  getTurnActivityProjection(): TurnActivityProjection {
+    return this.turnActivity.snapshot();
+  }
+
+  private publishTurnActivity(activity: TurnActivityProjection): void {
+    Bus.publish(
+      { sessionId: this.sessionId, projectPath: this.workspaceRoot },
+      'turn.activity',
+      { activity }
     );
   }
 
@@ -2845,6 +2888,9 @@ export class SessionRuntime {
         this.backgroundSubagentCompletionRegistration;
       if (this.providerRecoveryGeneration) {
         this.clearProviderRecovery(this.providerRecoveryGeneration);
+      }
+      if (this.turnActivityGeneration) {
+        this.clearTurnActivity(this.turnActivityGeneration);
       }
       await attempt('stop side conversations', () =>
         this.sideConversationOperations.shutdown('session-runtime-dispose')

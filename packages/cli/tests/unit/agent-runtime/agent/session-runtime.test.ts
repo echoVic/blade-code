@@ -4916,6 +4916,56 @@ describe('SessionRuntime', () => {
     ).toBeUndefined();
   });
 
+  it('publishes and clears its ephemeral turn activity projection', () => {
+    const runtime = new SessionRuntime(DEFAULT_CONFIG, {
+      sessionId: 'turn-activity-runtime',
+      workspaceRoot: storageRoot,
+    });
+    const events: Array<{ type: string; properties: Record<string, unknown> }> = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (event.sessionId === 'turn-activity-runtime') events.push(event);
+    });
+
+    try {
+      const generation = runtime.beginTurnActivity();
+      const turn = runtime.observeTurnActivity(generation, {
+        kind: 'turn_start',
+        turn: 1,
+        maxTurns: 20,
+      });
+      const clear = runtime.clearTurnActivity(generation);
+
+      expect(turn?.snapshot).toMatchObject({ phase: 'thinking', turn: 1 });
+      expect(clear?.snapshot).toBeNull();
+      expect(events.map((event) => event.type)).toEqual([
+        'turn.activity',
+        'turn.activity',
+        'turn.activity',
+      ]);
+      expect(events.at(-1)?.properties.activity).toMatchObject({ snapshot: null });
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('forgets a turn activity generation when the runtime is disposed', async () => {
+    const runtime = new SessionRuntime(DEFAULT_CONFIG, {
+      sessionId: 'turn-activity-dispose-runtime',
+      workspaceRoot: storageRoot,
+    });
+    const generation = runtime.beginTurnActivity();
+    await runtime.dispose();
+
+    expect(
+      runtime.observeTurnActivity(generation, {
+        kind: 'turn_start',
+        turn: 1,
+        maxTurns: 20,
+      })
+    ).toBeUndefined();
+    expect(runtime.getTurnActivityProjection().snapshot).toBeNull();
+  });
+
   it('keeps prompt artifact reads available through explicit tool filters', async () => {
     const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
     const { createReadPromptArtifactTool } = await import(
