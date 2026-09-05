@@ -160,6 +160,33 @@ describe('ProviderRecoveryState', () => {
     ).toBeUndefined();
   });
 
+  it('does not emit duplicate clears for trailing recovery lifecycle events', () => {
+    const state = new ProviderRecoveryState({
+      now: () => 2_000,
+      createGenerationId: () => 'generation-1',
+    });
+    const generation = state.begin();
+    state.observe(generation, retryScheduled);
+    expect(
+      state.observe(generation, {
+        kind: 'provider_retry',
+        phase: 'recovered',
+        attempt: 1,
+        maxRetries: 12,
+        reason: 'rate_limit',
+      })?.snapshot
+    ).toBeNull();
+
+    expect(
+      state.observe(generation, {
+        kind: 'provider_circuit',
+        phase: 'closed',
+        reason: 'rate_limit',
+        openDurationMs: 2_000,
+      })
+    ).toBeUndefined();
+  });
+
   it('keeps the generation active after per-turn progress clears recovery', () => {
     const state = new ProviderRecoveryState({
       now: () => 2_000,

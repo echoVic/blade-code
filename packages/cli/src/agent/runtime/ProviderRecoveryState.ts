@@ -155,6 +155,7 @@ export class ProviderRecoveryState {
   ): ProviderRecoveryProjection | undefined {
     if (!this.isCurrent(generation)) return undefined;
     let changed = true;
+    const wasVisible = this.projection?.snapshot !== null;
     switch (event.kind) {
       case 'provider_admission':
         if (event.phase === 'admitted') {
@@ -275,7 +276,9 @@ export class ProviderRecoveryState {
         changed = false;
     }
     if (!changed) return undefined;
-    return this.commit(snapshotFromLayers(this.layers, this.reasons, this.now()));
+    const snapshot = snapshotFromLayers(this.layers, this.reasons, this.now());
+    if (!snapshot && !wasVisible) return undefined;
+    return this.commit(snapshot);
   }
 
   clear(
