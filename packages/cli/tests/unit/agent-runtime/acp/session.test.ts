@@ -18,6 +18,7 @@ import {
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../../../src/api/attachmentLimits.js';
 import type { FollowUpQueueSnapshot } from '../../../../src/api/followUpQueueSchemas.js';
+import type { ProviderRecoveryProjection } from '../../../../src/api/providerRecoverySchemas.js';
 import { Bus } from '../../../../src/server/bus.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { ProviderAdmissionError } from '../../../../src/services/pi/providerRequestAdmission.js';
@@ -88,12 +89,14 @@ const runtimeState = vi.hoisted(() => ({
     getFollowUpQueueSnapshot: vi
       .fn<() => Promise<FollowUpQueueSnapshot>>()
       .mockResolvedValue(followUpQueue('0'.repeat(64), 0)),
-    getProviderRecoveryProjection: vi.fn(() => ({
-      version: 1 as const,
-      generation: 'provider-recovery-generation',
-      revision: 0,
-      snapshot: null,
-    })),
+    getProviderRecoveryProjection: vi
+      .fn<() => ProviderRecoveryProjection>()
+      .mockReturnValue({
+        version: 1,
+        generation: 'provider-recovery-generation',
+        revision: 0,
+        snapshot: null,
+      }),
     isIdleForResidency: vi.fn<() => ReturnType<SessionRuntime['isIdleForResidency']>>(
       () => true
     ),
@@ -384,6 +387,46 @@ describe('AcpSession', () => {
   });
 
   describe('initialize', () => {
+    it('projects the initial Runtime-owned Provider recovery snapshot', async () => {
+      vi.useFakeTimers();
+      const recovery = {
+        version: 1 as const,
+        generation: 'initial-recovery',
+        revision: 2,
+        snapshot: {
+          activity: 'circuit_open' as const,
+          reason: 'server_error' as const,
+          updatedAt: 1_000,
+          nextActionAt: 3_000,
+          circuit: {
+            phase: 'waiting' as const,
+            retryAfterMs: 2_000,
+            nextProbeAt: 3_000,
+            openDurationMs: 2_000,
+          },
+        },
+      };
+      runtimeState.runtime.getProviderRecoveryProjection.mockReturnValueOnce(recovery);
+
+      try {
+        await session.initialize();
+        session.sendAvailableCommandsDelayed();
+        await vi.advanceTimersByTimeAsync(500);
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              _meta: { 'blade/providerRecovery': recovery },
+            }),
+          }),
+        ])
+      );
+    });
+
     it('projects an initial counts-only follow-up queue summary', async () => {
       vi.useFakeTimers();
       const privateMarkers = [
