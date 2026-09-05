@@ -3085,6 +3085,7 @@ describe('eventHandlers', () => {
       pendingResume: null,
       providerStall: null,
       providerRecovery: null,
+      turnActivity: null,
       actionStationarity: null,
     });
     expect(state.resyncSessionMessages).toHaveBeenCalledWith({
