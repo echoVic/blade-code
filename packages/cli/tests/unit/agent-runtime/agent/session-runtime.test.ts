@@ -1786,12 +1786,18 @@ describe('SessionRuntime', () => {
     await expect(
       SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
     ).resolves.toBe(true);
+    await expect(
+      SessionRuntime.hasDurableFollowUpInbox(workspaceRoot, sessionId)
+    ).resolves.toBe(true);
 
     await runtime.discardPendingInput();
 
     expect(runtime.getPendingSteeringCount()).toBe(0);
     await expect(
       SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
+    ).resolves.toBe(false);
+    await expect(
+      SessionRuntime.hasDurableFollowUpInbox(workspaceRoot, sessionId)
     ).resolves.toBe(false);
     if (prepared.accepted) {
       await runtime.finishTurn(prepared.handle);

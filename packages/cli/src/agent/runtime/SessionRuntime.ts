@@ -320,6 +320,7 @@ export interface SessionUserShellCommandResult {
   auxiliary: boolean;
   delivery?: 'current_turn' | 'next_turn';
   queued?: number;
+  queue?: FollowUpQueueSnapshot;
 }
 
 export type SessionUserShellCommandEvent =
@@ -764,6 +765,22 @@ export class SessionRuntime {
       }
     }
     return false;
+  }
+
+  static async hasDurableFollowUpInbox(
+    workspaceRoot: string,
+    sessionId: string,
+    stateStorage: SessionStateStorage = createSessionStateStorage(workspaceRoot)
+  ): Promise<boolean> {
+    return withSessionStatePaths(stateStorage, sessionId, async ({ inboxPath }) => {
+      try {
+        await stat(inboxPath);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        return false;
+      }
+    });
   }
 
   static async hasActiveGoal(
@@ -2192,6 +2209,13 @@ export class SessionRuntime {
         this.backgroundTaskCompletionSettledIds.add(session.id);
         if (queued.duplicate) continue;
         enqueued++;
+        if (queued.queue) {
+          Bus.publish(
+            { sessionId: this.sessionId, projectPath: this.workspaceRoot },
+            'follow_up.queue.changed',
+            { queue: queued.queue }
+          );
+        }
         Bus.publish(
           { sessionId: this.sessionId, projectPath: this.workspaceRoot },
           'subagent.completion.queued',
@@ -2356,6 +2380,7 @@ export class SessionRuntime {
         auxiliary,
         ...(steering?.delivery ? { delivery: steering.delivery } : {}),
         ...(steering ? { queued: steering.queued } : {}),
+        ...(steering?.queue ? { queue: steering.queue } : {}),
       };
       await publish({
         type: 'completed',

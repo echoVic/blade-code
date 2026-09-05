@@ -336,7 +336,16 @@ export class ActiveTurnMailbox {
     request: FollowUpQueueMutationRequest
   ): Promise<FollowUpQueueMutationResult> {
     return this.transitionMutex.runExclusive(async () => {
-      const durable = await this.inbox.refresh();
+      let durable;
+      try {
+        durable = await this.inbox.refresh();
+      } catch {
+        throw new FollowUpQueueMutationError(
+          'storage_unavailable',
+          this.snapshotLocked(),
+          'Follow-up queue storage is unavailable'
+        );
+      }
       const snapshot = this.snapshotLocked();
       if (request.expectedVersion !== snapshot.version) {
         throw new FollowUpQueueMutationError('revision_conflict', snapshot);
@@ -352,7 +361,16 @@ export class ActiveTurnMailbox {
       ) {
         return { snapshot };
       }
-      const replacement = await this.inbox.replace(durable.generation, messages);
+      let replacement;
+      try {
+        replacement = await this.inbox.replace(durable.generation, messages);
+      } catch {
+        throw new FollowUpQueueMutationError(
+          'storage_unavailable',
+          this.snapshotLocked(),
+          'Follow-up queue storage is unavailable'
+        );
+      }
       if (!replacement.replaced) {
         throw new FollowUpQueueMutationError(
           'revision_conflict',

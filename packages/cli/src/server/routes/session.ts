@@ -13,6 +13,7 @@ import {
   type ActiveOperationLease,
 } from '../../agent/runtime/ActiveOperationGate.js';
 import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
+import { emptyFollowUpQueueSnapshot } from '../../agent/runtime/FollowUpQueueProjection.js';
 import {
   decidePendingResumeRetry,
   PENDING_RESUME_MAX_ATTEMPTS,
@@ -46,6 +47,13 @@ import {
 } from '../../api/attachmentLimits.js';
 import {
   CodeReviewRequestSchema,
+  FOLLOW_UP_QUEUE_MAX_ITEMS,
+  type FollowUpQueueErrorCode,
+  type FollowUpQueueMutationRequest,
+  FollowUpQueueMutationSchema,
+  type FollowUpQueueSnapshot,
+  FollowUpQueueSnapshotSchema,
+  FollowUpQueueVersionSchema,
   ResumeSubagentRequestSchema,
   SendMessageRequestSchema,
   SessionRewindRequestSchema,
@@ -101,7 +109,7 @@ import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
-import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
+import { Runtime, StringEnum, safeParseSchema, Type } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import {
   type CodeReviewRun,
@@ -221,6 +229,44 @@ const CreateSessionSchema = Type.Object({
 });
 
 const SendMessageSchema = SendMessageRequestSchema;
+const FollowUpQueueMutationHttpRequestSchema = Runtime(
+  Type.Object(
+    {
+      projectPath: Type.Optional(Type.String()),
+      expectedVersion: FollowUpQueueVersionSchema,
+      operation: FollowUpQueueMutationSchema,
+    },
+    { additionalProperties: false }
+  )
+);
+
+const FOLLOW_UP_QUEUE_ERROR_CODES = new Set([
+  'revision_conflict',
+  'already_claimed',
+  'immutable_origin',
+  'immutable_boundary',
+  'not_found',
+  'runtime_unavailable',
+  'invalid_mutation',
+  'storage_unavailable',
+]);
+
+function isFollowUpQueueMutationError(error: unknown): error is {
+  code: FollowUpQueueErrorCode;
+  message: string;
+  snapshot: FollowUpQueueSnapshot;
+} {
+  if (!(error instanceof Error) || error.name !== 'FollowUpQueueMutationError') {
+    return false;
+  }
+  if (!('code' in error) || !('snapshot' in error)) return false;
+  const candidate = error as Error & { code: unknown; snapshot: unknown };
+  return (
+    typeof candidate.code === 'string' &&
+    FOLLOW_UP_QUEUE_ERROR_CODES.has(candidate.code) &&
+    safeParseSchema(FollowUpQueueSnapshotSchema, candidate.snapshot).success
+  );
+}
 
 const UpdateSessionSchema = Type.Object({
   title: Type.Optional(Type.String()),
@@ -2257,6 +2303,20 @@ export const createSessionRouteController = (): SessionRouteController => {
     } finally {
       lease.release();
     }
+  };
+
+  const getFollowUpQueueSnapshot = async (
+    session: SessionInfo
+  ): Promise<FollowUpQueueSnapshot> => {
+    const key = sessionRefKey(sessionRefFromSession(session));
+    if (
+      !runtimes.has(key) &&
+      !runtimeInitializations.has(key) &&
+      !(await SessionRuntime.hasDurableFollowUpInbox(session.projectPath, session.id))
+    ) {
+      return emptyFollowUpQueueSnapshot();
+    }
+    return withRuntime(session, (runtime) => runtime.getFollowUpQueueSnapshot());
   };
 
   const disposeRuntime = async (
@@ -4610,6 +4670,64 @@ export const createSessionRouteController = (): SessionRouteController => {
     }
   });
 
+  app.get('/:sessionId/follow-ups', async (c) => {
+    return withWritableProjection(
+      c.req.param('sessionId'),
+      c.req.query('projectPath'),
+      (session, ref) =>
+        withMessageSubmissionLock(ref, async () =>
+          c.json(await getFollowUpQueueSnapshot(session))
+        )
+    );
+  });
+
+  app.post('/:sessionId/follow-ups/mutate', async (c) => {
+    const parsed = FollowUpQueueMutationHttpRequestSchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+      throw new BadRequestError('Invalid follow-up queue mutation');
+    }
+    return withWritableProjection(
+      c.req.param('sessionId'),
+      parsed.data.projectPath ?? c.req.query('projectPath'),
+      (session, ref) =>
+        withMessageSubmissionLock(ref, async () => {
+          try {
+            return await withRuntime(session, async (runtime) => {
+              const request: FollowUpQueueMutationRequest = {
+                expectedVersion: parsed.data.expectedVersion,
+                operation: parsed.data.operation,
+              };
+              const result = await runtime.mutateFollowUpQueue(request);
+              if (result.snapshot.version !== request.expectedVersion) {
+                Bus.publish(ref, 'follow_up.queue.changed', {
+                  queue: result.snapshot,
+                });
+              }
+              return c.json(result);
+            });
+          } catch (error) {
+            if (!isFollowUpQueueMutationError(error)) throw error;
+            const status =
+              error.code === 'not_found'
+                ? 404
+                : error.code === 'invalid_mutation'
+                  ? 400
+                  : error.code === 'storage_unavailable' ||
+                      error.code === 'runtime_unavailable'
+                    ? 503
+                    : 409;
+            return c.json(
+              {
+                error: { code: error.code, message: error.message },
+                snapshot: error.snapshot,
+              },
+              status
+            );
+          }
+        })
+    );
+  });
+
   app.get('/:sessionId/events', async (c) => {
     const sessionId = c.req.param('sessionId');
     let sseLease: ActiveOperationLease;
@@ -4777,6 +4895,11 @@ export const createSessionRouteController = (): SessionRouteController => {
                   metadata,
                 });
                 if (!steering.accepted) return;
+                if (steering.queue && !steering.duplicate) {
+                  Bus.publish(ref, 'follow_up.queue.changed', {
+                    queue: steering.queue,
+                  });
+                }
                 await new TeamMailbox(teamName, getBladeStorageRoot()).markDelivered([
                   messageId,
                 ]);
@@ -4814,6 +4937,9 @@ export const createSessionRouteController = (): SessionRouteController => {
           if (stream.aborted || terminationStarted) return;
 
           const currentRun = getRun(session.currentRunId);
+          const followUpQueue = await withMessageSubmissionLock(ref, () =>
+            getFollowUpQueueSnapshot(session)
+          );
           const runtimeLease = isActiveRun(currentRun)
             ? await acquireRuntime(session)
             : undefined;
@@ -4837,6 +4963,7 @@ export const createSessionRouteController = (): SessionRouteController => {
                         : 'next_turn'
                       : null,
                   recovered: runtime?.getRecoveredSteeringCount() ?? 0,
+                  followUpQueue,
                 },
               }),
             });
@@ -5129,11 +5256,8 @@ export const createSessionRouteController = (): SessionRouteController => {
 
             const messageId = steering.messageId ?? nanoid(12);
             const queued = steering.queued;
-            Bus.publish(sessionRef, 'message.created', {
-              messageId,
-              role: 'user',
-              content: getDisplayContent(userContent),
-            });
+            const followUpQueue =
+              steering.queue ?? (await runtime.getFollowUpQueueSnapshot());
             const queuedEvent =
               steering.delivery === 'next_turn'
                 ? 'follow_up.queued'
@@ -5143,6 +5267,11 @@ export const createSessionRouteController = (): SessionRouteController => {
               messageId,
               queued,
             });
+            if (!steering.duplicate) {
+              Bus.publish(sessionRef, 'follow_up.queue.changed', {
+                queue: followUpQueue,
+              });
+            }
             if (
               steering.delivery === 'next_turn' &&
               currentRun.status !== 'running' &&
@@ -5167,6 +5296,7 @@ export const createSessionRouteController = (): SessionRouteController => {
                     ? 'follow_up_queued'
                     : 'steering_queued',
                 queued,
+                followUpQueue,
               },
               202
             );
@@ -5454,6 +5584,9 @@ export const createSessionRouteController = (): SessionRouteController => {
             if (result.delivery === 'next_turn' && isActiveRun(currentRun)) {
               currentRun.pendingFollowUpRequested = true;
             }
+            if (result.queue) {
+              Bus.publish(ref, 'follow_up.queue.changed', { queue: result.queue });
+            }
             return c.json({
               executionId: result.executionId,
               messageId: result.messageId,
@@ -5674,6 +5807,16 @@ async function executeRunAsync(
   let toolExecutionStarted = false;
   let pendingResumeDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
   const sessionRef = sessionRefFromSession(session);
+  const projectedInboxMessageIds =
+    options.pendingResume?.projectedInputIds ?? new Set<string>();
+  const rememberProjectedInboxMessageId = (messageId: string): void => {
+    if (projectedInboxMessageIds.has(messageId)) return;
+    if (projectedInboxMessageIds.size >= FOLLOW_UP_QUEUE_MAX_ITEMS) {
+      const oldest = projectedInboxMessageIds.values().next().value;
+      if (oldest !== undefined) projectedInboxMessageIds.delete(oldest);
+    }
+    projectedInboxMessageIds.add(messageId);
+  };
 
   const settleRecoveryAttention = async (result: LoopResult): Promise<boolean> => {
     const assessment = result.metadata?.recoveryAttention;
@@ -6150,6 +6293,18 @@ async function executeRunAsync(
           });
           break;
         case 'steering_applied':
+          for (const message of event.messages) {
+            if ((message.origin ?? 'user') !== 'user') continue;
+            if (message.persisted) continue;
+            if (projectedInboxMessageIds.has(message.id)) continue;
+            emit('message.created', {
+              messageId: message.id,
+              role: 'user',
+              content: getDisplayContent(message.content),
+              ...(message.recovered ? { recovered: true } : {}),
+            });
+            rememberProjectedInboxMessageId(message.id);
+          }
           emit('steering.applied', {
             runId,
             messageIds: event.messageIds,
@@ -6158,31 +6313,25 @@ async function executeRunAsync(
             delivery: event.delivery,
             queued: runtimeOwner.getPendingSteeringCount(),
           });
+          emit('follow_up.queue.changed', { queue: event.queue });
           break;
         case 'follow_up_started': {
           if (assistantMessageId) {
             emit('message.complete', { messageId: assistantMessageId });
             assistantMessageId = undefined;
           }
-          for (const message of event.messages) {
-            if (!message.recovered || message.persisted) continue;
-            if (options.pendingResume?.projectedInputIds.has(message.id)) continue;
-            emit('message.created', {
-              messageId: message.id,
-              role: 'user',
-              content: getDisplayContent(message.content),
-              recovered: true,
-            });
-            options.pendingResume?.projectedInputIds.add(message.id);
-          }
           emit('follow_up.started', {
             runId,
             queued: event.queued,
             recovered: event.recovered,
           });
+          emit('follow_up.queue.changed', { queue: event.queue });
           ensureAssistantMessage();
           break;
         }
+        case 'follow_up_queue_changed':
+          emit('follow_up.queue.changed', { queue: event.queue });
+          break;
         case 'goal_updated':
           emit('goal.updated', { goal: event.goal });
           break;

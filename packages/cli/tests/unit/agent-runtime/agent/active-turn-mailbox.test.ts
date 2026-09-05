@@ -894,6 +894,32 @@ describe('ActiveTurnMailbox', () => {
     expect(inbox.snapshot()).toEqual(before);
   });
 
+  it('maps mutation storage failures to a typed unavailable error', async () => {
+    const sessionId = 'mutation-storage-failure';
+    const mailbox = await createMailbox(sessionId);
+    await mailbox.enqueue('mutable', {
+      allowBeforeTurn: true,
+      messageId: 'mutable',
+    });
+    const before = await mailbox.getFollowUpQueueSnapshot();
+    await writeFile(
+      getSessionInboxFilePath(workspaceRoot, sessionId),
+      '{"invalid":true}\n',
+      'utf8'
+    );
+
+    await expect(
+      mailbox.mutateFollowUpQueue({
+        expectedVersion: before.version,
+        operation: { type: 'remove', messageId: 'mutable' },
+      })
+    ).rejects.toMatchObject({
+      name: 'FollowUpQueueMutationError',
+      code: 'storage_unavailable',
+      snapshot: before,
+    });
+  });
+
   it('does not advance memory when the inbox lock is compromised during write', async () => {
     const sessionId = 'compromised-lock';
     let compromise: ((error: Error) => unknown) | undefined;

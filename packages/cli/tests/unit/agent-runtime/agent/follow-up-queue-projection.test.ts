@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { DurableSteeringMessage } from '../../../../src/agent/runtime/DurableSteeringInbox.js';
-import { projectFollowUpQueue } from '../../../../src/agent/runtime/FollowUpQueueProjection.js';
+import {
+  emptyFollowUpQueueSnapshot,
+  projectFollowUpQueue,
+} from '../../../../src/agent/runtime/FollowUpQueueProjection.js';
 
 function message(
   id: string,
@@ -17,6 +20,17 @@ function message(
 }
 
 describe('follow-up queue projection', () => {
+  it('returns one stable canonical empty snapshot without a Runtime owner', () => {
+    expect(emptyFollowUpQueueSnapshot()).toEqual({
+      version: '605e5d0a887656f60cb317f38f04d4c35515f7eb6ca51b6d2a1cec9c1d9dbd97',
+      pending: 0,
+      mutable: 0,
+      locked: 0,
+      internal: 0,
+      items: [],
+    });
+  });
+
   it('projects bounded user previews and attachment counts without image data', () => {
     const secretImage = 'data:image/png;base64,SECRET_IMAGE_BYTES';
     const snapshot = projectFollowUpQueue({

@@ -15,6 +15,7 @@ import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../../../src/api/attachmentLimits.js';
+import type { FollowUpQueueSnapshot } from '../../../../src/api/followUpQueueSchemas.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import type { ProjectedSessionInteraction } from '../../../../src/context/interactions.js';
 import { getBladeStorageRoot } from '../../../../src/context/storage/pathUtils.js';
@@ -62,12 +63,38 @@ const makePreparedInputTurn = (): InputTurnPreparation => ({
   mode: 'direct',
 });
 
+const makeFollowUpQueueSnapshot = (
+  overrides: Partial<FollowUpQueueSnapshot> = {}
+): FollowUpQueueSnapshot => ({
+  version: 'a'.repeat(64),
+  pending: 1,
+  mutable: 1,
+  locked: 0,
+  internal: 0,
+  items: [
+    {
+      id: 'follow-up-1',
+      position: 0,
+      queuedAt: '2026-09-05T00:00:00.000Z',
+      kind: 'user',
+      state: 'pending',
+      delivery: 'current_turn',
+      mutable: true,
+      preview: 'Updated requirement',
+      previewTruncated: false,
+      attachmentCount: 0,
+    },
+  ],
+  ...overrides,
+});
+
 const makeSteeringEnqueueResult = (): SteeringEnqueueResult => ({
   accepted: true,
   messageId: 'steering-input',
   turnId: 'turn-1',
   queued: 1,
   delivery: 'current_turn',
+  queue: makeFollowUpQueueSnapshot(),
 });
 
 const makeMessages = (...messages: Message[]): Message[] => messages;
@@ -214,6 +241,15 @@ const runtimeState = vi.hoisted(() => ({
     finishTurn: vi.fn().mockResolvedValue(undefined),
     getPendingSteeringCount: vi.fn(() => 0),
     getPendingSteeringMessages: vi.fn(() => []),
+    getFollowUpQueueSnapshot: vi.fn(async () => makeFollowUpQueueSnapshot()),
+    mutateFollowUpQueue: vi.fn(async () => ({
+      snapshot: makeFollowUpQueueSnapshot({
+        version: 'b'.repeat(64),
+        pending: 0,
+        mutable: 0,
+        items: [],
+      }),
+    })),
     getRecoveredSteeringCount: vi.fn(() => 0),
     getTurnRecoveryAssessment: vi.fn<
       () => ReturnType<SessionRuntime['getTurnRecoveryAssessment']>
@@ -350,6 +386,7 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
   SessionRuntime: {
     create: vi.fn(async () => runtimeState.runtime),
     hasPendingInbox: vi.fn(async () => false),
+    hasDurableFollowUpInbox: vi.fn(async () => false),
     hasActiveGoal: vi.fn(async () => false),
     hasRecoverableTurn: vi.fn(async () => false),
   },
@@ -686,6 +723,17 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.finishTurn.mockClear();
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.getPendingSteeringMessages.mockReturnValue([]);
+    runtimeState.runtime.getFollowUpQueueSnapshot
+      .mockReset()
+      .mockResolvedValue(makeFollowUpQueueSnapshot());
+    runtimeState.runtime.mutateFollowUpQueue.mockReset().mockResolvedValue({
+      snapshot: makeFollowUpQueueSnapshot({
+        version: 'b'.repeat(64),
+        pending: 0,
+        mutable: 0,
+        items: [],
+      }),
+    });
     runtimeState.runtime.getRecoveredSteeringCount.mockReturnValue(0);
     runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({ state: 'none' });
     runtimeState.runtime.hasActiveTurn.mockReturnValue(false);
@@ -724,6 +772,7 @@ describe('SessionRoutes runtime reuse', () => {
         })
     );
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
+    vi.mocked(SessionRuntime.hasDurableFollowUpInbox).mockResolvedValue(false);
     vi.mocked(SessionRuntime.hasActiveGoal).mockResolvedValue(false);
     vi.mocked(SessionRuntime.hasRecoverableTurn).mockResolvedValue(false);
     vi.mocked(SessionService.listSessions).mockResolvedValue([]);
@@ -3015,6 +3064,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(await second.json()).toMatchObject({
       status: 'steering_queued',
       queued: 1,
+      followUpQueue: makeFollowUpQueueSnapshot(),
     });
     expect(runtimeState.runtime.enqueueSteering).toHaveBeenCalledWith(
       'updated requirement',
@@ -3025,6 +3075,16 @@ describe('SessionRoutes runtime reuse', () => {
       refFor('steering-session'),
       'steering.queued',
       expect.objectContaining({ queued: 1 })
+    );
+    expect(Bus.publish).not.toHaveBeenCalledWith(
+      refFor('steering-session'),
+      'message.created',
+      expect.objectContaining({ messageId: 'steering-input' })
+    );
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('steering-session'),
+      'follow_up.queue.changed',
+      { queue: makeFollowUpQueueSnapshot() }
     );
 
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
@@ -3043,6 +3103,7 @@ describe('SessionRoutes runtime reuse', () => {
         queued: 1,
         pendingInputDelivery: 'current_turn',
         recovered: 1,
+        followUpQueue: makeFollowUpQueueSnapshot(),
       },
     });
     eventsAbort.abort();
@@ -3056,6 +3117,391 @@ describe('SessionRoutes runtime reuse', () => {
         expect.any(Object)
       );
     });
+  });
+
+  it('reads and mutates the authoritative follow-up queue through the runtime', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const projectPath = '/tmp/follow-up-queue-routes';
+    mockResolvedSession('follow-up-routes', { projectPath });
+    vi.mocked(SessionRuntime.hasDurableFollowUpInbox).mockResolvedValue(true);
+    const before = makeFollowUpQueueSnapshot();
+    const after = makeFollowUpQueueSnapshot({
+      version: 'b'.repeat(64),
+      pending: 0,
+      mutable: 0,
+      items: [],
+    });
+    runtimeState.runtime.getFollowUpQueueSnapshot.mockResolvedValue(before);
+    runtimeState.runtime.mutateFollowUpQueue.mockResolvedValue({ snapshot: after });
+    const app = SessionRoutes();
+    const query = `?projectPath=${encodeURIComponent(projectPath)}`;
+
+    const read = await app.request(`/follow-up-routes/follow-ups${query}`);
+    expect(read.status).toBe(200);
+    await expect(read.json()).resolves.toEqual(before);
+
+    const mutate = await app.request(`/follow-up-routes/follow-ups/mutate${query}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        expectedVersion: before.version,
+        operation: { type: 'remove', messageId: 'follow-up-1' },
+      }),
+    });
+    expect(mutate.status).toBe(200);
+    await expect(mutate.json()).resolves.toEqual({ snapshot: after });
+    expect(runtimeState.runtime.mutateFollowUpQueue).toHaveBeenCalledWith({
+      expectedVersion: before.version,
+      operation: { type: 'remove', messageId: 'follow-up-1' },
+    });
+    expect(Bus.publish).toHaveBeenCalledWith(
+      { sessionId: 'follow-up-routes', projectPath },
+      'follow_up.queue.changed',
+      { queue: after }
+    );
+  });
+
+  it('moves a follow-up to the requested position', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const projectPath = '/tmp/move-follow-up-queue';
+    mockResolvedSession('move-follow-up-queue', { projectPath });
+    const moved = makeFollowUpQueueSnapshot({
+      version: 'd'.repeat(64),
+      items: [
+        {
+          ...makeFollowUpQueueSnapshot().items[0]!,
+          id: 'follow-up-2',
+          position: 0,
+        },
+      ],
+    });
+    runtimeState.runtime.mutateFollowUpQueue.mockResolvedValue({ snapshot: moved });
+
+    const response = await SessionRoutes().request(
+      `/move-follow-up-queue/follow-ups/mutate?projectPath=${encodeURIComponent(projectPath)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedVersion: 'a'.repeat(64),
+          operation: { type: 'move', messageId: 'follow-up-2', toPosition: 0 },
+        }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(runtimeState.runtime.mutateFollowUpQueue).toHaveBeenCalledWith({
+      expectedVersion: 'a'.repeat(64),
+      operation: { type: 'move', messageId: 'follow-up-2', toPosition: 0 },
+    });
+  });
+
+  it('routes a queue mutation by projectPath in the request body', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const projectPath = '/tmp/body-follow-up-queue';
+    mockResolvedSession('body-follow-up-queue', { projectPath });
+
+    const response = await SessionRoutes().request(
+      '/body-follow-up-queue/follow-ups/mutate',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectPath,
+          expectedVersion: 'a'.repeat(64),
+          operation: { type: 'remove', messageId: 'follow-up-1' },
+        }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(SessionService.findSessionMetadata).toHaveBeenCalledWith(
+      'body-follow-up-queue',
+      projectPath
+    );
+    expect(runtimeState.runtime.mutateFollowUpQueue).toHaveBeenCalledWith({
+      expectedVersion: 'a'.repeat(64),
+      operation: { type: 'remove', messageId: 'follow-up-1' },
+    });
+  });
+
+  it('returns a canonical empty queue without initializing an idle runtime', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const projectPath = '/tmp/empty-follow-up-queue';
+    mockResolvedSession('empty-follow-up-queue', { projectPath });
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
+
+    const response = await SessionRoutes().request(
+      `/empty-follow-up-queue/follow-ups?projectPath=${encodeURIComponent(projectPath)}`
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      version: expect.stringMatching(/^[a-f0-9]{64}$/),
+      pending: 0,
+      mutable: 0,
+      locked: 0,
+      internal: 0,
+      items: [],
+    });
+    expect(SessionRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it('returns typed queue conflicts with the latest snapshot', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { FollowUpQueueMutationError } = await import(
+      '../../../../src/agent/runtime/FollowUpQueueProjection.js'
+    );
+    const projectPath = '/tmp/stale-follow-up-queue';
+    mockResolvedSession('stale-follow-up-queue', { projectPath });
+    const latest = makeFollowUpQueueSnapshot({ version: 'c'.repeat(64) });
+    runtimeState.runtime.mutateFollowUpQueue.mockRejectedValue(
+      new FollowUpQueueMutationError(
+        'revision_conflict',
+        latest,
+        'Follow-up queue changed'
+      )
+    );
+
+    const response = await SessionRoutes().request(
+      `/stale-follow-up-queue/follow-ups/mutate?projectPath=${encodeURIComponent(projectPath)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedVersion: 'a'.repeat(64),
+          operation: { type: 'remove', messageId: 'follow-up-1' },
+        }),
+      }
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'revision_conflict',
+        message: 'Follow-up queue changed',
+      },
+      snapshot: latest,
+    });
+  });
+
+  it.each([
+    ['already_claimed', 409],
+    ['immutable_origin', 409],
+    ['immutable_boundary', 409],
+    ['not_found', 404],
+    ['runtime_unavailable', 503],
+    ['invalid_mutation', 400],
+    ['storage_unavailable', 503],
+  ] as const)('maps the %s queue error to HTTP %s', async (code, status) => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { FollowUpQueueMutationError } = await import(
+      '../../../../src/agent/runtime/FollowUpQueueProjection.js'
+    );
+    const projectPath = `/tmp/${code}-follow-up-queue`;
+    mockResolvedSession(`${code}-follow-up-queue`, { projectPath });
+    const latest = makeFollowUpQueueSnapshot();
+    runtimeState.runtime.mutateFollowUpQueue.mockRejectedValue(
+      new FollowUpQueueMutationError(code, latest, `Queue error: ${code}`)
+    );
+
+    const response = await SessionRoutes().request(
+      `/${code}-follow-up-queue/follow-ups/mutate?projectPath=${encodeURIComponent(projectPath)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedVersion: latest.version,
+          operation: { type: 'remove', messageId: 'follow-up-1' },
+        }),
+      }
+    );
+
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toEqual({
+      error: { code, message: `Queue error: ${code}` },
+      snapshot: latest,
+    });
+  });
+
+  it('rejects malformed follow-up mutations before acquiring a runtime', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const projectPath = '/tmp/invalid-follow-up-queue';
+    mockResolvedSession('invalid-follow-up-queue', { projectPath });
+
+    const response = await SessionRoutes().request(
+      `/invalid-follow-up-queue/follow-ups/mutate?projectPath=${encodeURIComponent(projectPath)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedVersion: 'not-a-version',
+          operation: { type: 'remove', messageId: 'follow-up-1' },
+          unexpected: true,
+        }),
+      }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'BAD_REQUEST' },
+    });
+    expect(SessionRuntime.create).not.toHaveBeenCalled();
+    expect(runtimeState.runtime.mutateFollowUpQueue).not.toHaveBeenCalled();
+  });
+
+  it('uses exact compound identity and rejects ambiguous follow-up queue lookup', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const left = metadataFor('shared-follow-up', '/tmp/follow-up-left');
+    const right = metadataFor('shared-follow-up', '/tmp/follow-up-right');
+    vi.mocked(SessionService.listSessions).mockResolvedValue([left, right]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) =>
+        [left, right].find(
+          (candidate) =>
+            candidate.sessionId === sessionId &&
+            (projectPath === undefined || candidate.projectPath === projectPath)
+        )
+    );
+    const app = SessionRoutes();
+
+    const ambiguous = await app.request('/shared-follow-up/follow-ups');
+    expect(ambiguous.status).toBe(409);
+    await expect(ambiguous.json()).resolves.toMatchObject({
+      error: { code: 'AMBIGUOUS_SESSION' },
+    });
+
+    const exact = await app.request(
+      `/shared-follow-up/follow-ups?projectPath=${encodeURIComponent(right.projectPath)}`
+    );
+    expect(exact.status).toBe(200);
+    expect(SessionService.findSessionMetadata).toHaveBeenCalledWith(
+      right.sessionId,
+      right.projectPath
+    );
+  });
+
+  it('rejects archived and ACP-remote follow-up queue surfaces', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionArchivedError } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+    const archivedPath = '/tmp/archived-follow-up';
+    mockResolvedSession('archived-follow-up', { projectPath: archivedPath });
+    vi.mocked(SessionService.assertSessionWritable).mockRejectedValueOnce(
+      new SessionArchivedError('archived-follow-up', 'archived-follow-up')
+    );
+    const archived = await SessionRoutes().request(
+      `/archived-follow-up/follow-ups?projectPath=${encodeURIComponent(archivedPath)}`
+    );
+    expect(archived.status).toBe(409);
+
+    const app = await createMountedSessionApp();
+    const protectedRoot =
+      getBladeStorageRoot() + '/acp-remote-workspaces/' + 'a'.repeat(64);
+    const remote = await app.request(
+      `/sessions/remote-follow-up/follow-ups?projectPath=${encodeURIComponent(protectedRoot)}`
+    );
+    expect(remote.status).toBe(400);
+    await expect(remote.json()).resolves.toMatchObject({
+      error: { code: 'BAD_REQUEST' },
+    });
+  });
+
+  it('publishes an unsequenced queue snapshot to an active SSE stream', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const projectPath = '/tmp/follow-up-sse';
+    mockResolvedSession('follow-up-sse', { projectPath });
+    vi.mocked(SessionRuntime.hasDurableFollowUpInbox).mockResolvedValue(true);
+    const app = SessionRoutes();
+    const abort = new AbortController();
+    const response = await app.request(
+      `/follow-up-sse/events?projectPath=${encodeURIComponent(projectPath)}`,
+      { signal: abort.signal }
+    );
+    const collector = createSseCollector(response);
+    expect(await collector.next()).toMatchObject({
+      type: 'connected',
+      properties: { followUpQueue: makeFollowUpQueueSnapshot() },
+    });
+
+    const replacement = makeFollowUpQueueSnapshot({ version: 'e'.repeat(64) });
+    Bus.publish(
+      { sessionId: 'follow-up-sse', projectPath },
+      'follow_up.queue.changed',
+      { queue: replacement }
+    );
+    const changed = await collector.next();
+    expect(changed).toMatchObject({
+      type: 'follow_up.queue.changed',
+      properties: { queue: replacement },
+    });
+    expect(changed.seq).toBeUndefined();
+
+    abort.abort();
+    await collector.cancel();
+  });
+
+  it('commits a queue mutation after its SSE observer disconnects', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const projectPath = '/tmp/disconnected-follow-up-sse';
+    mockResolvedSession('disconnected-follow-up-sse', { projectPath });
+    vi.mocked(SessionRuntime.hasDurableFollowUpInbox).mockResolvedValue(true);
+    const committed = makeFollowUpQueueSnapshot({
+      version: 'f'.repeat(64),
+      pending: 0,
+      mutable: 0,
+      items: [],
+    });
+    let markMutationStarted!: () => void;
+    const mutationStarted = new Promise<void>((resolve) => {
+      markMutationStarted = resolve;
+    });
+    let releaseMutation!: () => void;
+    const mutationGate = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    runtimeState.runtime.mutateFollowUpQueue.mockImplementationOnce(async () => {
+      markMutationStarted();
+      await mutationGate;
+      return { snapshot: committed };
+    });
+    const app = SessionRoutes();
+    const abort = new AbortController();
+    const eventsResponse = await app.request(
+      `/disconnected-follow-up-sse/events?projectPath=${encodeURIComponent(projectPath)}`,
+      { signal: abort.signal }
+    );
+    const collector = createSseCollector(eventsResponse);
+    await collector.next();
+
+    const mutationResponsePromise = app.request(
+      `/disconnected-follow-up-sse/follow-ups/mutate?projectPath=${encodeURIComponent(projectPath)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedVersion: 'a'.repeat(64),
+          operation: { type: 'remove', messageId: 'follow-up-1' },
+        }),
+      }
+    );
+    await mutationStarted;
+    abort.abort();
+    await collector.cancel();
+    releaseMutation();
+
+    const mutationResponse = await mutationResponsePromise;
+    expect(mutationResponse.status).toBe(200);
+    await expect(mutationResponse.json()).resolves.toEqual({ snapshot: committed });
+    expect(Bus.publish).toHaveBeenCalledWith(
+      { sessionId: 'disconnected-follow-up-sse', projectPath },
+      'follow_up.queue.changed',
+      { queue: committed }
+    );
   });
 
   it('rejects changing models while a turn is active', async () => {
@@ -3482,6 +3928,29 @@ describe('SessionRoutes runtime reuse', () => {
               persisted: false,
             },
           ],
+          queue: makeFollowUpQueueSnapshot({ locked: 1, mutable: 0 }),
+        };
+        yield {
+          kind: 'steering_applied' as const,
+          messageIds: ['durable-recovered-input'],
+          count: 1,
+          recovered: 1,
+          delivery: 'next_turn' as const,
+          messages: [
+            {
+              id: 'durable-recovered-input',
+              content: 'continue durable work',
+              queuedAt: Date.now(),
+              recovered: true,
+              persisted: false,
+            },
+          ],
+          queue: makeFollowUpQueueSnapshot({
+            version: 'b'.repeat(64),
+            pending: 0,
+            mutable: 0,
+            items: [],
+          }),
         };
         return {
           success: false,
@@ -3510,6 +3979,29 @@ describe('SessionRoutes runtime reuse', () => {
               persisted: false,
             },
           ],
+          queue: makeFollowUpQueueSnapshot({ locked: 1, mutable: 0 }),
+        };
+        yield {
+          kind: 'steering_applied' as const,
+          messageIds: ['durable-recovered-input'],
+          count: 1,
+          recovered: 1,
+          delivery: 'next_turn' as const,
+          messages: [
+            {
+              id: 'durable-recovered-input',
+              content: 'continue durable work',
+              queuedAt: Date.now(),
+              recovered: true,
+              persisted: false,
+            },
+          ],
+          queue: makeFollowUpQueueSnapshot({
+            version: 'c'.repeat(64),
+            pending: 0,
+            mutable: 0,
+            items: [],
+          }),
         };
         return {
           success: true,
@@ -6164,13 +6656,52 @@ describe('SessionRoutes runtime reuse', () => {
             persisted: false,
           },
         ],
+        queue: makeFollowUpQueueSnapshot({
+          version: 'b'.repeat(64),
+          pending: 2,
+          mutable: 0,
+          locked: 2,
+          items: [],
+        }),
       };
       yield {
         kind: 'steering_applied',
-        messageIds: ['recovered-steer'],
+        messageIds: ['not-yet-persisted'],
         count: 1,
         recovered: 1,
         delivery: 'next_turn',
+        messages: [
+          {
+            id: 'not-yet-persisted',
+            content: 'not persisted',
+            queuedAt: Date.now(),
+            recovered: true,
+          },
+        ],
+        queue: makeFollowUpQueueSnapshot({
+          version: 'c'.repeat(64),
+          pending: 1,
+          mutable: 0,
+          locked: 1,
+          items: [
+            {
+              ...makeFollowUpQueueSnapshot().items[0]!,
+              id: 'not-yet-persisted',
+              state: 'locked',
+              mutable: false,
+              delivery: 'recovery',
+            },
+          ],
+        }),
+      };
+      yield {
+        kind: 'follow_up_queue_changed',
+        queue: makeFollowUpQueueSnapshot({
+          version: 'd'.repeat(64),
+          pending: 0,
+          mutable: 0,
+          items: [],
+        }),
       };
       yield {
         kind: 'goal_continuation_started',
@@ -6362,11 +6893,37 @@ describe('SessionRoutes runtime reuse', () => {
       refFor('surface-events'),
       'steering.applied',
       expect.objectContaining({
-        messageIds: ['recovered-steer'],
+        messageIds: ['not-yet-persisted'],
         count: 1,
         recovered: 1,
       })
     );
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('surface-events'),
+      'follow_up.queue.changed',
+      expect.objectContaining({
+        queue: expect.objectContaining({ version: 'b'.repeat(64), locked: 2 }),
+      })
+    );
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('surface-events'),
+      'follow_up.queue.changed',
+      expect.objectContaining({
+        queue: expect.objectContaining({ version: 'd'.repeat(64), pending: 0 }),
+      })
+    );
+    const appliedMessageIndex = busState.publish.mock.calls.findIndex(
+      ([, type, properties]) =>
+        type === 'message.created' && properties.messageId === 'not-yet-persisted'
+    );
+    const acknowledgedQueueIndex = busState.publish.mock.calls.findIndex(
+      ([, type, properties]) =>
+        type === 'follow_up.queue.changed' &&
+        (properties.queue as FollowUpQueueSnapshot | undefined)?.version ===
+          'd'.repeat(64)
+    );
+    expect(appliedMessageIndex).toBeGreaterThanOrEqual(0);
+    expect(acknowledgedQueueIndex).toBeGreaterThan(appliedMessageIndex);
     expect(Bus.publish).toHaveBeenCalledWith(
       refFor('surface-events'),
       'goal.continuation.started',

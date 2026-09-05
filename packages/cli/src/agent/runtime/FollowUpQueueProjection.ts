@@ -10,6 +10,10 @@ import type { DurableSteeringMessage } from './DurableSteeringInbox.js';
 
 const VERSION_DOMAIN = 'blade-follow-up-queue-snapshot-v1\0';
 const INTERNAL_ID_DOMAIN = 'blade-follow-up-queue-internal-id-v1\0';
+const EMPTY_VERSION = createHash('sha256')
+  .update(VERSION_DOMAIN)
+  .update('canonical-empty')
+  .digest('hex');
 
 export interface FollowUpQueueProjectionInput {
   generation: string;
@@ -27,11 +31,22 @@ export class FollowUpQueueMutationError extends Error {
   constructor(
     readonly code: FollowUpQueueErrorCode,
     readonly snapshot: FollowUpQueueSnapshot,
-    message = code
+    message: string = code
   ) {
     super(message);
     this.name = 'FollowUpQueueMutationError';
   }
+}
+
+export function emptyFollowUpQueueSnapshot(): FollowUpQueueSnapshot {
+  return {
+    version: EMPTY_VERSION,
+    pending: 0,
+    mutable: 0,
+    locked: 0,
+    internal: 0,
+    items: [],
+  };
 }
 
 function isInternal(message: DurableSteeringMessage): boolean {
