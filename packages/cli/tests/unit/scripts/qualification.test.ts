@@ -251,6 +251,27 @@ describe('production qualification contract', () => {
     expect(deterministic).toContain("describe.skipIf(process.platform === 'win32')");
   });
 
+  it('registers the production TUI and Web turn activity trajectory', () => {
+    const deterministicPath = path.resolve(
+      __dirname,
+      '../../integration/turn-activity-surfaces.test.ts'
+    );
+    const runnerPath = path.resolve(
+      __dirname,
+      '../../support/turnActivityPtyRunner.ts'
+    );
+    const deterministic = fs.readFileSync(deterministicPath, 'utf8');
+    const runner = fs.readFileSync(runnerPath, 'utf8');
+
+    expect(fs.existsSync(deterministicPath)).toBe(true);
+    expect(fs.existsSync(runnerPath)).toBe(true);
+    expect(deterministic).toContain('access(cliEntry)');
+    expect(deterministic).toContain('await chromium.launch({ headless: true })');
+    expect(deterministic).toContain("describe.skipIf(process.platform === 'win32')");
+    expect(runner).toContain("import { spawn } from 'bun-pty'");
+    expect(runner).toContain('BLADE_TURN_ACTIVITY_PTY_USES_PRODUCTION_DIST');
+  });
+
   it('registers the production follow-up queue surface matrix in exact order', () => {
     const testConfig = fs.readFileSync(
       path.resolve(__dirname, '../../../scripts/test-config.js'),
