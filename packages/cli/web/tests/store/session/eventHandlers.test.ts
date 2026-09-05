@@ -2143,6 +2143,35 @@ describe('eventHandlers', () => {
     });
 
     expect(state.providerRecovery).toEqual(createProviderRecovery('generation-1', 2));
+
+    dispatch({
+      type: 'provider.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        recovery: createProviderRecovery('stale-generation', 7),
+      },
+    });
+    expect(state.providerRecovery).toEqual(createProviderRecovery('generation-1', 2));
+
+    dispatch({
+      type: 'provider.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        recovery: {
+          version: 1,
+          generation: 'generation-2',
+          revision: 0,
+          snapshot: null,
+        },
+      },
+    });
+    expect(state.providerRecovery).toMatchObject({
+      generation: 'generation-2',
+      revision: 0,
+      snapshot: null,
+    });
   });
 
   test('lets an authoritative reconnect replace or clear Provider recovery', () => {

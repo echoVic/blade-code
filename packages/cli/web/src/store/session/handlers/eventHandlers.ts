@@ -1940,8 +1940,10 @@ const handleProviderRecovery: EventHandler = (props, get, set) => {
   const current = get().providerRecovery;
   if (
     props.authoritative !== true &&
-    current?.generation === parsed.data.generation &&
-    current.revision >= parsed.data.revision
+    current &&
+    ((current.generation === parsed.data.generation &&
+      current.revision >= parsed.data.revision) ||
+      (current.generation !== parsed.data.generation && parsed.data.revision !== 0))
   ) {
     return;
   }
