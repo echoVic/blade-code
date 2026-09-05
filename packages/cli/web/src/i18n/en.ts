@@ -618,6 +618,34 @@ export const en = {
   'chat.input.action.steer': 'Steer active turn',
   'chat.input.action.send': 'Send message',
   'chat.input.action.submitting': 'Submitting message',
+  'chat.providerRecovery.admission': 'Waiting for Provider capacity',
+  'chat.providerRecovery.admissionDetail':
+    'Queue {position}/{depth} · {scope} · waiting {waitSeconds}s',
+  'chat.providerRecovery.admissionCompact': 'Provider queue · {position}/{depth}',
+  'chat.providerRecovery.rateLimit': 'Provider rate limited · retry in {seconds}s',
+  'chat.providerRecovery.retryWait':
+    'Provider temporarily unavailable · retry in {seconds}s',
+  'chat.providerRecovery.retryAttempt': 'Retrying Provider',
+  'chat.providerRecovery.retryDetail':
+    'Attempt {attempt}/{maxRetries} · recovery budget {budgetSeconds}s',
+  'chat.providerRecovery.retryCompact':
+    'Provider recovery · {seconds}s · {attempt}/{maxRetries}',
+  'chat.providerRecovery.circuit': 'Provider isolated · waiting for recovery probe',
+  'chat.providerRecovery.circuitDetail': 'Probe in {seconds}s',
+  'chat.providerRecovery.circuitCompact': 'Provider circuit · {seconds}s',
+  'chat.providerRecovery.probe': 'Probing Provider recovery',
+  'chat.providerRecovery.probeDetail': 'One recovery probe is in progress',
+  'chat.providerRecovery.probeCompact': 'Provider recovery probe',
+  'chat.providerRecovery.stall': 'Provider has not returned stream data',
+  'chat.providerRecovery.stallAfterOutput': 'Provider stream is temporarily paused',
+  'chat.providerRecovery.stallDetail':
+    'Waiting {stallSeconds}s · timeout {timeoutSeconds}s',
+  'chat.providerRecovery.stallCompact': 'Provider waiting · {stallSeconds}s',
+  'chat.providerRecovery.fallback': 'Switching to {to}',
+  'chat.providerRecovery.fallbackDetail':
+    'Candidate {candidate}/{candidateCount} · from {from}',
+  'chat.providerRecovery.fallbackCompact': 'Provider switch · {to}',
+  'chat.providerRecovery.stop': 'Stop',
 
   // Chat · Code review report
   'chat.review.title': 'Code Review',

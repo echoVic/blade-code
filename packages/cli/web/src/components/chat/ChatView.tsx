@@ -28,6 +28,7 @@ import { ChatList } from './ChatList';
 import { FollowUpQueuePanel } from './FollowUpQueuePanel';
 import { GoalControlBar } from './GoalControlBar';
 import { PendingInteractionBar } from './PendingInteractionBar';
+import { ProviderRecoveryBanner } from './ProviderRecoveryBanner';
 import { SideConversationPanel } from './SideConversationPanel';
 import { StatusBar } from './StatusBar';
 import { TeamPanel } from './TeamPanel';
@@ -135,6 +136,7 @@ export function ChatView() {
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const isStopping = useSessionStore((state) => state.isStopping);
+  const providerRecovery = useSessionStore((state) => state.providerRecovery);
   const sessionEventConnectionState = useSessionStore(
     (state) => state.sessionEventConnectionState
   );
@@ -395,6 +397,11 @@ export function ChatView() {
           mutation={followUpQueueMutation}
           onMutate={mutateFollowUpQueue}
           onRefresh={refreshFollowUpQueue}
+        />
+        <ProviderRecoveryBanner
+          recovery={historyOnly ? null : providerRecovery}
+          stopping={isStopping}
+          onStop={handleAbort}
         />
         <ChatInput
           key={composerDraftKey}

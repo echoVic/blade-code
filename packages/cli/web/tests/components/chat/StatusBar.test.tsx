@@ -49,6 +49,7 @@ const sessionState = vi.hoisted(() => ({
     durationMs: number;
     timeoutMs: number;
   } | null,
+  providerRecovery: null as import('@api/schemas').ProviderRecoveryProjection | null,
   pendingResume: null as {
     phase: 'retry_scheduled';
     kind: 'pending_input';
@@ -89,6 +90,7 @@ describe('StatusBar', () => {
     sessionState.providerRetry = null;
     sessionState.providerCircuit = null;
     sessionState.providerStall = null;
+    sessionState.providerRecovery = null;
     sessionState.pendingResume = null;
     sessionState.actionStationarity = null;
     sessionState.turnRecovery = null;
@@ -182,110 +184,151 @@ describe('StatusBar', () => {
 
   it('renders the Provider retry attempt and bounded wait', () => {
     sessionState.agentPhase = 'running';
-    sessionState.providerRetry = {
-      attempt: 1,
-      maxRetries: 2,
-      delayMs: 1_250,
+    sessionState.providerRecovery = {
+      version: 1,
+      generation: 'retry',
+      revision: 1,
+      snapshot: {
+        activity: 'retry_attempt',
+        reason: 'server_error',
+        updatedAt: Date.now(),
+        retry: { attempt: 1, maxRetries: 2 },
+      },
     };
     act(() => {
       root.render(<StatusBar />);
     });
 
     expect(container.textContent).toContain('Provider');
-    expect(container.textContent).toContain('Retrying');
+    expect(container.textContent).toContain('Provider recovery');
     expect(container.textContent).toContain('1/2');
-    expect(container.textContent).toContain('2s');
   });
 
   it('renders bounded foreground recovery and its remaining budget', () => {
     sessionState.agentPhase = 'running';
-    sessionState.providerRetry = {
-      phase: 'waiting',
-      attempt: 4,
-      maxRetries: 12,
-      mode: 'bounded_foreground',
-      recoveryRemainingMs: 585_000,
+    sessionState.providerRecovery = {
+      version: 1,
+      generation: 'bounded',
+      revision: 1,
+      snapshot: {
+        activity: 'retry_wait',
+        reason: 'rate_limit',
+        updatedAt: Date.now(),
+        nextActionAt: Date.now() + 2_000,
+        retry: { attempt: 4, maxRetries: 12, recoveryRemainingMs: 585_000 },
+      },
     };
     act(() => {
       root.render(<StatusBar />);
     });
 
     expect(container.textContent).toContain('Provider');
-    expect(container.textContent).toContain('Bounded recovery');
+    expect(container.textContent).toContain('Provider recovery');
     expect(container.textContent).toContain('4/12');
-    expect(container.textContent).toContain('9m 45s');
+    expect(container.textContent).toContain('2s');
   });
 
   it('renders Provider admission ahead of retry and ordinary phases', () => {
     sessionState.agentPhase = 'running';
-    sessionState.providerAdmission = {
-      queuePosition: 1,
-      queueDepth: 2,
-      scope: 'domain',
-      waitMs: 15_000,
-    };
-    sessionState.providerRetry = {
-      phase: 'waiting',
-      attempt: 4,
-      maxRetries: 12,
-      mode: 'bounded_foreground',
-      recoveryRemainingMs: 585_000,
+    sessionState.providerRecovery = {
+      version: 1,
+      generation: 'admission',
+      revision: 1,
+      snapshot: {
+        activity: 'admission_wait',
+        reason: 'capacity',
+        updatedAt: Date.now(),
+        admission: {
+          requestClass: 'foreground',
+          resource: 'stream',
+          queuePosition: 1,
+          queueDepth: 2,
+          scope: 'domain',
+          waitMs: 15_000,
+          maxWaitMs: 180_000,
+          inFlight: 1,
+          limit: 1,
+        },
+      },
     };
     act(() => {
       root.render(<StatusBar />);
     });
 
     expect(container.textContent).toContain('Provider');
-    expect(container.textContent).toContain('Capacity queue 1/2');
-    expect(container.textContent).toContain('domain');
-    expect(container.textContent).toContain('15s');
-    expect(container.textContent).not.toContain('Bounded recovery');
+    expect(container.textContent).toContain('Provider queue');
+    expect(container.textContent).toContain('1/2');
   });
 
   it('renders shared circuit waiting and probe ahead of request retry', () => {
     sessionState.agentPhase = 'running';
-    sessionState.providerRetry = {
-      phase: 'waiting',
-      attempt: 4,
-      maxRetries: 12,
-      mode: 'bounded_foreground',
-      recoveryRemainingMs: 598_000,
-    };
-    sessionState.providerCircuit = {
-      phase: 'waiting',
-      retryAfterMs: 2_000,
-      recoveryRemainingMs: 598_000,
+    sessionState.providerRecovery = {
+      version: 1,
+      generation: 'circuit',
+      revision: 1,
+      snapshot: {
+        activity: 'circuit_open',
+        reason: 'server_error',
+        updatedAt: Date.now(),
+        nextActionAt: Date.now() + 2_000,
+        circuit: {
+          phase: 'waiting',
+          retryAfterMs: 2_000,
+          openDurationMs: 2_000,
+          recoveryRemainingMs: 598_000,
+        },
+      },
     };
     act(() => {
       root.render(<StatusBar />);
     });
 
     expect(container.textContent).toContain('Provider');
-    expect(container.textContent).toContain('Circuit open');
-    expect(container.textContent).toContain('probe in 2s');
-    expect(container.textContent).toContain('9m 58s');
-    expect(container.textContent).not.toContain('Bounded recovery');
+    expect(container.textContent).toContain('Provider circuit');
+    expect(container.textContent).toContain('2s');
 
-    sessionState.providerCircuit = { phase: 'probe' };
+    sessionState.providerRecovery = {
+      version: 1,
+      generation: 'circuit',
+      revision: 2,
+      snapshot: {
+        activity: 'circuit_probe',
+        reason: 'server_error',
+        updatedAt: Date.now(),
+        circuit: { phase: 'probe', openDurationMs: 2_000 },
+      },
+    };
     act(() => {
       root.render(<StatusBar />);
     });
-    expect(container.textContent).toContain('Recovery probe');
+    expect(container.textContent).toContain('Provider recovery probe');
   });
 
   it('renders Provider stall duration ahead of the normal phase', () => {
     sessionState.agentPhase = 'running';
-    sessionState.providerStall = {
-      durationMs: 30_000,
-      timeoutMs: 300_000,
+    sessionState.providerRecovery = {
+      version: 1,
+      generation: 'stall',
+      revision: 1,
+      snapshot: {
+        activity: 'stream_stall',
+        reason: 'stream_stall',
+        updatedAt: Date.now(),
+        stall: {
+          stallCount: 1,
+          durationMs: 30_000,
+          warningAfterMs: 30_000,
+          timeoutMs: 300_000,
+          outputStarted: false,
+        },
+      },
     };
     act(() => {
       root.render(<StatusBar />);
     });
 
-    expect(container.textContent).toContain('Provider stream paused');
+    expect(container.textContent).toContain('Provider waiting');
     expect(container.textContent).toContain('30s');
-    expect(container.textContent).toContain('300s');
     expect(container.textContent).not.toContain('Generating...');
   });
 
@@ -317,7 +360,17 @@ describe('StatusBar', () => {
       attempt: 2,
       maxAttempts: 4,
     };
-    sessionState.providerRetry = { attempt: 1, maxRetries: 3 };
+    sessionState.providerRecovery = {
+      version: 1,
+      generation: 'retry-priority',
+      revision: 1,
+      snapshot: {
+        activity: 'retry_attempt',
+        reason: 'transport',
+        updatedAt: Date.now(),
+        retry: { attempt: 1, maxRetries: 3 },
+      },
+    };
 
     act(() => {
       root.render(<StatusBar />);
@@ -325,7 +378,7 @@ describe('StatusBar', () => {
     expect(container.textContent).toContain('Provider');
     expect(container.textContent).not.toContain('Recovery attempt');
 
-    sessionState.providerRetry = null;
+    sessionState.providerRecovery = null;
     sessionState.pendingResume = null;
     act(() => {
       root.render(<StatusBar />);

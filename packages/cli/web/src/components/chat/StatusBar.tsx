@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/tooltip';
 import { type TranslationKey, useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { presentProviderRecovery } from '@/lib/providerRecoveryPresentation';
 import { useSessionStore } from '@/store/session';
 
 const PHASE_LABEL_KEYS: Record<string, TranslationKey | ''> = {
@@ -50,18 +51,12 @@ export function StatusBar() {
   const tokenUsage = useSessionStore((state) => state.tokenUsage);
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const agentPhase = useSessionStore((state) => state.agentPhase);
-  const providerAdmission = useSessionStore((state) => state.providerAdmission);
-  const providerCircuit = useSessionStore((state) => state.providerCircuit);
-  const providerRetry = useSessionStore((state) => state.providerRetry);
+  const providerRecovery = useSessionStore((state) => state.providerRecovery);
   const pendingResume = useSessionStore((state) => state.pendingResume);
-  const providerStall = useSessionStore((state) => state.providerStall);
   const actionStationarity = useSessionStore((state) => state.actionStationarity);
   const turnRecovery = useSessionStore((state) => state.turnRecovery);
   const phaseKey = PHASE_LABEL_KEYS[agentPhase] ?? '';
-  const retryDelay =
-    providerRetry?.delayMs !== undefined
-      ? ` · ${Math.max(0, Math.ceil(providerRetry.delayMs / 1000))}s`
-      : '';
+  const providerRecoveryPresentation = presentProviderRecovery(providerRecovery);
   const pendingResumeDelay =
     pendingResume?.delayMs !== undefined
       ? ` · retry in ${formatDurationMs(pendingResume.delayMs)}`
@@ -84,34 +79,16 @@ export function StatusBar() {
             ? 'status.phase.actionStationarityStopped'
             : 'status.phase.actionStationarityRecovering'
         )} · ${actionStationarity.toolName} · ${actionStationarity.runLength}/${actionStationarity.haltThreshold}`
-      : providerCircuit
-        ? providerCircuit.phase === 'probe'
-          ? 'Provider · Recovery probe'
-          : `Provider · Circuit open${
-              providerCircuit.retryAfterMs !== undefined
-                ? ` · probe in ${formatDurationMs(providerCircuit.retryAfterMs)}`
-                : ''
-            }${
-              providerCircuit.recoveryRemainingMs !== undefined
-                ? ` · ${formatDurationMs(providerCircuit.recoveryRemainingMs)}`
-                : ''
-            }`
-        : providerAdmission
-          ? `Provider · Capacity queue ${providerAdmission.queuePosition}/${Math.max(
-              providerAdmission.queueDepth,
-              providerAdmission.queuePosition
-            )} · ${providerAdmission.scope} · ${formatDurationMs(providerAdmission.waitMs)}`
-          : providerRetry
-            ? providerRetry.mode === 'bounded_foreground'
-              ? `Provider · Bounded recovery · ${providerRetry.attempt}/${providerRetry.maxRetries} · ${formatDurationMs(providerRetry.recoveryRemainingMs ?? 0)}`
-              : `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
+      : providerRecoveryPresentation
+        ? t(
+            providerRecoveryPresentation.compactKey,
+            providerRecoveryPresentation.params
+          )
             : pendingResume
               ? `Recovery attempt ${pendingResume.attempt}/${pendingResume.maxAttempts}${pendingResumeDelay}`
-              : providerStall
-                ? `${t('status.phase.providerStall')} · ${Math.ceil(providerStall.durationMs / 1000)}s / ${Math.ceil(providerStall.timeoutMs / 1000)}s`
-                : phaseKey
-                  ? t(phaseKey)
-                  : '';
+              : phaseKey
+                ? t(phaseKey)
+                : '';
 
   const usagePercent =
     tokenUsage.maxContextTokens > 0

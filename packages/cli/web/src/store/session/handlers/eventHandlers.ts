@@ -3,6 +3,7 @@ import {
   FollowUpQueueSnapshotSchema,
   type Goal,
   type McpElicitationDetails,
+  ProviderRecoveryProjectionSchema,
 } from '@api/schemas';
 import { taskFailureCode } from '@/lib/taskFailure';
 import type { Message as ServiceMessage, StreamEvent } from '@/services';
@@ -1897,6 +1898,7 @@ const handleModelFallback: EventHandler = (props, get, set) => {
     providerRetry: null,
     pendingResume: null,
     providerStall: null,
+    providerRecovery: null,
     actionStationarity: null,
   });
 };
@@ -1926,6 +1928,25 @@ const handleProviderRetry: EventHandler = (props, get, set) => {
     providerRetry:
       props.phase === 'recovered' ? null : (props as unknown as ProviderRetryInfo),
   });
+};
+
+const handleProviderRecovery: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  if (props.recovery === null && props.authoritative === true) {
+    set({ providerRecovery: null });
+    return;
+  }
+  const parsed = ProviderRecoveryProjectionSchema.safeParse(props.recovery);
+  if (!parsed.success) return;
+  const current = get().providerRecovery;
+  if (
+    props.authoritative !== true &&
+    current?.generation === parsed.data.generation &&
+    current.revision >= parsed.data.revision
+  ) {
+    return;
+  }
+  set({ providerRecovery: parsed.data });
 };
 
 const isFiniteNonnegative = (value: unknown): value is number =>
@@ -2219,6 +2240,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       providerRetry: null,
       pendingResume: null,
       providerStall: null,
+      providerRecovery: null,
       actionStationarity: null,
       currentRunId: null,
       pendingSteeringCount: 0,
@@ -2259,6 +2281,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       providerRetry: null,
       pendingResume: null,
       providerStall: null,
+      providerRecovery: null,
       actionStationarity: null,
       currentRunId: null,
       pendingSteeringCount: 0,
@@ -2452,6 +2475,7 @@ const handleSessionRewound: EventHandler = (props, get, set) => {
     providerRetry: null,
     pendingResume: null,
     providerStall: null,
+    providerRecovery: null,
     actionStationarity: null,
     currentRunId: null,
     pendingSteeringCount: 0,
@@ -2574,6 +2598,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'provider.admission': handleProviderAdmission,
   'provider.circuit': handleProviderCircuit,
   'provider.retry': handleProviderRetry,
+  'provider.recovery': handleProviderRecovery,
   'pending.resume': handlePendingResume,
   'provider.stall': handleProviderStall,
   'action.stationarity': handleActionStationarity,

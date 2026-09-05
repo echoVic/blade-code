@@ -20,6 +20,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
     providerRetry: null,
     pendingResume: null,
     providerStall: null,
+    providerRecovery: null,
     actionStationarity: null,
     turnRecovery: null,
     sessionEventConnectionState: 'idle',
@@ -96,6 +97,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
         providerCircuit: null,
         providerRetry: null,
         providerStall: null,
+        providerRecovery: null,
         actionStationarity: null,
         turnRecovery: null,
       });
@@ -114,6 +116,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
         providerRetry: null,
         pendingResume: null,
         providerStall: null,
+        providerRecovery: null,
         actionStationarity: null,
         currentRunId: null,
         pendingSteeringCount: 0,

@@ -2,6 +2,7 @@ import type {
   FollowUpQueueErrorCode,
   FollowUpQueueMutation,
   FollowUpQueueSnapshot,
+  ProviderRecoveryProjection,
   McpElicitationDetails,
   SessionLocatorV2,
   SessionRef,
@@ -539,6 +540,7 @@ export interface StreamingSlice {
   providerRetry: ProviderRetryInfo | null;
   pendingResume: PendingResumeInfo | null;
   providerStall: ProviderStallInfo | null;
+  providerRecovery: ProviderRecoveryProjection | null;
   actionStationarity: ActionStationarityInfo | null;
   turnRecovery: TurnRecoveryInfo | null;
   sessionEventConnectionState: TaskEventConnectionState | 'idle';

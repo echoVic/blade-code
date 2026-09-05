@@ -1,4 +1,9 @@
-import type { FollowUpQueueSnapshot, SessionLocatorV2, SessionRef } from '@api/schemas';
+import type {
+  FollowUpQueueSnapshot,
+  ProviderRecoveryProjection,
+  SessionLocatorV2,
+  SessionRef,
+} from '@api/schemas';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import type { Message as ServiceMessage, StreamEvent } from '../../../src/services';
@@ -60,6 +65,24 @@ function createFollowUpQueue(version = 'a'.repeat(64)): FollowUpQueueSnapshot {
   };
 }
 
+function createProviderRecovery(
+  generation: string,
+  revision: number
+): ProviderRecoveryProjection {
+  return {
+    version: 1,
+    generation,
+    revision,
+    snapshot: {
+      activity: 'retry_wait',
+      reason: 'rate_limit',
+      updatedAt: 1_000,
+      nextActionAt: 3_000,
+      retry: { attempt: 1, maxRetries: 12, delayMs: 2_000 },
+    },
+  };
+}
+
 function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreState {
   const messages: Message[] = overrides.messages ?? [
     {
@@ -114,6 +137,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     providerRetry: null,
     pendingResume: null,
     providerStall: null,
+    providerRecovery: null,
     turnRecovery: overrides.turnRecovery ?? null,
     sessionEventConnectionState: 'idle',
     currentRunId: null,
@@ -2005,6 +2029,7 @@ describe('eventHandlers', () => {
       providerRetry: null,
       pendingResume: null,
       providerStall: null,
+      providerRecovery: null,
       actionStationarity: null,
     });
   });
@@ -2090,6 +2115,86 @@ describe('eventHandlers', () => {
     });
     expect(state.agentPhase).toBe('running');
     expect(state.providerRetry).toBeNull();
+  });
+
+  test('accepts only newer live Provider recovery revisions', () => {
+    const state = createState();
+    const set = vi.fn((partial) => {
+      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'provider.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        recovery: createProviderRecovery('generation-1', 2),
+      },
+    });
+    dispatch({
+      type: 'provider.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        recovery: createProviderRecovery('generation-1', 1),
+      },
+    });
+
+    expect(state.providerRecovery).toEqual(createProviderRecovery('generation-1', 2));
+  });
+
+  test('lets an authoritative reconnect replace or clear Provider recovery', () => {
+    const state = createState({
+      providerRecovery: createProviderRecovery('old-generation', 9),
+    });
+    const set = vi.fn((partial) => {
+      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'provider.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        recovery: createProviderRecovery('new-generation', 0),
+        authoritative: true,
+      },
+    });
+    expect(state.providerRecovery?.generation).toBe('new-generation');
+
+    dispatch({
+      type: 'provider.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        recovery: null,
+        authoritative: true,
+      },
+    });
+    expect(state.providerRecovery).toBeNull();
+  });
+
+  test('rejects malformed Provider recovery projections', () => {
+    const state = createState();
+    const set = vi.fn();
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'provider.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        recovery: {
+          ...createProviderRecovery('generation-1', 1),
+          apiKey: 'must-not-cross',
+        },
+      },
+    });
+
+    expect(set).not.toHaveBeenCalled();
+    expect(state.providerRecovery).toBeNull();
   });
 
   test('projects pending resume only for the exact active session identity', () => {
@@ -2825,6 +2930,7 @@ describe('eventHandlers', () => {
       providerRetry: null,
       pendingResume: null,
       providerStall: null,
+      providerRecovery: null,
       actionStationarity: null,
     });
     expect(state.resyncSessionMessages).toHaveBeenCalledWith({

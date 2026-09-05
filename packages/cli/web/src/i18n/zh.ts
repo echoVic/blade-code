@@ -576,6 +576,33 @@ export const zh: Dict = {
   'chat.input.action.steer': '引导当前轮次',
   'chat.input.action.send': '发送消息',
   'chat.input.action.submitting': '正在提交消息',
+  'chat.providerRecovery.admission': '等待 Provider 容量',
+  'chat.providerRecovery.admissionDetail':
+    '队列 {position}/{depth} · {scope} · 已等待 {waitSeconds}s',
+  'chat.providerRecovery.admissionCompact': 'Provider 排队 · {position}/{depth}',
+  'chat.providerRecovery.rateLimit': 'Provider 请求受限，{seconds}s 后重试',
+  'chat.providerRecovery.retryWait': 'Provider 暂时不可用，{seconds}s 后重试',
+  'chat.providerRecovery.retryAttempt': '正在重试 Provider',
+  'chat.providerRecovery.retryDetail':
+    '尝试 {attempt}/{maxRetries} · 剩余预算 {budgetSeconds}s',
+  'chat.providerRecovery.retryCompact':
+    'Provider 恢复 · {seconds}s · {attempt}/{maxRetries}',
+  'chat.providerRecovery.circuit': 'Provider 故障已隔离，等待恢复探测',
+  'chat.providerRecovery.circuitDetail': '{seconds}s 后探测',
+  'chat.providerRecovery.circuitCompact': 'Provider 熔断 · {seconds}s',
+  'chat.providerRecovery.probe': 'Provider 正在执行恢复探测',
+  'chat.providerRecovery.probeDetail': '一个恢复探测正在进行',
+  'chat.providerRecovery.probeCompact': 'Provider 恢复探测',
+  'chat.providerRecovery.stall': 'Provider 尚未返回流数据',
+  'chat.providerRecovery.stallAfterOutput': 'Provider 流暂时停滞',
+  'chat.providerRecovery.stallDetail':
+    '已等待 {stallSeconds}s · 超时上限 {timeoutSeconds}s',
+  'chat.providerRecovery.stallCompact': 'Provider 等待 · {stallSeconds}s',
+  'chat.providerRecovery.fallback': '正在切换到 {to}',
+  'chat.providerRecovery.fallbackDetail':
+    '候选 {candidate}/{candidateCount} · 来源 {from}',
+  'chat.providerRecovery.fallbackCompact': 'Provider 切换 · {to}',
+  'chat.providerRecovery.stop': '停止',
 
   // 对话 · 代码评审报告
   'chat.review.title': '代码评审',

@@ -105,6 +105,7 @@ describe('ChatView session event recovery', () => {
       sessions: [],
       followUpQueue: null,
       followUpQueueMutation: { pending: false, supersededVersions: [] },
+      providerRecovery: null,
       mutateFollowUpQueue,
       refreshFollowUpQueue,
     });
@@ -294,6 +295,44 @@ describe('ChatView session event recovery', () => {
         button.textContent?.includes('Reconnect')
       )
     ).toBe(false);
+  });
+
+  it('renders Provider recovery beside the composer and reuses abort', async () => {
+    const abortSession = vi.fn(async () => true);
+    useSessionStore.setState({
+      abortSession,
+      sessionEventConnectionState: 'connected',
+      providerRecovery: {
+        version: 1,
+        generation: 'provider-recovery',
+        revision: 1,
+        snapshot: {
+          activity: 'fallback',
+          reason: 'server_error',
+          updatedAt: Date.now(),
+          fallback: {
+            from: { provider: 'primary', model: 'model-a' },
+            to: { provider: 'secondary', model: 'model-b' },
+            candidate: 1,
+            candidateCount: 1,
+            trigger: { source: 'retry', reason: 'server_error', statusCode: 503 },
+          },
+        },
+      },
+    });
+
+    await act(async () => root.render(<ChatView />));
+    expect(
+      container.querySelector('[data-provider-recovery-banner]')?.textContent
+    ).toContain('model-b');
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-provider-recovery-stop]')
+        ?.click();
+      await Promise.resolve();
+    });
+    expect(abortSession).toHaveBeenCalledOnce();
   });
 
   it('does not surface a task action error from another session', async () => {
