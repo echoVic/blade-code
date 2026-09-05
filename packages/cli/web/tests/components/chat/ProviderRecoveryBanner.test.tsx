@@ -47,11 +47,7 @@ describe('ProviderRecoveryBanner', () => {
     const onStop = vi.fn();
     act(() => {
       root.render(
-        <ProviderRecoveryBanner
-          recovery={recovery}
-          stopping={false}
-          onStop={onStop}
-        />
+        <ProviderRecoveryBanner recovery={recovery} stopping={false} onStop={onStop} />
       );
     });
 

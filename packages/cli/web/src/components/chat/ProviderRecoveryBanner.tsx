@@ -57,11 +57,7 @@ export function ProviderRecoveryBanner({
         ) : (
           <Square className="h-3 w-3 fill-current" aria-hidden />
         )}
-        {t(
-          stopping
-            ? 'chat.input.action.stopping'
-            : 'chat.providerRecovery.stop'
-        )}
+        {t(stopping ? 'chat.input.action.stopping' : 'chat.providerRecovery.stop')}
       </button>
     </section>
   );

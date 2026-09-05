@@ -84,11 +84,11 @@ export function StatusBar() {
             providerRecoveryPresentation.compactKey,
             providerRecoveryPresentation.params
           )
-            : pendingResume
-              ? `Recovery attempt ${pendingResume.attempt}/${pendingResume.maxAttempts}${pendingResumeDelay}`
-              : phaseKey
-                ? t(phaseKey)
-                : '';
+        : pendingResume
+          ? `Recovery attempt ${pendingResume.attempt}/${pendingResume.maxAttempts}${pendingResumeDelay}`
+          : phaseKey
+            ? t(phaseKey)
+            : '';
 
   const usagePercent =
     tokenUsage.maxContextTokens > 0

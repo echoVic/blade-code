@@ -37,9 +37,7 @@ export function presentProviderRecovery(
     maxRetries: retry?.maxRetries ?? 0,
     budgetSeconds: seconds(retry?.recoveryRemainingMs),
     position: admission?.queuePosition ?? 0,
-    depth: admission
-      ? Math.max(admission.queueDepth, admission.queuePosition)
-      : 0,
+    depth: admission ? Math.max(admission.queueDepth, admission.queuePosition) : 0,
     scope: admission?.scope ?? '',
     waitSeconds: seconds(admission?.waitMs),
     stallSeconds: seconds(stall?.durationMs),

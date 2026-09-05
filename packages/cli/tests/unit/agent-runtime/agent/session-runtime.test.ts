@@ -4905,13 +4905,15 @@ describe('SessionRuntime', () => {
     const second = runtime.beginProviderRecovery();
     await runtime.dispose();
 
-    expect(runtime.observeProviderRecovery(second, {
-      kind: 'provider_retry',
-      phase: 'scheduled',
-      attempt: 1,
-      maxRetries: 1,
-      reason: 'transport',
-    })).toBeUndefined();
+    expect(
+      runtime.observeProviderRecovery(second, {
+        kind: 'provider_retry',
+        phase: 'scheduled',
+        attempt: 1,
+        maxRetries: 1,
+        reason: 'transport',
+      })
+    ).toBeUndefined();
   });
 
   it('keeps prompt artifact reads available through explicit tool filters', async () => {
