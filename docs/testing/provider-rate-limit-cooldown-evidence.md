@@ -4,7 +4,8 @@
 - 目标版本：`blade-code@0.10.139`
 - 设计起点：`62a062e1`
 - 真实 API 实现基线：`27a6accc`
-- 最终 release HEAD：`df2ff5c9db9b5992e63f0a1257e3f7d71092608f`
+- 版本元数据 commit：`df2ff5c9db9b5992e63f0a1257e3f7d71092608f`
+- 发布前完整复验 HEAD：`dc6507dd1384bba8d1e3b9c129db99b8bcb8c00a`
 - 测试对象：首个权威 `429 + Retry-After`、相同 failure domain 跨 Session 抑制、唯一 HalfOpen probe、TUI/Web/ACP/Headless 投影
 
 ## 确定性生产表面验证
@@ -68,5 +69,7 @@ Edit、精确 Bash 验证、最终 marker、文件 diff 范围及无 secret/priv
   tests skipped；statements 73.79%、branches 67.19%、functions 75.65%、lines 75.16%；
 - `bun run test:web`：passed；69 files、663 tests。
 
-上述版本元数据冻结在 `df2ff5c9db9b5992e63f0a1257e3f7d71092608f`；tag 前再次
-运行 `bun run build && bun run test:all`，结果将在下方追加。
+版本元数据冻结后，在 `dc6507dd1384bba8d1e3b9c129db99b8bcb8c00a` 上重新运行
+`bun run build && bun run test:all`：passed；非 performance 阶段 495 files passed、
+99 skipped，5,767 tests passed、88 skipped；performance 阶段 4 files passed、1 skipped，
+9 tests passed、1 skipped；总耗时 435.94s。
