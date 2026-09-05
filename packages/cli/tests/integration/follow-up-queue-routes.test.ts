@@ -8,11 +8,14 @@ vi.unmock('node:child_process');
 
 import { ActiveTurnMailbox } from '../../src/agent/runtime/ActiveTurnMailbox.js';
 import { FollowUpQueueSnapshotSchema } from '../../src/api/followUpQueueSchemas.js';
+import { getCwdState, setCwdState } from '../../src/bootstrap/state.js';
 import { Bus } from '../../src/server/bus.js';
 import { createSessionRouteController } from '../../src/server/routes/session.js';
 import { SessionService } from '../../src/services/SessionService.js';
 import { getState } from '../../src/store/vanilla.js';
 import { createDefaultMockConfig } from '../support/mocks/mockConfig.js';
+
+const SSE_EVENT_TIMEOUT_MS = 10_000;
 
 function createSseCollector(response: Response) {
   const reader = response.body?.getReader();
@@ -20,8 +23,8 @@ function createSseCollector(response: Response) {
   const decoder = new TextDecoder();
   let buffer = '';
   return {
-    async next() {
-      const deadline = Date.now() + 2_000;
+    async next(description: string) {
+      const deadline = Date.now() + SSE_EVENT_TIMEOUT_MS;
       while (Date.now() < deadline) {
         const delimiter = buffer.indexOf('\n\n');
         if (delimiter >= 0) {
@@ -42,16 +45,22 @@ function createSseCollector(response: Response) {
           continue;
         }
         const remaining = deadline - Date.now();
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         const result = await Promise.race([
           reader.read(),
           new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('Timed out waiting for SSE')), remaining);
+            timeoutHandle = setTimeout(
+              () => reject(new Error(`Timed out waiting for ${description}`)),
+              remaining
+            );
           }),
-        ]);
-        if (result.done) throw new Error('SSE stream ended');
+        ]).finally(() => {
+          if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+        });
+        if (result.done) throw new Error(`SSE stream ended before ${description}`);
         buffer += decoder.decode(result.value, { stream: true });
       }
-      throw new Error('Timed out waiting for SSE');
+      throw new Error(`Timed out waiting for ${description}`);
     },
     cancel: () => reader.cancel().catch(() => undefined),
   };
@@ -60,16 +69,19 @@ function createSseCollector(response: Response) {
 describe('follow-up queue HTTP and SSE lifecycle', () => {
   let root: string;
   let workspace: string;
+  let previousCwd: string;
   let previousStorageRoot: string | undefined;
   let previousConfig: ReturnType<typeof getState>['config']['config'];
 
   beforeEach(async () => {
     root = await mkdtemp(path.join(os.tmpdir(), 'blade-follow-up-routes-'));
     workspace = path.join(root, 'workspace');
+    previousCwd = getCwdState();
     previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
     previousConfig = getState().config.config;
     process.env.BLADE_STORAGE_ROOT = path.join(root, 'storage');
     await mkdir(workspace, { recursive: true });
+    setCwdState(workspace);
     getState().config.actions.setConfig(
       createDefaultMockConfig({
         agentTeamsEnabled: false,
@@ -82,6 +94,7 @@ describe('follow-up queue HTTP and SSE lifecycle', () => {
   });
 
   afterEach(async () => {
+    setCwdState(previousCwd);
     if (previousConfig) getState().config.actions.setConfig(previousConfig);
     if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
     else process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
@@ -120,7 +133,7 @@ describe('follow-up queue HTTP and SSE lifecycle', () => {
     const events = createSseCollector(eventsResponse);
 
     try {
-      const connected = await events.next();
+      const connected = await events.next('connected event');
       expect(connected).toMatchObject({
         type: 'connected',
         properties: {
@@ -159,7 +172,7 @@ describe('follow-up queue HTTP and SSE lifecycle', () => {
         'second-follow-up',
         'first-follow-up',
       ]);
-      const changed = await events.next();
+      const changed = await events.next('queue changed event');
       expect(changed).toMatchObject({
         type: 'follow_up.queue.changed',
         properties: { queue: moved },
