@@ -26,6 +26,7 @@ const runnerInventory = [
   'toolAdmissionPtyRunner.ts',
   'tuiPtyRunner.ts',
   'tuiTaskAttentionPtyRunner.ts',
+  'turnActivityPtyRunner.ts',
   'weightedProviderAdmissionPtyRunner.ts',
 ] as const;
 
@@ -40,6 +41,7 @@ const promptInputRunners = [
   'sessionRuntimeResidencyPtyRunner.ts',
   'tokenBudgetHandoffPtyRunner.ts',
   'toolAdmissionPtyRunner.ts',
+  'turnActivityPtyRunner.ts',
   'tuiPtyRunner.ts',
 ] as const satisfies readonly (typeof runnerInventory)[number][];
 
@@ -188,6 +190,7 @@ describe('raw PTY marker latching source contract', () => {
       'finalMarkerSeen ||= scan.includes(input.finalMarker)',
     ],
     ['toolAdmissionPtyRunner.ts', 'new ArmedPtyMarkerLatch(input.marker)'],
+    ['turnActivityPtyRunner.ts', 'new ArmedPtyMarkerLatch(input.marker)'],
     ['tuiPtyRunner.ts', 'latchPtyMarker'],
     ['tuiTaskAttentionPtyRunner.ts', "new ArmedPtyMarkerLatch('[NEW]')"],
     ['weightedProviderAdmissionPtyRunner.ts', 'latchPtyEvidence'],

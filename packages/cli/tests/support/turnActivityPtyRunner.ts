@@ -7,11 +7,7 @@ import {
   projectForegroundBoundedPtyOutput,
   waitForPtyExit,
 } from './foregroundBoundedOutputPtyDriver.js';
-import {
-  createTuiPtyComposerReadyHandshake,
-  TUI_COMPOSER_MARKER,
-  writeBracketedPaste,
-} from './ptyInput.js';
+import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 import { createTuiTaskAttentionRunnerEnvironment } from './tuiTaskAttentionPtyDriver.js';
 
 interface RunnerInput {
@@ -112,6 +108,7 @@ async function main(): Promise<void> {
   let sawThinking = false;
   let sawTool = false;
   let releasedTool = false;
+  let completionReadyMarkerSeen = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit((event) => {
       exited = true;
@@ -122,6 +119,9 @@ async function main(): Promise<void> {
   terminal.onData((chunk) => {
     markerLatch.observe(chunk);
     secretLatch.observe(chunk);
+    if (markerLatch.seen && chunk.includes(handshake.marker)) {
+      completionReadyMarkerSeen = true;
+    }
     output = appendBoundedPtyEvidence(output, chunk, 128_000);
     plainOutput = appendBoundedPtyEvidence(
       plainOutput,
@@ -154,10 +154,7 @@ async function main(): Promise<void> {
       await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
     }
     await waitFor(
-      () =>
-        markerLatch.seen &&
-        plainOutput.lastIndexOf(TUI_COMPOSER_MARKER) >
-          plainOutput.lastIndexOf(input.marker),
+      () => markerLatch.seen && completionReadyMarkerSeen,
       'Turn activity TUI did not complete and return to the composer',
       60_000
     );
