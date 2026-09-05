@@ -137,6 +137,7 @@ describe('follow-up queue HTTP and SSE lifecycle', () => {
       expect(connected).toMatchObject({
         type: 'connected',
         properties: {
+          providerRecovery: null,
           followUpQueue: {
             pending: 2,
             items: [{ id: 'first-follow-up' }, { id: 'second-follow-up' }],
