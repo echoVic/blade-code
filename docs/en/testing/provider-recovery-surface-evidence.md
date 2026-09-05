@@ -3,8 +3,8 @@
 - Date: 2026-09-05
 - Target version: `blade-code@0.10.137`
 - Design baseline: `09286d1b72eec3cef1795f487668df8dc6bf1afc`
-- Qualified implementation HEAD: to be filled after the final release gate
-- Complete local gates: to be filled after the final release gate
+- Qualified implementation HEAD: `9c5e70666565efb647673b05502f882a266e4a27`
+- Complete local gates: `build`, `type-check`, `lint`, and `test:all` passed
 - Real API command:
   `REAL_API_TEST=1 REAL_API_RELEASE_MATRIX=0 bunx vitest run --config vitest.config.ts --project=real-api tests/integration/real-api/foreground-provider-recovery-trajectory.test.ts`
 - Cross-provider fallback command:
@@ -22,17 +22,17 @@ Current real Provider results:
 
 | Model | Surface | Duration | Result |
 | --- | --- | ---: | --- |
-| DeepSeek V4 Flash | Headless JSONL | 10.253s | passed |
-| DeepSeek V4 Flash | ACP stdio + child-backed terminal | 11.578s | passed |
-| DeepSeek V4 Flash | raw PTY TUI | 10.345s | passed |
-| DeepSeek V4 Flash | production Chromium Web | 18.631s | passed |
-| DeepSeek V4 Pro | Headless JSONL | 12.725s | passed |
-| DeepSeek V4 Pro | ACP stdio + child-backed terminal | 16.080s | passed |
-| DeepSeek V4 Pro | raw PTY TUI | 13.720s | passed |
-| DeepSeek V4 Pro | production Chromium Web | 22.894s | passed |
+| DeepSeek V4 Flash | Headless JSONL | 10.510s | passed |
+| DeepSeek V4 Flash | ACP stdio + child-backed terminal | 10.773s | passed |
+| DeepSeek V4 Flash | raw PTY TUI | 11.210s | passed |
+| DeepSeek V4 Flash | production Chromium Web | 15.929s | passed |
+| DeepSeek V4 Pro | Headless JSONL | 11.191s | passed |
+| DeepSeek V4 Pro | ACP stdio + child-backed terminal | 13.904s | passed |
+| DeepSeek V4 Pro | raw PTY TUI | 13.126s | passed |
+| DeepSeek V4 Pro | production Chromium Web | 21.292s | passed |
 
-The eight-cell matrix passed `8/8` in 117.45s. A real Claude-to-GPT pre-output
-fallback trajectory also passed `1/1` in about 12.01s, proving typed source/target
+The eight-cell matrix passed `8/8` in 108.99s. A real Claude-to-GPT pre-output
+fallback trajectory also passed `1/1` in 9.00s, proving typed source/target
 identity, independent credential channels, and secret isolation. These results came
 from explicit runs at the feature implementation HEAD and do not stand in for the
 still-pending final repository gates.
@@ -126,10 +126,30 @@ After correcting assertions and evidence collection, the matrix passed `8/8`. Th
 final audit also used RED/GREEN tests to fix a retained generation after an empty
 snapshot clear and Web acceptance of an unanchored late live revision.
 
+## Final Gates
+
+Evidence collected at `9c5e70666565efb647673b05502f882a266e4a27`:
+
+- `bun run build`: passed;
+- `bun run type-check`: passed;
+- `bun run lint`: passed across 1,391 CLI files and 205 Web files;
+- `bun run test:all`: passed; the non-performance stage passed 490 files with 97
+  skipped and 5,705 tests with 87 skipped; the performance stage passed 4 files with
+  1 skipped and 9 tests with 1 skipped; total duration was 337.36s;
+- real Provider recovery matrix: 8/8 passed in 108.99s;
+- real Claude-to-GPT fallback: 1/1 passed in 9.00s.
+
+The first `test:all` attempt was terminated by a Node/V8
+`EXC_BAD_ACCESS`/`SIGSEGV` inside `rolldown-binding.darwin-arm64.node`. The second run
+exposed and fixed one deterministic missing `ChatStatusBar` selector mock. In that
+same run, one Chromium cross-origin coordinate assertion returned
+`browser_snapshot_stale`; the unchanged source test then passed 3/3 in isolation. The
+complete suite was run again from the beginning after the fix and passed.
+
 ## Release Boundary
 
-Before release, replace the final implementation HEAD and complete-gate placeholders
-at the top of this file with actual evidence. After that, only version metadata, the
-bilingual source changelogs, and this evidence metadata may change. The tag must be
+The implementation HEAD above is the qualification baseline before version metadata.
+Only version metadata, the bilingual source changelogs, and this evidence metadata may
+change afterward, and build plus test:all must run again before tagging. The tag must be
 annotated `v0.10.137` and consumed by `publish.yml`; do not run `npm publish` manually
 and do not move or rewrite an existing tag.

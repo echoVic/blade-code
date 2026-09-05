@@ -3,8 +3,8 @@
 - 日期：2026-09-05
 - 目标版本：`blade-code@0.10.137`
 - 设计起点：`09286d1b72eec3cef1795f487668df8dc6bf1afc`
-- 已验证实现 HEAD：发布前最终门禁填写
-- 完整本地门禁：发布前最终门禁填写
+- 已验证实现 HEAD：`9c5e70666565efb647673b05502f882a266e4a27`
+- 完整本地门禁：`build`、`type-check`、`lint`、`test:all` passed
 - 真实 API 命令：
   `REAL_API_TEST=1 REAL_API_RELEASE_MATRIX=0 bunx vitest run --config vitest.config.ts --project=real-api tests/integration/real-api/foreground-provider-recovery-trajectory.test.ts`
 - 跨 Provider fallback 命令：
@@ -20,17 +20,17 @@
 
 | 模型 | 表面 | 耗时 | 结果 |
 | --- | --- | ---: | --- |
-| DeepSeek V4 Flash | Headless JSONL | 10.253s | passed |
-| DeepSeek V4 Flash | ACP stdio + child-backed terminal | 11.578s | passed |
-| DeepSeek V4 Flash | raw PTY TUI | 10.345s | passed |
-| DeepSeek V4 Flash | production Chromium Web | 18.631s | passed |
-| DeepSeek V4 Pro | Headless JSONL | 12.725s | passed |
-| DeepSeek V4 Pro | ACP stdio + child-backed terminal | 16.080s | passed |
-| DeepSeek V4 Pro | raw PTY TUI | 13.720s | passed |
-| DeepSeek V4 Pro | production Chromium Web | 22.894s | passed |
+| DeepSeek V4 Flash | Headless JSONL | 10.510s | passed |
+| DeepSeek V4 Flash | ACP stdio + child-backed terminal | 10.773s | passed |
+| DeepSeek V4 Flash | raw PTY TUI | 11.210s | passed |
+| DeepSeek V4 Flash | production Chromium Web | 15.929s | passed |
+| DeepSeek V4 Pro | Headless JSONL | 11.191s | passed |
+| DeepSeek V4 Pro | ACP stdio + child-backed terminal | 13.904s | passed |
+| DeepSeek V4 Pro | raw PTY TUI | 13.126s | passed |
+| DeepSeek V4 Pro | production Chromium Web | 21.292s | passed |
 
-八格矩阵共 `8/8` passed，117.45s。另一个真实 Claude 到 GPT 的 pre-output
-fallback 轨迹 `1/1` passed，约 12.01s；它验证 typed source/target identity、独立
+八格矩阵共 `8/8` passed，108.99s。另一个真实 Claude 到 GPT 的 pre-output
+fallback 轨迹 `1/1` passed，9.00s；它验证 typed source/target identity、独立
 credential channel 和 secret isolation。以上结果来自本功能实现 HEAD 的显式运行，
 不代表尚未运行的最终全仓门禁。
 
@@ -109,8 +109,27 @@ probe。修正断言与证据收集后，八格矩阵一次性 `8/8` 通过。�
 测试修复了空 snapshot clear 后的 generation 引用，以及 Web 接纳未锚定迟到 live
 revision 的问题。
 
+## 最终门禁
+
+在 `9c5e70666565efb647673b05502f882a266e4a27` 上取得：
+
+- `bun run build`：passed；
+- `bun run type-check`：passed；
+- `bun run lint`：passed，CLI 1391 files、Web 205 files；
+- `bun run test:all`：passed；非 performance 阶段 490 files passed、97 skipped，
+  5705 tests passed、87 skipped；performance 阶段 4 files passed、1 skipped，9 tests
+  passed、1 skipped；总耗时 337.36s；
+- 真实 Provider recovery 八格矩阵：8/8 passed，108.99s；
+- 真实 Claude→GPT fallback：1/1 passed，9.00s。
+
+第一次 `test:all` 被 Node/V8 在 `rolldown-binding.darwin-arm64.node` 中的
+`EXC_BAD_ACCESS`/`SIGSEGV` 中止。第二次运行暴露并修复了一个确定性的
+`ChatStatusBar` selector mock 遗漏；同次的 Chromium cross-origin coordinate 断言出现
+一次 `browser_snapshot_stale`，该未改源码测试随后单独重跑 3/3 通过。完整套件在修复后
+再次从头运行并通过。
+
 ## Release 边界
 
-发布前必须把本文件顶部的最终实现 HEAD 和全仓门禁结果替换为实际值，然后只允许再
-修改版本、双语 changelog 和本证据元数据。tag 必须是 annotated `v0.10.137`，由
+上述实现 HEAD 是版本元数据修改前的资格基线。后续只允许修改版本、双语 changelog 和
+本证据元数据，并在 tag 前重跑 build 与 test:all。tag 必须是 annotated `v0.10.137`，由
 `publish.yml` 发布；不得手工 `npm publish`，不得移动或重写既有 tag。
