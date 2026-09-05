@@ -94,6 +94,10 @@ describe('production qualification contract', () => {
       { kind: 'production-build' },
       { kind: 'vitest', project: 'integration' },
     ]);
+    expect(testRunner).toContain('const requestedFiles = args.slice(1)');
+    expect(testRunner).toContain(
+      'requestedFiles.length > 0 ? requestedFiles : config.files'
+    );
     expect(createTestExecutionStages(testTypes.all, { coverage: true })).toEqual([
       { kind: 'production-build' },
       { kind: 'vitest', project: '!performance' },

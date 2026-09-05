@@ -79,7 +79,7 @@ function printUsage() {
 `);
 }
 
-async function runTest(testType, options = {}) {
+async function runTest(testType, options = {}, requestedFiles = []) {
   const config = testTypes[testType];
   if (!config) {
     console.error(`❌ 未知的测试类型: ${testType}`);
@@ -112,8 +112,9 @@ async function runTest(testType, options = {}) {
 
   baseArgs.push('--config', path.join(__dirname, '..', 'vitest.config.ts'));
 
-  if (config.files) {
-    baseArgs.push(...config.files.map(f => path.resolve(__dirname, '..', f)));
+  const selectedFiles = requestedFiles.length > 0 ? requestedFiles : config.files;
+  if (selectedFiles) {
+    baseArgs.push(...selectedFiles.map(f => path.resolve(__dirname, '..', f)));
   }
 
   if (options.coverage) {
@@ -220,6 +221,7 @@ async function main() {
   }
   
   const testType = args[0];
+  const requestedFiles = args.slice(1).filter(arg => !arg.startsWith('--'));
   const options = {
     coverage: args.includes('--coverage'),
     watch: args.includes('--watch'),
@@ -234,7 +236,7 @@ async function main() {
     process.exit(1);
   }
   
-  await runTest(testType, options);
+  await runTest(testType, options, requestedFiles);
 }
 
 process.on('uncaughtException', (error) => {
