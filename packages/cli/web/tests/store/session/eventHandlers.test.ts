@@ -2330,6 +2330,47 @@ describe('eventHandlers', () => {
     expect(state.turnActivity).toBeNull();
   });
 
+  test('preserves the generation anchor when an assistant message starts', () => {
+    const state = createState();
+    state.startAgentResponse = vi.fn((id: string) => {
+      state.currentAssistantMessageId = id;
+      state.isStreaming = true;
+    });
+    const set = vi.fn((partial) => {
+      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'turn.activity',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        activity: createTurnActivity('activity-1', 0),
+      },
+    });
+    dispatch({
+      type: 'message.created',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-live',
+        role: 'assistant',
+        content: '',
+      },
+    });
+    dispatch({
+      type: 'turn.activity',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        activity: createTurnActivity('activity-1', 2),
+      },
+    });
+
+    expect(state.turnActivity).toEqual(createTurnActivity('activity-1', 2));
+  });
+
   test('rejects malformed Provider recovery projections', () => {
     const state = createState();
     const set = vi.fn();

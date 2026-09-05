@@ -99,7 +99,6 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
         providerRetry: null,
         providerStall: null,
         providerRecovery: null,
-        turnActivity: null,
         actionStationarity: null,
         turnRecovery: null,
       });

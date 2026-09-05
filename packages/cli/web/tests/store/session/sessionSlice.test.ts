@@ -438,6 +438,31 @@ describe('sessionSlice multimodal sendMessage', () => {
     ]);
   });
 
+  it('keeps the Runtime turn activity generation when an assistant message starts', () => {
+    const activity = {
+      version: 1 as const,
+      generation: 'activity-1',
+      revision: 0,
+      snapshot: {
+        phase: 'starting' as const,
+        startedAt: 1_000,
+        updatedAt: 1_000,
+        turn: 0,
+        maxTurns: null,
+        outputStarted: false,
+        toolCallsStarted: 0,
+        toolCallsCompleted: 0,
+        activeTools: [],
+        activeToolOverflow: 0,
+      },
+    };
+    useSessionStore.setState({ turnActivity: activity });
+
+    useSessionStore.getState().startAgentResponse('assistant-live');
+
+    expect(useSessionStore.getState().turnActivity).toEqual(activity);
+  });
+
   it('routes user shell input without sending a model message', async () => {
     const ref = createRef('shell-session', '/tmp/shell-workspace');
     useSessionStore.setState({
