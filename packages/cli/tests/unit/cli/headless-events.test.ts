@@ -326,6 +326,18 @@ describe('headless event contract', () => {
       })
     ).not.toThrow();
 
+    const modelFallback = createHeadlessJsonlEvent('model_fallback', {
+      from: { provider: 'primary', model: 'model-a' },
+      to: { provider: 'secondary', model: 'model-b' },
+      candidate: 1,
+      candidate_count: 2,
+      trigger: { source: 'retry', reason: 'server_error', status_code: 503 },
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(modelFallback)).not.toThrow();
+    expect(() =>
+      HeadlessJsonlEventSchema.parse({ ...modelFallback, api_key: 'secret' })
+    ).toThrow();
+
     const actionStationarity = createHeadlessJsonlEvent('action_stationarity', {
       phase: 'detected',
       tool_name: 'TaskOutput',

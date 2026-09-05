@@ -620,12 +620,28 @@ const ProviderRecoverySnapshotEventSchema = Type.Object(
   },
   { additionalProperties: false }
 );
-const ProviderRecoveryEventSchema = event({
-  type: Type.Literal('provider_recovery'),
-  generation: Type.String({ minLength: 1, maxLength: 128 }),
-  revision: Type.Integer({ minimum: 0 }),
-  snapshot: Type.Union([ProviderRecoverySnapshotEventSchema, Type.Null()]),
-});
+const ProviderRecoveryEventSchema = Type.Object(
+  {
+    event_version: Type.Literal(HEADLESS_EVENT_VERSION),
+    type: Type.Literal('provider_recovery'),
+    generation: Type.String({ minLength: 1, maxLength: 128 }),
+    revision: Type.Integer({ minimum: 0 }),
+    snapshot: Type.Union([ProviderRecoverySnapshotEventSchema, Type.Null()]),
+  },
+  { additionalProperties: false }
+);
+const ModelFallbackEventSchema = Type.Object(
+  {
+    event_version: Type.Literal(HEADLESS_EVENT_VERSION),
+    type: Type.Literal('model_fallback'),
+    from: ProviderRecoveryIdentitySchema,
+    to: ProviderRecoveryIdentitySchema,
+    candidate: Type.Integer({ minimum: 1 }),
+    candidate_count: Type.Integer({ minimum: 1 }),
+    trigger: ProviderRecoveryTriggerSchema,
+  },
+  { additionalProperties: false }
+);
 
 const ActionStationarityEventSchema = event({
   type: Type.Literal('action_stationarity'),
@@ -718,6 +734,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     ProviderRetryEventSchema,
     ProviderStallEventSchema,
     ProviderRecoveryEventSchema,
+    ModelFallbackEventSchema,
     ActionStationarityEventSchema,
     TurnRecoveryEventSchema,
     TurnLimitEventSchema,

@@ -1311,6 +1311,30 @@ function createEventWriter(
           : '[provider-recovery:clear]'
       );
     },
+    modelFallback(event: Extract<LoopEvent, { kind: 'model_fallback' }>) {
+      const trigger =
+        event.trigger.source === 'retry' || event.trigger.source === 'circuit'
+          ? {
+              source: event.trigger.source,
+              reason: event.trigger.reason,
+              status_code: event.trigger.statusCode,
+            }
+          : event.trigger;
+      if (outputFormat === 'jsonl') {
+        writeJsonl('model_fallback', {
+          from: event.from,
+          to: event.to,
+          candidate: event.candidate,
+          candidate_count: event.candidateCount,
+          trigger,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[provider-fallback] ${event.from.model} -> ${event.to.model}`
+      );
+    },
     actionStationarity(event: Extract<LoopEvent, { kind: 'action_stationarity' }>) {
       if (outputFormat === 'jsonl') {
         writeJsonl('action_stationarity', {
@@ -2000,7 +2024,7 @@ export async function runHeadless(
 
           // --- 模型降级 ---
           case 'model_fallback':
-            // 在 headless 模式下不需要特殊处理
+            eventWriter.modelFallback(event);
             break;
           case 'provider_admission':
             eventWriter.providerAdmission(event);

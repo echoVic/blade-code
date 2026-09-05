@@ -1791,6 +1791,38 @@ describe('headless runner', () => {
     expect(stderr.write).not.toHaveBeenCalled();
   });
 
+  it('emits a typed model fallback transition in JSONL mode', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'model_fallback',
+          from: { provider: 'primary', model: 'model-a' },
+          to: { provider: 'secondary', model: 'model-b' },
+          candidate: 1,
+          candidateCount: 2,
+          trigger: { source: 'retry', reason: 'server_error', statusCode: 503 },
+        },
+      ])
+    );
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    expect(
+      await runHeadless(
+        { headless: true, outputFormat: 'jsonl', message: 'fallback' },
+        { stdout, stderr }
+      )
+    ).toBe(0);
+    expect(stdout.write.mock.calls.map((call) => String(call[0])).join('')).toContain(
+      '"type":"model_fallback"'
+    );
+    expect(stdout.write.mock.calls.map((call) => String(call[0])).join('')).toContain(
+      '"model":"model-b"'
+    );
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+
   it('emits sanitized Provider stall lifecycle events in JSONL mode', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
