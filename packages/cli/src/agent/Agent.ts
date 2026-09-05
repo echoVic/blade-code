@@ -147,13 +147,21 @@ export class Agent {
     runtime: SessionRuntime,
     generation: ProviderRecoveryGeneration
   ): AsyncGenerator<LoopEvent, LoopResult, void> {
-    while (true) {
-      const step = await stream.next();
-      if (step.done) return step.value;
-      const event = step.value;
-      const recovery = runtime.observeProviderRecovery(generation, event);
-      yield event;
-      if (recovery) yield { kind: 'provider_recovery', recovery };
+    try {
+      while (true) {
+        const step = await stream.next();
+        if (step.done) return step.value;
+        const event = step.value;
+        const recovery = runtime.observeProviderRecovery(generation, event);
+        yield event;
+        if (recovery) yield { kind: 'provider_recovery', recovery };
+      }
+    } finally {
+      await stream.return?.({
+        success: false,
+        error: { type: 'aborted', message: 'Provider recovery observer closed' },
+        metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
+      });
     }
   }
 

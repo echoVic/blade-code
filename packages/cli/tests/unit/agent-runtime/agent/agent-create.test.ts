@@ -1212,6 +1212,7 @@ describe('Agent runLoop system prompt injection', () => {
 
   it('persists interruption when a stream consumer closes before completion', async () => {
     const turnHandle = { id: 'interrupted-turn' };
+    let loopClosed = false;
     const runtime = {
       ...createGoalRuntimeMocks(),
       prepareInputTurn: vi.fn(async () => ({
@@ -1238,12 +1239,16 @@ describe('Agent runLoop system prompt injection', () => {
     (agent as any).isInitialized = true;
     (agent as any).processAtMentionsForContent = vi.fn().mockResolvedValue('partial');
     (agent as any).runLoop = vi.fn(async function* () {
-      yield { kind: 'content_delta' as const, delta: 'partial' };
-      return {
-        success: true,
-        finalMessage: 'done',
-        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-      };
+      try {
+        yield { kind: 'content_delta' as const, delta: 'partial' };
+        return {
+          success: true,
+          finalMessage: 'done',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      } finally {
+        loopClosed = true;
+      }
     });
     const stream = agent.chatStream('partial', {
       messages: [],
@@ -1271,6 +1276,7 @@ describe('Agent runLoop system prompt injection', () => {
     expect(runtime.clearProviderRecovery).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'provider-recovery-generation' })
     );
+    expect(loopClosed).toBe(true);
   });
 
   it('starts a durable follow-up turn without a synthetic user message', async () => {
