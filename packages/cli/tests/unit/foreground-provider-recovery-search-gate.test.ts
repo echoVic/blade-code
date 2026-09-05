@@ -96,4 +96,25 @@ describe('foreground Provider recovery source gate', () => {
     expect(ptyTimeout).toBeLessThan(webBranch);
     expect(trajectory).toContain('540_000');
   });
+
+  it('requires unified Runtime recovery evidence across production surfaces', () => {
+    const runtime = source('../../src/agent/runtime/SessionRuntime.ts');
+    const agent = source('../../src/agent/Agent.ts');
+    const sessionRoutes = source('../../src/server/routes/session.ts');
+    const web = source('../../web/src/components/chat/ProviderRecoveryBanner.tsx');
+    const acpRunner = source('../support/foregroundProviderRecoveryAcpRunner.ts');
+    const ptyRunner = source('../support/foregroundProviderRecoveryPtyRunner.ts');
+    const trajectory = source(
+      '../integration/real-api/foreground-provider-recovery-trajectory.test.ts'
+    );
+
+    expect(runtime).toContain('private readonly providerRecovery');
+    expect(agent).toContain('beginProviderRecovery()');
+    expect(sessionRoutes).toContain('getProviderRecoveryProjection() ?? null');
+    expect(web).toContain('data-provider-recovery-stop');
+    expect(acpRunner).toContain('blade/providerRecovery');
+    expect(ptyRunner).toContain('sawProviderRecoveryWait');
+    expect(trajectory).toContain("event.type === 'provider_recovery'");
+    expect(trajectory).toContain("event.type === 'provider.recovery'");
+  });
 });
