@@ -160,6 +160,25 @@ describe('ProviderRecoveryState', () => {
     ).toBeUndefined();
   });
 
+  it('keeps the generation active after per-turn progress clears recovery', () => {
+    const state = new ProviderRecoveryState({
+      now: () => 2_000,
+      createGenerationId: () => 'generation-1',
+    });
+    const generation = state.begin();
+    state.observe(generation, retryScheduled);
+    expect(state.observe(generation, { kind: 'stream_end' })?.snapshot).toBeNull();
+
+    expect(
+      state.observe(generation, {
+        ...retryScheduled,
+        phase: 'attempt',
+        delayMs: undefined,
+        nextRetryAt: undefined,
+      })?.snapshot
+    ).toMatchObject({ activity: 'retry_attempt' });
+  });
+
   it('treats a zero-delay retry as an active attempt instead of a wait', () => {
     const state = new ProviderRecoveryState({
       now: () => 2_000,

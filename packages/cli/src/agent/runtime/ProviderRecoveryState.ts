@@ -265,12 +265,12 @@ export class ProviderRecoveryState {
       case 'content_delta':
       case 'thinking_delta':
         if (event.delta.length === 0) changed = false;
-        else return this.clear(generation);
+        else return this.resetVisible(generation);
         break;
       case 'tool_start':
       case 'structured_output':
       case 'stream_end':
-        return this.clear(generation);
+        return this.resetVisible(generation);
       default:
         changed = false;
     }
@@ -303,6 +303,17 @@ export class ProviderRecoveryState {
       }
     }
     return cloneProjection(this.projection as ProviderRecoveryProjection);
+  }
+
+  private resetVisible(
+    generation: ProviderRecoveryGeneration
+  ): ProviderRecoveryProjection | undefined {
+    if (!this.isCurrent(generation) || this.projection?.snapshot === null) {
+      return undefined;
+    }
+    this.layers = {};
+    this.reasons = {};
+    return this.commit(null);
   }
 
   private isCurrent(generation: ProviderRecoveryGeneration): boolean {
