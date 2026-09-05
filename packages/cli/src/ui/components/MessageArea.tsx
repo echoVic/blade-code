@@ -176,7 +176,7 @@ const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => 
     );
     streamingPendingEmptyBlocksRef.current = [];
     setStreamingStaticItems([]);
-  }, [activeStreamingMessageId, historyMessages]);
+  }, [activeStreamingMessageId, clearCount]);
 
   useEffect(() => {
     if (!activeStreamingMessageId) {

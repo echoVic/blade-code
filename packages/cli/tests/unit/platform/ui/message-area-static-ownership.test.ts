@@ -15,4 +15,11 @@ describe('MessageArea Static ownership', () => {
     );
     expect(messageAreaSource).not.toContain('key={`streaming-${clearCount}`}');
   });
+
+  it('does not reset the streaming tool baseline when a new tool message arrives', () => {
+    expect(messageAreaSource).toContain('}, [activeStreamingMessageId, clearCount]);');
+    expect(messageAreaSource).not.toContain(
+      '}, [activeStreamingMessageId, historyMessages]);'
+    );
+  });
 });
