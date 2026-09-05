@@ -2335,6 +2335,23 @@ describe('sessionSlice multimodal sendMessage', () => {
         retry: { attempt: 1, maxRetries: 12, delayMs: 2_000 },
       },
     };
+    const activity = {
+      version: 1,
+      generation: 'activity-1',
+      revision: 2,
+      snapshot: {
+        phase: 'thinking',
+        startedAt: 1_000,
+        updatedAt: 2_000,
+        turn: 1,
+        maxTurns: 20,
+        outputStarted: true,
+        toolCallsStarted: 0,
+        toolCallsCompleted: 0,
+        activeTools: [],
+        activeToolOverflow: 0,
+      },
+    };
     const actual = await vi.importActual<
       typeof import('../../../src/services/sessionService')
     >('../../../src/services/sessionService');
@@ -2352,6 +2369,7 @@ describe('sessionSlice multimodal sendMessage', () => {
             projectPath: '/tmp/recovery-connected',
             status: 'running',
             providerRecovery: recovery,
+            turnActivity: activity,
           },
         }),
       });
@@ -2362,6 +2380,15 @@ describe('sessionSlice multimodal sendMessage', () => {
           sessionId: 'recovery-connected',
           projectPath: '/tmp/recovery-connected',
           recovery,
+          authoritative: true,
+        },
+      });
+      expect(onEvent).toHaveBeenNthCalledWith(3, {
+        type: 'turn.activity',
+        properties: {
+          sessionId: 'recovery-connected',
+          projectPath: '/tmp/recovery-connected',
+          activity,
           authoritative: true,
         },
       });
