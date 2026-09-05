@@ -311,12 +311,20 @@ export class ProviderRecoveryState {
     snapshot: ProviderRecoverySnapshot | null
   ): ProviderRecoveryProjection {
     this.revision++;
-    this.projection = this.parse({
+    const candidate: ProviderRecoveryProjection = {
       version: 1,
       generation: this.generation,
       revision: this.revision,
       snapshot,
-    });
+    };
+    const parsed = ProviderRecoveryProjectionSchema.safeParse(candidate);
+    if (!parsed.success) {
+      this.layers = {};
+      this.reasons = {};
+      this.projection = { ...candidate, snapshot: null };
+      return cloneProjection(this.projection);
+    }
+    this.projection = parsed.data;
     return cloneProjection(this.projection);
   }
 

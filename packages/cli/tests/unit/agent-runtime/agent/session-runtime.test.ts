@@ -29,6 +29,7 @@ import { BackgroundAgentManager } from '../../../../src/agent/subagents/Backgrou
 import { TeamMailbox } from '../../../../src/agent/teams/TeamMailbox.js';
 import { TeamStore } from '../../../../src/agent/teams/TeamStore.js';
 import { MAX_INLINE_USER_MESSAGE_TEXT_BYTES } from '../../../../src/api/attachmentLimits.js';
+import { DEFAULT_CONFIG } from '../../../../src/config/defaults.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import {
   PersistentStore,
@@ -4855,7 +4856,7 @@ describe('SessionRuntime', () => {
   });
 
   it('publishes and clears its ephemeral Provider recovery projection', () => {
-    const runtime = new SessionRuntime({ permissions: {} } as never, {
+    const runtime = new SessionRuntime(DEFAULT_CONFIG, {
       sessionId: 'provider-recovery-runtime',
       workspaceRoot: storageRoot,
     });

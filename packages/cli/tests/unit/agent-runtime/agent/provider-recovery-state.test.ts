@@ -284,4 +284,24 @@ describe('ProviderRecoveryState', () => {
     expect(state.observe(generation, retryScheduled)).toBeUndefined();
     expect(state.snapshot()).toMatchObject({ revision: 0, snapshot: null });
   });
+
+  it('fails closed when an event cannot satisfy the bounded public schema', () => {
+    const state = new ProviderRecoveryState({
+      now: () => 3_000,
+      createGenerationId: () => 'generation-1',
+    });
+    const generation = state.begin();
+
+    expect(() =>
+      state.observe(generation, {
+        kind: 'provider_retry',
+        phase: 'scheduled',
+        attempt: Number.MAX_SAFE_INTEGER,
+        maxRetries: 12,
+        reason: 'rate_limit',
+        delayMs: 2_000,
+      })
+    ).not.toThrow();
+    expect(state.snapshot()).toMatchObject({ snapshot: null });
+  });
 });
