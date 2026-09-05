@@ -32,7 +32,9 @@
 
 - `bun run build && bun run type-check && bun run lint`：passed；CLI lint 1401 files，Web lint 208 files；
 - 首次 `bun run test:all`：5749 passed、88 skipped、2 failed。`raw-pty-marker-latching.test.ts` 因新增 runner 未登记而确定性失败，已补齐 inventory；未修改源码的 `remote-workspace-reference.test.ts` 跨进程容量用例单独复跑通过。
-- 最终 release candidate 的 `test:all`、coverage 与版本/tag 门禁必须在文档和版本元数据冻结后重新运行，最终结果以 release commit 为准。
+- 冻结 `0.10.138` 元数据后的 `bun run test:all`：非 performance 阶段 494 files passed、98 skipped，5754 tests passed、88 skipped；performance 阶段 4 files passed、1 skipped，9 tests passed、1 skipped，总耗时 364.06s。
+- `bun run test:coverage`：494 files passed、98 skipped，5754 tests passed、88 skipped；全局 statements 73.78%、branches 67.17%、functions 75.65%、lines 75.16%，退出码 0。
+- `bun run test:web`：69 files、662 tests passed。单独 Web coverage 因仓库当前 `vitest@3.2.7` 与根依赖 `@vitest/coverage-v8@4.1.10` 不兼容，在 provider 加载阶段失败；未将此环境问题伪装为通过。
 
 ## 清理与隐私
 

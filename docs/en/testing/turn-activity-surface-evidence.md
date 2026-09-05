@@ -32,7 +32,9 @@ The deterministic production TUI/Web trajectory passed `2/2` three consecutive t
 
 - `bun run build && bun run type-check && bun run lint`: passed; CLI lint checked 1401 files and Web lint checked 208 files.
 - First `bun run test:all`: 5749 passed, 88 skipped, 2 failed. `raw-pty-marker-latching.test.ts` failed deterministically because the new runner was not inventoried, then the inventory was fixed. The unchanged cross-process capacity case in `remote-workspace-reference.test.ts` passed on its exact rerun.
-- The final release candidate must rerun `test:all`, coverage, and version/tag gates after documentation and version metadata are frozen; the release commit is authoritative.
+- After freezing `0.10.138` metadata, `bun run test:all` passed 494 files and 5754 tests with 98 files and 88 tests skipped in the non-performance stage; performance passed 4 files and 9 tests with one file and one test skipped, in 364.06s total.
+- `bun run test:coverage` passed 494 files and 5754 tests with 98 files and 88 tests skipped; global coverage was 73.78% statements, 67.17% branches, 75.65% functions, and 75.16% lines, exit code 0.
+- `bun run test:web` passed 69 files and 662 tests. Separate Web coverage fails while loading the provider because the repository currently resolves `vitest@3.2.7` with root `@vitest/coverage-v8@4.1.10`; this environment mismatch is not reported as a passing gate.
 
 ## Cleanup and privacy
 
