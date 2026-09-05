@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.140] - 2026-09-06
+
+### Added
+- Added checkpoint-gated full-compaction memory consolidation for explicit reusable preferences, conventions, lessons, and resolved debugging knowledge, with bounded plans, exact deduplication, atomic project-scoped writes, and managed topic discovery.
+- Added content-free memory outcomes across the TUI, Web UI, ACP metadata, and Headless JSONL, including localized Web/TUI feedback and lifecycle cleanup.
+
+### Fixed
+- Prevented credentials, tool output, tool arguments, reasoning, metadata, and image URLs from entering automatic project memory; remote ACP workspaces remain host-write disabled.
+- Preserved late TUI status messages during streaming and prevented hidden durable messages or non-tool parts from leaking through Web SSE replay.
+
+### Tests
+- Added deterministic production Headless, real ACP stdio, raw PTY TUI, and Chromium Web qualification, passing three consecutive four-surface runs.
+- Qualified `deepseek-v4-flash` and `deepseek-v4-pro` through an `8/8` real-API matrix with exact final markers, new-Session memory discovery, bounded metadata, and no credential disclosure.
+
 ## [0.10.139] - 2026-09-05
 
 ### Added

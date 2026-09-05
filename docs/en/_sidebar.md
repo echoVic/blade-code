@@ -47,6 +47,7 @@
   * [TUI Terminal Input](/en/reference/tui-terminal-input.md)
   * [Active Turn Activity](/en/reference/turn-activity.md)
   * [Active Turn Activity Qualification Evidence](/en/testing/turn-activity-surface-evidence.md)
+  * [Compaction Project Memory Qualification Evidence](/en/testing/compaction-memory-consolidation-evidence.md)
   * [Fresh Independent Verification](/en/reference/fresh-independent-verification.md)
   * [Goal Completion Verification](/en/reference/goal-completion-verification.md)
   * [Workspace Agent Resources](/en/reference/workspace-agent-resources.md)

@@ -359,6 +359,14 @@ transcript。TUI `/queue` 与 Web 面板可以删除或重排尚未被观察的�
   JSONL、Server SSE 与 ACP
   `session_info_update._meta["blade/compaction"]` 使用同一生命周期，不把内部摘要或
   Provider 错误正文写入 assistant 内容。
+- 每次 full compaction 还会在纯 planning 阶段从确定被省略的原始可见文本构造有界
+  project-memory plan；该计划不会写入 checkpoint 或传给客户端。只有 replacement
+  checkpoint 已成功 fsync 后，runtime 才以 best-effort 方式原子写入项目记忆；失败被
+  收敛为内容无关的 `failed`，不能回滚 compaction 或阻止继续执行。manual `/compact`
+  使用相同顺序；remote ACP workspace 与仅 snip/micro 路径返回 `disabled` 或不产生计划。
+  TUI、Web、ACP 和 Headless 只接收 `outcome`、`entries`、`topics`。Web 的 durable SSE
+  replay 不发送 `clientVisible:false` 消息，也不发送 text/reasoning/image/summary part，
+  防止内部候选和 checkpoint 内容在重连时旁路公开投影。
 - user-turn rewind 不截断 transcript，而是追加 `session_rewound` marker。resume、
   catalog、fork、search 和 ContextManager 通过同一 projector 累积计算有效历史，
   被回退的原始事件保留用于审计但不会重新进入模型或 UI。

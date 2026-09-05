@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.140] - 2026-09-06
+
+### 新增
+- 新增 checkpoint 门控的 full-compaction 项目记忆巩固：从明确标记的偏好、约定、教训和已解决调试知识生成有界计划，执行精确去重、原子化项目级写入和受管 topic 发现。
+- 在 TUI、Web UI、ACP metadata 与 Headless JSONL 中新增内容无关的记忆结果投影，并提供双语 Web/TUI 提示和完整 lifecycle 清理。
+
+### 修复
+- 阻止 credential、tool output、tool arguments、reasoning、metadata 和图片 URL 进入自动项目记忆；remote ACP workspace 继续禁止宿主写入。
+- 保留流式阶段较晚到达的 TUI 状态消息，并阻止 hidden durable message 或非工具 part 通过 Web SSE replay 泄露。
+
+### 测试
+- 新增 production Headless、真实 ACP stdio、raw PTY TUI 与 Chromium Web 确定性资格测试，并连续通过三轮四端执行。
+- 使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 完成 `8/8` 真实 API 矩阵，验证精确 final marker、新 Session 记忆发现、有界 metadata 和零 credential 泄漏。
+
 ## [0.10.139] - 2026-09-05
 
 ### 新增

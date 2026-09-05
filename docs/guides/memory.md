@@ -6,7 +6,34 @@ Auto Memory 让 Agent 在工作中自动记录项目知识，跨会话持久化�
 
 1. **启动时加载** — 会话开始时，MEMORY.md 前 200 行自动注入 system prompt
 2. **工作中记录** — Agent 发现有价值的知识时，通过 MemoryWrite 工具保存
-3. **按需检索** — Agent 需要特定主题的详细信息时，通过 MemoryRead 工具读取
+3. **压缩时巩固** — full compaction 会从被移出上下文的消息中提取明确标记的可复用知识
+4. **按需检索** — Agent 需要特定主题的详细信息时，通过 MemoryRead 工具读取
+
+## Full compaction 记忆巩固
+
+预测式阈值压缩、上下文超限恢复、轮次上限续跑和手动 `/compact` 都遵循同一流程：
+
+1. 先生成有界的 compaction replacement 和项目记忆计划；
+2. 先原子提交 replacement checkpoint；
+3. checkpoint 成功后，才以 best-effort 方式写入项目记忆；
+4. 最后替换当前模型上下文并继续任务。
+
+如果 checkpoint 失败，不会写入记忆或替换上下文。如果记忆写入失败，已提交的
+compaction 仍然有效，任务可以继续。该过程复用 compaction 已经读取的历史，**不会额外
+发起一次 Provider 请求**。仅执行 snip/micro compaction 时不会生成项目记忆。
+
+自动巩固只读取被 full compaction 丢弃的可见文本：
+
+- 用户明确写出的 `记住:` / `remember:` 进入 `preferences.md`；
+- `约定:` / `规范:` / `convention:` 进入 `conventions.md`；
+- `教训:` / `踩坑:` / `lesson:` 进入 `lessons.md`；
+- 助手明确写出的 `修复:` / `解决:` / `fixed:` / `resolved:` 进入
+  `debugging.md`。
+
+工具输出、工具参数、reasoning、metadata 和图片 URL 不参与提取。单次计划最多 20 条，
+单条最多 500 个 Unicode code point，总计最多 8,000 个 code point。写入时会对规范化后的
+完整条目精确去重，并通过进程内锁、文件锁和原子替换避免并发丢失；topic 与索引文件使用
+`0600` 权限。自动管理的主题链接只会更新 `MEMORY.md` 的受管区块，不覆盖用户维护的其它内容。
 
 ## 存储结构
 
@@ -34,8 +61,14 @@ Auto Memory 让 Agent 在工作中自动记录项目知识，跨会话持久化�
 ## 安全机制
 
 - **敏感数据过滤** — 自动拒绝包含 password、token、secret、api_key、private_key 的内容
+- **封闭凭据分类** — Bearer token、`sk-*`、AWS access key ID 和 PEM 私钥头同样被拒绝；
+  错误与客户端投影不会返回命中内容或正则细节
 - **路径遍历防护** — 主题名不允许包含 `..` 或 `/`，防止写入任意路径
 - **索引行数限制** — MEMORY.md 加载上限 200 行，避免 system prompt 膨胀
+- **工作区隔离** — 记忆只写入当前本地 workspace；remote ACP workspace 返回
+  `disabled`，不会写到宿主机项目目录
+- **内容无关投影** — TUI、Web、ACP 与 Headless 只接收 outcome、条目数和 topic 名称，
+  不接收记忆正文、路径、存储错误或凭据
 
 ## /memory 命令
 

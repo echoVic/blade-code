@@ -47,6 +47,7 @@
   * [TUI Terminal Input](reference/tui-terminal-input.md)
   * [当前回合活动状态](reference/turn-activity.md)
   * [当前回合活动状态资格验证证据](testing/turn-activity-surface-evidence.md)
+  * [Compaction 项目记忆资格验证证据](testing/compaction-memory-consolidation-evidence.md)
   * [Fresh Independent Verification](reference/fresh-independent-verification.md)
   * [Goal Completion Verification](reference/goal-completion-verification.md)
   * [Workspace Agent 资源隔离](reference/workspace-agent-resources.md)
