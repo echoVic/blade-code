@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.138] - 2026-09-05
+
+### Added
+- Added one Runtime-owned, generation- and revision-fenced active-turn projection covering startup, thinking, response, parallel tool execution, compaction, continuation, counters, numeric progress, and elapsed time.
+- Added first-class TUI and Web activity surfaces, including active tool summaries, turn/tool counts, specialized-state precedence, and authoritative Web reload hydration.
+- Added ACP `blade/turnActivity` metadata, closed-schema Headless JSONL `turn_activity` events, bilingual reference/evidence documentation, deterministic production PTY/Chromium qualification, and a DeepSeek Flash/Pro eight-cell real-API matrix.
+
+### Fixed
+- Preserved the Web activity generation when the assistant message starts so later tool revisions are not rejected as unanchored events.
+- Normalized unlimited turn limits to `null`, suppressed duplicate ACP revisions, and consistently cleared ephemeral activity on terminal, navigation, cancellation, consumer-close, and Runtime-disposal paths.
+- Kept tool arguments, commands, output, paths, prompts, URLs, errors, progress text, and credentials outside every public activity surface.
+
+### Tests
+- Added TypeBox, Runtime, Agent, lifecycle, TUI, Web, SSE, ACP, Headless, stale-event, raw-PTY inventory, privacy, deterministic production, and real-API coverage.
+- Qualified `deepseek-v4-flash` and `deepseek-v4-pro` through Headless, real ACP stdio, raw PTY TUI, and production Chromium Web with `8/8` passing cells and in-progress Web reload restoration.
+
 ## [0.10.137] - 2026-09-05
 
 ### Added

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.138] - 2026-09-05
+
+### 新增
+- 新增由 Runtime 统一持有、带 generation/revision fence 的当前回合活动投影，覆盖启动、思考、响应、并行工具执行、压缩、继续、计数、数字进度与耗时。
+- 重点建设 TUI 与 Web 活动表面，显示活动工具摘要、回合/工具计数，遵循专用状态优先级，并支持 Web reload 后从权威快照恢复。
+- 新增 ACP `blade/turnActivity` metadata、封闭 schema 的 Headless JSONL `turn_activity`、双语 reference/evidence、production PTY/Chromium 确定性资格测试，以及 DeepSeek Flash/Pro 八格真实 API 矩阵。
+
+### 修复
+- assistant message 开始时不再清除 Web activity generation，避免后续工具 revision 被当作未锚定事件拒绝。
+- 将无限 turn limit 规范化为 `null`，去除 ACP 重复 revision，并在终态、导航、取消、consumer close 与 Runtime dispose 路径一致清除瞬态状态。
+- 工具参数、命令、输出、路径、prompt、URL、错误、进度文本和凭据均不会进入任何公开 activity 表面。
+
+### 测试
+- 新增 TypeBox、Runtime、Agent、lifecycle、TUI、Web、SSE、ACP、Headless、stale event、raw-PTY inventory、隐私、production 确定性及真实 API 覆盖。
+- 使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 在 Headless、真实 ACP stdio、raw PTY TUI 和 production Chromium Web 完成 `8/8` 通过矩阵，并验证工具执行中的 Web reload 恢复。
+
 ## [0.10.137] - 2026-09-05
 
 ### 新增
