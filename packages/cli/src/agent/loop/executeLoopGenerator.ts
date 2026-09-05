@@ -38,6 +38,11 @@ import type {
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { renderMcpInstructionReminder } from '../../mcp/McpServerInstructions.js';
+import {
+  commitMemoryConsolidation,
+  type MemoryConsolidationPlan,
+  type MemoryConsolidationProjection,
+} from '../../memory/MemoryConsolidation.js';
 import type {
   ChatRequestOptions,
   ChatResponse,
@@ -599,6 +604,23 @@ export interface LoopCompactionState {
   lastCompactionTurn?: number;
 }
 
+async function commitCompactionMemory(
+  memoryPlan: MemoryConsolidationPlan | undefined,
+  context: ChatContext,
+  checkpointId: string | null
+): Promise<MemoryConsolidationProjection | undefined> {
+  if (!memoryPlan) return undefined;
+  if (!checkpointId) return { outcome: 'disabled', entries: 0, topics: [] };
+  try {
+    return await commitMemoryConsolidation(memoryPlan, {
+      workspaceRoot: context.workspaceRoot || getCwd(),
+      workspaceAccess: context.workspaceKind === 'acp-remote' ? 'none' : 'full',
+    });
+  } catch {
+    return { outcome: 'failed', entries: 0, topics: [] };
+  }
+}
+
 function hashSessionForWarning(sessionId: string): string {
   return createHash('sha256').update(sessionId).digest('hex').slice(0, 16);
 }
@@ -786,6 +808,7 @@ export async function* checkAndCompactInLoop(
   let fallbackMessagesOmitted: number | undefined;
   let fallbackMessagesTruncated: number | undefined;
   let failureReason: CompactionFailureReason | undefined;
+  let memory: MemoryConsolidationProjection | undefined;
   let failurePhase: 'compaction' | 'checkpoint' = 'compaction';
   yield { kind: 'compaction', phase: 'start', reason: 'threshold' };
   try {
@@ -836,7 +859,7 @@ export async function* checkAndCompactInLoop(
 
     // 保存压缩数据到 JSONL
     failurePhase = 'checkpoint';
-    await persistCompaction(
+    const checkpointId = await persistCompaction(
       deps,
       context,
       result.summary,
@@ -867,6 +890,7 @@ export async function* checkAndCompactInLoop(
       }
     );
 
+    memory = await commitCompactionMemory(result.memoryPlan, context, checkpointId);
     context.messages = result.compactedMessages;
     if (compactionState) {
       compactionState.lastCompactionTurn = currentTurn;
@@ -904,6 +928,7 @@ export async function* checkAndCompactInLoop(
       fallbackMessagesOmitted,
       fallbackMessagesTruncated,
       failureReason,
+      memory,
     };
   }
 }
@@ -2287,6 +2312,7 @@ validates the object and may return a bounded corrective error.`;
             let fallbackMessagesOmitted: number | undefined;
             let fallbackMessagesTruncated: number | undefined;
             let failureReason: CompactionFailureReason | undefined;
+            let memory: MemoryConsolidationProjection | undefined;
             yield {
               kind: 'compaction',
               phase: 'start',
@@ -2337,7 +2363,7 @@ validates the object and may return a bounded corrective error.`;
                     ),
                   };
                 }
-                await persistCompaction(
+                const checkpointId = await persistCompaction(
                   deps,
                   context,
                   result.summary,
@@ -2360,6 +2386,11 @@ validates the object and may return a bounded corrective error.`;
                     replacementMessages: result.messages,
                   },
                   { required: deps.executionEngine !== undefined }
+                );
+                memory = await commitCompactionMemory(
+                  result.memoryPlan,
+                  context,
+                  checkpointId
                 );
                 context.messages = result.messages;
                 // 同步到 state（此时 pending 已被 writeback() commit，为空）
@@ -2394,6 +2425,7 @@ validates the object and may return a bounded corrective error.`;
                 fallbackMessagesOmitted,
                 fallbackMessagesTruncated,
                 failureReason,
+                memory,
               };
             }
             if (recovered) {
@@ -4276,6 +4308,7 @@ validates the object and may return a bounded corrective error.`;
               let compactionFallbackMessagesOmitted: number | undefined;
               let compactionFallbackMessagesTruncated: number | undefined;
               let compactionFailureReason: CompactionFailureReason | undefined;
+              let compactionMemory: MemoryConsolidationProjection | undefined;
               yield {
                 kind: 'compaction',
                 phase: 'start',
@@ -4364,7 +4397,7 @@ validates the object and may return a bounded corrective error.`;
                 compactionFailureReason = compactResult.failureReason;
 
                 // 保存压缩数据到 JSONL
-                await persistCompaction(
+                const checkpointId = await persistCompaction(
                   deps,
                   context,
                   compactResult.summary,
@@ -4395,6 +4428,11 @@ validates the object and may return a bounded corrective error.`;
                   },
                   { required: deps.executionEngine !== undefined }
                 );
+                compactionMemory = await commitCompactionMemory(
+                  compactResult.memoryPlan,
+                  context,
+                  checkpointId
+                );
                 context.messages = replacementMessages;
                 state.replaceHistory(context.messages);
                 contextTokenTracker.reset();
@@ -4422,6 +4460,7 @@ validates the object and may return a bounded corrective error.`;
                   fallbackMessagesOmitted: compactionFallbackMessagesOmitted,
                   fallbackMessagesTruncated: compactionFallbackMessagesTruncated,
                   failureReason: compactionFailureReason,
+                  memory: compactionMemory,
                 };
               }
 

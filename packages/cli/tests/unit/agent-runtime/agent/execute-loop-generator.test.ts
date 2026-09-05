@@ -22,6 +22,14 @@ vi.mock('../../../../src/context/CompactionService.js', () => ({
   CompactionService: { compact: vi.fn() },
 }));
 
+const memoryConsolidationState = vi.hoisted(() => ({
+  commit: vi.fn(),
+}));
+
+vi.mock('../../../../src/memory/MemoryConsolidation.js', () => ({
+  commitMemoryConsolidation: memoryConsolidationState.commit,
+}));
+
 const emptyFollowUpQueue = () => ({
   version: '0'.repeat(64),
   pending: 0,
@@ -646,6 +654,11 @@ describe('executeLoopGenerator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(CompactionService.compact).mockReset();
+    memoryConsolidationState.commit.mockResolvedValue({
+      outcome: 'nothing_to_store',
+      entries: 0,
+      topics: [],
+    });
     reactiveCompactionState.tryReactiveCompact.mockReset().mockResolvedValue({
       success: false,
       messages: [],
@@ -1707,12 +1720,20 @@ describe('executeLoopGenerator', () => {
     });
 
     it('triggers full compaction before the next Provider request when total context crosses the boundary', async () => {
-      const { deps } = createHandoffPersistenceHarness();
+      const { deps, contextManager } = createHandoffPersistenceHarness();
       const recordSpy = vi.spyOn(
         deps.executionEngine!.getContextManager(),
         'recordTokenBudgetHandoff'
       );
       const order: string[] = [];
+      vi.spyOn(contextManager, 'saveCompaction').mockImplementationOnce(async () => {
+        order.push('checkpoint');
+        return 'memory-checkpoint';
+      });
+      memoryConsolidationState.commit.mockImplementationOnce(async () => {
+        order.push('memory');
+        return { outcome: 'written', entries: 1, topics: ['conventions'] };
+      });
       const chatMock = vi.mocked(deps.chatService.chat);
       chatMock.mockImplementation(async (messages) => {
         order.push(
@@ -1737,6 +1758,10 @@ describe('executeLoopGenerator', () => {
           compactedMessages: [{ role: 'user', content: 'POST_COMPACT' }],
           boundaryMessage: { role: 'system', content: '' },
           summaryMessage: { role: 'user', content: 'summary' },
+          memoryPlan: {
+            entries: [{ topic: 'conventions', content: 'keep this convention' }],
+            rejectedSensitive: 0,
+          },
         };
       });
 
@@ -1753,7 +1778,17 @@ describe('executeLoopGenerator', () => {
       expect(result.success).toBe(true);
       expect(recordSpy).not.toHaveBeenCalled();
       expect(CompactionService.compact).toHaveBeenCalledOnce();
-      expect(order).toEqual(['chat:initial', 'compact', 'chat:post']);
+      expect(order).toEqual([
+        'chat:initial',
+        'compact',
+        'checkpoint',
+        'memory',
+        'chat:post',
+      ]);
+      expect(memoryConsolidationState.commit).toHaveBeenCalledWith(
+        expect.objectContaining({ entries: expect.any(Array) }),
+        { workspaceRoot: '/tmp/test', workspaceAccess: 'full' }
+      );
     });
 
     it('fails closed when full compaction throws a non-abort error', async () => {
@@ -1788,6 +1823,7 @@ describe('executeLoopGenerator', () => {
         details: { phase: 'compaction' },
       });
       expect(vi.mocked(deps.chatService.chat)).toHaveBeenCalledTimes(1);
+      expect(memoryConsolidationState.commit).not.toHaveBeenCalled();
       expect(saveCompaction).not.toHaveBeenCalled();
       expect(context.messages.some(isTokenBudgetHandoffMessage)).toBe(true);
     });
@@ -1826,6 +1862,57 @@ describe('executeLoopGenerator', () => {
         details: { phase: 'checkpoint' },
       });
       expect(vi.mocked(deps.chatService.chat)).toHaveBeenCalledTimes(1);
+      expect(memoryConsolidationState.commit).not.toHaveBeenCalled();
+    });
+
+    it('continues with the committed replacement when memory persistence fails', async () => {
+      const { deps, contextManager } = createHandoffPersistenceHarness();
+      vi.spyOn(contextManager, 'saveCompaction').mockResolvedValueOnce(
+        'memory-failure-checkpoint'
+      );
+      vi.mocked(deps.chatService.chat)
+        .mockResolvedValueOnce(toolResponse(80_000))
+        .mockResolvedValueOnce(finalResponse(24_000, 'continued safely'));
+      vi.mocked(CompactionService.compact).mockResolvedValueOnce({
+        success: true,
+        summary: 'summary',
+        preTokens: 80_000,
+        postTokens: 24_000,
+        filesIncluded: [],
+        compactedMessages: [{ role: 'user', content: 'summary' }],
+        boundaryMessage: { role: 'system', content: '' },
+        summaryMessage: { role: 'user', content: 'summary' },
+        memoryPlan: {
+          entries: [{ topic: 'debugging', content: 'safe reusable fix' }],
+          rejectedSensitive: 0,
+        },
+      });
+      memoryConsolidationState.commit.mockRejectedValueOnce(
+        Object.assign(new Error('private path must not surface'), { code: 'EIO' })
+      );
+
+      const context = createMockContext();
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Continue after memory failure.',
+          context,
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(context.messages).toContainEqual({ role: 'user', content: 'summary' });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'compaction',
+          phase: 'end',
+          outcome: 'completed',
+          memory: { outcome: 'failed', entries: 0, topics: [] },
+        })
+      );
+      expect(JSON.stringify(events)).not.toContain('private path must not surface');
     });
 
     it('validates appendDurableControl identity and dedupes by message id', () => {
@@ -2874,7 +2961,15 @@ describe('executeLoopGenerator', () => {
     const { deps, contextManager } = createTypedPersistenceHarness();
     const saveCompaction = vi
       .spyOn(contextManager, 'saveCompaction')
-      .mockResolvedValue('turn-limit-checkpoint');
+      .mockImplementationOnce(async () => {
+        order.push('checkpoint');
+        return 'turn-limit-checkpoint';
+      });
+    const order: string[] = [];
+    memoryConsolidationState.commit.mockImplementationOnce(async () => {
+      order.push('memory');
+      return { outcome: 'written', entries: 1, topics: ['lessons'] };
+    });
     deps.runtimeOptions.maxTurns = 1;
     const marker = projectedHandoff(70_000);
     const sourceHistory: Message[] = [
@@ -2921,6 +3016,10 @@ describe('executeLoopGenerator', () => {
       compactedMessages: boundaryReplacement,
       boundaryMessage: { role: 'system', content: 'Conversation compacted' },
       summaryMessage: { role: 'user', content: 'ledger summary' },
+      memoryPlan: {
+        entries: [{ topic: 'lessons', content: 'preserve this lesson' }],
+        rejectedSensitive: 0,
+      },
     } satisfies CompactionResult);
 
     const { events, result } = await drainGenerator(
@@ -2967,8 +3066,10 @@ describe('executeLoopGenerator', () => {
         reason: 'turn_limit',
         preTokenSource: 'provider_plus_estimate',
         estimatedPendingTokens: expect.any(Number),
+        memory: { outcome: 'written', entries: 1, topics: ['lessons'] },
       })
     );
+    expect(order).toEqual(['checkpoint', 'memory']);
   });
 
   it('turn-limit boundary 失败时不持久化 checkpoint 并保留原 marker', async () => {
@@ -5453,12 +5554,27 @@ describe('executeLoopGenerator', () => {
         } as unknown as ExecutionEngine,
       });
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      const order: string[] = [];
+      contextManager.saveCompaction.mockImplementationOnce(async () => {
+        order.push('checkpoint');
+        return 'reactive-checkpoint';
+      });
+      memoryConsolidationState.commit.mockImplementationOnce(async () => {
+        order.push('memory');
+        return { outcome: 'written', entries: 1, topics: ['debugging'] };
+      });
       chatMock
-        .mockRejectedValueOnce(new Error('context_length_exceeded'))
-        .mockResolvedValueOnce({
-          content: 'Recovered.',
-          finishReason: 'stop',
-          usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 },
+        .mockImplementationOnce(async () => {
+          order.push('chat:initial');
+          throw new Error('context_length_exceeded');
+        })
+        .mockImplementationOnce(async () => {
+          order.push('chat:replay');
+          return {
+            content: 'Recovered.',
+            finishReason: 'stop',
+            usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 },
+          };
         });
       (deps.chatService.getConfig as ReturnType<typeof vi.fn>).mockReturnValue({
         stream: false,
@@ -5476,6 +5592,10 @@ describe('executeLoopGenerator', () => {
         preTokens: 100_000,
         postTokens: 20,
         filesIncluded: [],
+        memoryPlan: {
+          entries: [{ topic: 'debugging', content: 'keep this fix' }],
+          rejectedSensitive: 0,
+        },
       });
 
       const { events, result } = await drainGenerator(
@@ -5503,6 +5623,7 @@ describe('executeLoopGenerator', () => {
       expect(contextManager.saveCompaction.mock.invocationCallOrder[0]).toBeLessThan(
         chatMock.mock.invocationCallOrder[1]!
       );
+      expect(order).toEqual(['chat:initial', 'checkpoint', 'memory', 'chat:replay']);
       expect(events).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -5516,6 +5637,7 @@ describe('executeLoopGenerator', () => {
             reason: 'context_limit',
             outcome: 'completed',
             strategy: 'llm',
+            memory: { outcome: 'written', entries: 1, topics: ['debugging'] },
           }),
         ])
       );
@@ -5669,6 +5791,10 @@ describe('executeLoopGenerator', () => {
         preTokens: 100_000,
         postTokens: 20,
         filesIncluded: [],
+        memoryPlan: {
+          entries: [{ topic: 'debugging', content: 'must not be persisted' }],
+          rejectedSensitive: 0,
+        },
       });
 
       const { events, result } = await drainGenerator(
@@ -5683,6 +5809,7 @@ describe('executeLoopGenerator', () => {
 
       expect(result.success).toBe(false);
       expect(chatMock).toHaveBeenCalledOnce();
+      expect(memoryConsolidationState.commit).not.toHaveBeenCalled();
       expect(events).toContainEqual(
         expect.objectContaining({
           kind: 'compaction',

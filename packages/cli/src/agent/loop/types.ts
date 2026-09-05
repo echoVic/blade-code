@@ -21,6 +21,7 @@ import type {
   GoalPrematureStopPattern,
   GoalSnapshot,
 } from '../../goals/types.js';
+import type { MemoryConsolidationProjection } from '../../memory/MemoryConsolidation.js';
 import type {
   ChatCompletionMessageToolCall,
   IChatService,
@@ -94,6 +95,7 @@ export type SystemEvent =
       fallbackMessagesOmitted?: number;
       fallbackMessagesTruncated?: number;
       failureReason?: CompactionFailureReason;
+      memory?: MemoryConsolidationProjection;
     }
   | { kind: 'token_usage'; usage: TokenUsageInfo }
   | ({ kind: 'provider_admission' } & ProviderAdmissionEvent)
