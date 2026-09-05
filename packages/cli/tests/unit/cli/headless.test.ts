@@ -1719,6 +1719,78 @@ describe('headless runner', () => {
     expect(stderr.write).not.toHaveBeenCalled();
   });
 
+  it('emits the unified Provider recovery envelope and its terminal clear', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'provider_recovery',
+          recovery: {
+            version: 1,
+            generation: 'generation-1',
+            revision: 1,
+            snapshot: {
+              activity: 'retry_wait',
+              reason: 'rate_limit',
+              updatedAt: 1_000,
+              nextActionAt: 3_000,
+              retry: {
+                attempt: 1,
+                maxRetries: 12,
+                statusCode: 429,
+                delayMs: 2_000,
+              },
+            },
+          },
+        },
+        {
+          kind: 'provider_recovery',
+          recovery: {
+            version: 1,
+            generation: 'generation-1',
+            revision: 2,
+            snapshot: null,
+          },
+        },
+      ])
+    );
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    expect(
+      await runHeadless(
+        { headless: true, outputFormat: 'jsonl', message: 'recover' },
+        { stdout, stderr }
+      )
+    ).toBe(0);
+
+    const events = stdout.write.mock.calls
+      .map((call) => String(call[0] ?? ''))
+      .join('')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((event) => event.type === 'provider_recovery');
+    expect(events).toEqual([
+      expect.objectContaining({
+        generation: 'generation-1',
+        revision: 1,
+        snapshot: expect.objectContaining({
+          activity: 'retry_wait',
+          updated_at: 1_000,
+          next_action_at: 3_000,
+        }),
+      }),
+      expect.objectContaining({
+        generation: 'generation-1',
+        revision: 2,
+        snapshot: null,
+      }),
+    ]);
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+
   it('emits sanitized Provider stall lifecycle events in JSONL mode', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
