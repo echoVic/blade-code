@@ -100,6 +100,17 @@ describe.skipIf(!isRealApiTestEnabled())(
           expect(resolved.chat.fallbackModels?.[0]?.channel?.apiKey).toBe(gpt.apiKey);
           expect(resolved.chat.fallbackModels?.[0]?.channel?.baseUrl).toBe(gpt.baseURL);
           expect(chunks.filter((chunk) => chunk.modelFallback)).toHaveLength(1);
+          expect(chunks.find((chunk) => chunk.modelFallback)?.modelFallback).toEqual({
+            from: { provider: claude.provider, model: claude.model },
+            to: { provider: gpt.provider, model: gpt.model },
+            candidate: 1,
+            candidateCount: 1,
+            trigger: { source: 'stall', reason: 'timeout' },
+          });
+          expect(JSON.stringify(chunks)).not.toContain(claude.apiKey);
+          expect(JSON.stringify(chunks)).not.toContain(gpt.apiKey);
+          expect(JSON.stringify(chunks)).not.toContain(claude.baseURL);
+          expect(JSON.stringify(chunks)).not.toContain(gpt.baseURL);
           expect(chunks.some((chunk) => chunk.providerRetry?.phase === 'attempt')).toBe(
             false
           );

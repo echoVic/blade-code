@@ -101,7 +101,15 @@ class FallbackStreamingChatService implements IChatService {
           },
         ],
       };
-      yield { modelFallback: true };
+      yield {
+        modelFallback: {
+          from: { provider: 'primary', model: 'primary-model' },
+          to: { provider: 'fallback', model: 'fallback-model' },
+          candidate: 1,
+          candidateCount: 1,
+          trigger: { source: 'retry', reason: 'server_error', statusCode: 503 },
+        },
+      };
       yield {
         toolCalls: [
           {

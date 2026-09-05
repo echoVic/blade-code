@@ -728,7 +728,15 @@ describe('PiAIChatService', () => {
       },
     });
     await expect(stream.next()).resolves.toEqual({
-      value: { modelFallback: true },
+      value: {
+        modelFallback: {
+          from: { provider: 'test', model: 'test-model' },
+          to: { provider: 'test', model: 'backup' },
+          candidate: 1,
+          candidateCount: 1,
+          trigger: { source: 'admission', reason: 'wait_timeout' },
+        },
+      },
       done: false,
     });
     await expect(stream.next()).resolves.toMatchObject({
@@ -1119,6 +1127,40 @@ describe('PiAIChatService', () => {
       false
     );
     expect(estimateProviderRequestPendingBytes).toHaveBeenCalledOnce();
+  });
+
+  it('uses the previously failed fallback as the next fallback source', async () => {
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([{ content: 'second fallback' }]));
+
+    const events: StreamChunk[] = [];
+    const stream = (
+      await service({
+        maxRetries: 0,
+        fallbackModels: [
+          { provider: 'test', model: 'backup-one' },
+          { provider: 'test', model: 'backup-two' },
+        ],
+      })
+    ).streamChat([{ role: 'user', content: 'use the second fallback' }]);
+    for await (const event of stream) events.push(event);
+
+    expect(events.flatMap((event) => event.modelFallback ?? [])).toEqual([
+      expect.objectContaining({
+        from: { provider: 'test', model: 'test-model' },
+        to: { provider: 'test', model: 'backup-one' },
+        candidate: 1,
+        candidateCount: 2,
+      }),
+      expect.objectContaining({
+        from: { provider: 'test', model: 'backup-one' },
+        to: { provider: 'test', model: 'backup-two' },
+        candidate: 2,
+        candidateCount: 2,
+      }),
+    ]);
   });
 
   it('switches providers after a pre-output idle timeout without retrying primary', async () => {
@@ -1565,7 +1607,15 @@ describe('PiAIChatService', () => {
       });
       expect(streamPiModel).toHaveBeenCalledTimes(4);
       expect(createFallbackModel).toHaveBeenCalledOnce();
-      expect(events).toContainEqual({ modelFallback: true });
+      expect(events).toContainEqual({
+        modelFallback: {
+          from: { provider: 'test', model: 'test-model' },
+          to: { provider: 'test', model: 'backup' },
+          candidate: 1,
+          candidateCount: 1,
+          trigger: { source: 'retry', reason: 'server_error', statusCode: 503 },
+        },
+      });
       expect(fallbackClosed).toBe(true);
       expect(
         events.flatMap((event) =>
@@ -1998,7 +2048,19 @@ describe('PiAIChatService', () => {
         expect.objectContaining({
           providerCircuit: expect.objectContaining({ phase: 'rejected' }),
         }),
-        { modelFallback: true },
+        {
+          modelFallback: {
+            from: { provider: 'test', model: 'test-model' },
+            to: { provider: 'test', model: 'backup' },
+            candidate: 1,
+            candidateCount: 1,
+            trigger: {
+              source: 'circuit',
+              reason: 'server_error',
+              statusCode: 503,
+            },
+          },
+        },
         { content: 'healthy-fallback' },
       ]);
       expect(streamPiModel).toHaveBeenCalledOnce();

@@ -38,6 +38,7 @@ import type {
   ProviderCircuitEvent,
   ProviderCircuitRegistry,
 } from './pi/providerCircuitBreaker.js';
+import type { ProviderFallbackEvent } from './pi/providerFallback.js';
 import type {
   ProviderAdmissionEvent,
   ProviderRequestAdmissionScheduler,
@@ -245,7 +246,7 @@ export interface StreamChunk {
   toolCalls?: StreamToolCall[];
   finishReason?: string;
   usage?: UsageInfo;
-  modelFallback?: boolean;
+  modelFallback?: ProviderFallbackEvent;
   providerAdmission?: ProviderAdmissionEvent;
   providerCircuit?: ProviderCircuitEvent;
   providerRetry?: ProviderRetryEvent;

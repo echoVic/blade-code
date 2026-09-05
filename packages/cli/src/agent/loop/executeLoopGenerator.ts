@@ -477,7 +477,7 @@ async function* processStreamResponse(
         streamFinishReason = undefined;
         toolCallAccumulator.clear();
         chunkCount = 0;
-        yield { kind: 'model_fallback' };
+        yield { kind: 'model_fallback', ...chunk.modelFallback };
         continue;
       }
 

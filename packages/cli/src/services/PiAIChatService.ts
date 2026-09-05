@@ -40,6 +40,10 @@ import {
   type ProviderCircuitTransition,
 } from './pi/providerCircuitBreaker.js';
 import {
+  providerFallbackIdentity,
+  providerFallbackTriggerFromError,
+} from './pi/providerFallback.js';
+import {
   DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
   DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
   getProviderRequestAdmissionScheduler,
@@ -1081,6 +1085,7 @@ export class PiAIChatService implements IChatService {
 
     let lastError: unknown;
     let primaryEmitted = false;
+    let failedModel = this.model;
     const fallbackModels = this.config.fallbackModels ?? [];
     const primaryRetryLimit =
       boundedRecovery && fallbackModels.length > 0
@@ -1114,11 +1119,20 @@ export class PiAIChatService implements IChatService {
 
     for (const [index, fallback] of fallbackModels.entries()) {
       if (!hasLogicalAttemptCapacity()) break;
-      yield { modelFallback: true };
       let fallbackEmitted = false;
       try {
         const fallbackConfig = createFallbackChatConfig(this.config, fallback);
         const fallbackModel = createFallbackModel(fallbackConfig, fallback);
+        yield {
+          modelFallback: {
+            from: providerFallbackIdentity(failedModel.provider, failedModel.id),
+            to: providerFallbackIdentity(fallbackModel.provider, fallbackModel.id),
+            candidate: index + 1,
+            candidateCount: fallbackModels.length,
+            trigger: providerFallbackTriggerFromError(lastError, responseMetadata),
+          },
+        };
+        failedModel = fallbackModel;
         const terminalCandidate = index === fallbackModels.length - 1;
         const candidateRetryLimit =
           boundedRecovery && !terminalCandidate

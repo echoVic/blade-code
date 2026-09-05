@@ -3,7 +3,7 @@ import type {
   ProviderRecoveryFallback,
   ProviderRecoveryIdentity,
 } from '../../api/providerRecoverySchemas.js';
-import type { ModelRef } from '../../config/types.js';
+import { normalizeProviderRecoveryIdentity } from '../../api/providerRecoverySchemas.js';
 import { isProviderCircuitOpenError } from './providerCircuitBreaker.js';
 import { isProviderAdmissionError } from './providerRequestAdmission.js';
 import {
@@ -13,8 +13,14 @@ import {
 
 export type ProviderFallbackEvent = ProviderRecoveryFallback;
 
-export function providerFallbackIdentity(model: ModelRef): ProviderRecoveryIdentity {
-  return { provider: model.provider, model: model.model };
+export function providerFallbackIdentity(
+  provider: string,
+  model: string
+): ProviderRecoveryIdentity {
+  return {
+    provider: normalizeProviderRecoveryIdentity(provider),
+    model: normalizeProviderRecoveryIdentity(model),
+  };
 }
 
 export function providerFallbackTriggerFromError(

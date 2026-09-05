@@ -25,6 +25,7 @@ import type {
   PromptCacheBreakInfo,
 } from '../../services/ChatServiceInterface.js';
 import type { ProviderCircuitEvent } from '../../services/pi/providerCircuitBreaker.js';
+import type { ProviderFallbackEvent } from '../../services/pi/providerFallback.js';
 import type { ProviderAdmissionEvent } from '../../services/pi/providerRequestAdmission.js';
 import type { ProviderRetryEvent } from '../../services/pi/providerRetry.js';
 import type { ProviderStallEvent } from '../../services/pi/providerStall.js';
@@ -57,7 +58,7 @@ export type StreamEvent =
    * 而非整个 run 的完成标志。
    */
   | { kind: 'stream_end' }
-  | { kind: 'model_fallback' };
+  | ({ kind: 'model_fallback' } & ProviderFallbackEvent);
 
 /** 工具生命周期事件 */
 export type ToolEvent =
