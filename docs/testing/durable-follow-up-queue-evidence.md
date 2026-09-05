@@ -1,7 +1,7 @@
 # Durable Follow-up Queue 资格验证证据
 
 - 日期：2026-09-05
-- 目标版本：blade-code@0.10.134
+- 目标版本：blade-code@0.10.136
 - 基线：v0.10.133
 - Framework retry：0
 - Provider model retry：0

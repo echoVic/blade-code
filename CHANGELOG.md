@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.136] - 2026-09-05
+
+### Fixed
+- Stabilized the ACP remote Write readback deadline regression test by asserting the shared deadline's bounded remaining budget instead of requiring an exact millisecond value.
+
 ## [0.10.135] - 2026-09-05
 
 ### Fixed

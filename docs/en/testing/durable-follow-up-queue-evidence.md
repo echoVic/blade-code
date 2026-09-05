@@ -1,7 +1,7 @@
 # Durable Follow-up Queue Qualification Evidence
 
 - Date: 2026-09-05
-- Target version: blade-code@0.10.134
+- Target version: blade-code@0.10.136
 - Baseline: v0.10.133
 - Framework retry: 0
 - Provider model retry: 0
