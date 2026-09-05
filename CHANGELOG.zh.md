@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.135] - 2026-09-05
+
+### 修复
+- 将 durable follow-up queue HTTP/SSE 集成测试的临时 workspace 绑定为模型解析使用的进程 workspace，消除对开发者 home 配置的隐式依赖。
+- 清理已完成的 SSE read timer，并增加有界且区分阶段的诊断，使 CI 能精确报告缺失事件且不残留过期 timer。
+
 ## [0.10.134] - 2026-09-05
 
 ### 新增

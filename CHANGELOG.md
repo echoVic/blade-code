@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.135] - 2026-09-05
+
+### Fixed
+- Made the durable follow-up queue HTTP/SSE integration fixture independent of developer home configuration by binding its temporary workspace to the process workspace used for model resolution.
+- Cleared settled SSE read timers and added bounded, stage-specific diagnostics so CI reports the exact missing event without retaining stale timers.
+
 ## [0.10.134] - 2026-09-05
 
 ### Added
