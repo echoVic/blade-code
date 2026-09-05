@@ -4,6 +4,7 @@
 - Target version: `blade-code@0.10.139`
 - Design baseline: `62a062e1`
 - Real-API implementation baseline: `27a6accc`
+- Final release HEAD: `df2ff5c9db9b5992e63f0a1257e3f7d71092608f`
 - Scope: first authoritative `429 + Retry-After`, same-domain cross-Session suppression, one HalfOpen probe, and TUI/Web/ACP/Headless projection
 
 ## Deterministic Production-Surface Qualification
@@ -67,5 +68,6 @@ Evidence collected at implementation-and-documentation HEAD
   88 tests skipped; statements 73.79%, branches 67.19%, functions 75.65%, lines 75.16%;
 - `bun run test:web`: passed; 69 files and 663 tests.
 
-The required release gates will still be rerun after version metadata is frozen and
-before tagging.
+Version metadata was frozen at
+`df2ff5c9db9b5992e63f0a1257e3f7d71092608f`; `bun run build && bun run test:all`
+will be rerun before tagging and appended below.

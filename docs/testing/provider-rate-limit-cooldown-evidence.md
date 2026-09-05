@@ -4,6 +4,7 @@
 - 目标版本：`blade-code@0.10.139`
 - 设计起点：`62a062e1`
 - 真实 API 实现基线：`27a6accc`
+- 最终 release HEAD：`df2ff5c9db9b5992e63f0a1257e3f7d71092608f`
 - 测试对象：首个权威 `429 + Retry-After`、相同 failure domain 跨 Session 抑制、唯一 HalfOpen probe、TUI/Web/ACP/Headless 投影
 
 ## 确定性生产表面验证
@@ -63,4 +64,5 @@ Edit、精确 Bash 验证、最终 marker、文件 diff 范围及无 secret/priv
   tests skipped；statements 73.79%、branches 67.19%、functions 75.65%、lines 75.16%；
 - `bun run test:web`：passed；69 files、663 tests。
 
-版本元数据完成后仍会在 tag 前重新运行必要的发布门禁。
+上述版本元数据冻结在 `df2ff5c9db9b5992e63f0a1257e3f7d71092608f`；tag 前再次
+运行 `bun run build && bun run test:all`，结果将在下方追加。
