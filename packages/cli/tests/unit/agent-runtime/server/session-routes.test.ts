@@ -242,6 +242,18 @@ const runtimeState = vi.hoisted(() => ({
     getPendingSteeringCount: vi.fn(() => 0),
     getPendingSteeringMessages: vi.fn(() => []),
     getFollowUpQueueSnapshot: vi.fn(async () => makeFollowUpQueueSnapshot()),
+    getProviderRecoveryProjection: vi.fn(() => ({
+      version: 1 as const,
+      generation: 'provider-recovery-generation',
+      revision: 1,
+      snapshot: {
+        activity: 'retry_wait' as const,
+        reason: 'rate_limit' as const,
+        updatedAt: 1_000,
+        nextActionAt: 3_000,
+        retry: { attempt: 1, maxRetries: 12, delayMs: 2_000 },
+      },
+    })),
     mutateFollowUpQueue: vi.fn(async () => ({
       snapshot: makeFollowUpQueueSnapshot({
         version: 'b'.repeat(64),
@@ -726,6 +738,18 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.getFollowUpQueueSnapshot
       .mockReset()
       .mockResolvedValue(makeFollowUpQueueSnapshot());
+    runtimeState.runtime.getProviderRecoveryProjection.mockReturnValue({
+      version: 1,
+      generation: 'provider-recovery-generation',
+      revision: 1,
+      snapshot: {
+        activity: 'retry_wait',
+        reason: 'rate_limit',
+        updatedAt: 1_000,
+        nextActionAt: 3_000,
+        retry: { attempt: 1, maxRetries: 12, delayMs: 2_000 },
+      },
+    });
     runtimeState.runtime.mutateFollowUpQueue.mockReset().mockResolvedValue({
       snapshot: makeFollowUpQueueSnapshot({
         version: 'b'.repeat(64),
@@ -3104,6 +3128,12 @@ describe('SessionRoutes runtime reuse', () => {
         pendingInputDelivery: 'current_turn',
         recovered: 1,
         followUpQueue: makeFollowUpQueueSnapshot(),
+        providerRecovery: {
+          version: 1,
+          generation: 'provider-recovery-generation',
+          revision: 1,
+          snapshot: { activity: 'retry_wait', reason: 'rate_limit' },
+        },
       },
     });
     eventsAbort.abort();

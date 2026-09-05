@@ -1118,6 +1118,15 @@ export const sessionService = {
                   },
                 });
               }
+              onEvent({
+                type: 'provider.recovery',
+                properties: {
+                  sessionId: ref.sessionId,
+                  projectPath: ref.projectPath,
+                  recovery: event.properties.providerRecovery ?? null,
+                  authoritative: true,
+                },
+              });
               markReady();
             }
             return;

@@ -4964,6 +4964,7 @@ export const createSessionRouteController = (): SessionRouteController => {
                       : null,
                   recovered: runtime?.getRecoveredSteeringCount() ?? 0,
                   followUpQueue,
+                  providerRecovery: runtime?.getProviderRecoveryProjection() ?? null,
                 },
               }),
             });
