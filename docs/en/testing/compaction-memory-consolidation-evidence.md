@@ -21,8 +21,9 @@ deduplication, the `MEMORY.md` topic link, discovery from a new Session, and sen
 candidate rejection.
 
 The real-API matrix used `deepseek-v4-flash` and `deepseek-v4-pro` across all four
-production surfaces and passed `8/8` in 126.34s. Model and framework retries were both
-disabled. Each cell injected one context-limit response through a loopback proxy, then
+production surfaces and passed `8/8`; Vitest took 120.73 seconds in the final
+release-runner command, or 126.18 seconds including the production build. Model and
+framework retries were both disabled. Each cell injected one context-limit response through a loopback proxy, then
 forwarded compaction, continuation, and new-Session discovery requests to real DeepSeek.
 Every cell produced one discoverable `conventions.md` entry and an exact final marker.
 
@@ -85,8 +86,8 @@ git diff      PASS
 
 The final `test:all` main stage took 444.30 seconds, the performance stage took 5.58
 seconds, and the complete command took 455.46 seconds. Coverage took 481.73 seconds. The
-final real-API matrix took 115.09 seconds; cell timings were Flash
-14.696/13.929/13.351/10.458 seconds and Pro 14.916/13.060/18.004/15.350 seconds, both in
+final release-runner real-API matrix cell timings were Flash
+12.804/12.117/12.734/9.785 seconds and Pro 20.688/15.770/21.631/13.669 seconds, both in
 Headless/ACP/raw PTY/Web order.
 
 The first `test:all` run exposed three issues: the new PTY runner was missing from the
@@ -94,6 +95,11 @@ inventory, the runner process had not switched its own storage root to the isola
 and the unchanged Chromium cross-origin test intermittently observed a stale snapshot first.
 The first two were fixed and covered by the later complete gate; the unchanged Chromium case
 passed on its exact rerun.
+The first attempt to use the plan's release-runner command with a file argument revealed
+that the old runner ignored that argument and unintentionally ran all 45 historical real-API
+files; 16 existing Web/process trajectories failed under that concurrent resource load. A
+new runner argument contract now selects the requested trajectory, and the same command
+completed with 8/8 and exit code 0.
 
 ## Completion audit
 

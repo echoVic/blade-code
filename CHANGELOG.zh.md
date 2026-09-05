@@ -9,6 +9,7 @@
 ### 修复
 - 阻止 credential、tool output、tool arguments、reasoning、metadata 和图片 URL 进入自动项目记忆；remote ACP workspace 继续禁止宿主写入。
 - 保留流式阶段较晚到达的 TUI 状态消息，并阻止 hidden durable message 或非工具 part 通过 Web SSE replay 泄露。
+- 修复测试 runner 忽略显式文件参数的问题，避免局部发布资格命令意外执行完整真实 API 矩阵。
 
 ### 测试
 - 新增 production Headless、真实 ACP stdio、raw PTY TUI 与 Chromium Web 确定性资格测试，并连续通过三轮四端执行。

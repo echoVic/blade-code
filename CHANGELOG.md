@@ -9,6 +9,7 @@
 ### Fixed
 - Prevented credentials, tool output, tool arguments, reasoning, metadata, and image URLs from entering automatic project memory; remote ACP workspaces remain host-write disabled.
 - Preserved late TUI status messages during streaming and prevented hidden durable messages or non-tool parts from leaking through Web SSE replay.
+- Made the test runner honor explicit file arguments so scoped release qualification commands do not unintentionally execute the complete real-API matrix.
 
 ### Tests
 - Added deterministic production Headless, real ACP stdio, raw PTY TUI, and Chromium Web qualification, passing three consecutive four-surface runs.

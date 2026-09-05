@@ -18,7 +18,8 @@ Chromium Web `4/4` 通过，总计 `12/12` surface executions。每格都注入�
 最终响应、精确去重、`MEMORY.md` topic link、新 Session 索引加载及敏感候选拒绝。
 
 真实 API 使用 `deepseek-v4-flash` 和 `deepseek-v4-pro`，在四个 production surface 上
-完成 `8/8` 矩阵，总耗时 126.34s。模型与 framework retry 均为 0；每格经 loopback proxy
+完成 `8/8` 矩阵；最终 release-runner 命令中 Vitest 耗时 120.73 秒，含 production
+build 的总耗时 126.18 秒。模型与 framework retry 均为 0；每格经 loopback proxy
 注入一次 context-limit，再将 compaction、继续响应和新 Session 发现请求转发到真实
 DeepSeek。全部格子都产生一个可发现的 `conventions.md` 条目并完成精确 final marker。
 
@@ -69,13 +70,16 @@ git diff      PASS
 ~~~
 
 最终 `test:all` 主阶段 444.30 秒，performance 5.58 秒，总耗时 455.46 秒。coverage
-耗时 481.73 秒。最终真实 API 矩阵耗时 115.09 秒；单格耗时分别为 Flash
-14.696/13.929/13.351/10.458 秒与 Pro 14.916/13.060/18.004/15.350 秒，顺序均为
+耗时 481.73 秒。最终 release-runner 真实 API 矩阵的单格耗时分别为 Flash
+12.804/12.117/12.734/9.785 秒与 Pro 20.688/15.770/21.631/13.669 秒，顺序均为
 Headless/ACP/raw PTY/Web。
 
 首次 `test:all` 暴露三个问题：新增 PTY runner 未进入 inventory、runner 进程内环境未
 切换到临时 storage root，以及未修改的 Chromium cross-origin 用例偶发先命中 stale
 snapshot。前两项已修复并由后续全量门禁覆盖；Chromium 用例在源码不变时精确复跑通过。
+首次尝试计划中的带文件参数 release-runner 命令时，旧 runner 忽略该参数并误跑全部
+45 个历史真实 API 文件，在高并发资源压力下产生 16 个既有 Web/进程轨迹失败；新增
+runner 参数契约后，同一命令只选择目标 trajectory，并以 8/8、exit 0 完成。
 
 ## 完成审计
 
