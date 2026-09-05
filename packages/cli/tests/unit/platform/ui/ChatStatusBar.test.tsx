@@ -10,6 +10,11 @@ const mockGetProjectRoot = vi.fn(() => '/repo-root');
 const mockRecoveredSteeringCount = vi.fn(() => 0);
 const mockCommunicationStyle = vi.fn(() => 'auto');
 const mockPromptCacheHitRate = vi.fn<() => number | undefined>(() => undefined);
+const mockProviderRecovery = vi.fn<
+  () =>
+    | import('../../../../src/api/providerRecoverySchemas.js').ProviderRecoveryProjection
+    | null
+>(() => null);
 const mockTaskAttentionStatus = vi.fn(() => 'idle');
 const mockTaskAttentionUnreadKeys = vi.fn<() => readonly string[]>(() => []);
 const mockFollowUpQueue = vi.fn<
@@ -35,6 +40,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useFollowUpQueue: () => mockFollowUpQueue(),
   usePermissionMode: () => 'default',
   usePromptCacheHitRate: () => mockPromptCacheHitRate(),
+  useProviderRecovery: () => mockProviderRecovery(),
   useRecoveredSteeringCount: () => mockRecoveredSteeringCount(),
   useSessionCost: () => null,
   useSessionId: () => 'status-bar-session',
@@ -63,6 +69,7 @@ describe('ChatStatusBar', () => {
     mockRecoveredSteeringCount.mockReturnValue(0);
     mockCommunicationStyle.mockReturnValue('auto');
     mockPromptCacheHitRate.mockReturnValue(undefined);
+    mockProviderRecovery.mockReturnValue(null);
     mockTaskAttentionStatus.mockReturnValue('idle');
     mockTaskAttentionUnreadKeys.mockReturnValue([]);
     mockFollowUpQueue.mockReturnValue(null);
