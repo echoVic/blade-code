@@ -52,5 +52,15 @@ Edit、精确 Bash 验证、最终 marker、文件 diff 范围及无 secret/priv
 
 ## 最终门禁
 
-最终 release HEAD 的 `build`、`type-check`、`lint`、`test:all` 和 coverage 结果将在
-版本元数据完成后回填。本文在这些命令实际完成前不宣称 release qualification 完成。
+在实现与文档 HEAD `d28fdcd28085b1940b87101200f0ebd29565dc50` 上取得：
+
+- `bun run build`、`bun run type-check`、`bun run lint`：passed；CLI lint 检查
+  1,403 个文件，Web lint 检查 208 个文件；
+- `bun run test:all`：passed；非 performance 阶段 495 files passed、99 skipped，
+  5,767 tests passed、88 skipped；performance 阶段 4 files passed、1 skipped，9 tests
+  passed、1 skipped；总耗时 439.50s；
+- `bun run test:coverage`：passed；495 files / 5,767 tests passed，99 files / 88
+  tests skipped；statements 73.79%、branches 67.19%、functions 75.65%、lines 75.16%；
+- `bun run test:web`：passed；69 files、663 tests。
+
+版本元数据完成后仍会在 tag 前重新运行必要的发布门禁。

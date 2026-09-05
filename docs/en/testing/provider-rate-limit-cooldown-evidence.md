@@ -55,6 +55,17 @@ matrix passed once with framework retries disabled in release mode.
 
 ## Final Gates
 
-The final release-HEAD results for `build`, `type-check`, `lint`, `test:all`, and coverage
-will be added after version metadata is complete. This document does not claim complete
-release qualification before those commands finish.
+Evidence collected at implementation-and-documentation HEAD
+`d28fdcd28085b1940b87101200f0ebd29565dc50`:
+
+- `bun run build`, `bun run type-check`, and `bun run lint`: passed; CLI lint checked
+  1,403 files and Web lint checked 208 files;
+- `bun run test:all`: passed; the non-performance stage passed 495 files and 5,767
+  tests with 99 files and 88 tests skipped; performance passed 4 files and 9 tests with
+  one file and one test skipped; total duration was 439.50s;
+- `bun run test:coverage`: passed; 495 files and 5,767 tests passed, with 99 files and
+  88 tests skipped; statements 73.79%, branches 67.19%, functions 75.65%, lines 75.16%;
+- `bun run test:web`: passed; 69 files and 663 tests.
+
+The required release gates will still be rerun after version metadata is frozen and
+before tagging.
