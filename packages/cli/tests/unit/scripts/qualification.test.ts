@@ -298,6 +298,36 @@ describe('production qualification contract', () => {
     expect(acpRunner).toContain('blade/turnActivity');
   });
 
+  it('qualifies the authoritative rate-limit cooldown on all production surfaces', () => {
+    const deterministicPath = path.resolve(
+      __dirname,
+      '../../integration/provider-rate-limit-cooldown.test.ts'
+    );
+    const acpRunnerPath = path.resolve(
+      __dirname,
+      '../../support/foregroundProviderRecoveryAcpRunner.ts'
+    );
+    const ptyRunnerPath = path.resolve(
+      __dirname,
+      '../../support/foregroundProviderRecoveryPtyRunner.ts'
+    );
+    const deterministic = fs.readFileSync(deterministicPath, 'utf8');
+    const acpRunner = fs.readFileSync(acpRunnerPath, 'utf8');
+    const ptyRunner = fs.readFileSync(ptyRunnerPath, 'utf8');
+
+    expect(deterministic).toContain('access(cliEntry)');
+    expect(deterministic).toContain("['opened', 'waiting', 'probe', 'closed']");
+    expect(deterministic).toContain('status_code: 429');
+    expect(deterministic).toContain('requestCount()).toBe(1)');
+    expect(deterministic).toContain('await chromium.launch({ headless: true })');
+    expect(deterministic).toContain("describe.skipIf(process.platform === 'win32')");
+    expect(acpRunner).toContain('expectRateLimitCooldown');
+    expect(acpRunner).toContain('blade/turnActivity');
+    expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
+    expect(ptyRunner).toContain('recoveryWaitText');
+    expect(ptyRunner).toContain('expectTerminalClear');
+  });
+
   it('registers the production follow-up queue surface matrix in exact order', () => {
     const testConfig = fs.readFileSync(
       path.resolve(__dirname, '../../../scripts/test-config.js'),

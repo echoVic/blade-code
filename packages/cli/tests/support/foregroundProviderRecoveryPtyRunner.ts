@@ -22,6 +22,10 @@ interface RunnerInput {
   prompt: string;
   marker: string;
   secret: string;
+  privateMarker?: string;
+  recoveryWaitText?: string;
+  expectToolActivity?: boolean;
+  expectTerminalClear?: boolean;
 }
 
 function loadInput(): RunnerInput {
@@ -74,6 +78,7 @@ async function main(): Promise<void> {
     BLADE_STORAGE_ROOT: input.storageRoot,
     BLADE_AUTO_MEMORY: '0',
     BLADE_TELEMETRY_DISABLED: '1',
+    BLADE_API_KEY: input.secret,
     TERM: 'xterm-256color',
   });
   const terminal = spawn(
@@ -105,6 +110,7 @@ async function main(): Promise<void> {
   let exitCode: number | undefined;
   let sawRecoveryWait = false;
   let sawRecoveryProbe = false;
+  let sawToolActivity = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit((event) => {
       exited = true;
@@ -117,8 +123,12 @@ async function main(): Promise<void> {
     secretLatch.observe(chunk);
     output = appendBoundedPtyEvidence(output, chunk, 256_000);
     const visible = projectForegroundBoundedPtyOutput(output);
-    sawRecoveryWait ||= visible.includes('Provider 故障已隔离，等待恢复探测');
+    sawRecoveryWait ||= visible.includes(
+      input.recoveryWaitText ?? 'Provider 故障已隔离，等待恢复探测'
+    );
     sawRecoveryProbe ||= visible.includes('Provider 正在执行恢复探测');
+    sawToolActivity ||=
+      visible.includes('正在执行 1 个工具') && visible.includes('Bash');
   });
 
   try {
@@ -146,6 +156,13 @@ async function main(): Promise<void> {
       'Raw PTY did not render shared Provider circuit recovery',
       60_000
     );
+    if (input.expectToolActivity) {
+      await waitFor(
+        () => sawToolActivity,
+        'Raw PTY did not render active Bash after Provider recovery',
+        60_000
+      );
+    }
     let transcript = '';
     await waitFor(
       async () => {
@@ -173,8 +190,25 @@ async function main(): Promise<void> {
       'Raw PTY did not render Provider recovery completion marker',
       30_000
     );
-    if (secretLatch.seen || transcript.includes(input.secret)) {
-      throw new Error('Raw PTY Provider recovery capture contained credentials');
+    if (input.expectTerminalClear) {
+      await waitFor(
+        () => {
+          const visible = projectForegroundBoundedPtyOutput(output);
+          return (
+            visible.lastIndexOf('yolo mode on') > visible.lastIndexOf(input.marker)
+          );
+        },
+        'Raw PTY did not clear recovery and return to the composer',
+        30_000
+      );
+    }
+    if (
+      secretLatch.seen ||
+      transcript.includes(input.secret) ||
+      (input.privateMarker !== undefined &&
+        `${output}\n${transcript}`.includes(input.privateMarker))
+    ) {
+      throw new Error('Raw PTY Provider recovery capture contained private data');
     }
 
     process.kill(terminal.pid, 'SIGTERM');
@@ -197,17 +231,26 @@ async function main(): Promise<void> {
         output: projectForegroundBoundedPtyOutput(output),
         sawProviderRecoveryWait: sawRecoveryWait,
         sawProviderRecoveryProbe: sawRecoveryProbe,
+        sawToolActivity,
+        terminalClearSeen: input.expectTerminalClear,
       })
     );
   } catch (error) {
     process.stdout.write(
       JSON.stringify({
         success: false,
-        error: (error instanceof Error ? error.message : String(error)).replaceAll(
-          input.secret,
-          '[redacted]'
-        ),
-        output: output.replaceAll(input.secret, '[redacted]'),
+        error: (error instanceof Error ? error.message : String(error))
+          .replaceAll(input.secret, '[redacted]')
+          .replaceAll(
+            input.privateMarker ?? '__NO_PRIVATE_MARKER_CONFIGURED__',
+            '[redacted]'
+          ),
+        output: output
+          .replaceAll(input.secret, '[redacted]')
+          .replaceAll(
+            input.privateMarker ?? '__NO_PRIVATE_MARKER_CONFIGURED__',
+            '[redacted]'
+          ),
       })
     );
     process.exitCode = 1;

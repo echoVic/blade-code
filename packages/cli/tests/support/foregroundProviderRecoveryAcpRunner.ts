@@ -19,6 +19,9 @@ interface RunnerInput {
   secondaryPrompt?: string;
   secondaryMarker?: string;
   secret: string;
+  privateMarker?: string;
+  expectRateLimitCooldown?: boolean;
+  expectTurnActivity?: boolean;
 }
 
 function loadInput(): RunnerInput {
@@ -81,6 +84,7 @@ async function run(input: RunnerInput) {
       BLADE_STORAGE_ROOT: input.storageRoot,
       BLADE_AUTO_MEMORY: '0',
       BLADE_TELEMETRY_DISABLED: '1',
+      BLADE_API_KEY: input.secret,
       TERM: 'xterm-256color',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -192,12 +196,14 @@ async function run(input: RunnerInput) {
     ) {
       throw new Error('ACP did not project bounded Provider recovery metadata');
     }
+    const requiredRecoveryActivities = input.expectRateLimitCooldown
+      ? ['\"activity\":\"circuit_open\"', '\"activity\":\"circuit_probe\"']
+      : ['\"activity\":\"retry_attempt\"', '\"activity\":\"circuit_open\"'];
     if (
       !output.includes('blade/providerRecovery') ||
       !output.includes('"generation"') ||
       !output.includes('"revision"') ||
-      !output.includes('\"activity\":\"retry_attempt\"') ||
-      !output.includes('\"activity\":\"circuit_open\"') ||
+      requiredRecoveryActivities.some((activity) => !output.includes(activity)) ||
       !output.includes('\"snapshot\":null')
     ) {
       throw new Error('ACP did not project unified Provider recovery metadata');
@@ -223,12 +229,47 @@ async function run(input: RunnerInput) {
         'Secondary ACP Session did not wait on the shared Provider circuit'
       );
     }
+    const activityUpdates = client.sessionUpdates.filter(
+      (notification) =>
+        notification.sessionId === sessionId &&
+        notification.update._meta?.['blade/turnActivity'] !== undefined
+    );
+    const activityProjections = activityUpdates.flatMap((notification) => {
+      const activity = notification.update._meta?.['blade/turnActivity'];
+      return activity && typeof activity === 'object' && !Array.isArray(activity)
+        ? [activity as { revision?: unknown; snapshot?: unknown }]
+        : [];
+    });
+    const activityRevisions = activityProjections.flatMap((activity) =>
+      typeof activity.revision === 'number' ? [activity.revision] : []
+    );
+    const activityRevisionsMonotonic = activityRevisions.every(
+      (revision, index) => index === 0 || revision > activityRevisions[index - 1]!
+    );
+    const sawTurnActivity =
+      activityProjections.some((activity) =>
+        JSON.stringify(activity.snapshot).includes('executing_tools')
+      ) && activityProjections.at(-1)?.snapshot === null;
+    if (
+      input.expectRateLimitCooldown &&
+      (!output.includes('\"reason\":\"rate_limit\"') ||
+        !output.includes('\"statusCode\":429'))
+    ) {
+      throw new Error('ACP did not project the authoritative rate-limit cooldown');
+    }
+    if (input.expectTurnActivity && (!sawTurnActivity || !activityRevisionsMonotonic)) {
+      throw new Error('ACP did not project monotonic tool activity and terminal clear');
+    }
     if (
       output.includes(input.secret) ||
       transcript.includes(input.secret) ||
-      secondaryTranscript.includes(input.secret)
+      secondaryTranscript.includes(input.secret) ||
+      (input.privateMarker !== undefined &&
+        `${output}\n${transcript}\n${secondaryTranscript}`.includes(
+          input.privateMarker
+        ))
     ) {
-      throw new Error('ACP Provider recovery evidence contained credentials');
+      throw new Error('ACP Provider recovery evidence contained private data');
     }
     if (client.activeTerminalCount() !== 0) {
       throw new Error('ACP Provider recovery left an active terminal');
@@ -255,6 +296,10 @@ async function run(input: RunnerInput) {
           JSON.stringify(notification).includes('"phase":"probe"')
       ).length,
       sawProviderRecovery: output.includes('blade/providerRecovery'),
+      sawRateLimitCooldown: output.includes('\"reason\":\"rate_limit\"'),
+      sawTurnActivity,
+      activityRevisionsMonotonic,
+      turnActivityTerminalClearSeen: activityProjections.at(-1)?.snapshot === null,
       output: output.slice(-256_000),
       terminalReleaseCount: [...client.releaseCounts.values()].reduce(
         (sum, count) => sum + count,
@@ -262,6 +307,19 @@ async function run(input: RunnerInput) {
       ),
       processes: client.releasedProcesses,
     };
+  } catch (error) {
+    const diagnostic =
+      `${error instanceof Error ? error.message : String(error)}; ` +
+      `updates=${JSON.stringify(client.sessionUpdates).slice(-16_000)}; ` +
+      `stderr=${stderr.slice(-8_000)}`;
+    throw new Error(
+      diagnostic
+        .replaceAll(input.secret, '[redacted]')
+        .replaceAll(
+          input.privateMarker ?? '__NO_PRIVATE_MARKER_CONFIGURED__',
+          '[redacted]'
+        )
+    );
   } finally {
     await client.close().catch(() => undefined);
     if (child.exitCode === null && child.signalCode === null) {
@@ -278,10 +336,12 @@ async function main(): Promise<void> {
     process.stdout.write(
       JSON.stringify({
         success: false,
-        error: (error instanceof Error ? error.message : String(error)).replaceAll(
-          input.secret,
-          '[redacted]'
-        ),
+        error: (error instanceof Error ? error.message : String(error))
+          .replaceAll(input.secret, '[redacted]')
+          .replaceAll(
+            input.privateMarker ?? '__NO_PRIVATE_MARKER_CONFIGURED__',
+            '[redacted]'
+          ),
       })
     );
     process.exitCode = 1;
