@@ -326,6 +326,32 @@ describe('headless event contract', () => {
       })
     ).not.toThrow();
 
+    const turnActivity = createHeadlessJsonlEvent('turn_activity', {
+      generation: 'activity-1',
+      revision: 3,
+      snapshot: {
+        phase: 'executing_tools',
+        started_at: 1_000,
+        updated_at: 2_000,
+        turn: 2,
+        max_turns: 20,
+        output_started: true,
+        tool_calls_started: 5,
+        tool_calls_completed: 3,
+        active_tools: [
+          { name: 'Read', kind: 'readonly', started_at: 1_500, progress: 1, total: 4 },
+        ],
+        active_tool_overflow: 2,
+      },
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(turnActivity)).not.toThrow();
+    expect(() =>
+      HeadlessJsonlEventSchema.parse({
+        ...turnActivity,
+        snapshot: { ...turnActivity.snapshot, api_key: 'secret' },
+      })
+    ).toThrow();
+
     const modelFallback = createHeadlessJsonlEvent('model_fallback', {
       from: { provider: 'primary', model: 'model-a' },
       to: { provider: 'secondary', model: 'model-b' },

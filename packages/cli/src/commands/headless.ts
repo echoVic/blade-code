@@ -1311,6 +1311,34 @@ function createEventWriter(
           : '[provider-recovery:clear]'
       );
     },
+    turnActivity(event: Extract<LoopEvent, { kind: 'turn_activity' }>) {
+      if (outputFormat !== 'jsonl') return;
+      const snapshot = event.activity.snapshot;
+      writeJsonl('turn_activity', {
+        generation: event.activity.generation,
+        revision: event.activity.revision,
+        snapshot: snapshot
+          ? {
+              phase: snapshot.phase,
+              started_at: snapshot.startedAt,
+              updated_at: snapshot.updatedAt,
+              turn: snapshot.turn,
+              max_turns: snapshot.maxTurns,
+              output_started: snapshot.outputStarted,
+              tool_calls_started: snapshot.toolCallsStarted,
+              tool_calls_completed: snapshot.toolCallsCompleted,
+              active_tools: snapshot.activeTools.map((tool) => ({
+                name: tool.name,
+                kind: tool.kind,
+                started_at: tool.startedAt,
+                progress: tool.progress,
+                total: tool.total,
+              })),
+              active_tool_overflow: snapshot.activeToolOverflow,
+            }
+          : null,
+      });
+    },
     modelFallback(event: Extract<LoopEvent, { kind: 'model_fallback' }>) {
       const trigger =
         event.trigger.source === 'retry' || event.trigger.source === 'circuit'
@@ -2042,6 +2070,7 @@ export async function runHeadless(
             eventWriter.providerRecovery(event);
             break;
           case 'turn_activity':
+            eventWriter.turnActivity(event);
             break;
           case 'action_stationarity':
             eventWriter.actionStationarity(event);

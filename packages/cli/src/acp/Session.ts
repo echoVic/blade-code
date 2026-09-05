@@ -48,6 +48,7 @@ import {
 } from '../api/followUpQueueSchemas.js';
 import { ProviderRecoveryProjectionSchema } from '../api/providerRecoverySchemas.js';
 import { parseSideConversationCommand } from '../api/sideConversation.js';
+import { TurnActivityProjectionSchema } from '../api/turnActivitySchemas.js';
 import {
   type BladeConfig,
   type CommunicationStyleSelection,
@@ -632,6 +633,14 @@ export class AcpSession {
         this.sendProviderRecoveryProjection(recovery.data);
         return;
       }
+      if (event.type === 'turn.activity') {
+        const activity = TurnActivityProjectionSchema.safeParse(
+          event.properties.activity
+        );
+        if (!activity.success) return;
+        this.sendTurnActivityProjection(activity.data);
+        return;
+      }
       if (event.type === 'task.delivery') {
         if (
           !event.properties.taskDelivery ||
@@ -826,6 +835,7 @@ export class AcpSession {
       if (runtime) {
         this.sendFollowUpQueueSnapshot(await runtime.getFollowUpQueueSnapshot());
         this.sendProviderRecoveryProjection(runtime.getProviderRecoveryProjection());
+        this.sendTurnActivityProjection(runtime.getTurnActivityProjection());
       }
     } catch {
       logger.warn('[AcpSession ' + this.id + '] Initial follow-up queue unavailable');
@@ -1841,6 +1851,10 @@ export class AcpSession {
               });
               break;
             case 'provider_recovery':
+              // SessionRuntime publishes this event on the Session Bus. Sending it
+              // again from the direct stream would duplicate ACP updates.
+              break;
+            case 'turn_activity':
               // SessionRuntime publishes this event on the Session Bus. Sending it
               // again from the direct stream would duplicate ACP updates.
               break;
@@ -3141,6 +3155,18 @@ export class AcpSession {
       updatedAt: new Date().toISOString(),
       _meta: {
         'blade/providerRecovery': parsed.data,
+      },
+    });
+  }
+
+  private sendTurnActivityProjection(snapshot: unknown): void {
+    const parsed = TurnActivityProjectionSchema.safeParse(snapshot);
+    if (!parsed.success) return;
+    this.sendUpdate({
+      sessionUpdate: 'session_info_update',
+      updatedAt: new Date().toISOString(),
+      _meta: {
+        'blade/turnActivity': parsed.data,
       },
     });
   }

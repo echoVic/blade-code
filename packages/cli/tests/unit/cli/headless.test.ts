@@ -1791,6 +1791,78 @@ describe('headless runner', () => {
     expect(stderr.write).not.toHaveBeenCalled();
   });
 
+  it('emits the unified turn activity envelope and its terminal clear', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'turn_activity',
+          activity: {
+            version: 1,
+            generation: 'activity-1',
+            revision: 1,
+            snapshot: {
+              phase: 'executing_tools',
+              startedAt: 1_000,
+              updatedAt: 2_000,
+              turn: 1,
+              maxTurns: 20,
+              outputStarted: true,
+              toolCallsStarted: 1,
+              toolCallsCompleted: 0,
+              activeTools: [{ name: 'Bash', kind: 'execute', startedAt: 1_500 }],
+              activeToolOverflow: 0,
+            },
+          },
+        },
+        {
+          kind: 'turn_activity',
+          activity: {
+            version: 1,
+            generation: 'activity-1',
+            revision: 2,
+            snapshot: null,
+          },
+        },
+      ])
+    );
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    expect(
+      await runHeadless(
+        { headless: true, outputFormat: 'jsonl', message: 'work' },
+        { stdout, stderr }
+      )
+    ).toBe(0);
+
+    const events = stdout.write.mock.calls
+      .map((call) => String(call[0] ?? ''))
+      .join('')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((event) => event.type === 'turn_activity');
+    expect(events).toEqual([
+      expect.objectContaining({
+        generation: 'activity-1',
+        revision: 1,
+        snapshot: expect.objectContaining({
+          phase: 'executing_tools',
+          active_tools: [expect.objectContaining({ name: 'Bash' })],
+        }),
+      }),
+      expect.objectContaining({
+        generation: 'activity-1',
+        revision: 2,
+        snapshot: null,
+      }),
+    ]);
+    expect(JSON.stringify(events)).not.toContain('PRIVATE_PROGRESS_TEXT');
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+
   it('emits a typed model fallback transition in JSONL mode', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };

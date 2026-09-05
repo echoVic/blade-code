@@ -630,6 +630,48 @@ const ProviderRecoveryEventSchema = Type.Object(
   },
   { additionalProperties: false }
 );
+const TurnActivityToolEventSchema = Type.Object(
+  {
+    name: Type.String({ minLength: 1, maxLength: 128 }),
+    kind: Type.Optional(StringEnum(['readonly', 'write', 'execute'])),
+    started_at: Type.Integer({ minimum: 0 }),
+    progress: Type.Optional(Type.Integer({ minimum: 0 })),
+    total: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false }
+);
+const TurnActivitySnapshotEventSchema = Type.Object(
+  {
+    phase: StringEnum([
+      'starting',
+      'thinking',
+      'responding',
+      'executing_tools',
+      'compacting',
+      'continuing',
+    ]),
+    started_at: Type.Integer({ minimum: 0 }),
+    updated_at: Type.Integer({ minimum: 0 }),
+    turn: Type.Integer({ minimum: 0 }),
+    max_turns: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+    output_started: Type.Boolean(),
+    tool_calls_started: Type.Integer({ minimum: 0 }),
+    tool_calls_completed: Type.Integer({ minimum: 0 }),
+    active_tools: Type.Array(TurnActivityToolEventSchema, { maxItems: 8 }),
+    active_tool_overflow: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false }
+);
+const TurnActivityEventSchema = Type.Object(
+  {
+    event_version: Type.Literal(HEADLESS_EVENT_VERSION),
+    type: Type.Literal('turn_activity'),
+    generation: Type.String({ minLength: 1, maxLength: 128 }),
+    revision: Type.Integer({ minimum: 0 }),
+    snapshot: Type.Union([TurnActivitySnapshotEventSchema, Type.Null()]),
+  },
+  { additionalProperties: false }
+);
 const ModelFallbackEventSchema = Type.Object(
   {
     event_version: Type.Literal(HEADLESS_EVENT_VERSION),
@@ -734,6 +776,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     ProviderRetryEventSchema,
     ProviderStallEventSchema,
     ProviderRecoveryEventSchema,
+    TurnActivityEventSchema,
     ModelFallbackEventSchema,
     ActionStationarityEventSchema,
     TurnRecoveryEventSchema,

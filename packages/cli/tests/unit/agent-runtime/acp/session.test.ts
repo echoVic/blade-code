@@ -19,6 +19,7 @@ import {
 } from '../../../../src/api/attachmentLimits.js';
 import type { FollowUpQueueSnapshot } from '../../../../src/api/followUpQueueSchemas.js';
 import type { ProviderRecoveryProjection } from '../../../../src/api/providerRecoverySchemas.js';
+import type { TurnActivityProjection } from '../../../../src/api/turnActivitySchemas.js';
 import { Bus } from '../../../../src/server/bus.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { ProviderAdmissionError } from '../../../../src/services/pi/providerRequestAdmission.js';
@@ -97,6 +98,12 @@ const runtimeState = vi.hoisted(() => ({
         revision: 0,
         snapshot: null,
       }),
+    getTurnActivityProjection: vi.fn<() => TurnActivityProjection>().mockReturnValue({
+      version: 1,
+      generation: 'turn-activity-generation',
+      revision: 0,
+      snapshot: null,
+    }),
     isIdleForResidency: vi.fn<() => ReturnType<SessionRuntime['isIdleForResidency']>>(
       () => true
     ),
@@ -421,6 +428,46 @@ describe('AcpSession', () => {
           expect.objectContaining({
             update: expect.objectContaining({
               _meta: { 'blade/providerRecovery': recovery },
+            }),
+          }),
+        ])
+      );
+    });
+
+    it('projects the initial Runtime-owned turn activity snapshot', async () => {
+      vi.useFakeTimers();
+      const activity: TurnActivityProjection = {
+        version: 1,
+        generation: 'initial-activity',
+        revision: 2,
+        snapshot: {
+          phase: 'executing_tools',
+          startedAt: 1_000,
+          updatedAt: 2_000,
+          turn: 1,
+          maxTurns: 20,
+          outputStarted: true,
+          toolCallsStarted: 1,
+          toolCallsCompleted: 0,
+          activeTools: [{ name: 'Bash', kind: 'execute', startedAt: 1_500 }],
+          activeToolOverflow: 0,
+        },
+      };
+      runtimeState.runtime.getTurnActivityProjection.mockReturnValueOnce(activity);
+
+      try {
+        await session.initialize();
+        session.sendAvailableCommandsDelayed();
+        await vi.advanceTimersByTimeAsync(500);
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              _meta: { 'blade/turnActivity': activity },
             }),
           }),
         ])
@@ -3694,6 +3741,52 @@ describe('AcpSession', () => {
           }),
         ])
       );
+    });
+
+    it('projects unified turn activity metadata once from the Runtime Bus', async () => {
+      const activity: TurnActivityProjection = {
+        version: 1,
+        generation: 'activity-1',
+        revision: 1,
+        snapshot: {
+          phase: 'thinking',
+          startedAt: 1_000,
+          updatedAt: 2_000,
+          turn: 1,
+          maxTurns: 20,
+          outputStarted: false,
+          toolCallsStarted: 0,
+          toolCallsCompleted: 0,
+          activeTools: [],
+          activeToolOverflow: 0,
+        },
+      };
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'turn.activity',
+          { activity }
+        );
+        yield { kind: 'turn_activity', activity } as LoopEvent;
+        return { success: true, finalMessage: 'done' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'show progress' }],
+      });
+
+      const updates = mockConnection.sessionUpdates.filter(
+        ({ update }) => update._meta?.['blade/turnActivity'] !== undefined
+      );
+      expect(updates).toEqual([
+        expect.objectContaining({
+          update: expect.objectContaining({
+            _meta: { 'blade/turnActivity': activity },
+          }),
+        }),
+      ]);
     });
 
     it('projects Provider circuit lifecycle through ACP metadata only', async () => {
