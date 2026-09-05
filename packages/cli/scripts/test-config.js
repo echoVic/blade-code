@@ -52,6 +52,7 @@ export const testTypes = {
       'tests/integration/real-api/large-prompt-offload-trajectory.test.ts',
       'tests/integration/real-api/compaction-rich-media-trajectory.test.ts',
       'tests/integration/real-api/foreground-provider-recovery-trajectory.test.ts',
+      'tests/integration/real-api/turn-activity-surface-trajectory.test.ts',
       'tests/integration/real-api/provider-request-admission-acp-trajectory.test.ts',
       'tests/integration/real-api/provider-request-admission-web-trajectory.test.ts',
       'tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts',

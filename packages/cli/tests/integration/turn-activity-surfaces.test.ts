@@ -340,6 +340,7 @@ describe.skipIf(process.platform === 'win32')(
         });
         const created = SessionSchema.parse(await createdResponse.json());
         probe = await openEventProbe(origin, created.sessionId, test.workspace);
+        const activeProbe = probe;
         browser = await chromium.launch({ headless: true });
         const page = await browser.newPage();
         const faults: string[] = [];
@@ -368,7 +369,7 @@ describe.skipIf(process.platform === 'win32')(
         await composer.fill('Use Bash exactly once and then answer with the marker.');
         await page.locator('[data-blade-submit]').click();
         const activeToolObserved = () =>
-          probe.events.some((event) => {
+          activeProbe.events.some((event) => {
             if (event.type !== 'turn.activity') return false;
             const activity = event.properties.activity;
             return (

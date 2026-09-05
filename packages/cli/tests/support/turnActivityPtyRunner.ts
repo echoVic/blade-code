@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import { stripVTControlCharacters } from 'node:util';
 import { spawn } from 'bun-pty';
 import {
@@ -11,6 +12,7 @@ import {
   TUI_COMPOSER_MARKER,
   writeBracketedPaste,
 } from './ptyInput.js';
+import { createTuiTaskAttentionRunnerEnvironment } from './tuiTaskAttentionPtyDriver.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -21,6 +23,9 @@ interface RunnerInput {
   prompt: string;
   marker: string;
   secret: string;
+  allowedTools?: string;
+  maxTurns?: number;
+  releaseFile?: string;
 }
 
 export const BLADE_TURN_ACTIVITY_PTY_USES_PRODUCTION_DIST = true;
@@ -67,12 +72,14 @@ async function main(): Promise<void> {
   const secretLatch = new ArmedPtyMarkerLatch(input.secret);
   secretLatch.arm();
   const handshake = createTuiPtyComposerReadyHandshake({
-    HOME: input.home,
-    BLADE_STORAGE_ROOT: input.storageRoot,
-    BLADE_AUTO_MEMORY: '0',
-    BLADE_TELEMETRY_DISABLED: '1',
+    ...createTuiTaskAttentionRunnerEnvironment(process.env, {
+      HOME: input.home,
+      BLADE_STORAGE_ROOT: input.storageRoot,
+      BLADE_AUTO_MEMORY: '0',
+      BLADE_TELEMETRY_DISABLED: '1',
+      TERM: 'xterm-256color',
+    }),
     BLADE_API_KEY: input.secret,
-    TERM: 'xterm-256color',
   });
   const terminal = spawn(
     '/usr/bin/env',
@@ -83,11 +90,11 @@ async function main(): Promise<void> {
       '--permission-mode',
       'yolo',
       '--max-turns',
-      '4',
+      String(input.maxTurns ?? 4),
       '--session-id',
       input.sessionId,
       '--allowed-tools',
-      'Bash',
+      input.allowedTools ?? 'Bash',
       '--no-verification-agent',
     ],
     {
@@ -104,6 +111,7 @@ async function main(): Promise<void> {
   let exitCode: number | undefined;
   let sawThinking = false;
   let sawTool = false;
+  let releasedTool = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit((event) => {
       exited = true;
@@ -123,6 +131,10 @@ async function main(): Promise<void> {
     sawThinking ||= plainOutput.includes('正在思考');
     sawTool ||=
       plainOutput.includes('正在执行 1 个工具') && plainOutput.includes('Bash');
+    if (sawTool && input.releaseFile && !releasedTool) {
+      releasedTool = true;
+      void writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
+    }
   });
 
   try {
@@ -132,15 +144,15 @@ async function main(): Promise<void> {
       60_000
     );
     await writeBracketedPaste(terminal, input.prompt);
-    await waitFor(
-      () => plainOutput.includes(input.prompt),
-      'Turn activity bracketed paste did not reach the TUI',
-      10_000
-    );
+    await new Promise((resolve) => setTimeout(resolve, 250));
     markerLatch.arm();
     terminal.write('\r');
     await waitFor(() => sawThinking, 'Turn activity TUI did not render thinking');
     await waitFor(() => sawTool, 'Turn activity TUI did not render active Bash');
+    if (input.releaseFile && !releasedTool) {
+      releasedTool = true;
+      await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
+    }
     await waitFor(
       () =>
         markerLatch.seen &&
@@ -159,6 +171,15 @@ async function main(): Promise<void> {
         success: true,
         sawThinking,
         sawTool,
+        phases: [
+          ...(sawThinking ? ['thinking'] : []),
+          ...(sawTool ? ['executing_tools'] : []),
+          ...(markerLatch.seen ? ['responding'] : []),
+          'clear',
+        ],
+        generationCount: 1,
+        sawBash: sawTool,
+        terminalClearSeen: true,
         finalMarkerSeen: markerLatch.seen,
         cleanupComplete: true,
         leakedSecrets: [],

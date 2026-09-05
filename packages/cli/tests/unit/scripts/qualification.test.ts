@@ -252,24 +252,50 @@ describe('production qualification contract', () => {
   });
 
   it('registers the production TUI and Web turn activity trajectory', () => {
+    const testConfig = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/test-config.js'),
+      'utf8'
+    );
     const deterministicPath = path.resolve(
       __dirname,
       '../../integration/turn-activity-surfaces.test.ts'
+    );
+    const realApiPath = path.resolve(
+      __dirname,
+      '../../integration/real-api/turn-activity-surface-trajectory.test.ts'
     );
     const runnerPath = path.resolve(
       __dirname,
       '../../support/turnActivityPtyRunner.ts'
     );
+    const acpRunnerPath = path.resolve(
+      __dirname,
+      '../../support/turnActivityAcpRunner.ts'
+    );
     const deterministic = fs.readFileSync(deterministicPath, 'utf8');
+    const realApi = fs.readFileSync(realApiPath, 'utf8');
     const runner = fs.readFileSync(runnerPath, 'utf8');
+    const acpRunner = fs.readFileSync(acpRunnerPath, 'utf8');
 
     expect(fs.existsSync(deterministicPath)).toBe(true);
+    expect(fs.existsSync(realApiPath)).toBe(true);
     expect(fs.existsSync(runnerPath)).toBe(true);
+    expect(fs.existsSync(acpRunnerPath)).toBe(true);
+    expect(testConfig).toContain(
+      "'tests/integration/real-api/turn-activity-surface-trajectory.test.ts'"
+    );
     expect(deterministic).toContain('access(cliEntry)');
     expect(deterministic).toContain('await chromium.launch({ headless: true })');
     expect(deterministic).toContain("describe.skipIf(process.platform === 'win32')");
+    expect(realApi).toContain('resolveRequiredDeepSeekQualificationModels');
+    expect(realApi).toContain('frameworkRetryBudget(context)');
+    expect(realApi).toContain('maxRetries: 0');
+    expect(realApi).toContain("['headless', 'acp', 'pty', 'web']");
+    expect(realApi).toContain('await chromium.launch({ headless: true })');
     expect(runner).toContain("import { spawn } from 'bun-pty'");
     expect(runner).toContain('BLADE_TURN_ACTIVITY_PTY_USES_PRODUCTION_DIST');
+    expect(acpRunner).toContain("[input.cliEntry, '--acp']");
+    expect(acpRunner).toContain('blade/turnActivity');
   });
 
   it('registers the production follow-up queue surface matrix in exact order', () => {
