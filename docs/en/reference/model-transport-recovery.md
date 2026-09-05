@@ -143,6 +143,8 @@ State machine:
 
 ```text
 Closed
+  -> first 429 + valid Retry-After opens immediately
+  or
   -> at least 4 samples in a 60-second window with error rate >= 80%
   -> Open
   -> after open duration only one lease owner
@@ -150,6 +152,21 @@ Closed
   -> success/neutral Provider response -> Closed
   -> transient failure -> Open
 ```
+
+When the server explicitly returns `429` with a valid positive `Retry-After` or
+`Retry-After-Ms`, Blade does not wait for the four-sample threshold. The first failed
+sample immediately opens the same failure domain. Later Sessions wait before issuing
+a physical Provider request, and only one HalfOpen probe owner is admitted when the
+boundary expires. The open duration is the greater of the configured duration and the
+server directive, still bounded by the existing `300000ms` maximum. Missing, zero,
+negative, or non-finite directives do not take this fast path, and non-429 responses
+continue to use the ordinary threshold.
+
+This cooldown is process-local and is not persisted across restarts. It does not infer
+subscription, balance, or purchase state. The TUI renders an explicit rate-limit wait
+and the Web GUI renders a rate-limit-specific banner; Headless, ACP, and Web SSE keep
+using the existing `provider_circuit` / `provider_recovery` protocols. Response bodies,
+endpoints, headers, and credentials never enter those surfaces.
 
 Default Open duration is `10000ms`; `providerCircuitBreakerOpenMs=0` disables it, other values must be `1000-300000ms`. A valid `Retry-After` can extend the current Open but cannot extend the foreground recovery deadline. The registry holds a fixed 128 failure domains, each sliding window holds a fixed 256 samples; only idle Closed entries are evicted; no background sweep timer is used. If all 128 entries are Open/HalfOpen, new domains fail-open as no-op circuits, preventing unrelated Providers from being globally rejected.
 

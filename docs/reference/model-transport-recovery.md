@@ -149,6 +149,8 @@ SSE reconnect 和 ACP load 不会绕过 admission 边界重放同一请求；Pro
 
 ```text
 Closed
+  -> 首个 429 + 有效 Retry-After 立即 Open
+  或
   -> 60 秒窗口至少 4 个样本且错误率 >= 80%
   -> Open
   -> open duration 到达后仅一个 lease owner
@@ -156,6 +158,17 @@ Closed
   -> success/neutral Provider response -> Closed
   -> transient failure -> Open
 ```
+
+服务端明确返回 `429` 且携带有效正数 `Retry-After` 或 `Retry-After-Ms` 时，
+Blade 不等待四样本阈值：首个失败样本立即让相同 failure domain 进入 Open。后续
+Session 会在发出物理 Provider 请求前等待，边界到达后仍只有一个 HalfOpen probe owner。
+Open 时长为配置值与服务端指令的较大值，并继续受 `300000ms` 上限约束。缺失、零、
+负数或非有限指令不会触发这条快速路径；非 `429` 响应也继续使用原阈值。
+
+该冷却只存在于当前进程内，不跨进程重启持久化，也不代表订阅、余额或购买状态。TUI
+会显示 `Provider 请求受限，等待恢复探测`，Web GUI 显示 rate-limit 专用 banner；
+Headless、ACP 和 Web SSE 继续复用既有 `provider_circuit` / `provider_recovery` 协议。
+响应正文、endpoint、header 与 credential 不会进入这些表面。
 
 默认 Open `10000ms`；`providerCircuitBreakerOpenMs=0` 禁用，其他值必须为
 `1000-300000ms`。有效 `Retry-After` 可延长当次 Open，但不能延长 foreground recovery
