@@ -1224,6 +1224,93 @@ function createEventWriter(
         `[provider-stall:${event.phase}] ${event.durationMs}ms / ${event.timeoutMs}ms`
       );
     },
+    providerRecovery(event: Extract<LoopEvent, { kind: 'provider_recovery' }>) {
+      const snapshot = event.recovery.snapshot;
+      if (outputFormat === 'jsonl') {
+        writeJsonl('provider_recovery', {
+          generation: event.recovery.generation,
+          revision: event.recovery.revision,
+          snapshot: snapshot
+            ? {
+                activity: snapshot.activity,
+                reason: snapshot.reason,
+                updated_at: snapshot.updatedAt,
+                next_action_at: snapshot.nextActionAt,
+                retry: snapshot.retry
+                  ? {
+                      attempt: snapshot.retry.attempt,
+                      max_retries: snapshot.retry.maxRetries,
+                      status_code: snapshot.retry.statusCode,
+                      delay_ms: snapshot.retry.delayMs,
+                      recovery_budget_ms: snapshot.retry.recoveryBudgetMs,
+                      recovery_elapsed_ms: snapshot.retry.recoveryElapsedMs,
+                      recovery_remaining_ms: snapshot.retry.recoveryRemainingMs,
+                    }
+                  : undefined,
+                admission: snapshot.admission
+                  ? {
+                      request_class: snapshot.admission.requestClass,
+                      scope: snapshot.admission.scope,
+                      resource: snapshot.admission.resource,
+                      queue_position: snapshot.admission.queuePosition,
+                      queue_depth: snapshot.admission.queueDepth,
+                      in_flight: snapshot.admission.inFlight,
+                      limit: snapshot.admission.limit,
+                      wait_ms: snapshot.admission.waitMs,
+                      max_wait_ms: snapshot.admission.maxWaitMs,
+                      recovery_remaining_ms: snapshot.admission.recoveryRemainingMs,
+                    }
+                  : undefined,
+                circuit: snapshot.circuit
+                  ? {
+                      phase: snapshot.circuit.phase,
+                      status_code: snapshot.circuit.statusCode,
+                      retry_after_ms: snapshot.circuit.retryAfterMs,
+                      next_probe_at: snapshot.circuit.nextProbeAt,
+                      open_duration_ms: snapshot.circuit.openDurationMs,
+                      sample_count: snapshot.circuit.sampleCount,
+                      failure_count: snapshot.circuit.failureCount,
+                      recovery_remaining_ms: snapshot.circuit.recoveryRemainingMs,
+                    }
+                  : undefined,
+                stall: snapshot.stall
+                  ? {
+                      stall_count: snapshot.stall.stallCount,
+                      duration_ms: snapshot.stall.durationMs,
+                      warning_after_ms: snapshot.stall.warningAfterMs,
+                      timeout_ms: snapshot.stall.timeoutMs,
+                      output_started: snapshot.stall.outputStarted,
+                    }
+                  : undefined,
+                fallback: snapshot.fallback
+                  ? {
+                      from: snapshot.fallback.from,
+                      to: snapshot.fallback.to,
+                      candidate: snapshot.fallback.candidate,
+                      candidate_count: snapshot.fallback.candidateCount,
+                      trigger:
+                        snapshot.fallback.trigger.source === 'retry' ||
+                        snapshot.fallback.trigger.source === 'circuit'
+                          ? {
+                              source: snapshot.fallback.trigger.source,
+                              reason: snapshot.fallback.trigger.reason,
+                              status_code: snapshot.fallback.trigger.statusCode,
+                            }
+                          : snapshot.fallback.trigger,
+                    }
+                  : undefined,
+              }
+            : null,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        snapshot
+          ? `[provider-recovery:${snapshot.activity}] ${snapshot.reason}`
+          : '[provider-recovery:clear]'
+      );
+    },
     actionStationarity(event: Extract<LoopEvent, { kind: 'action_stationarity' }>) {
       if (outputFormat === 'jsonl') {
         writeJsonl('action_stationarity', {
@@ -1928,6 +2015,7 @@ export async function runHeadless(
             eventWriter.providerStall(event);
             break;
           case 'provider_recovery':
+            eventWriter.providerRecovery(event);
             break;
           case 'action_stationarity':
             eventWriter.actionStationarity(event);

@@ -46,6 +46,7 @@ import {
   type FollowUpQueueSnapshot,
   FollowUpQueueSnapshotSchema,
 } from '../api/followUpQueueSchemas.js';
+import { ProviderRecoveryProjectionSchema } from '../api/providerRecoverySchemas.js';
 import { parseSideConversationCommand } from '../api/sideConversation.js';
 import {
   type BladeConfig,
@@ -623,6 +624,14 @@ export class AcpSession {
         if (snapshot.success) this.sendFollowUpQueueSnapshot(snapshot.data);
         return;
       }
+      if (event.type === 'provider.recovery') {
+        const recovery = ProviderRecoveryProjectionSchema.safeParse(
+          event.properties.recovery
+        );
+        if (!recovery.success) return;
+        this.sendProviderRecoveryProjection(recovery.data);
+        return;
+      }
       if (event.type === 'task.delivery') {
         if (
           !event.properties.taskDelivery ||
@@ -816,6 +825,7 @@ export class AcpSession {
       const runtime = this.runtime;
       if (runtime) {
         this.sendFollowUpQueueSnapshot(await runtime.getFollowUpQueueSnapshot());
+        this.sendProviderRecoveryProjection(runtime.getProviderRecoveryProjection());
       }
     } catch {
       logger.warn('[AcpSession ' + this.id + '] Initial follow-up queue unavailable');
@@ -1830,6 +1840,25 @@ export class AcpSession {
                 },
               });
               break;
+            case 'provider_recovery':
+              // SessionRuntime publishes this event on the Session Bus. Sending it
+              // again from the direct stream would duplicate ACP updates.
+              break;
+            case 'model_fallback':
+              this.sendUpdate({
+                sessionUpdate: 'session_info_update',
+                updatedAt: new Date().toISOString(),
+                _meta: {
+                  'blade/modelFallback': {
+                    from: event.from,
+                    to: event.to,
+                    candidate: event.candidate,
+                    candidateCount: event.candidateCount,
+                    trigger: event.trigger,
+                  },
+                },
+              });
+              break;
             case 'action_stationarity':
               this.sendUpdate({
                 sessionUpdate: 'session_info_update',
@@ -2008,7 +2037,7 @@ export class AcpSession {
 
             // --- 系统事件不外发 ---
             // stream_end: 内部 per-turn 信号，不外发
-            // turn_start, token_usage, model_fallback: 内部事件
+            // turn_start, token_usage: 内部事件
             default:
               break;
           }
@@ -3100,6 +3129,18 @@ export class AcpSession {
       updatedAt: new Date().toISOString(),
       _meta: {
         'blade/followUpQueue': followUpQueueMetadata(parsed.data),
+      },
+    });
+  }
+
+  private sendProviderRecoveryProjection(snapshot: unknown): void {
+    const parsed = ProviderRecoveryProjectionSchema.safeParse(snapshot);
+    if (!parsed.success) return;
+    this.sendUpdate({
+      sessionUpdate: 'session_info_update',
+      updatedAt: new Date().toISOString(),
+      _meta: {
+        'blade/providerRecovery': parsed.data,
       },
     });
   }

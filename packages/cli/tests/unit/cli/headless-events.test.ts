@@ -275,6 +275,57 @@ describe('headless event contract', () => {
     });
     expect(() => HeadlessJsonlEventSchema.parse(providerStall)).not.toThrow();
 
+    const providerRecovery = createHeadlessJsonlEvent('provider_recovery', {
+      generation: 'generation-1',
+      revision: 3,
+      snapshot: {
+        activity: 'retry_wait',
+        reason: 'rate_limit',
+        updated_at: 1_000,
+        next_action_at: 3_000,
+        retry: {
+          attempt: 1,
+          max_retries: 12,
+          status_code: 429,
+          delay_ms: 2_000,
+        },
+      },
+    });
+    expect(providerRecovery).toEqual({
+      event_version: 1,
+      type: 'provider_recovery',
+      generation: 'generation-1',
+      revision: 3,
+      snapshot: {
+        activity: 'retry_wait',
+        reason: 'rate_limit',
+        updated_at: 1_000,
+        next_action_at: 3_000,
+        retry: {
+          attempt: 1,
+          max_retries: 12,
+          status_code: 429,
+          delay_ms: 2_000,
+        },
+      },
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(providerRecovery)).not.toThrow();
+    expect(() =>
+      HeadlessJsonlEventSchema.parse({
+        ...providerRecovery,
+        snapshot: { ...providerRecovery.snapshot, api_key: 'secret' },
+      })
+    ).toThrow();
+    expect(() =>
+      HeadlessJsonlEventSchema.parse({
+        event_version: 1,
+        type: 'provider_recovery',
+        generation: 'generation-1',
+        revision: 4,
+        snapshot: null,
+      })
+    ).not.toThrow();
+
     const actionStationarity = createHeadlessJsonlEvent('action_stationarity', {
       phase: 'detected',
       tool_name: 'TaskOutput',

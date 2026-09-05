@@ -88,6 +88,12 @@ const runtimeState = vi.hoisted(() => ({
     getFollowUpQueueSnapshot: vi
       .fn<() => Promise<FollowUpQueueSnapshot>>()
       .mockResolvedValue(followUpQueue('0'.repeat(64), 0)),
+    getProviderRecoveryProjection: vi.fn(() => ({
+      version: 1 as const,
+      generation: 'provider-recovery-generation',
+      revision: 0,
+      snapshot: null,
+    })),
     isIdleForResidency: vi.fn<() => ReturnType<SessionRuntime['isIdleForResidency']>>(
       () => true
     ),
@@ -3588,6 +3594,62 @@ describe('AcpSession', () => {
       );
       expect(JSON.stringify(mockConnection.sessionUpdates)).not.toContain(
         'provider-specific'
+      );
+    });
+
+    it('projects unified Provider recovery and typed fallback metadata', async () => {
+      const recovery = {
+        version: 1 as const,
+        generation: 'generation-1',
+        revision: 1,
+        snapshot: {
+          activity: 'fallback' as const,
+          reason: 'server_error' as const,
+          updatedAt: 1_000,
+          fallback: {
+            from: { provider: 'primary', model: 'model-a' },
+            to: { provider: 'secondary', model: 'model-b' },
+            candidate: 1,
+            candidateCount: 1,
+            trigger: {
+              source: 'retry' as const,
+              reason: 'server_error' as const,
+              statusCode: 503,
+            },
+          },
+        },
+      };
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'provider.recovery',
+          { recovery }
+        );
+        yield { kind: 'model_fallback', ...recovery.snapshot.fallback } as LoopEvent;
+        return { success: true, finalMessage: 'fallback recovered' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'recover through fallback' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              _meta: { 'blade/providerRecovery': recovery },
+            }),
+          }),
+          expect.objectContaining({
+            update: expect.objectContaining({
+              _meta: {
+                'blade/modelFallback': recovery.snapshot.fallback,
+              },
+            }),
+          }),
+        ])
       );
     });
 

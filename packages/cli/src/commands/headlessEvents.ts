@@ -487,6 +487,146 @@ const ProviderStallEventSchema = event({
   output_started: Type.Boolean(),
 });
 
+const ProviderRecoveryIdentitySchema = Type.Object(
+  {
+    provider: Type.String({ minLength: 1, maxLength: 256 }),
+    model: Type.String({ minLength: 1, maxLength: 256 }),
+  },
+  { additionalProperties: false }
+);
+const ProviderRecoveryTriggerSchema = Type.Union([
+  Type.Object(
+    {
+      source: StringEnum(['retry', 'circuit']),
+      reason: StringEnum([
+        'rate_limit',
+        'server_error',
+        'timeout',
+        'transport',
+        'stream_closed',
+      ]),
+      status_code: Type.Optional(Type.Integer({ minimum: 100, maximum: 999 })),
+    },
+    { additionalProperties: false }
+  ),
+  Type.Object(
+    {
+      source: Type.Literal('admission'),
+      reason: StringEnum(['queue_full', 'wait_timeout', 'closed']),
+    },
+    { additionalProperties: false }
+  ),
+  Type.Object(
+    { source: Type.Literal('stall'), reason: Type.Literal('timeout') },
+    { additionalProperties: false }
+  ),
+]);
+const ProviderRecoverySnapshotEventSchema = Type.Object(
+  {
+    activity: StringEnum([
+      'admission_wait',
+      'retry_wait',
+      'retry_attempt',
+      'circuit_open',
+      'circuit_probe',
+      'stream_stall',
+      'fallback',
+    ]),
+    reason: StringEnum([
+      'capacity',
+      'queue_full',
+      'wait_timeout',
+      'admission_closed',
+      'rate_limit',
+      'server_error',
+      'timeout',
+      'transport',
+      'stream_closed',
+      'circuit_open',
+      'stream_stall',
+    ]),
+    updated_at: Type.Integer({ minimum: 0 }),
+    next_action_at: Type.Optional(Type.Integer({ minimum: 0 })),
+    retry: Type.Optional(
+      Type.Object(
+        {
+          attempt: Type.Integer({ minimum: 0 }),
+          max_retries: Type.Integer({ minimum: 0 }),
+          status_code: Type.Optional(Type.Integer({ minimum: 100, maximum: 999 })),
+          delay_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+          recovery_budget_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+          recovery_elapsed_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+          recovery_remaining_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+        },
+        { additionalProperties: false }
+      )
+    ),
+    admission: Type.Optional(
+      Type.Object(
+        {
+          request_class: StringEnum(['foreground', 'background', 'internal']),
+          scope: StringEnum(['global', 'domain', 'owner', 'class']),
+          resource: StringEnum(['stream', 'pending_count', 'pending_bytes']),
+          queue_position: Type.Integer({ minimum: 0 }),
+          queue_depth: Type.Integer({ minimum: 0 }),
+          in_flight: Type.Integer({ minimum: 0 }),
+          limit: Type.Integer({ minimum: 0 }),
+          wait_ms: Type.Integer({ minimum: 0 }),
+          max_wait_ms: Type.Integer({ minimum: 0 }),
+          recovery_remaining_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+        },
+        { additionalProperties: false }
+      )
+    ),
+    circuit: Type.Optional(
+      Type.Object(
+        {
+          phase: StringEnum(['opened', 'reopened', 'waiting', 'probe', 'rejected']),
+          status_code: Type.Optional(Type.Integer({ minimum: 100, maximum: 999 })),
+          retry_after_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+          next_probe_at: Type.Optional(Type.Integer({ minimum: 0 })),
+          open_duration_ms: Type.Integer({ minimum: 0 }),
+          sample_count: Type.Optional(Type.Integer({ minimum: 0 })),
+          failure_count: Type.Optional(Type.Integer({ minimum: 0 })),
+          recovery_remaining_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+        },
+        { additionalProperties: false }
+      )
+    ),
+    stall: Type.Optional(
+      Type.Object(
+        {
+          stall_count: Type.Integer({ minimum: 0 }),
+          duration_ms: Type.Integer({ minimum: 0 }),
+          warning_after_ms: Type.Integer({ minimum: 0 }),
+          timeout_ms: Type.Integer({ minimum: 0 }),
+          output_started: Type.Boolean(),
+        },
+        { additionalProperties: false }
+      )
+    ),
+    fallback: Type.Optional(
+      Type.Object(
+        {
+          from: ProviderRecoveryIdentitySchema,
+          to: ProviderRecoveryIdentitySchema,
+          candidate: Type.Integer({ minimum: 1 }),
+          candidate_count: Type.Integer({ minimum: 1 }),
+          trigger: ProviderRecoveryTriggerSchema,
+        },
+        { additionalProperties: false }
+      )
+    ),
+  },
+  { additionalProperties: false }
+);
+const ProviderRecoveryEventSchema = event({
+  type: Type.Literal('provider_recovery'),
+  generation: Type.String({ minLength: 1, maxLength: 128 }),
+  revision: Type.Integer({ minimum: 0 }),
+  snapshot: Type.Union([ProviderRecoverySnapshotEventSchema, Type.Null()]),
+});
+
 const ActionStationarityEventSchema = event({
   type: Type.Literal('action_stationarity'),
   phase: StringEnum(['detected', 'recovered', 'halted']),
@@ -577,6 +717,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     ProviderCircuitEventSchema,
     ProviderRetryEventSchema,
     ProviderStallEventSchema,
+    ProviderRecoveryEventSchema,
     ActionStationarityEventSchema,
     TurnRecoveryEventSchema,
     TurnLimitEventSchema,
