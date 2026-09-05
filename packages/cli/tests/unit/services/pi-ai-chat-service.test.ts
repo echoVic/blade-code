@@ -2008,6 +2008,61 @@ describe('PiAIChatService', () => {
     }
   });
 
+  it('shares the first authoritative 429 cooldown before another service requests', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(21),
+    });
+    observePiProviderResponses.mockImplementation(
+      (
+        _options: unknown,
+        _model: unknown,
+        onResponse: (response: {
+          statusCode: number;
+          retryAfter?: string;
+        }) => void
+      ) => onResponse({ statusCode: 429, retryAfter: '30' })
+    );
+    streamPiModel.mockReturnValue(chunks([new Error('status 429')]));
+
+    try {
+      await expect(
+        (
+          await service(
+            circuitOverrides(circuitRegistry, {
+              maxRetries: 0,
+            })
+          )
+        ).chat([{ role: 'user', content: 'establish cooldown' }])
+      ).rejects.toThrow('status 429');
+      expect(streamPiModel).toHaveBeenCalledOnce();
+
+      const second = (
+        await service(
+          circuitOverrides(circuitRegistry, {
+            maxRetries: 0,
+          })
+        )
+      ).streamChat([{ role: 'user', content: 'do not hit the provider' }]);
+      await expect(second.next()).resolves.toMatchObject({
+        value: {
+          providerCircuit: {
+            phase: 'rejected',
+            reason: 'rate_limit',
+            statusCode: 429,
+            retryAfterMs: 30_000,
+          },
+        },
+      });
+      await expect(second.next()).rejects.toMatchObject({
+        code: 'PROVIDER_CIRCUIT_OPEN',
+      });
+      expect(streamPiModel).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     ['standard', undefined],
     [
