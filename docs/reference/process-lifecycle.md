@@ -27,6 +27,17 @@ Blade Code 把自己启动的命令视为一棵 owned process tree。超时、�
 
 PTY terminal 和只启动单个固定二进制的内部查询工具使用各自的生命周期协议，不属于这一 ChildProcess 包装器的覆盖范围。
 
+## Durable follow-up queue
+
+活动回合中的用户输入先写入 Session 私有的 durable inbox，再在安全边界被 claim 并写入
+transcript。TUI `/queue` 与 Web 面板可以删除或重排尚未被观察的用户输入；所有操作都使用
+当前 snapshot version，并在过期时返回最新 snapshot 而不自动重试。重启后的 Runtime 会
+生成新的 owner epoch，使旧 surface token 失效。
+
+队列控制不拥有 Provider 或子进程，也不会中断当前进程树。`session/cancel` 仍只取消当前
+回合；未消费 follow-up 保持 durable。更多控制与隐私边界见
+[Durable Follow-up Queue](follow-up-queue.md)。
+
 ## Session 所有权
 
 - 同一项目中的同一 session 同时只能由一个 `SessionRuntime` 持有。运行时使用原子创建的 session lease 阻止第二个 CLI、TUI、ACP 或 server runtime 向同一 JSONL 父链并发写入。

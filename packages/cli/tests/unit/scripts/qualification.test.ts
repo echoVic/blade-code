@@ -251,6 +251,69 @@ describe('production qualification contract', () => {
     expect(deterministic).toContain("describe.skipIf(process.platform === 'win32')");
   });
 
+  it('registers the production follow-up queue surface matrix in exact order', () => {
+    const testConfig = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/test-config.js'),
+      'utf8'
+    );
+    const trajectoryPath = path.resolve(
+      __dirname,
+      '../../integration/real-api/follow-up-queue-trajectory.test.ts'
+    );
+    const deterministicPath = path.resolve(
+      __dirname,
+      '../../integration/follow-up-queue-pty.test.ts'
+    );
+    const webDriverPath = path.resolve(
+      __dirname,
+      '../../support/followUpQueueWebDriver.ts'
+    );
+    const ptyDriverPath = path.resolve(
+      __dirname,
+      '../../support/followUpQueuePtyDriver.ts'
+    );
+    const ptyRunnerPath = path.resolve(
+      __dirname,
+      '../../support/followUpQueuePtyRunner.ts'
+    );
+    const acpRunnerPath = path.resolve(
+      __dirname,
+      '../../support/followUpQueueAcpRunner.ts'
+    );
+
+    expect(testConfig).toContain(
+      "'tests/integration/real-api/follow-up-queue-trajectory.test.ts'"
+    );
+    for (const filePath of [
+      trajectoryPath,
+      deterministicPath,
+      webDriverPath,
+      ptyDriverPath,
+      ptyRunnerPath,
+      acpRunnerPath,
+    ]) {
+      expect(fs.existsSync(filePath)).toBe(true);
+    }
+    const trajectory = fs.readFileSync(trajectoryPath, 'utf8');
+    const deterministic = fs.readFileSync(deterministicPath, 'utf8');
+    const webDriver = fs.readFileSync(webDriverPath, 'utf8');
+    const ptyDriver = fs.readFileSync(ptyDriverPath, 'utf8');
+    const ptyRunner = fs.readFileSync(ptyRunnerPath, 'utf8');
+    const acpRunner = fs.readFileSync(acpRunnerPath, 'utf8');
+
+    expect(trajectory).toContain('resolveRequiredDeepSeekQualificationModels');
+    expect(trajectory).toContain('frameworkRetryBudget(context)');
+    expect(trajectory).toContain('modelMaxRetries: 0');
+    expect(trajectory).toContain("['web', 'tui', 'acp']");
+    expect(deterministic).toContain('access(cliEntry)');
+    expect(webDriver).toContain('../../dist/blade.js');
+    expect(webDriver).toContain('await chromium.launch({ headless: true })');
+    expect(ptyDriver).toContain('FOLLOW_UP_QUEUE_PTY_USES_PRODUCTION_DIST');
+    expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
+    expect(acpRunner).toContain("[input.cliEntry, '--acp']");
+    expect(acpRunner).toContain('endChildInput');
+  });
+
   it('rejects secrets anywhere in raw task attention runner output before parsing', () => {
     const secret = 'qualification-secret';
 

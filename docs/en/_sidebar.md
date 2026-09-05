@@ -27,6 +27,8 @@
   * [ACP Filesystem Request Lifecycle](/en/reference/acp-filesystem-request-lifecycle.md)
   * [ACP Filesystem Request Lifecycle Qualification Evidence](/en/testing/acp-filesystem-request-lifecycle-evidence.md)
   * [TUI Durable Task Attention Qualification Evidence](/en/testing/tui-durable-task-attention-evidence.md)
+  * [Durable Follow-up Queue](/en/reference/follow-up-queue.md)
+  * [Durable Follow-up Queue Qualification Evidence](/en/testing/durable-follow-up-queue-evidence.md)
   * [Tool Concurrency Model](/en/reference/tool-concurrency.md)
   * [Atomic ApplyPatch](/en/reference/atomic-apply-patch.md)
   * [Native Read-Only Code Review](/en/reference/native-code-review.md)

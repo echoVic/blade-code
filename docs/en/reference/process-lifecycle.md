@@ -24,6 +24,20 @@ The unified termination implementation is in `packages/cli/src/utils/process/Own
 
 PTY terminals and internal query tools that only launch a single fixed binary use their own lifecycle protocols and are outside the scope of this ChildProcess wrapper.
 
+## Durable follow-up queue
+
+User input submitted during an active turn is committed to the Session-private durable
+inbox before it is claimed and written to the transcript at a safe boundary. TUI `/queue`
+and the Web panel can remove or reorder unobserved user input. Every operation carries the
+current snapshot version; stale operations receive the latest snapshot and are never
+retried automatically. Runtime restart creates a new owner epoch, invalidating old surface
+tokens.
+
+Queue controls do not own Provider or child processes and never interrupt the current
+process tree. `session/cancel` continues to cancel only the current turn; unconsumed
+follow-ups remain durable. See [Durable Follow-up Queue](follow-up-queue.md) for the full
+control and privacy boundaries.
+
 ## Session Ownership
 
 - The same session in the same project can only be held by one `SessionRuntime` at a time. Runtime uses atomically created session leases to prevent a second CLI, TUI, ACP, or server runtime from concurrently writing to the same JSONL parent chain.
