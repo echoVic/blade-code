@@ -777,20 +777,22 @@ async function runWeb(input: {
       'Web SSE did not project shared Provider circuit waiting',
       30_000
     );
-    await page.getByText('Circuit open', { exact: false }).waitFor({
+    const recoveryBanner = page.locator('[data-provider-recovery-banner]');
+    await recoveryBanner.waitFor({
       state: 'visible',
       timeout: 10_000,
     });
-    await page.locator('[data-provider-recovery-banner]').waitFor({
-      state: 'visible',
-      timeout: 10_000,
-    });
+    expect(await recoveryBanner.textContent()).toContain('Provider isolated');
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.locator('textarea[data-blade-composer]').waitFor({ state: 'visible' });
-    await page.locator('[data-provider-recovery-banner]').waitFor({
+    const reconnectedRecoveryBanner = page.locator('[data-provider-recovery-banner]');
+    await reconnectedRecoveryBanner.waitFor({
       state: 'visible',
       timeout: 10_000,
     });
+    expect(await reconnectedRecoveryBanner.textContent()).toContain(
+      'Provider isolated'
+    );
     await page.locator('[data-provider-recovery-stop]').waitFor({
       state: 'visible',
       timeout: 10_000,
