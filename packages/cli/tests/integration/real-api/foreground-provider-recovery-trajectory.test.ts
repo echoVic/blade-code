@@ -919,9 +919,11 @@ async function runWeb(input: {
     const providerEvents = [...probe.events, ...secondaryProbe.events].filter(
       (event) => event.type === 'provider.retry' || event.type === 'provider.circuit'
     );
-    const recoveryEvents = [...probe.events, ...secondaryProbe.events].filter(
-      (event) => event.type === 'provider.recovery'
-    );
+    const recoveryEvents = [
+      ...probe.events,
+      ...secondaryProbe.events,
+      ...reconnectProbe.events,
+    ].filter((event) => event.type === 'provider.recovery');
     const providerProbeCount = providerEvents.filter(
       (event) => event.type === 'provider.circuit' && event.properties.phase === 'probe'
     ).length;
@@ -968,7 +970,9 @@ async function runWeb(input: {
         recoveryEvents.some(
           (event) =>
             event.properties.recovery &&
-            JSON.stringify(event.properties.recovery).includes('retry_wait')
+            /retry_attempt|retry_wait|circuit_open|circuit_probe/.test(
+              JSON.stringify(event.properties.recovery)
+            )
         ) &&
         recoveryEvents.some(
           (event) =>
