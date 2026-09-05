@@ -8,6 +8,7 @@ import {
 import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
+  projectForegroundBoundedPtyOutput,
   waitForPtyExit,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
@@ -102,6 +103,8 @@ async function main(): Promise<void> {
   let output = '';
   let exited = false;
   let exitCode: number | undefined;
+  let sawRecoveryWait = false;
+  let sawRecoveryProbe = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit((event) => {
       exited = true;
@@ -113,6 +116,9 @@ async function main(): Promise<void> {
     finalMarkerLatch.observe(chunk);
     secretLatch.observe(chunk);
     output = appendBoundedPtyEvidence(output, chunk, 256_000);
+    const visible = projectForegroundBoundedPtyOutput(output);
+    sawRecoveryWait ||= visible.includes('Provider 故障已隔离，等待恢复探测');
+    sawRecoveryProbe ||= visible.includes('Provider 正在执行恢复探测');
   });
 
   try {
@@ -136,9 +142,7 @@ async function main(): Promise<void> {
     terminal.write('\r');
 
     await waitFor(
-      () =>
-        output.includes('Provider 故障已隔离，等待恢复探测') &&
-        output.includes('Provider 正在执行唯一恢复探测'),
+      () => sawRecoveryWait && sawRecoveryProbe,
       'Raw PTY did not render shared Provider circuit recovery',
       60_000
     );
@@ -190,7 +194,9 @@ async function main(): Promise<void> {
         sessionId: input.sessionId,
         finalMarkerSeen: finalMarkerLatch.seen,
         secretSeen: secretLatch.seen,
-        output,
+        output: projectForegroundBoundedPtyOutput(output),
+        sawProviderRecoveryWait: sawRecoveryWait,
+        sawProviderRecoveryProbe: sawRecoveryProbe,
       })
     );
   } catch (error) {

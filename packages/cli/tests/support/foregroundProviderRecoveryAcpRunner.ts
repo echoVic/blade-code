@@ -193,6 +193,13 @@ async function run(input: RunnerInput) {
       throw new Error('ACP did not project bounded Provider recovery metadata');
     }
     if (
+      !output.includes('blade/providerRecovery') ||
+      !output.includes('\"activity\":\"retry_wait\"') ||
+      !output.includes('\"snapshot\":null')
+    ) {
+      throw new Error('ACP did not project unified Provider recovery metadata');
+    }
+    if (
       !output.includes('blade/providerCircuit') ||
       !output.includes('"phase":"waiting"') ||
       !output.includes('"phase":"probe"') ||
@@ -244,6 +251,7 @@ async function run(input: RunnerInput) {
           JSON.stringify(notification).includes('blade/providerCircuit') &&
           JSON.stringify(notification).includes('"phase":"probe"')
       ).length,
+      sawProviderRecovery: output.includes('blade/providerRecovery'),
       output: output.slice(-256_000),
       terminalReleaseCount: [...client.releaseCounts.values()].reduce(
         (sum, count) => sum + count,

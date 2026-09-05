@@ -72,6 +72,9 @@ interface SurfaceEvidence {
   providerProbeCount?: number;
   sawBoundedForegroundRecovery?: boolean;
   sawProviderLifecycle?: boolean;
+  sawProviderRecovery?: boolean;
+  sawProviderRecoveryWait?: boolean;
+  sawProviderRecoveryProbe?: boolean;
 }
 
 interface SessionEventProbe {
@@ -404,6 +407,7 @@ function assertHeadlessRetry(stdout: string): void {
     });
   const retryEvents = events.filter((event) => event.type === 'provider_retry');
   const circuitEvents = events.filter((event) => event.type === 'provider_circuit');
+  const recoveryEvents = events.filter((event) => event.type === 'provider_recovery');
   expect(
     retryEvents
       .filter((event) => event.phase === 'attempt')
@@ -432,6 +436,14 @@ function assertHeadlessRetry(stdout: string): void {
     retry_after_ms: CIRCUIT_OPEN_MS,
     open_duration_ms: CIRCUIT_OPEN_MS,
   });
+  expect(recoveryEvents).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        snapshot: expect.objectContaining({ activity: 'retry_wait' }),
+      }),
+      expect.objectContaining({ snapshot: null }),
+    ])
+  );
 }
 
 async function runHeadless(input: {
@@ -769,6 +781,20 @@ async function runWeb(input: {
       state: 'visible',
       timeout: 10_000,
     });
+    await page.locator('[data-provider-recovery-banner]').waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('textarea[data-blade-composer]').waitFor({ state: 'visible' });
+    await page.locator('[data-provider-recovery-banner]').waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    });
+    await page.locator('[data-provider-recovery-stop]').waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    });
     const secondarySessionId = await createWebSession(origin, input.workspace);
     secondaryProbe = await openSessionEventProbe(
       origin,
@@ -862,6 +888,9 @@ async function runWeb(input: {
     const providerEvents = [...probe.events, ...secondaryProbe.events].filter(
       (event) => event.type === 'provider.retry' || event.type === 'provider.circuit'
     );
+    const recoveryEvents = [...probe.events, ...secondaryProbe.events].filter(
+      (event) => event.type === 'provider.recovery'
+    );
     const providerProbeCount = providerEvents.filter(
       (event) => event.type === 'provider.circuit' && event.properties.phase === 'probe'
     ).length;
@@ -901,6 +930,17 @@ async function runWeb(input: {
         (event) => event.properties.mode === 'bounded_foreground'
       ),
       sawProviderLifecycle: providerEvents.length > 0,
+      sawProviderRecovery:
+        recoveryEvents.some(
+          (event) =>
+            event.properties.recovery &&
+            JSON.stringify(event.properties.recovery).includes('retry_wait')
+        ) &&
+        recoveryEvents.some(
+          (event) =>
+            event.properties.recovery &&
+            JSON.stringify(event.properties.recovery).includes('"snapshot":null')
+        ),
       output: `${output}\n${html}`.slice(-MAX_CAPTURE_CHARS),
       protocolOutput: eventOutput.slice(-MAX_CAPTURE_CHARS),
     };
@@ -1073,8 +1113,8 @@ describe
             ]);
           }
           if (surface === 'pty') {
-            expect(evidence.output).toContain('Provider 故障已隔离，等待恢复探测');
-            expect(evidence.output).toContain('Provider 正在执行唯一恢复探测');
+            expect(evidence.sawProviderRecoveryWait).toBe(true);
+            expect(evidence.sawProviderRecoveryProbe).toBe(true);
           } else {
             const protocolOutput = evidence.protocolOutput ?? evidence.output;
             expect(
@@ -1084,6 +1124,10 @@ describe
             expect(
               evidence.sawProviderLifecycle ??
                 /provider[_./]circuit|blade\/providerCircuit/.test(protocolOutput)
+            ).toBe(true);
+            expect(
+              evidence.sawProviderRecovery ??
+                /provider[_./]recovery|blade\/providerRecovery/.test(protocolOutput)
             ).toBe(true);
           }
           if (surface === 'acp') {
