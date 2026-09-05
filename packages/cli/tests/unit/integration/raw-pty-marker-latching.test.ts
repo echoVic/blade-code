@@ -175,7 +175,10 @@ describe('raw PTY marker latching source contract', () => {
       'new ArmedPtyMarkerLatch(input.fixture.marker)',
     ],
     ['foregroundProviderRecoveryPtyRunner.ts', 'new ArmedPtyMarkerLatch(input.marker)'],
-    ['followUpQueuePtyRunner.ts', 'finalMarkerSeen ||= scan.includes(input.expectedOutput)'],
+    [
+      'followUpQueuePtyRunner.ts',
+      'finalMarkerSeen ||= scan.includes(input.expectedOutput)',
+    ],
     ['goalFinalizationPtyRunner.ts', 'latchPtyMarker'],
     ['promptCacheStatusPtyRunner.ts', 'latchPtyMarker'],
     ['rootTurnAutoResumePtyRunner.ts', 'latchPtyMarker'],
