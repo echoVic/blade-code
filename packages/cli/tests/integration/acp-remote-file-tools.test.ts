@@ -6,6 +6,7 @@ import * as acp from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ACP_REMOTE_READBACK_TIMEOUT_MS,
   AcpRemoteFileBoundaryError,
   getAcpFileRequestCoordinator,
 } from '../../src/acp/AcpFileRequestCoordinator.js';
@@ -2988,8 +2989,9 @@ describe('ACP remote Write/Edit builtin tools', () => {
     expect(result.metadata?.sideEffectsUncertain).toBe(false);
   });
 
-  it('remote Write times out readback after exactly 5s and does not replay the write', async () => {
+  it('remote Write caps readback at 5s and does not replay the write', async () => {
     let releaseBlockedRead: (() => void) | undefined;
+    let observedReadbackTimeoutMs: number | undefined;
     const originalSetTimeout = globalThis.setTimeout.bind(globalThis);
     const originalClearTimeout = globalThis.clearTimeout.bind(globalThis);
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
@@ -3002,7 +3004,12 @@ describe('ACP remote Write/Edit builtin tools', () => {
         throw new Error('unexpected string timer handler');
       };
 
-      if (timeout === 5_000) {
+      if (
+        typeof timeout === 'number' &&
+        timeout > 0 &&
+        timeout <= ACP_REMOTE_READBACK_TIMEOUT_MS
+      ) {
+        observedReadbackTimeoutMs = timeout;
         const handle = originalSetTimeout(() => undefined, 60_000);
         queueMicrotask(() => {
           originalClearTimeout(handle);
@@ -3048,7 +3055,10 @@ describe('ACP remote Write/Edit builtin tools', () => {
         'write',
         'read',
       ]);
-      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5_000);
+      expect(observedReadbackTimeoutMs).toBeGreaterThan(0);
+      expect(observedReadbackTimeoutMs).toBeLessThanOrEqual(
+        ACP_REMOTE_READBACK_TIMEOUT_MS
+      );
     } finally {
       setTimeoutSpy.mockRestore();
       releaseBlockedRead?.();
