@@ -196,7 +196,8 @@ async function run(input: RunnerInput) {
       !output.includes('blade/providerRecovery') ||
       !output.includes('"generation"') ||
       !output.includes('"revision"') ||
-      !output.includes('\"activity\":\"retry_wait\"') ||
+      !output.includes('\"activity\":\"retry_attempt\"') ||
+      !output.includes('\"activity\":\"circuit_open\"') ||
       !output.includes('\"snapshot\":null')
     ) {
       throw new Error('ACP did not project unified Provider recovery metadata');

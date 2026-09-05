@@ -439,7 +439,13 @@ function assertHeadlessRetry(stdout: string): void {
   expect(recoveryEvents).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        snapshot: expect.objectContaining({ activity: 'retry_wait' }),
+        snapshot: expect.objectContaining({ activity: 'retry_attempt' }),
+      }),
+      expect.objectContaining({
+        snapshot: expect.objectContaining({ activity: 'circuit_open' }),
+      }),
+      expect.objectContaining({
+        snapshot: expect.objectContaining({ activity: 'circuit_probe' }),
       }),
       expect.objectContaining({ snapshot: null }),
     ])
