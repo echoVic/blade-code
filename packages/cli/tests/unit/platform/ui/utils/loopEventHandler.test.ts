@@ -82,6 +82,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       setProviderRetry: vi.fn(),
       setProviderStall: vi.fn(),
       setProviderRecovery: vi.fn(),
+      setTurnActivity: vi.fn(),
       setActionStationarity: vi.fn(),
       resetContextUsage: vi.fn(),
       resetTokenUsage: vi.fn(),
@@ -147,6 +148,32 @@ it('projects unified Provider recovery state without rebuilding it in the UI', (
 
   expect(deps.sessionActions.setProviderRecovery).toHaveBeenCalledWith(recovery);
   expect(deps.sessionActions.setProviderRetry).not.toHaveBeenCalled();
+});
+
+it('projects unified turn activity state without rebuilding it in the UI', () => {
+  const deps = createMockDeps();
+  const handler = createLoopEventHandler(deps, createMockStats());
+  const activity = {
+    version: 1 as const,
+    generation: 'activity-1',
+    revision: 1,
+    snapshot: {
+      phase: 'thinking' as const,
+      startedAt: 1_000,
+      updatedAt: 1_001,
+      turn: 1,
+      maxTurns: 20,
+      outputStarted: false,
+      toolCallsStarted: 0,
+      toolCallsCompleted: 0,
+      activeTools: [],
+      activeToolOverflow: 0,
+    },
+  };
+
+  handler({ kind: 'turn_activity', activity });
+
+  expect(deps.sessionActions.setTurnActivity).toHaveBeenCalledWith(activity);
 });
 
 // ==================== 测试 ====================

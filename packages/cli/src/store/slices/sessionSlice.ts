@@ -111,6 +111,7 @@ const initialSessionState: SessionState = {
   providerRetry: null,
   providerStall: null,
   providerRecovery: null,
+  turnActivity: null,
   actionStationarity: null,
 };
 
@@ -728,6 +729,12 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     setProviderRecovery: (providerRecovery) => {
       set((state) => ({
         session: { ...state.session, providerRecovery },
+      }));
+    },
+
+    setTurnActivity: (turnActivity) => {
+      set((state) => ({
+        session: { ...state.session, turnActivity },
       }));
     },
 

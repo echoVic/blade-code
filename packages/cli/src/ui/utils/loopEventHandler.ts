@@ -510,7 +510,9 @@ export function createLoopEventHandler(
         break;
       case 'goal_updated':
       case 'goal_continuation_started':
+        break;
       case 'turn_activity':
+        deps.sessionActions.setTurnActivity(event.activity);
         break;
 
       case 'subagent_spawned':

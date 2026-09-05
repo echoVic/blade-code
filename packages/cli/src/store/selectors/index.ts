@@ -74,6 +74,9 @@ export const useProviderStall = () =>
 export const useProviderRecovery = () =>
   useBladeStore((state) => state.session.providerRecovery);
 
+export const useTurnActivity = () =>
+  useBladeStore((state) => state.session.turnActivity);
+
 export const useActionStationarity = () =>
   useBladeStore((state) => state.session.actionStationarity);
 

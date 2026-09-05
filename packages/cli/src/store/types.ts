@@ -16,6 +16,7 @@ import type {
 } from '../api/followUpQueueSchemas.js';
 import type { ProviderRecoveryProjection } from '../api/providerRecoverySchemas.js';
 import type { SessionSurfaceSummary } from '../api/sessionSurfaceSchemas.js';
+import type { TurnActivityProjection } from '../api/turnActivitySchemas.js';
 import type {
   CommunicationStyleSelection,
   ModelConfig,
@@ -135,6 +136,7 @@ export interface SessionState {
   providerRetry: ProviderRetryEvent | null; // 首字节前可安全重放的 Provider retry 状态
   providerStall: ProviderStallEvent | null; // Provider 流事件间隙的可恢复 stall 状态
   providerRecovery: ProviderRecoveryProjection | null; // Runtime-owned Provider 恢复快照
+  turnActivity: TurnActivityProjection | null; // Runtime-owned 当前回合活动快照
   actionStationarity: ActionStationarityEvent | null; // 连续工具调用无进展状态
 }
 
@@ -186,6 +188,7 @@ export interface SessionActions {
   setProviderRetry: (retry: ProviderRetryEvent | null) => void;
   setProviderStall: (stall: ProviderStallEvent | null) => void;
   setProviderRecovery: (recovery: ProviderRecoveryProjection | null) => void;
+  setTurnActivity: (activity: TurnActivityProjection | null) => void;
   setActionStationarity: (stationarity: ActionStationarityEvent | null) => void;
   // 事件溯源投影 actions (CQRS read-model)
   applyCommittedEvent: (event: SessionEvent) => void; // 折叠 committed 事件到投影

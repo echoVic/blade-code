@@ -26,6 +26,12 @@ const mockUseActionStationarity = vi.fn(
       progressAware: boolean;
     } | null
 );
+const mockUseTurnActivity = vi.fn(
+  () =>
+    null as
+      | import('../../../../src/api/turnActivitySchemas.js').TurnActivityProjection
+      | null
+);
 
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) =>
@@ -39,6 +45,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useIsReady: () => true,
   useProviderRecovery: () => mockUseProviderRecovery(),
   useActionStationarity: () => mockUseActionStationarity(),
+  useTurnActivity: () => mockUseTurnActivity(),
   useTheme: () => ({
     colors: {
       warning: 'yellow',
@@ -75,6 +82,90 @@ describe('LoadingIndicator', () => {
     mockUseProviderRecovery.mockReturnValue(null);
     mockUseActionStationarity.mockReset();
     mockUseActionStationarity.mockReturnValue(null);
+    mockUseTurnActivity.mockReset();
+    mockUseTurnActivity.mockReturnValue(null);
+  });
+
+  it('显示 Runtime-owned 工具进度与回合计数', async () => {
+    mockUseTurnActivity.mockReturnValue({
+      version: 1,
+      generation: 'activity-1',
+      revision: 3,
+      snapshot: {
+        phase: 'executing_tools',
+        startedAt: Date.now() - 65_000,
+        updatedAt: Date.now(),
+        turn: 2,
+        maxTurns: 20,
+        outputStarted: true,
+        toolCallsStarted: 5,
+        toolCallsCompleted: 3,
+        activeTools: [
+          {
+            name: 'Read',
+            kind: 'readonly',
+            startedAt: Date.now(),
+            progress: 1,
+            total: 4,
+          },
+          { name: 'Bash', kind: 'execute', startedAt: Date.now() },
+        ],
+        activeToolOverflow: 2,
+      },
+    });
+    const { LoadingIndicator } = await import(
+      '../../../../src/ui/components/LoadingIndicator.js'
+    );
+
+    const html = renderToStaticMarkup(React.createElement(LoadingIndicator));
+
+    expect(html).toContain('正在执行 4 个工具');
+    expect(html).toContain('Read 1/4');
+    expect(html).toContain('Bash');
+    expect(html).toContain('+2');
+    expect(html).toContain('工具 3/5');
+    expect(html).toContain('回合 2/20');
+    expect(html).toContain('Esc 取消');
+    expect(html).not.toContain('炼化代码灵气...');
+  });
+
+  it('Provider 恢复优先于通用 turn activity', async () => {
+    mockUseTurnActivity.mockReturnValue({
+      version: 1,
+      generation: 'activity-1',
+      revision: 1,
+      snapshot: {
+        phase: 'executing_tools',
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+        turn: 1,
+        maxTurns: 20,
+        outputStarted: false,
+        toolCallsStarted: 1,
+        toolCallsCompleted: 0,
+        activeTools: [{ name: 'Bash', startedAt: Date.now() }],
+        activeToolOverflow: 0,
+      },
+    });
+    mockUseProviderRecovery.mockReturnValue({
+      version: 1,
+      generation: 'recovery-1',
+      revision: 1,
+      snapshot: {
+        activity: 'retry_attempt',
+        reason: 'transport',
+        updatedAt: Date.now(),
+        retry: { attempt: 1, maxRetries: 2 },
+      },
+    });
+    const { LoadingIndicator } = await import(
+      '../../../../src/ui/components/LoadingIndicator.js'
+    );
+
+    const html = renderToStaticMarkup(React.createElement(LoadingIndicator));
+
+    expect(html).toContain('正在重试 Provider');
+    expect(html).not.toContain('正在执行 1 个工具');
   });
 
   it('显示 Runtime-owned Provider 恢复状态和 fallback 目标', async () => {

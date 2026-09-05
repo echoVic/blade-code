@@ -14,10 +14,12 @@ import {
   useIsReady,
   useProviderRecovery,
   useTheme,
+  useTurnActivity,
 } from '../../store/selectors/index.js';
 import { useLoadingIndicator } from '../hooks/useLoadingIndicator.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 import { formatProviderRecoveryPresentation } from '../utils/providerRecoveryPresentation.js';
+import { formatTurnActivityPresentation } from '../utils/turnActivityPresentation.js';
 
 interface LoadingIndicatorProps {
   message?: string; // 自定义消息（中性/真实动作文案优先）
@@ -61,6 +63,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     const isProcessing = useIsProcessing();
     const isReady = useIsReady();
     const providerRecovery = useProviderRecovery();
+    const turnActivity = useTurnActivity();
     const actionStationarity = useActionStationarity();
     const visible = isProcessing || !isReady;
 
@@ -96,11 +99,15 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     }, [visible, paused]);
 
     useEffect(() => {
-      if (!providerRecovery?.snapshot?.nextActionAt || paused) return;
+      if (
+        (!providerRecovery?.snapshot?.nextActionAt && !turnActivity?.snapshot) ||
+        paused
+      )
+        return;
       setClock(Date.now());
       const timer = setInterval(() => setClock(Date.now()), 1_000);
       return () => clearInterval(timer);
-    }, [paused, providerRecovery?.snapshot?.nextActionAt]);
+    }, [paused, providerRecovery?.snapshot?.nextActionAt, turnActivity?.snapshot]);
 
     if (!visible) {
       return null;
@@ -111,6 +118,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
       providerRecovery,
       clock
     );
+    const activityPresentation = formatTurnActivityPresentation(turnActivity, clock);
     const stationarityMessage =
       actionStationarity?.phase === 'detected'
         ? `检测到 ${actionStationarity.toolName} 连续 ${actionStationarity.runLength} 次无进展，正在要求 Agent 切换策略`
@@ -120,6 +128,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     const displayMessage =
       stationarityMessage ||
       recoveryPresentation?.primary ||
+      activityPresentation?.primary ||
       message ||
       currentPhrase ||
       '正在思考中...';
@@ -136,11 +145,15 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
           {recoveryPresentation?.secondary && (
             <Text color={theme.colors.info}>{recoveryPresentation.secondary}</Text>
           )}
-          {elapsedTime > 0 && (
+          {!recoveryPresentation?.secondary && activityPresentation?.secondary && (
+            <Text color={theme.colors.info}>{activityPresentation.secondary}</Text>
+          )}
+          {(activityPresentation || elapsedTime > 0) && (
             <>
               <Text color={theme.colors.muted}>|</Text>
               <Text color={theme.colors.info}>
-                已用时: {formatElapsedTime(elapsedTime)}
+                已用时:{' '}
+                {activityPresentation?.elapsed ?? formatElapsedTime(elapsedTime)}
               </Text>
             </>
           )}
@@ -165,12 +178,17 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
             <Text color={theme.colors.info}>{recoveryPresentation.secondary}</Text>
           </Box>
         )}
+        {!recoveryPresentation?.secondary && activityPresentation?.secondary && (
+          <Box marginLeft={2}>
+            <Text color={theme.colors.info}>{activityPresentation.secondary}</Text>
+          </Box>
+        )}
 
         {/* 第二行：计时器 + 取消提示 */}
-        {elapsedTime > 0 && (
+        {(activityPresentation || elapsedTime > 0) && (
           <Box marginLeft={2} flexDirection="row" gap={1}>
             <Text color={theme.colors.info}>
-              已用时: {formatElapsedTime(elapsedTime)}
+              已用时: {activityPresentation?.elapsed ?? formatElapsedTime(elapsedTime)}
             </Text>
             <Text color={theme.colors.muted}>|</Text>
             <Text color={theme.colors.secondary}>Esc 取消</Text>

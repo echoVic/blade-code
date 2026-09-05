@@ -235,6 +235,7 @@ function createMockSessionActions(): SessionActions {
     setProviderRetry: vi.fn(),
     setProviderStall: vi.fn(),
     setProviderRecovery: vi.fn(),
+    setTurnActivity: vi.fn(),
     setActionStationarity: vi.fn(),
     applyCommittedEvent: vi.fn(),
     applyStreamingDelta: vi.fn(),
