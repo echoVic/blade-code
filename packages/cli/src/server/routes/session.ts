@@ -532,7 +532,27 @@ function buildPendingInteractionEvent(
 
 function sessionBusEventSseMessage(
   event: import('../bus.js').BusEvent
-): SerializedSseMessage {
+): SerializedSseMessage | undefined {
+  if (event.type.startsWith('committed.')) {
+    const committed = event.properties.event;
+    if (!committed || typeof committed !== 'object' || Array.isArray(committed)) {
+      return undefined;
+    }
+    const projected = projectCommittedSessionEvent(committed as SessionEvent);
+    if (!projected) return undefined;
+    return {
+      ...(projected.seq !== undefined ? { id: String(projected.seq) } : {}),
+      data: JSON.stringify({
+        type: projected.type,
+        ...(projected.seq !== undefined ? { seq: projected.seq } : {}),
+        properties: {
+          ...projected.properties,
+          sessionId: event.sessionId,
+          projectPath: event.projectPath,
+        },
+      }),
+    };
+  }
   return {
     ...(typeof event.seq === 'number' ? { id: String(event.seq) } : {}),
     data: JSON.stringify({
@@ -964,12 +984,30 @@ export const sanitizeToolMetadata = (
   return sanitized as ToolResultMetadata;
 };
 
-export function projectCommittedSessionEvent(event: SessionEvent): {
-  type: string;
-  seq?: number;
-  properties: Record<string, unknown>;
-} {
+export function projectCommittedSessionEvent(event: SessionEvent):
+  | {
+      type: string;
+      seq?: number;
+      properties: Record<string, unknown>;
+    }
+  | undefined {
   const base = typeof event.seq === 'number' ? { seq: event.seq } : {};
+  if (
+    event.type === 'message_created' &&
+    event.data.metadata !== null &&
+    typeof event.data.metadata === 'object' &&
+    !Array.isArray(event.data.metadata) &&
+    event.data.metadata.clientVisible === false
+  ) {
+    return undefined;
+  }
+  if (
+    (event.type === 'part_created' || event.type === 'part_updated') &&
+    event.data.partType !== 'tool_call' &&
+    event.data.partType !== 'tool_result'
+  ) {
+    return undefined;
+  }
   if (event.type === 'part_created' && event.data.partType === 'tool_call') {
     const payload = event.data.payload as {
       toolCallId?: string;
@@ -4930,7 +4968,8 @@ export const createSessionRouteController = (): SessionRouteController => {
           }
           // Only committed events carry a seq; ephemeral events never advance
           // EventSource's Last-Event-ID cursor.
-          egress?.observe(sessionBusEventSseMessage(event), event.seq);
+          const message = sessionBusEventSseMessage(event);
+          if (message) egress?.observe(message, event.seq);
         });
 
         try {
@@ -4981,7 +5020,7 @@ export const createSessionRouteController = (): SessionRouteController => {
                 onCommitted: async (event) => {
                   if (stream.aborted || terminationStarted) return;
                   const projected = projectCommittedSessionEvent(event);
-                  if (projected.seq === undefined) return;
+                  if (!projected || projected.seq === undefined) return;
                   await egress.writeReplay(
                     {
                       ...(typeof event.seq === 'number'

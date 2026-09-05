@@ -938,6 +938,8 @@ describe('SessionRoutes runtime reuse', () => {
     };
 
     const replay = projectCommittedSessionEvent(event);
+    expect(replay).toBeDefined();
+    if (!replay) throw new Error('Expected committed tool result projection');
     const fresh = projectClientMessages([
       {
         role: 'tool',
@@ -999,6 +1001,8 @@ describe('SessionRoutes runtime reuse', () => {
     };
 
     const replay = projectCommittedSessionEvent(event);
+    expect(replay).toBeDefined();
+    if (!replay) throw new Error('Expected committed tool result projection');
 
     expect(replay).toMatchObject({
       type: 'tool.result',
@@ -1013,6 +1017,46 @@ describe('SessionRoutes runtime reuse', () => {
       },
     });
     expect(JSON.stringify(replay)).not.toContain('"null"');
+  });
+
+  it('does not replay client-hidden message content over SSE', async () => {
+    const { projectCommittedSessionEvent } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const hidden: SessionEvent = {
+      id: 'hidden-message-event',
+      seq: 44,
+      sessionId: 'replay-session',
+      timestamp: '2026-09-06T00:00:00.000Z',
+      type: 'message_created',
+      cwd: DEFAULT_PROJECT_PATH,
+      version: 'test',
+      data: {
+        messageId: 'hidden-message',
+        role: 'user',
+        createdAt: '2026-09-06T00:00:00.000Z',
+        metadata: { clientVisible: false },
+      },
+    };
+    const hiddenPart: SessionEvent = {
+      id: 'hidden-part-event',
+      seq: 45,
+      sessionId: 'replay-session',
+      timestamp: '2026-09-06T00:00:00.000Z',
+      type: 'part_created',
+      cwd: DEFAULT_PROJECT_PATH,
+      version: 'test',
+      data: {
+        partId: 'hidden-part',
+        messageId: 'hidden-message',
+        partType: 'text',
+        payload: { text: 'private hidden content' },
+        createdAt: '2026-09-06T00:00:00.000Z',
+      },
+    };
+
+    expect(projectCommittedSessionEvent(hidden)).toBeUndefined();
+    expect(projectCommittedSessionEvent(hiddenPart)).toBeUndefined();
   });
 
   const createPermissionsApp = async () => {
