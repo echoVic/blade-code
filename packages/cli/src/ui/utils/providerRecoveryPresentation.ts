@@ -73,12 +73,12 @@ export function formatProviderRecoveryPresentation(
     }
     case 'circuit_open':
       return {
-        primary: `Provider 故障已隔离，等待恢复探测${countdownText ? `（${countdownText}）` : ''}`,
+        primary: `${snapshot.reason === 'rate_limit' ? 'Provider 请求受限' : 'Provider 故障已隔离'}，等待恢复探测${countdownText ? `（${countdownText}）` : ''}`,
         secondary:
           snapshot.circuit?.recoveryRemainingMs !== undefined
             ? `剩余预算 ${formatDuration(snapshot.circuit.recoveryRemainingMs)}`
             : '',
-        compact: `Provider 熔断${countdownText ? ` · ${countdownText}` : ''}`,
+        compact: `Provider ${snapshot.reason === 'rate_limit' ? '限流' : '熔断'}${countdownText ? ` · ${countdownText}` : ''}`,
       };
     case 'circuit_probe':
       return {

@@ -77,6 +77,40 @@ describe('ProviderRecoveryBanner', () => {
     expect(container.textContent).toContain('29s');
   });
 
+  it('labels an open 429 cooldown as rate limited', () => {
+    act(() => {
+      root.render(
+        <ProviderRecoveryBanner
+          recovery={{
+            version: 1,
+            generation: 'rate-limit-1',
+            revision: 1,
+            snapshot: {
+              activity: 'circuit_open',
+              reason: 'rate_limit',
+              updatedAt: 1_000,
+              nextActionAt: 33_000,
+              circuit: {
+                phase: 'waiting',
+                statusCode: 429,
+                retryAfterMs: 32_000,
+                nextProbeAt: 33_000,
+                openDurationMs: 32_000,
+                sampleCount: 1,
+                failureCount: 1,
+              },
+            },
+          }}
+          stopping={false}
+          onStop={vi.fn()}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain('Provider rate limited');
+    expect(container.textContent).toContain('31s');
+  });
+
   it('renders fallback identity and hides itself after an authoritative clear', () => {
     const fallback: ProviderRecoveryProjection = {
       version: 1,

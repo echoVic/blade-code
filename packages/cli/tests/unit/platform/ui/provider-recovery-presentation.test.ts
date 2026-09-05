@@ -68,6 +68,29 @@ describe('Provider recovery presentation', () => {
     expect(
       formatProviderRecoveryPresentation(
         projection({
+          activity: 'circuit_open',
+          reason: 'rate_limit',
+          updatedAt: 1_000,
+          nextActionAt: 33_000,
+          circuit: {
+            phase: 'waiting',
+            statusCode: 429,
+            retryAfterMs: 32_000,
+            nextProbeAt: 33_000,
+            openDurationMs: 32_000,
+            sampleCount: 1,
+            failureCount: 1,
+          },
+        }),
+        2_000
+      )
+    ).toMatchObject({
+      primary: 'Provider 请求受限，等待恢复探测（31s）',
+      compact: 'Provider 限流 · 31s',
+    });
+    expect(
+      formatProviderRecoveryPresentation(
+        projection({
           activity: 'circuit_probe',
           reason: 'server_error',
           updatedAt: 1_000,

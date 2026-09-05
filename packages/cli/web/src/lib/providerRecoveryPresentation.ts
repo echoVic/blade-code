@@ -74,9 +74,15 @@ export function presentProviderRecovery(
       };
     case 'circuit_open':
       return {
-        titleKey: 'chat.providerRecovery.circuit',
+        titleKey:
+          snapshot.reason === 'rate_limit'
+            ? 'chat.providerRecovery.rateLimitCircuit'
+            : 'chat.providerRecovery.circuit',
         detailKey: 'chat.providerRecovery.circuitDetail',
-        compactKey: 'chat.providerRecovery.circuitCompact',
+        compactKey:
+          snapshot.reason === 'rate_limit'
+            ? 'chat.providerRecovery.rateLimitCircuitCompact'
+            : 'chat.providerRecovery.circuitCompact',
         params: shared,
       };
     case 'circuit_probe':

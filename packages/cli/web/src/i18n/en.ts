@@ -631,8 +631,11 @@ export const en = {
   'chat.providerRecovery.retryCompact':
     'Provider recovery · {seconds}s · {attempt}/{maxRetries}',
   'chat.providerRecovery.circuit': 'Provider isolated · waiting for recovery probe',
+  'chat.providerRecovery.rateLimitCircuit':
+    'Provider rate limited · waiting for recovery probe',
   'chat.providerRecovery.circuitDetail': 'Probe in {seconds}s',
   'chat.providerRecovery.circuitCompact': 'Provider circuit · {seconds}s',
+  'chat.providerRecovery.rateLimitCircuitCompact': 'Provider rate limited · {seconds}s',
   'chat.providerRecovery.probe': 'Probing Provider recovery',
   'chat.providerRecovery.probeDetail': 'One recovery probe is in progress',
   'chat.providerRecovery.probeCompact': 'Provider recovery probe',

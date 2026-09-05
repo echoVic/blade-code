@@ -588,8 +588,10 @@ export const zh: Dict = {
   'chat.providerRecovery.retryCompact':
     'Provider 恢复 · {seconds}s · {attempt}/{maxRetries}',
   'chat.providerRecovery.circuit': 'Provider 故障已隔离，等待恢复探测',
+  'chat.providerRecovery.rateLimitCircuit': 'Provider 请求受限，等待恢复探测',
   'chat.providerRecovery.circuitDetail': '{seconds}s 后探测',
   'chat.providerRecovery.circuitCompact': 'Provider 熔断 · {seconds}s',
+  'chat.providerRecovery.rateLimitCircuitCompact': 'Provider 限流 · {seconds}s',
   'chat.providerRecovery.probe': 'Provider 正在执行恢复探测',
   'chat.providerRecovery.probeDetail': '一个恢复探测正在进行',
   'chat.providerRecovery.probeCompact': 'Provider 恢复探测',
