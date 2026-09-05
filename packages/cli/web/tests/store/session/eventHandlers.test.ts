@@ -3183,6 +3183,7 @@ describe('eventHandlers', () => {
       providerStall: null,
       providerRecovery: null,
       turnActivity: null,
+      memoryConsolidation: null,
       actionStationarity: null,
     });
     expect(state.resyncSessionMessages).toHaveBeenCalledWith({
