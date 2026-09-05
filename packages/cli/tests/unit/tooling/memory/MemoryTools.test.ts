@@ -149,6 +149,23 @@ describe('MemoryWriteTool', () => {
     expect(result.success).toBe(false);
   });
 
+  it.each([
+    'Authorization: Bearer examplecredential',
+    'Use sk-examplecredential for this request',
+    'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
+    '-----BEGIN PRIVATE KEY-----',
+  ])('should reject shared credential form: %s', async (content) => {
+    const result = await memoryWriteTool.execute(
+      { topic: 'security', content, mode: 'append' },
+      undefined,
+      context
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.llmContent).toContain('sensitive data');
+    expect(result.llmContent).not.toContain(content);
+  });
+
   it('should allow content mentioning password in context', async () => {
     const result = await memoryWriteTool.execute(
       {

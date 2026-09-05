@@ -3,20 +3,12 @@
  */
 
 import { AutoMemoryManager } from '../../../memory/AutoMemoryManager.js';
+import { classifyMemoryContent } from '../../../memory/MemorySafety.js';
 import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
-
-/** 禁止写入的敏感关键词 */
-const SENSITIVE_PATTERNS = [
-  /password\s*[:=]/i,
-  /token\s*[:=]/i,
-  /secret\s*[:=]/i,
-  /api[_-]?key\s*[:=]/i,
-  /private[_-]?key/i,
-];
 
 export const memoryWriteTool = createTool({
   name: 'MemoryWrite',
@@ -75,16 +67,16 @@ export const memoryWriteTool = createTool({
     const projectPath = context.workspaceRoot || getCwd();
 
     // 安全检查：拒绝写入敏感信息
-    for (const pattern of SENSITIVE_PATTERNS) {
-      if (pattern.test(content)) {
-        const msg = `Refused: content appears to contain sensitive data (matched ${pattern}). Do not save passwords, tokens, or API keys to memory.`;
-        return {
-          success: false,
-          llmContent: msg,
-          error: { message: msg, type: ToolErrorType.VALIDATION_ERROR },
-          metadata: { summary: '拒绝写入敏感信息' },
-        };
-      }
+    const safety = classifyMemoryContent(content);
+    if (!safety.safe) {
+      const msg =
+        'Refused: content appears to contain sensitive data. Do not save passwords, tokens, or API keys to memory.';
+      return {
+        success: false,
+        llmContent: msg,
+        error: { message: msg, type: ToolErrorType.VALIDATION_ERROR },
+        metadata: { summary: '拒绝写入敏感信息' },
+      };
     }
 
     const manager = new AutoMemoryManager(projectPath);
