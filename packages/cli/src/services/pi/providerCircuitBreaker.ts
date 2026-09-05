@@ -536,6 +536,15 @@ export class ProviderCircuitRegistry {
     if (outcome === 'neutral') return undefined;
     this.#pushSample(entry, outcome === 'failure', now);
     if (outcome !== 'failure' || !rawFailure) return undefined;
+    const retryAfterMs = sanitizeRetryAfter(rawFailure.retryAfterMs);
+    if (
+      rawFailure.reason === 'rate_limit' &&
+      rawFailure.statusCode === 429 &&
+      retryAfterMs !== undefined &&
+      retryAfterMs > 0
+    ) {
+      return this.#open(entry, { ...rawFailure, retryAfterMs }, now, 'opened');
+    }
 
     const failures = countFailures(entry.samples);
     const errorRate = entry.samples.length === 0 ? 0 : failures / entry.samples.length;

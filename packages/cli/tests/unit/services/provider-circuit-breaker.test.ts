@@ -237,6 +237,79 @@ describe('ProviderCircuitRegistry state machine', () => {
     });
   });
 
+  it('opens immediately for an authoritative 429 retry boundary', () => {
+    let now = 10_000;
+    const handle = registry({ now: () => now }).get(scope());
+
+    expect(
+      recordFailure(handle, {
+        reason: 'rate_limit',
+        statusCode: 429,
+        retryAfterMs: 45_000,
+      })
+    ).toMatchObject({
+      phase: 'opened',
+      reason: 'rate_limit',
+      statusCode: 429,
+      retryAfterMs: 45_000,
+      nextProbeAt: 55_000,
+      sampleCount: 1,
+      failureCount: 1,
+    });
+    expect(handle.snapshot()).toMatchObject({
+      state: 'open',
+      sampleCount: 1,
+      failureCount: 1,
+      nextProbeAt: 55_000,
+    });
+
+    now += 1_000;
+    expect(handle.preflight()).toMatchObject({
+      eligible: false,
+      reason: 'rate_limit',
+      statusCode: 429,
+      retryAfterMs: 44_000,
+    });
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['zero', 0],
+    ['negative', -1],
+    ['non-finite', Number.POSITIVE_INFINITY],
+  ] as const)(
+    'keeps the sample threshold for a 429 with a %s retry directive',
+    (_name, retryAfterMs) => {
+      const handle = registry().get(scope());
+
+      expect(
+        recordFailure(handle, {
+          reason: 'rate_limit',
+          statusCode: 429,
+          retryAfterMs,
+        })
+      ).toBeUndefined();
+      expect(handle.snapshot()).toMatchObject({
+        state: 'closed',
+        sampleCount: 1,
+        failureCount: 1,
+      });
+    }
+  );
+
+  it('does not fast-open a non-429 rate-limit classification', () => {
+    const handle = registry().get(scope());
+
+    expect(
+      recordFailure(handle, {
+        reason: 'rate_limit',
+        statusCode: 503,
+        retryAfterMs: 45_000,
+      })
+    ).toBeUndefined();
+    expect(handle.snapshot()).toMatchObject({ state: 'closed', sampleCount: 1 });
+  });
+
   it('admits exactly one half-open probe for concurrent same-tick checks', () => {
     let now = 1_000;
     const handle = registry({ now: () => now }).get(scope());
