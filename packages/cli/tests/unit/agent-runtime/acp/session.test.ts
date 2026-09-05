@@ -4198,6 +4198,7 @@ describe('AcpSession', () => {
           fallbackMessagesOmitted: 8,
           fallbackMessagesTruncated: 1,
           failureReason: 'insufficient_reduction',
+          memory: { outcome: 'written', entries: 1, topics: ['debugging'] },
         } as LoopEvent;
         return { success: true, finalMessage: 'recovered' };
       }) as typeof mockAgent.chatStream;
@@ -4242,6 +4243,7 @@ describe('AcpSession', () => {
                   fallbackMessagesOmitted: 8,
                   fallbackMessagesTruncated: 1,
                   failureReason: 'insufficient_reduction',
+                  memory: { outcome: 'written', entries: 1, topics: ['debugging'] },
                 },
               },
             }),

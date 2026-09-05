@@ -1101,6 +1101,7 @@ function createEventWriter(
           fallback_messages_omitted: event.fallbackMessagesOmitted,
           fallback_messages_truncated: event.fallbackMessagesTruncated,
           failure_reason: event.failureReason,
+          memory: event.memory,
         });
         return;
       }
@@ -1131,6 +1132,10 @@ function createEventWriter(
                 ? `; fallback target ${event.fallbackTargetTokens} tokens, ${
                     event.fallbackMessagesOmitted ?? 0
                   } messages omitted, ${event.fallbackMessagesTruncated ?? 0} truncated`
+                : ''
+            }${
+              event.memory?.outcome === 'written'
+                ? `; saved ${event.memory.entries} project memories`
                 : ''
             }`
       );

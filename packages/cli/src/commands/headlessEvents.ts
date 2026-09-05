@@ -5,6 +5,7 @@
  * integrations can consume it without depending on internal TypeScript naming.
  */
 
+import { MemoryConsolidationProjectionSchema } from '../api/memoryConsolidationSchemas.js';
 import { GOAL_PREMATURE_STOP_PATTERNS } from '../goals/types.js';
 import {
   Runtime,
@@ -422,6 +423,7 @@ const CompactingEventSchema = event({
       'transient_exhausted',
     ])
   ),
+  memory: Type.Optional(MemoryConsolidationProjectionSchema),
 });
 
 const ProviderRetryEventSchema = event({

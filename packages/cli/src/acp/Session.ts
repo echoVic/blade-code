@@ -2046,6 +2046,7 @@ export class AcpSession {
                     ...(event.failureReason
                       ? { failureReason: event.failureReason }
                       : {}),
+                    ...(event.memory ? { memory: event.memory } : {}),
                   },
                 },
               });

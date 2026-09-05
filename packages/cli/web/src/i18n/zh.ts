@@ -614,6 +614,7 @@ export const zh: Dict = {
   'chat.turnActivity.toolCount': '工具 {completed}/{started}',
   'chat.turnActivity.turn': '回合 {turn}',
   'chat.turnActivity.turnBounded': '回合 {turn}/{maxTurns}',
+  'chat.memoryConsolidation.saved': '已保存 {count} 条项目记忆',
 
   // 对话 · 代码评审报告
   'chat.review.title': '代码评审',

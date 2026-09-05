@@ -658,6 +658,7 @@ export const en = {
   'chat.turnActivity.toolCount': '{completed}/{started} tools',
   'chat.turnActivity.turn': 'turn {turn}',
   'chat.turnActivity.turnBounded': 'turn {turn}/{maxTurns}',
+  'chat.memoryConsolidation.saved': 'Saved {count} project memories',
 
   // Chat · Code review report
   'chat.review.title': 'Code Review',

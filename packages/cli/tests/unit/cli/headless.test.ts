@@ -1434,6 +1434,7 @@ describe('headless runner', () => {
           fallbackMessagesOmitted: 8,
           fallbackMessagesTruncated: 1,
           failureReason: 'insufficient_reduction',
+          memory: { outcome: 'written', entries: 1, topics: ['conventions'] },
         },
       ])
     );
@@ -1487,6 +1488,7 @@ describe('headless runner', () => {
         fallback_messages_omitted: 8,
         fallback_messages_truncated: 1,
         failure_reason: 'insufficient_reduction',
+        memory: { outcome: 'written', entries: 1, topics: ['conventions'] },
       },
     ]);
     expect(stderr.write).not.toHaveBeenCalled();

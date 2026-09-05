@@ -3,6 +3,7 @@ import type {
   FollowUpQueueMutation,
   FollowUpQueueSnapshot,
   McpElicitationDetails,
+  MemoryConsolidationProjection,
   ProviderRecoveryProjection,
   SessionLocatorV2,
   SessionRef,
@@ -42,6 +43,7 @@ export type {
   FollowUpQueueSnapshot,
   Goal,
   ImageAttachmentInput,
+  MemoryConsolidationProjection,
   MessageContent,
   MessageContentPart,
   PermissionMode,
@@ -545,6 +547,7 @@ export interface StreamingSlice {
   providerStall: ProviderStallInfo | null;
   providerRecovery: ProviderRecoveryProjection | null;
   turnActivity: TurnActivityProjection | null;
+  memoryConsolidation: MemoryConsolidationProjection | null;
   actionStationarity: ActionStationarityInfo | null;
   turnRecovery: TurnRecoveryInfo | null;
   sessionEventConnectionState: TaskEventConnectionState | 'idle';

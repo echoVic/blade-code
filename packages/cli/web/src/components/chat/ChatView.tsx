@@ -139,6 +139,7 @@ export function ChatView() {
   const isStopping = useSessionStore((state) => state.isStopping);
   const providerRecovery = useSessionStore((state) => state.providerRecovery);
   const turnActivity = useSessionStore((state) => state.turnActivity);
+  const memoryConsolidation = useSessionStore((state) => state.memoryConsolidation);
   const actionStationarity = useSessionStore((state) => state.actionStationarity);
   const sessionEventConnectionState = useSessionStore(
     (state) => state.sessionEventConnectionState
@@ -415,6 +416,7 @@ export function ChatView() {
               ? null
               : turnActivity
           }
+          memory={historyOnly ? null : memoryConsolidation}
         />
         <ChatInput
           key={composerDraftKey}

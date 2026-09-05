@@ -1290,6 +1290,27 @@ describe('createLoopEventHandler', () => {
       expect(stats.compactionCount).toBe(1);
     });
 
+    it('compaction writes project memory as bounded TUI activity', () => {
+      const deps = createMockDeps();
+      const handler = createLoopEventHandler(deps, createMockStats());
+
+      handler({
+        kind: 'compaction',
+        phase: 'end',
+        outcome: 'completed',
+        memory: { outcome: 'written', entries: 2, topics: ['conventions'] },
+      });
+
+      expect(deps.sessionActions.addToolMessage).toHaveBeenCalledWith(
+        'Saved 2 project memories',
+        {
+          toolName: 'Project Memory',
+          phase: 'complete',
+          summary: 'Saved 2 project memories',
+        }
+      );
+    });
+
     it('failed compaction does not replace the retained CLI model context', () => {
       const deps = createMockDeps();
       const stats = createMockStats();

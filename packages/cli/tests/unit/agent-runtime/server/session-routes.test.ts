@@ -6640,6 +6640,7 @@ describe('SessionRoutes runtime reuse', () => {
         fallbackMessagesOmitted: 8,
         fallbackMessagesTruncated: 1,
         failureReason: 'insufficient_reduction',
+        memory: { outcome: 'written', entries: 1, topics: ['debugging'] },
       };
       yield {
         kind: 'model_fallback',
@@ -6877,6 +6878,7 @@ describe('SessionRoutes runtime reuse', () => {
         fallbackMessagesOmitted: 8,
         fallbackMessagesTruncated: 1,
         failureReason: 'insufficient_reduction',
+        memory: { outcome: 'written', entries: 1, topics: ['debugging'] },
       }
     );
     expect(Bus.publish).toHaveBeenCalledWith(

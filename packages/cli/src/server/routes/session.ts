@@ -6398,6 +6398,7 @@ async function executeRunAsync(
                 ? { fallbackMessagesTruncated: event.fallbackMessagesTruncated }
                 : {}),
               ...(event.failureReason ? { failureReason: event.failureReason } : {}),
+              ...(event.memory ? { memory: event.memory } : {}),
             }
           );
           break;

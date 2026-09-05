@@ -6,7 +6,17 @@
  * failure.
  */
 
+import type {
+  MemoryConsolidationProjection,
+  MemoryConsolidationTopic,
+} from '../api/memoryConsolidationSchemas.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+
+export type {
+  MemoryConsolidationProjection,
+  MemoryConsolidationTopic,
+} from '../api/memoryConsolidationSchemas.js';
+
 import type { Message } from '../services/ChatServiceInterface.js';
 import { AutoMemoryManager } from './AutoMemoryManager.js';
 import { classifyMemoryContent } from './MemorySafety.js';
@@ -17,12 +27,6 @@ export const MAX_MEMORY_CONSOLIDATION_ENTRY_CHARS = 500;
 export const MAX_MEMORY_CONSOLIDATION_ENTRIES = 20;
 export const MAX_MEMORY_CONSOLIDATION_TOTAL_CHARS = 8_000;
 
-export type MemoryConsolidationTopic =
-  | 'preferences'
-  | 'conventions'
-  | 'lessons'
-  | 'debugging';
-
 export interface MemoryConsolidationEntry {
   topic: MemoryConsolidationTopic;
   content: string;
@@ -32,12 +36,6 @@ export interface MemoryConsolidationPlan {
   entries: readonly MemoryConsolidationEntry[];
   rejectedSensitive: number;
 }
-
-export type MemoryConsolidationProjection =
-  | { outcome: 'written'; entries: number; topics: string[] }
-  | { outcome: 'nothing_to_store'; entries: 0; topics: [] }
-  | { outcome: 'disabled'; entries: 0; topics: [] }
-  | { outcome: 'failed'; entries: 0; topics: [] };
 
 export interface MemoryConsolidationCommitOptions {
   workspaceRoot: string;
@@ -176,7 +174,13 @@ export async function commitMemoryConsolidation(
     return {
       outcome: 'written',
       entries: result.written,
-      topics: result.topics,
+      topics: result.topics.filter(
+        (topic): topic is MemoryConsolidationTopic =>
+          topic === 'preferences' ||
+          topic === 'conventions' ||
+          topic === 'lessons' ||
+          topic === 'debugging'
+      ),
     };
   } catch (error) {
     logger.warn(

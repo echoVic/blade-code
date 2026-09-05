@@ -322,6 +322,14 @@ export function createLoopEventHandler(
           if (event.outcome !== 'failed') {
             stats.compactionCount = (stats.compactionCount ?? 0) + 1;
           }
+          if (event.memory?.outcome === 'written') {
+            const summary = `Saved ${event.memory.entries} project memories`;
+            deps.sessionActions.addToolMessage(summary, {
+              toolName: 'Project Memory',
+              phase: 'complete',
+              summary,
+            });
+          }
         }
         break;
 

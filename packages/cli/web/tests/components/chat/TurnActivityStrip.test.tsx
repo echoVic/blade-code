@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 
-import type { TurnActivityProjection } from '@api/schemas';
+import type {
+  MemoryConsolidationProjection,
+  TurnActivityProjection,
+} from '@api/schemas';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -74,5 +77,19 @@ describe('TurnActivityStrip', () => {
       )
     );
     expect(container.innerHTML).toBe('');
+  });
+
+  it('renders a bounded project-memory completion notice', () => {
+    const memory: MemoryConsolidationProjection = {
+      outcome: 'written',
+      entries: 2,
+      topics: ['conventions'],
+    };
+    act(() => root.render(<TurnActivityStrip activity={null} memory={memory} />));
+
+    const status = container.querySelector('[data-memory-consolidation-notice]');
+    expect(status?.getAttribute('aria-live')).toBe('polite');
+    expect(status?.textContent).toContain('Saved 2 project memories');
+    expect(status?.textContent).not.toContain('conventions');
   });
 });

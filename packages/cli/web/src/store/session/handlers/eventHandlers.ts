@@ -3,6 +3,7 @@ import {
   FollowUpQueueSnapshotSchema,
   type Goal,
   type McpElicitationDetails,
+  MemoryConsolidationProjectionSchema,
   ProviderRecoveryProjectionSchema,
   TurnActivityProjectionSchema,
 } from '@api/schemas';
@@ -1881,13 +1882,23 @@ const handleCompactionStarted: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
   set({
     agentPhase: props.reason === 'context_limit' ? 'recovering_context' : 'compacting',
+    memoryConsolidation: null,
   });
 };
 
 const handleCompactionCompleted: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
   get().resetContextUsage();
-  set({ agentPhase: 'running' });
+  const memory = MemoryConsolidationProjectionSchema.safeParse(props.memory);
+  if (props.memory !== undefined && !memory.success) {
+    set({ agentPhase: 'running' });
+    return;
+  }
+  set({
+    agentPhase: 'running',
+    memoryConsolidation:
+      memory.success && memory.data.outcome === 'written' ? memory.data : null,
+  });
 };
 
 const handleModelFallback: EventHandler = (props, get, set) => {

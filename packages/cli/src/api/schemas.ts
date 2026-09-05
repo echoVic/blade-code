@@ -10,6 +10,7 @@ import {
 } from './attachmentLimits.js';
 
 export * from './followUpQueueSchemas.js';
+export * from './memoryConsolidationSchemas.js';
 export * from './providerRecoverySchemas.js';
 export * from './sessionSurfaceSchemas.js';
 export * from './turnActivitySchemas.js';

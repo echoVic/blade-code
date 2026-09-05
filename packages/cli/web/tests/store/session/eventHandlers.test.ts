@@ -163,6 +163,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     providerStall: null,
     providerRecovery: null,
     turnActivity: null,
+    memoryConsolidation: null,
     turnRecovery: overrides.turnRecovery ?? null,
     sessionEventConnectionState: 'idle',
     currentRunId: null,
@@ -2024,7 +2025,10 @@ describe('eventHandlers', () => {
       type: 'compaction.started',
       properties: { sessionId: 'session-1', projectPath: '/workspace/a' },
     });
-    expect(set).toHaveBeenLastCalledWith({ agentPhase: 'compacting' });
+    expect(set).toHaveBeenLastCalledWith({
+      agentPhase: 'compacting',
+      memoryConsolidation: null,
+    });
 
     dispatch({
       type: 'compaction.started',
@@ -2036,13 +2040,17 @@ describe('eventHandlers', () => {
     });
     expect(set).toHaveBeenLastCalledWith({
       agentPhase: 'recovering_context',
+      memoryConsolidation: null,
     });
 
     dispatch({
       type: 'compaction.completed',
       properties: { sessionId: 'session-1', projectPath: '/workspace/a' },
     });
-    expect(set).toHaveBeenLastCalledWith({ agentPhase: 'running' });
+    expect(set).toHaveBeenLastCalledWith({
+      agentPhase: 'running',
+      memoryConsolidation: null,
+    });
 
     dispatch({
       type: 'model.fallback',
@@ -2058,6 +2066,54 @@ describe('eventHandlers', () => {
       actionStationarity: null,
     });
     expect(state.providerRecovery).toEqual(recovery);
+  });
+
+  test('accepts only bounded memory consolidation metadata for the active session', () => {
+    const state = createState();
+    const set = vi.fn((partial) => {
+      if (typeof partial === 'function') Object.assign(state, partial(state));
+      else Object.assign(state, partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'compaction.completed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        memory: { outcome: 'written', entries: 2, topics: ['conventions'] },
+      },
+    });
+    expect(state.memoryConsolidation).toEqual({
+      outcome: 'written',
+      entries: 2,
+      topics: ['conventions'],
+    });
+
+    dispatch({
+      type: 'compaction.completed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        memory: {
+          outcome: 'written',
+          entries: 2,
+          topics: ['conventions'],
+          content: 'private memory text',
+        },
+      },
+    });
+    expect(state.memoryConsolidation).toEqual({
+      outcome: 'written',
+      entries: 2,
+      topics: ['conventions'],
+    });
+
+    dispatch({
+      type: 'compaction.started',
+      properties: { sessionId: 'session-1', projectPath: '/workspace/a' },
+    });
+    expect(state.memoryConsolidation).toBeNull();
   });
 
   test('tracks bounded Provider retry lifecycle without exposing error details', () => {

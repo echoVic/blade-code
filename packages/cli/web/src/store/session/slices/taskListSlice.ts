@@ -1188,6 +1188,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
                 providerStall: null,
                 providerRecovery: null,
                 turnActivity: null,
+                memoryConsolidation: null,
                 actionStationarity: null,
                 turnRecovery: null,
                 currentRunId: null,

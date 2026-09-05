@@ -2,9 +2,11 @@ export { AutoMemoryManager } from './AutoMemoryManager.js';
 export type {
   MemoryConsolidationEntry,
   MemoryConsolidationPlan,
+} from './MemoryConsolidation.js';
+export type {
   MemoryConsolidationProjection,
   MemoryConsolidationTopic,
-} from './MemoryConsolidation.js';
+} from '../api/memoryConsolidationSchemas.js';
 export {
   commitMemoryConsolidation,
   EMPTY_MEMORY_CONSOLIDATION_PLAN,

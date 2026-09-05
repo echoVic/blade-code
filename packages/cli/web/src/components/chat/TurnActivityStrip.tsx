@@ -1,4 +1,7 @@
-import type { TurnActivityProjection } from '@api/schemas';
+import type {
+  MemoryConsolidationProjection,
+  TurnActivityProjection,
+} from '@api/schemas';
 import { Activity } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useT } from '@/i18n';
@@ -6,8 +9,10 @@ import { presentTurnActivity } from '@/lib/turnActivityPresentation';
 
 export function TurnActivityStrip({
   activity,
+  memory = null,
 }: {
   activity: TurnActivityProjection | null;
+  memory?: MemoryConsolidationProjection | null;
 }) {
   const t = useT();
   const [now, setNow] = useState(Date.now());
@@ -21,8 +26,29 @@ export function TurnActivityStrip({
   }, [startedAt]);
 
   const presentation = presentTurnActivity(activity, now);
-  if (!presentation) return null;
+  if (!presentation) {
+    if (memory?.outcome !== 'written') return null;
+    return (
+      <section
+        role="status"
+        aria-live="polite"
+        data-memory-consolidation-notice
+        className="mx-4 mb-2 flex min-h-10 items-center gap-3 rounded-lg border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))]/80 px-3 py-2 text-[hsl(var(--deck-ink))] shadow-sm md:mx-6"
+      >
+        <Activity
+          className="h-4 w-4 shrink-0 text-[hsl(var(--deck-accent))]"
+          aria-hidden
+        />
+        <span className="text-xs font-semibold">
+          {t('chat.memoryConsolidation.saved', { count: memory.entries })}
+        </span>
+      </section>
+    );
+  }
   const details = [
+    memory?.outcome === 'written'
+      ? t('chat.memoryConsolidation.saved', { count: memory.entries })
+      : undefined,
     ...presentation.tools,
     presentation.hiddenTools > 0 ? `+${presentation.hiddenTools}` : undefined,
     presentation.startedTools > 0

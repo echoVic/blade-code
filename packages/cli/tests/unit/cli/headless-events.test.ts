@@ -670,6 +670,26 @@ describe('headless event contract', () => {
     });
   });
 
+  it('accepts bounded compaction memory metadata and rejects content fields', async () => {
+    const { HEADLESS_EVENT_VERSION, HeadlessJsonlEventSchema } = await import(
+      '../../../src/commands/headlessEvents.js'
+    );
+    const event = {
+      event_version: HEADLESS_EVENT_VERSION,
+      type: 'compacting',
+      state: 'completed',
+      memory: { outcome: 'written', entries: 1, topics: ['conventions'] },
+    };
+
+    expect(() => HeadlessJsonlEventSchema.parse(event)).not.toThrow();
+    expect(() =>
+      HeadlessJsonlEventSchema.parse({
+        ...event,
+        memory: { ...event.memory, content: 'private memory text' },
+      })
+    ).toThrow();
+  });
+
   it('validates durable subagent lineage events', async () => {
     const { HEADLESS_EVENT_VERSION, HeadlessJsonlEventSchema } = await import(
       '../../../src/commands/headlessEvents.js'
