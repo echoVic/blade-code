@@ -289,6 +289,7 @@ describe('production qualification contract', () => {
     expect(deterministic).toContain("describe.skipIf(process.platform === 'win32')");
     expect(realApi).toContain('resolveRequiredDeepSeekQualificationModels');
     expect(realApi).toContain('frameworkRetryBudget(context)');
+    expect(realApi).toContain('frameworkRetryBudget(context)');
     expect(realApi).toContain('maxRetries: 0');
     expect(realApi).toContain("['headless', 'acp', 'pty', 'web']");
     expect(realApi).toContain('await chromium.launch({ headless: true })');
@@ -299,6 +300,10 @@ describe('production qualification contract', () => {
   });
 
   it('qualifies the authoritative rate-limit cooldown on all production surfaces', () => {
+    const testConfig = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/test-config.js'),
+      'utf8'
+    );
     const deterministicPath = path.resolve(
       __dirname,
       '../../integration/provider-rate-limit-cooldown.test.ts'
@@ -311,9 +316,14 @@ describe('production qualification contract', () => {
       __dirname,
       '../../support/foregroundProviderRecoveryPtyRunner.ts'
     );
+    const realApiPath = path.resolve(
+      __dirname,
+      '../../integration/real-api/provider-rate-limit-cooldown-trajectory.test.ts'
+    );
     const deterministic = fs.readFileSync(deterministicPath, 'utf8');
     const acpRunner = fs.readFileSync(acpRunnerPath, 'utf8');
     const ptyRunner = fs.readFileSync(ptyRunnerPath, 'utf8');
+    const realApi = fs.readFileSync(realApiPath, 'utf8');
 
     expect(deterministic).toContain('access(cliEntry)');
     expect(deterministic).toContain("['opened', 'waiting', 'probe', 'closed']");
@@ -326,6 +336,14 @@ describe('production qualification contract', () => {
     expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
     expect(ptyRunner).toContain('recoveryWaitText');
     expect(ptyRunner).toContain('expectTerminalClear');
+    expect(testConfig).toContain(
+      "'tests/integration/real-api/provider-rate-limit-cooldown-trajectory.test.ts'"
+    );
+    expect(realApi).toContain('resolveRequiredDeepSeekQualificationModels');
+    expect(realApi).toContain("['headless', 'acp', 'pty', 'web']");
+    expect(realApi).toContain('const INJECTED_FAILURES = 1');
+    expect(realApi).toContain('response.writeHead(429');
+    expect(realApi).toContain('expectRateLimitCooldown: true');
   });
 
   it('registers the production follow-up queue surface matrix in exact order', () => {
