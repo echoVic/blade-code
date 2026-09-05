@@ -23,6 +23,26 @@ function toolResult(id: string, name = 'Bash'): LoopEvent {
 }
 
 describe('TurnActivityState', () => {
+  it('reports an explicit inactive snapshot before a turn begins', () => {
+    const state = new TurnActivityState({
+      now: () => 500,
+      createGenerationId: () => 'inactive-activity',
+    });
+
+    expect(state.snapshot()).toEqual({
+      version: 1,
+      generation: 'inactive-activity',
+      revision: 0,
+      snapshot: null,
+    });
+    expect(state.snapshot()).toEqual({
+      version: 1,
+      generation: 'inactive-activity',
+      revision: 0,
+      snapshot: null,
+    });
+  });
+
   it('starts a new generation and tracks turn, output, and continuation phases', () => {
     let now = 1_000;
     const state = new TurnActivityState({

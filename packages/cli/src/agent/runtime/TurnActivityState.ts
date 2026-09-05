@@ -272,10 +272,15 @@ export class TurnActivityState {
 
   snapshot(): TurnActivityProjection {
     if (!this.projection) {
-      const generation = this.begin();
-      if (generation.id !== this.generation) {
-        throw new Error('Turn activity generation initialization failed');
-      }
+      this.generation = this.createGenerationId();
+      this.revision = 0;
+      this.state = undefined;
+      this.projection = this.parse({
+        version: 1,
+        generation: this.generation,
+        revision: 0,
+        snapshot: null,
+      });
     }
     return cloneProjection(this.projection as TurnActivityProjection);
   }
