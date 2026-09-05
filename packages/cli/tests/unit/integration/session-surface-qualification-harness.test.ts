@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -109,6 +109,41 @@ describe('session surface qualification harness', () => {
     await Promise.all(
       cleanupRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
     );
+  });
+
+  it('keeps compaction memory qualification on every production surface', async () => {
+    const integrationPath = path.resolve(
+      import.meta.dirname,
+      '../../integration/compaction-memory-consolidation.test.ts'
+    );
+    const acpRunnerPath = path.resolve(
+      import.meta.dirname,
+      '../../support/memoryConsolidationAcpRunner.ts'
+    );
+    const ptyRunnerPath = path.resolve(
+      import.meta.dirname,
+      '../../support/memoryConsolidationPtyRunner.ts'
+    );
+    const [integration, acpRunner, ptyRunner] = await Promise.all([
+      readFile(integrationPath, 'utf8'),
+      readFile(acpRunnerPath, 'utf8'),
+      readFile(ptyRunnerPath, 'utf8'),
+    ]);
+
+    expect(integration).toContain("import { chromium } from 'playwright'");
+    expect(integration).toContain('../../dist/blade.js');
+    expect(integration).toContain('compaction.started');
+    expect(integration).toContain('compaction.completed');
+    expect(integration).toContain('conventions.md');
+    expect(integration).toContain('MEMORY.md');
+    expect(integration).toContain('page.reload');
+    expect(integration).toContain('BLADE_STORAGE_ROOT');
+    expect(integration).toContain('HOME');
+    expect(acpRunner).toContain("[input.cliEntry, '--acp']");
+    expect(acpRunner).toContain('blade/compaction');
+    expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
+    expect(ptyRunner).toContain('正在压缩上下文');
+    expect(ptyRunner).toContain('Saved 1 project memories');
   });
 
   it('creates a disconnected production ACP fixture with redacted evidence and temporary session refs', async () => {

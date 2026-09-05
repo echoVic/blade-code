@@ -176,6 +176,36 @@ describe('production qualification contract', () => {
     expect(fs.existsSync(qualificationCore)).toBe(true);
   });
 
+  it('qualifies deterministic compaction memory on production surfaces', () => {
+    const deterministicPath = path.resolve(
+      __dirname,
+      '../../integration/compaction-memory-consolidation.test.ts'
+    );
+    const acpRunnerPath = path.resolve(
+      __dirname,
+      '../../support/memoryConsolidationAcpRunner.ts'
+    );
+    const ptyRunnerPath = path.resolve(
+      __dirname,
+      '../../support/memoryConsolidationPtyRunner.ts'
+    );
+
+    expect(fs.existsSync(deterministicPath)).toBe(true);
+    expect(fs.existsSync(acpRunnerPath)).toBe(true);
+    expect(fs.existsSync(ptyRunnerPath)).toBe(true);
+
+    const deterministic = fs.readFileSync(deterministicPath, 'utf8');
+    const acpRunner = fs.readFileSync(acpRunnerPath, 'utf8');
+    const ptyRunner = fs.readFileSync(ptyRunnerPath, 'utf8');
+    expect(deterministic).toContain('await chromium.launch({ headless: true })');
+    expect(deterministic).toContain('memoryConsolidationAcpRunner.ts');
+    expect(deterministic).toContain('memoryConsolidationPtyRunner.ts');
+    expect(deterministic).toContain('assertMemoryFiles');
+    expect(deterministic).toContain('assertNoSecret');
+    expect(acpRunner).toContain('newSession');
+    expect(ptyRunner).toContain('ArmedPtyMarkerLatch');
+  });
+
   it('registers the production Chromium durable task unread trajectory', () => {
     const testConfig = fs.readFileSync(
       path.resolve(__dirname, '../../../scripts/test-config.js'),
