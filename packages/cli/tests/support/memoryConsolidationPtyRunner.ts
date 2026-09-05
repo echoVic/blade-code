@@ -3,6 +3,11 @@ import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { spawn } from 'bun-pty';
 import {
+  finalAssistantText,
+  findSessionTranscript,
+  readSessionEvents,
+} from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
   projectForegroundBoundedPtyOutput,
@@ -17,6 +22,7 @@ interface RunnerInput {
   storageRoot: string;
   memoryDir: string;
   sessionId: string;
+  discoverySessionId: string;
   historyReady: string;
   prompt: string;
   marker: string;
@@ -79,7 +85,7 @@ async function main(): Promise<void> {
   const terminal = spawn(
     '/usr/bin/env',
     [
-      'node',
+      process.execPath,
       input.cliEntry,
       '--trust-workspace',
       '--permission-mode',
@@ -143,6 +149,14 @@ async function main(): Promise<void> {
     );
     await waitFor(
       () =>
+        finalAssistantText(
+          readSessionEvents(findSessionTranscript(input.storageRoot, input.sessionId))
+        ) === input.marker,
+      'Memory consolidation TUI did not persist its exact final marker',
+      10_000
+    );
+    await waitFor(
+      () =>
         access(path.join(input.memoryDir, 'MEMORY.md')).then(
           () => true,
           () => false
@@ -150,6 +164,15 @@ async function main(): Promise<void> {
       'Memory consolidation TUI did not persist the memory index',
       10_000
     );
+    const { buildSystemPrompt } = await import('../../src/prompts/builder.js');
+    const discoverySystemPrompt = await buildSystemPrompt({
+      projectPath: input.workspace,
+      includeEnvironment: false,
+      projectTrusted: true,
+    });
+    if (!discoverySystemPrompt.prompt.includes('conventions.md')) {
+      throw new Error('Memory consolidation TUI could not load the memory index');
+    }
     if (secret.seen) throw new Error('Memory consolidation TUI leaked a credential');
 
     signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
@@ -168,13 +191,15 @@ async function main(): Promise<void> {
     const discoveryTerminal = spawn(
       '/usr/bin/env',
       [
-        'node',
+        process.execPath,
         input.cliEntry,
         '--trust-workspace',
         '--permission-mode',
         'yolo',
         '--max-turns',
         '1',
+        '--session-id',
+        input.discoverySessionId,
         '--no-verification-agent',
       ],
       {
@@ -219,6 +244,23 @@ async function main(): Promise<void> {
             ),
         'Memory consolidation TUI did not discover the new memory index'
       );
+      await waitFor(
+        () => {
+          try {
+            return (
+              finalAssistantText(
+                readSessionEvents(
+                  findSessionTranscript(input.storageRoot, input.discoverySessionId)
+                )
+              ) === input.discoveryMarker
+            );
+          } catch {
+            return false;
+          }
+        },
+        'Memory discovery TUI did not persist its exact final marker',
+        10_000
+      );
       if (secret.seen) {
         throw new Error('Memory discovery TUI leaked a credential');
       }
@@ -248,6 +290,7 @@ async function main(): Promise<void> {
         finalMarkerSeen: finalMarker.seen,
         compactionRendered: plainOutput.includes('正在压缩上下文'),
         memoryNoticeSeen,
+        discoveryIndexLoaded: true,
         discoveryMarkerSeen: discoveryMarker.seen,
         output: projectForegroundBoundedPtyOutput(output),
       })

@@ -589,6 +589,7 @@ async function runPty(test: Fixture): Promise<void> {
       storageRoot: test.storageRoot,
       memoryDir,
       sessionId: test.sessionId,
+      discoverySessionId: `memory-discovery-${randomBytes(6).toString('hex')}`,
       historyReady: test.historyReady,
       prompt: test.prompt,
       marker: test.finalMarker,

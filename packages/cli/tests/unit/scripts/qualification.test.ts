@@ -206,6 +206,44 @@ describe('production qualification contract', () => {
     expect(ptyRunner).toContain('ArmedPtyMarkerLatch');
   });
 
+  it('registers the DeepSeek compaction memory release matrix', () => {
+    const testConfig = fs.readFileSync(
+      path.resolve(__dirname, '../../../scripts/test-config.js'),
+      'utf8'
+    );
+    const trajectoryPath = path.resolve(
+      __dirname,
+      '../../integration/real-api/compaction-memory-consolidation-trajectory.test.ts'
+    );
+    expect(fs.existsSync(trajectoryPath)).toBe(true);
+    const trajectory = fs.readFileSync(trajectoryPath, 'utf8');
+    const webDriver = fs.readFileSync(
+      path.resolve(__dirname, '../../support/tokenBudgetHandoffWebDriver.ts'),
+      'utf8'
+    );
+    const ptyRunner = fs.readFileSync(
+      path.resolve(__dirname, '../../support/tokenBudgetHandoffPtyRunner.ts'),
+      'utf8'
+    );
+    const acpRunner = fs.readFileSync(
+      path.resolve(__dirname, '../../support/tokenBudgetHandoffAcpRunner.ts'),
+      'utf8'
+    );
+
+    expect(testConfig).toContain(
+      "'tests/integration/real-api/compaction-memory-consolidation-trajectory.test.ts'"
+    );
+    expect(trajectory).toContain('resolveRequiredDeepSeekQualificationModels');
+    expect(trajectory).toContain("process.env.REAL_API_RELEASE_MATRIX !== '1'");
+    expect(trajectory).toContain("['headless', 'acp', 'pty', 'web']");
+    expect(trajectory).toContain('assertNoSecrets');
+    expect(trajectory).toContain('conventions.md');
+    expect(trajectory).toContain('MEMORY.md');
+    expect(webDriver).toContain('await chromium.launch({ headless: true })');
+    expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
+    expect(acpRunner).toContain('newSession');
+  });
+
   it('registers the production Chromium durable task unread trajectory', () => {
     const testConfig = fs.readFileSync(
       path.resolve(__dirname, '../../../scripts/test-config.js'),
