@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StreamChunk } from '../../src/services/ChatServiceInterface.js';
 import { PiAIChatService } from '../../src/services/PiAIChatService.js';
+import { ProviderCircuitRegistry } from '../../src/services/pi/providerCircuitBreaker.js';
 
 describe('pi provider retry integration', () => {
   let server: Server | undefined;
@@ -138,5 +139,106 @@ describe('pi provider retry integration', () => {
       'PRIVATE_PROVIDER_BODY_MUST_NOT_SURFACE'
     );
     expect(JSON.stringify(chunks)).not.toContain('integration-test-key');
+  });
+
+  it('shares an explicit 429 cooldown before another real HTTP request', async () => {
+    let now = 1_000;
+    requestCount = 0;
+    server?.removeAllListeners('request');
+    server?.on('request', async (request, response) => {
+      for await (const _chunk of request) {
+        // Drain the request body.
+      }
+      requestCount++;
+      if (requestCount === 1) {
+        response.writeHead(429, {
+          'content-type': 'application/json',
+          'retry-after-ms': '2000',
+        });
+        response.end(
+          JSON.stringify({
+            error: {
+              message: 'PRIVATE_RATE_LIMIT_BODY_MUST_NOT_SURFACE',
+              type: 'rate_limit_error',
+            },
+          })
+        );
+        return;
+      }
+      response.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+      });
+      response.end(
+        `data: ${JSON.stringify({
+          id: 'cooldown-probe',
+          object: 'chat.completion.chunk',
+          created: 1,
+          model: 'deepseek-v4-flash',
+          choices: [
+            { index: 0, delta: { content: 'RECOVERED' }, finish_reason: 'stop' },
+          ],
+          usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+        })}\n\ndata: [DONE]\n\n`
+      );
+    });
+    const registry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(9),
+      now: () => now,
+      wallNow: () => now,
+    });
+    const options = {
+      provider: 'deepseek',
+      apiKey: 'integration-test-key',
+      baseUrl,
+      model: 'deepseek-v4-flash',
+      maxOutputTokens: 64,
+      timeout: 5_000,
+      maxRetries: 0,
+      providerCircuitBreakerOpenMs: 1_000,
+      providerCircuitRegistry: registry,
+    } as const;
+
+    await expect(
+      new PiAIChatService(options).chat([{ role: 'user', content: 'first' }])
+    ).rejects.toThrow();
+    const second = new PiAIChatService(options).streamChat([
+      { role: 'user', content: 'second' },
+    ]);
+    await expect(second.next()).resolves.toMatchObject({
+      value: {
+        providerCircuit: {
+          phase: 'rejected',
+          reason: 'rate_limit',
+          statusCode: 429,
+          retryAfterMs: 2_000,
+        },
+      },
+    });
+    await expect(second.next()).rejects.toMatchObject({
+      code: 'PROVIDER_CIRCUIT_OPEN',
+    });
+    expect(requestCount).toBe(1);
+
+    now += 2_000;
+    const recovered: StreamChunk[] = [];
+    for await (const chunk of new PiAIChatService(options).streamChat([
+      { role: 'user', content: 'probe' },
+    ])) {
+      recovered.push(chunk);
+    }
+    expect(requestCount).toBe(2);
+    expect(
+      recovered.flatMap((chunk) =>
+        chunk.providerCircuit ? [chunk.providerCircuit.phase] : []
+      )
+    ).toEqual(['probe', 'closed']);
+    expect(recovered.filter((chunk) => chunk.content !== undefined)).toEqual([
+      expect.objectContaining({ content: 'RECOVERED' }),
+    ]);
+    expect(JSON.stringify(recovered)).not.toContain(
+      'PRIVATE_RATE_LIMIT_BODY_MUST_NOT_SURFACE'
+    );
+    expect(JSON.stringify(recovered)).not.toContain('integration-test-key');
   });
 });

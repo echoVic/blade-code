@@ -2017,10 +2017,7 @@ describe('PiAIChatService', () => {
       (
         _options: unknown,
         _model: unknown,
-        onResponse: (response: {
-          statusCode: number;
-          retryAfter?: string;
-        }) => void
+        onResponse: (response: { statusCode: number; retryAfter?: string }) => void
       ) => onResponse({ statusCode: 429, retryAfter: '30' })
     );
     streamPiModel.mockReturnValue(chunks([new Error('status 429')]));
