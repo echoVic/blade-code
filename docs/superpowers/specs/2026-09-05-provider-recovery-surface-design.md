@@ -261,6 +261,9 @@ state before later events. The Web store accepts a revision only when it is newe
 the current generation; a new authoritative `connected` snapshot replaces local
 state. Normal live Bus ordering supplies new generations, while the Runtime has
 already rejected events from invalidated generations.
+When an idle Session has no resident Runtime, `connected` carries an explicit `null`
+instead of creating a Runtime merely to manufacture an empty projection; the Web
+client treats that value as an authoritative clear.
 
 After terminal failure, the banner disappears and existing task retry,
 edit-and-resend, draft restore, and model-settings controls remain responsible for
