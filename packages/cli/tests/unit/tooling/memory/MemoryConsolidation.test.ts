@@ -1,75 +1,166 @@
-import { describe, expect, it } from 'vitest';
-import { extractLearnings } from '../../../../src/memory/MemoryConsolidation.js';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AutoMemoryManager } from '../../../../src/memory/AutoMemoryManager.js';
+import {
+  commitMemoryConsolidation,
+  MAX_MEMORY_CONSOLIDATION_ENTRIES,
+  MAX_MEMORY_CONSOLIDATION_ENTRY_CHARS,
+  MAX_MEMORY_CONSOLIDATION_TOTAL_CHARS,
+  planMemoryConsolidation,
+} from '../../../../src/memory/MemoryConsolidation.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 
 describe('MemoryConsolidation', () => {
-  describe('extractLearnings', () => {
-    it('should extract user-marked preferences', () => {
-      const messages: Message[] = [
-        { role: 'user', content: '记住：始终使用 pathe 而非 path' },
-      ];
+  const roots: string[] = [];
 
-      const learnings = extractLearnings(messages);
-      expect(learnings.has('preferences')).toBe(true);
-      expect(learnings.get('preferences')![0]).toContain('pathe');
-    });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    delete process.env.BLADE_AUTO_MEMORY;
+    await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true })));
+  });
 
-    it('should extract convention markers', () => {
-      const messages: Message[] = [
-        { role: 'user', content: 'convention: 工具类以 Tool 后缀命名' },
-      ];
+  it('extracts supported markers in source order and normalizes whitespace', () => {
+    const plan = planMemoryConsolidation([
+      { role: 'user', content: '记住： use   pnpm for packages' },
+      { role: 'user', content: 'convention: tools use a Tool suffix' },
+      { role: 'user', content: '教训： verify the generated route table' },
+      {
+        role: 'assistant',
+        content:
+          'Fixed: Wrap JSON parsing so malformed arguments cannot crash the loop',
+      },
+    ]);
 
-      const learnings = extractLearnings(messages);
-      expect(learnings.has('conventions')).toBe(true);
-      expect(learnings.get('conventions')![0]).toContain('Tool 后缀');
-    });
-
-    it('should extract error resolution patterns from assistant', () => {
-      const messages: Message[] = [
+    expect(plan).toEqual({
+      entries: [
+        { topic: 'preferences', content: 'use pnpm for packages' },
+        { topic: 'conventions', content: 'tools use a Tool suffix' },
+        { topic: 'lessons', content: 'verify the generated route table' },
         {
-          role: 'assistant',
-          content:
-            '修复: 将 JSON.parse 包裹在 try-catch 中以防止格式错误的工具参数导致循环崩溃',
+          topic: 'debugging',
+          content: 'Wrap JSON parsing so malformed arguments cannot crash the loop',
         },
-      ];
-
-      const learnings = extractLearnings(messages);
-      expect(learnings.has('debugging')).toBe(true);
+      ],
+      rejectedSensitive: 0,
     });
+  });
 
-    it('should extract tool error patterns', () => {
-      const messages: Message[] = [
-        {
-          role: 'tool',
-          content: 'Error: ENOENT: no such file or directory, open /foo/bar.ts',
-          tool_call_id: 'tc_1',
-        },
-      ];
+  it('does not inspect tool output, metadata, reasoning, or image URLs', () => {
+    const plan = planMemoryConsolidation([
+      { role: 'tool', content: 'Error: reusable failure', tool_call_id: 'tc-1' },
+      {
+        role: 'assistant',
+        content: 'No reusable marker here',
+        reasoningContent: 'Fixed: reasoning must stay private forever',
+        metadata: { note: 'lesson: metadata must stay private' },
+        tool_calls: [
+          {
+            id: 'tc-1',
+            type: 'function',
+            function: { name: 'Bash', arguments: '{"note":"lesson: private"}' },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'ordinary visible text' },
+          { type: 'image_url', image_url: { url: 'lesson: private image URL' } },
+        ],
+      },
+    ]);
 
-      const learnings = extractLearnings(messages);
-      expect(learnings.has('debugging')).toBe(true);
+    expect(plan).toEqual({ entries: [], rejectedSensitive: 0 });
+  });
+
+  it('deduplicates normalized entries and rejects sensitive candidates', () => {
+    const plan = planMemoryConsolidation([
+      { role: 'user', content: '约定：run   bun test' },
+      { role: 'user', content: '约定: run bun test' },
+      { role: 'user', content: '记住：token = private-value' },
+    ]);
+
+    expect(plan).toEqual({
+      entries: [{ topic: 'conventions', content: 'run bun test' }],
+      rejectedSensitive: 1,
     });
+    expect(JSON.stringify(plan)).not.toContain('private-value');
+  });
 
-    it('should return empty map for unrelated messages', () => {
-      const messages: Message[] = [
-        { role: 'user', content: '请帮我写一个函数' },
-        { role: 'assistant', content: '好的，这是实现：...' },
-      ];
+  it('enforces per-entry, entry-count, and total-character bounds', () => {
+    const messages: Message[] = Array.from(
+      {
+        length: MAX_MEMORY_CONSOLIDATION_ENTRIES + 10,
+      },
+      (_, index) => ({
+        role: 'user',
+        content: `lesson: ${index}-${'x'.repeat(MAX_MEMORY_CONSOLIDATION_ENTRY_CHARS * 2)}`,
+      })
+    );
 
-      const learnings = extractLearnings(messages);
-      expect(learnings.size).toBe(0);
+    const plan = planMemoryConsolidation(messages);
+    expect(plan.entries.length).toBeLessThanOrEqual(MAX_MEMORY_CONSOLIDATION_ENTRIES);
+    expect(plan.entries.every((entry) => [...entry.content].length <= 500)).toBe(true);
+    expect(
+      plan.entries.reduce((sum, entry) => sum + [...entry.content].length, 0)
+    ).toBe(MAX_MEMORY_CONSOLIDATION_TOTAL_CHARS);
+  });
+
+  it('commits to the explicit workspace and returns content-free metadata', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'blade-consolidation-'));
+    roots.push(root);
+    const plan = planMemoryConsolidation([
+      { role: 'user', content: 'convention: use the explicit workspace' },
+    ]);
+
+    const result = await commitMemoryConsolidation(plan, { workspaceRoot: root });
+
+    expect(result).toEqual({
+      outcome: 'written',
+      entries: 1,
+      topics: ['conventions'],
     });
+    const memory = new AutoMemoryManager(root);
+    expect(await memory.readTopic('conventions')).toContain(
+      'use the explicit workspace'
+    );
+  });
 
-    it('should limit debugging entries to 5', () => {
-      const messages: Message[] = Array.from({ length: 10 }, (_, i) => ({
-        role: 'tool' as const,
-        content: `Error: Some recurring error pattern number ${i} that keeps happening`,
-        tool_call_id: `tc_${i}`,
-      }));
+  it.each([
+    { name: 'environment disabled', env: '0', workspaceAccess: 'full' as const },
+    { name: 'remote workspace', env: undefined, workspaceAccess: 'none' as const },
+  ])('does not write when $name', async ({ env, workspaceAccess }) => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'blade-consolidation-disabled-')
+    );
+    roots.push(root);
+    if (env !== undefined) process.env.BLADE_AUTO_MEMORY = env;
 
-      const learnings = extractLearnings(messages);
-      const debugging = learnings.get('debugging') ?? [];
-      expect(debugging.length).toBeLessThanOrEqual(5);
-    });
+    const result = await commitMemoryConsolidation(
+      planMemoryConsolidation([
+        { role: 'user', content: 'convention: do not persist this entry' },
+      ]),
+      { workspaceRoot: root, workspaceAccess }
+    );
+
+    expect(result).toEqual({ outcome: 'disabled', entries: 0, topics: [] });
+    expect(await new AutoMemoryManager(root).listTopics()).toEqual([]);
+  });
+
+  it('maps storage failures to a content-free result', async () => {
+    vi.spyOn(AutoMemoryManager.prototype, 'appendUniqueEntries').mockRejectedValueOnce(
+      Object.assign(new Error('secret workspace path'), { code: 'EIO' })
+    );
+
+    await expect(
+      commitMemoryConsolidation(
+        planMemoryConsolidation([
+          { role: 'user', content: 'convention: keep runtime errors bounded' },
+        ]),
+        { workspaceRoot: '/private/workspace' }
+      )
+    ).resolves.toEqual({ outcome: 'failed', entries: 0, topics: [] });
   });
 });

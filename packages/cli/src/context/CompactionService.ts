@@ -690,7 +690,10 @@ export class CompactionService {
         0,
         sourceMessages.length - retainCount
       );
-      consolidateAfterCompaction(discardedMessages).catch((_) => void _);
+      consolidateAfterCompaction(discardedMessages, {
+        workspaceRoot: options.workspaceRoot ?? getCwd(),
+        workspaceAccess: options.workspaceAccess,
+      }).catch((_) => void _);
 
       return {
         success: true,

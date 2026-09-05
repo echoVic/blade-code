@@ -1,106 +1,205 @@
 /**
- * Memory Consolidation — 自动记忆巩固
+ * Memory consolidation for reusable project knowledge.
  *
- * 在上下文压缩时自动提取有价值的 learnings 并持久化到项目记忆。
- * 不依赖额外的 LLM 调用，而是通过规则匹配从对话中提取关键信息。
+ * Planning is pure and bounded. Persistence is explicit, workspace-scoped, and
+ * best-effort so a memory failure never turns a completed compaction into a task
+ * failure.
  */
 
+import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { Message } from '../services/ChatServiceInterface.js';
-import { getCwd } from '../utils/cwd.js';
 import { AutoMemoryManager } from './AutoMemoryManager.js';
+import { classifyMemoryContent } from './MemorySafety.js';
 
-export interface ConsolidationResult {
-  extracted: number;
-  topics: string[];
+const logger = createLogger(LogCategory.CONTEXT);
+
+export const MAX_MEMORY_CONSOLIDATION_ENTRY_CHARS = 500;
+export const MAX_MEMORY_CONSOLIDATION_ENTRIES = 20;
+export const MAX_MEMORY_CONSOLIDATION_TOTAL_CHARS = 8_000;
+
+export type MemoryConsolidationTopic =
+  | 'preferences'
+  | 'conventions'
+  | 'lessons'
+  | 'debugging';
+
+export interface MemoryConsolidationEntry {
+  topic: MemoryConsolidationTopic;
+  content: string;
 }
 
-const PATTERN_MARKERS = [
-  { pattern: /(?:记住|remember|note|备注)[：:](.+)/i, topic: 'preferences' },
-  { pattern: /(?:convention|约定|规范)[：:](.+)/i, topic: 'conventions' },
-  { pattern: /(?:lesson|教训|踩坑)[：:](.+)/i, topic: 'lessons' },
+export interface MemoryConsolidationPlan {
+  entries: readonly MemoryConsolidationEntry[];
+  rejectedSensitive: number;
+}
+
+export type MemoryConsolidationProjection =
+  | { outcome: 'written'; entries: number; topics: string[] }
+  | { outcome: 'nothing_to_store'; entries: 0; topics: [] }
+  | { outcome: 'disabled'; entries: 0; topics: [] }
+  | { outcome: 'failed'; entries: 0; topics: [] };
+
+export interface MemoryConsolidationCommitOptions {
+  workspaceRoot: string;
+  workspaceAccess?: 'full' | 'none';
+}
+
+const USER_PATTERNS: ReadonlyArray<{
+  pattern: RegExp;
+  topic: Exclude<MemoryConsolidationTopic, 'debugging'>;
+}> = [
+  {
+    pattern: /(?:记住|remember|note|备注)\s*[：:]\s*([^\r\n]+)/gi,
+    topic: 'preferences',
+  },
+  {
+    pattern: /(?:convention|约定|规范)\s*[：:]\s*([^\r\n]+)/gi,
+    topic: 'conventions',
+  },
+  { pattern: /(?:lesson|教训|踩坑)\s*[：:]\s*([^\r\n]+)/gi, topic: 'lessons' },
 ];
+const RESOLVED_PROBLEM_PATTERN =
+  /(?:fixed|fix|修复|解决|resolved)\s*[：:]\s*([^\r\n]+)/gi;
+const SAFE_MEMORY_ERROR_CODES = new Set([
+  'EACCES',
+  'EIO',
+  'EMFILE',
+  'ENFILE',
+  'ENOSPC',
+  'EPERM',
+  'EROFS',
+]);
 
-const ERROR_RESOLUTION_PATTERN = /(?:fix|修复|解决|resolved)[：:]\s*(.+?)(?:\n|$)/i;
+export const EMPTY_MEMORY_CONSOLIDATION_PLAN: MemoryConsolidationPlan = Object.freeze({
+  entries: Object.freeze([]),
+  rejectedSensitive: 0,
+});
 
-const TOOL_FAILURE_PATTERN = /(?:Error|FAIL|错误)[：:]\s*(.+?)(?:\n|$)/i;
+function normalizeEntry(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
 
-/**
- * 从即将被压缩的消息中提取值得记住的 learnings
- */
-export function extractLearnings(messages: Message[]): Map<string, string[]> {
-  const learnings = new Map<string, string[]>();
+function truncateCodePoints(value: string, limit: number): string {
+  return [...value].slice(0, Math.max(0, limit)).join('');
+}
 
-  for (const msg of messages) {
-    if (!msg.content || typeof msg.content !== 'string') continue;
-    const content = msg.content;
+function memoryErrorCategory(error: unknown): string {
+  if (!(error instanceof Error)) return 'UnknownError:unknown';
+  const coded = error as Error & { code?: unknown };
+  const code =
+    typeof coded.code === 'string' && SAFE_MEMORY_ERROR_CODES.has(coded.code)
+      ? coded.code
+      : 'unknown';
+  const name = ['Error', 'TypeError', 'RangeError'].includes(error.name)
+    ? error.name
+    : 'Error';
+  return `${name}:${code}`;
+}
 
-    // 1. 检查用户标记的明确记忆
-    if (msg.role === 'user') {
-      for (const { pattern, topic } of PATTERN_MARKERS) {
-        const match = content.match(pattern);
-        if (match?.[1]) {
-          const items = learnings.get(topic) ?? [];
-          items.push(match[1].trim());
-          learnings.set(topic, items);
+export function planMemoryConsolidation(
+  messages: readonly Message[]
+): MemoryConsolidationPlan {
+  const entries: MemoryConsolidationEntry[] = [];
+  const seen = new Set<string>();
+  let rejectedSensitive = 0;
+  let totalChars = 0;
+
+  const addCandidate = (topic: MemoryConsolidationTopic, rawContent: string): void => {
+    if (entries.length >= MAX_MEMORY_CONSOLIDATION_ENTRIES) return;
+    const normalized = normalizeEntry(rawContent);
+    if (!normalized) return;
+    if (!classifyMemoryContent(normalized).safe) {
+      rejectedSensitive++;
+      return;
+    }
+    const remainingChars = MAX_MEMORY_CONSOLIDATION_TOTAL_CHARS - totalChars;
+    if (remainingChars <= 0) return;
+    const content = truncateCodePoints(
+      normalized,
+      Math.min(MAX_MEMORY_CONSOLIDATION_ENTRY_CHARS, remainingChars)
+    );
+    if (!content) return;
+    const key = `${topic}\0${content}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    entries.push({ topic, content });
+    totalChars += [...content].length;
+  };
+
+  for (const message of messages) {
+    if (typeof message.content !== 'string') continue;
+    if (message.role === 'user') {
+      for (const { pattern, topic } of USER_PATTERNS) {
+        pattern.lastIndex = 0;
+        for (const match of message.content.matchAll(pattern)) {
+          if (match[1]) addCandidate(topic, match[1]);
         }
       }
-    }
-
-    // 2. 提取错误修复模式（从 assistant 消息）
-    if (msg.role === 'assistant') {
-      const errMatch = content.match(ERROR_RESOLUTION_PATTERN);
-      if (errMatch?.[1] && errMatch[1].length > 20 && errMatch[1].length < 200) {
-        const items = learnings.get('debugging') ?? [];
-        items.push(errMatch[1].trim());
-        learnings.set('debugging', items);
-      }
-    }
-
-    // 3. 提取重复失败的工具调用模式
-    if (msg.role === 'tool' && msg.content?.includes('Error')) {
-      const toolMatch = content.match(TOOL_FAILURE_PATTERN);
-      if (toolMatch?.[1] && toolMatch[1].length > 10) {
-        const items = learnings.get('debugging') ?? [];
-        if (items.length < 5) {
-          items.push(`Tool error pattern: ${toolMatch[1].trim().slice(0, 150)}`);
-          learnings.set('debugging', items);
+    } else if (message.role === 'assistant') {
+      RESOLVED_PROBLEM_PATTERN.lastIndex = 0;
+      for (const match of message.content.matchAll(RESOLVED_PROBLEM_PATTERN)) {
+        const candidate = match[1];
+        if (candidate && [...normalizeEntry(candidate)].length > 20) {
+          addCandidate('debugging', candidate);
         }
       }
     }
   }
 
-  return learnings;
+  return { entries, rejectedSensitive };
 }
 
-/**
- * 在压缩后执行记忆巩固（非阻塞）
- */
-export async function consolidateAfterCompaction(
-  discardedMessages: Message[]
-): Promise<ConsolidationResult> {
-  const learnings = extractLearnings(discardedMessages);
-  if (learnings.size === 0) {
-    return { extracted: 0, topics: [] };
+export async function commitMemoryConsolidation(
+  plan: MemoryConsolidationPlan,
+  options: MemoryConsolidationCommitOptions
+): Promise<MemoryConsolidationProjection> {
+  if (options.workspaceAccess === 'none' || process.env.BLADE_AUTO_MEMORY === '0') {
+    return { outcome: 'disabled', entries: 0, topics: [] };
+  }
+  if (plan.entries.length === 0) {
+    return { outcome: 'nothing_to_store', entries: 0, topics: [] };
+  }
+
+  const entriesByTopic = new Map<string, string[]>();
+  for (const entry of plan.entries) {
+    const topicEntries = entriesByTopic.get(entry.topic) ?? [];
+    topicEntries.push(entry.content);
+    entriesByTopic.set(entry.topic, topicEntries);
   }
 
   try {
-    const manager = new AutoMemoryManager(getCwd());
-    await manager.initialize();
-
-    const topics: string[] = [];
-    let total = 0;
-
-    for (const [topic, items] of learnings) {
-      if (items.length === 0) continue;
-      const timestamp = new Date().toISOString().split('T')[0];
-      const entry = items.map((item) => `- [${timestamp}] ${item}`).join('\n');
-      await manager.writeTopic(topic, entry + '\n', 'append');
-      topics.push(topic);
-      total += items.length;
+    const manager = new AutoMemoryManager(options.workspaceRoot);
+    const result = await manager.appendUniqueEntries(entriesByTopic);
+    if (result.written === 0) {
+      return { outcome: 'nothing_to_store', entries: 0, topics: [] };
     }
-
-    return { extracted: total, topics };
-  } catch {
-    return { extracted: 0, topics: [] };
+    return {
+      outcome: 'written',
+      entries: result.written,
+      topics: result.topics,
+    };
+  } catch (error) {
+    logger.warn(
+      `[MemoryConsolidation] memory commit failed (${memoryErrorCategory(error)})`
+    );
+    return { outcome: 'failed', entries: 0, topics: [] };
   }
+}
+
+/** Compatibility helper for internal callers migrating to the plan API. */
+export function extractLearnings(messages: Message[]): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  for (const entry of planMemoryConsolidation(messages).entries) {
+    const values = result.get(entry.topic) ?? [];
+    values.push(entry.content);
+    result.set(entry.topic, values);
+  }
+  return result;
+}
+
+export async function consolidateAfterCompaction(
+  discardedMessages: Message[],
+  options: MemoryConsolidationCommitOptions
+): Promise<MemoryConsolidationProjection> {
+  return commitMemoryConsolidation(planMemoryConsolidation(discardedMessages), options);
 }
