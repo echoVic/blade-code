@@ -3789,6 +3789,45 @@ describe('AcpSession', () => {
       ]);
     });
 
+    it('suppresses duplicate Runtime Bus turn activity revisions', async () => {
+      const activity: TurnActivityProjection = {
+        version: 1,
+        generation: 'activity-1',
+        revision: 1,
+        snapshot: {
+          phase: 'thinking',
+          startedAt: 1_000,
+          updatedAt: 2_000,
+          turn: 1,
+          maxTurns: 20,
+          outputStarted: false,
+          toolCallsStarted: 0,
+          toolCallsCompleted: 0,
+          activeTools: [],
+          activeToolOverflow: 0,
+        },
+      };
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        const ref = { sessionId: 'test-session-id', projectPath: '/tmp/test' };
+        Bus.publish(ref, 'turn.activity', { activity });
+        Bus.publish(ref, 'turn.activity', { activity });
+        yield { kind: 'turn_activity', activity } as LoopEvent;
+        return { success: true, finalMessage: 'done' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'show progress' }],
+      });
+
+      expect(
+        mockConnection.sessionUpdates.filter(
+          ({ update }) => update._meta?.['blade/turnActivity'] !== undefined
+        )
+      ).toHaveLength(1);
+    });
+
     it('projects Provider circuit lifecycle through ACP metadata only', async () => {
       const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {

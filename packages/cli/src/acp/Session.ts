@@ -341,6 +341,8 @@ export class AcpSession {
   private pendingResumeNextDelayMs: number | null = null;
   private availableCommandsTimer: ReturnType<typeof setTimeout> | null = null;
   private taskStatusUnsubscribe?: () => void;
+  private lastTurnActivityGeneration?: string;
+  private lastTurnActivityRevision = -1;
   private destroyed = false;
   private destroyFinished = false;
   private destroyPromise?: Promise<void>;
@@ -3162,6 +3164,14 @@ export class AcpSession {
   private sendTurnActivityProjection(snapshot: unknown): void {
     const parsed = TurnActivityProjectionSchema.safeParse(snapshot);
     if (!parsed.success) return;
+    if (
+      parsed.data.generation === this.lastTurnActivityGeneration &&
+      parsed.data.revision <= this.lastTurnActivityRevision
+    ) {
+      return;
+    }
+    this.lastTurnActivityGeneration = parsed.data.generation;
+    this.lastTurnActivityRevision = parsed.data.revision;
     this.sendUpdate({
       sessionUpdate: 'session_info_update',
       updatedAt: new Date().toISOString(),
