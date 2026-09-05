@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.134] - 2026-09-05
+
+### 新增
+- 新增 authoritative durable follow-up queue：提供有界 preview、不可变 internal barrier、精确 version token、重启安全顺序，以及带乐观并发控制的删除与移动操作。
+- 重点建设两个主要用户表面：TUI 在活动回合中提供带完整键盘导航的 `/queue` 面板，Web 提供可访问按钮、drag reorder、reload 恢复和 stale-state 提示。
+- 新增兼容标准的只读 ACP 队列生命周期投影，只包含 version 与聚合计数，不声明自定义 mutation capability。
+
+### 修复
+- 阻止 pending follow-up 在 `steering_applied` 前显示为已提交 transcript 消息，并避免删除待处理项后留下 ghost user message。
+- 使用进程内锁和文件锁串行化跨实例 inbox 写入，并通过原子替换、owner epoch fence、exact Session identity 与 fail-closed storage error 保证一致性。
+- 保留普通取消语义：停止活动回合不会把 `session/cancel` 重新解释为删除队列。
+
+### 测试
+- 新增 Runtime、持久化、HTTP/SSE、Web、TUI 与 ACP 的确定性覆盖，验证迁移、竞态、stale version、不可变 barrier、重启恢复和 metadata 隐私。
+- 使用 `deepseek-v4-flash` 与 `deepseek-v4-pro` 验证 production Web、raw-PTY TUI 和真实 SDK ACP；framework retry 为 `0`、model `maxRetries=0`，每条轨迹包含 1 个 setup request 与 1 个 queue-consumption request，并验证精确保留顺序、删除 marker 不出现、有界清理和零 credential 泄漏。
+
 ## [0.10.133] - 2026-09-04
 
 ### 新增

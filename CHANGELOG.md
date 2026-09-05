@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.134] - 2026-09-05
+
+### Added
+- Added an authoritative durable follow-up queue with bounded previews, immutable internal barriers, exact version tokens, restart-safe ordering, and optimistic-concurrency remove and move operations.
+- Added first-class queue controls to both primary user surfaces: an active-turn TUI `/queue` panel with keyboard navigation and an accessible Web panel with buttons, drag reordering, reload recovery, and stale-state feedback.
+- Added a standards-compatible, read-only ACP queue lifecycle projection containing only version and aggregate counts, without advertising a custom mutation capability.
+
+### Fixed
+- Prevented pending follow-ups from appearing as committed transcript messages before `steering_applied`, and kept deleted entries from leaving ghost user messages.
+- Serialized cross-instance inbox writes with process-local and file locks, atomic replacement, owner-epoch fencing, exact Session identity checks, and fail-closed storage errors.
+- Preserved ordinary cancellation semantics: stopping an active turn does not reinterpret `session/cancel` as queue deletion.
+
+### Tests
+- Added deterministic Runtime, persistence, HTTP/SSE, Web, TUI, and ACP coverage for migration, races, stale versions, immutable boundaries, restart recovery, and metadata privacy.
+- Qualified production Web, raw-PTY TUI, and real SDK ACP surfaces with `deepseek-v4-flash` and `deepseek-v4-pro`, framework retry `0`, model `maxRetries=0`, one setup plus one queue-consumption request per trajectory, exact retained order, deleted-marker absence, bounded cleanup, and no credential leaks.
+
 ## [0.10.133] - 2026-09-04
 
 ### Added
