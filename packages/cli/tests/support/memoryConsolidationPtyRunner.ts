@@ -69,6 +69,9 @@ function signalTerminalTree(
 
 async function main(): Promise<void> {
   const input = loadInput();
+  process.env.HOME = input.home;
+  process.env.BLADE_STORAGE_ROOT = input.storageRoot;
+  process.env.BLADE_AUTO_MEMORY = '1';
   const finalMarker = new ArmedPtyMarkerLatch(input.marker);
   const discoveryMarker = new ArmedPtyMarkerLatch(input.discoveryMarker);
   const secret = new ArmedPtyMarkerLatch(input.secret);
