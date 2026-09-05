@@ -50,6 +50,7 @@ const sessionState = vi.hoisted(() => ({
     timeoutMs: number;
   } | null,
   providerRecovery: null as import('@api/schemas').ProviderRecoveryProjection | null,
+  turnActivity: null as import('@api/schemas').TurnActivityProjection | null,
   pendingResume: null as {
     phase: 'retry_scheduled';
     kind: 'pending_input';
@@ -91,6 +92,7 @@ describe('StatusBar', () => {
     sessionState.providerCircuit = null;
     sessionState.providerStall = null;
     sessionState.providerRecovery = null;
+    sessionState.turnActivity = null;
     sessionState.pendingResume = null;
     sessionState.actionStationarity = null;
     sessionState.turnRecovery = null;
@@ -125,6 +127,31 @@ describe('StatusBar', () => {
     });
 
     expect(container.textContent).toContain('Compacting context...');
+    expect(container.textContent).not.toContain('Generating...');
+  });
+
+  it('does not duplicate a phase owned by the turn activity strip', () => {
+    sessionState.agentPhase = 'running';
+    sessionState.turnActivity = {
+      version: 1,
+      generation: 'activity-1',
+      revision: 1,
+      snapshot: {
+        phase: 'thinking',
+        startedAt: 1_000,
+        updatedAt: 2_000,
+        turn: 1,
+        maxTurns: 20,
+        outputStarted: false,
+        toolCallsStarted: 0,
+        toolCallsCompleted: 0,
+        activeTools: [],
+        activeToolOverflow: 0,
+      },
+    };
+
+    act(() => root.render(<StatusBar />));
+
     expect(container.textContent).not.toContain('Generating...');
   });
 

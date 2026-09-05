@@ -157,6 +157,21 @@ describe('ChatView session event recovery', () => {
       });
     });
     expect(container.querySelector('[data-testid="turn-activity-strip"]')).toBeNull();
+
+    act(() => {
+      useSessionStore.setState({
+        providerRecovery: null,
+        actionStationarity: {
+          phase: 'detected',
+          toolName: 'Bash',
+          runLength: 8,
+          nudgeThreshold: 8,
+          haltThreshold: 16,
+          progressAware: true,
+        },
+      });
+    });
+    expect(container.querySelector('[data-testid="turn-activity-strip"]')).toBeNull();
   });
 
   afterEach(() => {

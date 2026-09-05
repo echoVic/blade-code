@@ -10,8 +10,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { type TranslationKey, useT } from '@/i18n';
-import { cn } from '@/lib/utils';
 import { presentProviderRecovery } from '@/lib/providerRecoveryPresentation';
+import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/store/session';
 
 const PHASE_LABEL_KEYS: Record<string, TranslationKey | ''> = {
@@ -52,6 +52,7 @@ export function StatusBar() {
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const agentPhase = useSessionStore((state) => state.agentPhase);
   const providerRecovery = useSessionStore((state) => state.providerRecovery);
+  const turnActivity = useSessionStore((state) => state.turnActivity);
   const pendingResume = useSessionStore((state) => state.pendingResume);
   const actionStationarity = useSessionStore((state) => state.actionStationarity);
   const turnRecovery = useSessionStore((state) => state.turnRecovery);
@@ -234,7 +235,10 @@ export function StatusBar() {
 
       <div className="flex-1" />
 
-      {(recoveryLabel || (isStreaming && phaseLabel)) && (
+      {(recoveryLabel ||
+        (isStreaming &&
+          phaseLabel &&
+          (!turnActivity?.snapshot || actionStationarity))) && (
         <div className="flex min-w-0 items-center gap-2">
           <span
             className={cn(
