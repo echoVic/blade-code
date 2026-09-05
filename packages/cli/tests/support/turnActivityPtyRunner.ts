@@ -108,7 +108,6 @@ async function main(): Promise<void> {
   let sawThinking = false;
   let sawTool = false;
   let releasedTool = false;
-  let completionReadyMarkerSeen = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit((event) => {
       exited = true;
@@ -119,9 +118,6 @@ async function main(): Promise<void> {
   terminal.onData((chunk) => {
     markerLatch.observe(chunk);
     secretLatch.observe(chunk);
-    if (markerLatch.seen && chunk.includes(handshake.marker)) {
-      completionReadyMarkerSeen = true;
-    }
     output = appendBoundedPtyEvidence(output, chunk, 128_000);
     plainOutput = appendBoundedPtyEvidence(
       plainOutput,
@@ -154,7 +150,9 @@ async function main(): Promise<void> {
       await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
     }
     await waitFor(
-      () => markerLatch.seen && completionReadyMarkerSeen,
+      () =>
+        markerLatch.seen &&
+        plainOutput.lastIndexOf('yolo mode on') > plainOutput.lastIndexOf(input.marker),
       'Turn activity TUI did not complete and return to the composer',
       60_000
     );
