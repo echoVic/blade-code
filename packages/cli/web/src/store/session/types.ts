@@ -44,6 +44,7 @@ export type {
   MessageContent,
   MessageContentPart,
   PermissionMode,
+  ProviderRecoveryProjection,
   SendMessagePayload,
   Session,
   SessionRef,
