@@ -11,6 +11,7 @@ import {
 
 export * from './sessionSurfaceSchemas.js';
 export * from './followUpQueueSchemas.js';
+export * from './providerRecoverySchemas.js';
 
 import { MAX_SIDE_QUESTION_CHARS } from './sideConversation.js';
 
