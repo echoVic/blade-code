@@ -165,6 +165,29 @@ export class Agent {
     }
   }
 
+  private async *observeTurnActivity(
+    stream: AsyncGenerator<LoopEvent, LoopResult, void>,
+    runtime: SessionRuntime,
+    generation: ReturnType<SessionRuntime['beginTurnActivity']>
+  ): AsyncGenerator<LoopEvent, LoopResult, void> {
+    try {
+      while (true) {
+        const step = await stream.next();
+        if (step.done) return step.value;
+        const event = step.value;
+        const activity = runtime.observeTurnActivity(generation, event);
+        yield event;
+        if (activity) yield { kind: 'turn_activity', activity };
+      }
+    } finally {
+      await stream.return?.({
+        success: false,
+        error: { type: 'aborted', message: 'Turn activity observer closed' },
+        metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
+      });
+    }
+  }
+
   constructor(
     config: BladeConfig,
     runtimeOptions: AgentOptions = {},
@@ -466,6 +489,7 @@ export class Agent {
       let admissionPermit: TaskRunPermit | undefined;
       let ownsAdmission = false;
       let settled = false;
+      const turnActivityGeneration = runtime.beginTurnActivity();
       const providerRecoveryGeneration = runtime.beginProviderRecovery();
       const releaseOwnedAdmission = (
         taskStatus: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
@@ -542,11 +566,19 @@ export class Agent {
         }
 
         await runtime.setTaskStatus('running');
-        const result = yield* this.observeProviderRecovery(
-          this.chatStreamInternal(message, activeContext, options),
+        const result = yield* this.observeTurnActivity(
+          this.observeProviderRecovery(
+            this.chatStreamInternal(message, activeContext, options),
+            runtime,
+            providerRecoveryGeneration
+          ),
           runtime,
-          providerRecoveryGeneration
+          turnActivityGeneration
         );
+        const activityClear = runtime.clearTurnActivity(turnActivityGeneration);
+        if (activityClear) {
+          yield { kind: 'turn_activity', activity: activityClear };
+        }
         const recoveryClear = runtime.clearProviderRecovery(providerRecoveryGeneration);
         if (recoveryClear) {
           yield { kind: 'provider_recovery', recovery: recoveryClear };
@@ -574,6 +606,10 @@ export class Agent {
         releaseOwnedAdmission(status);
         return result;
       } catch (error) {
+        const activityClear = runtime.clearTurnActivity(turnActivityGeneration);
+        if (activityClear) {
+          yield { kind: 'turn_activity', activity: activityClear };
+        }
         const recoveryClear = runtime.clearProviderRecovery(providerRecoveryGeneration);
         if (recoveryClear) {
           yield { kind: 'provider_recovery', recovery: recoveryClear };
@@ -588,6 +624,7 @@ export class Agent {
         releaseOwnedAdmission(status);
         throw error;
       } finally {
+        runtime.clearTurnActivity(turnActivityGeneration);
         runtime.clearProviderRecovery(providerRecoveryGeneration);
         if (!settled) {
           await runtime

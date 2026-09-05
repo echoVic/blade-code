@@ -65,6 +65,7 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
 
 function createGoalRuntimeMocks() {
   const providerRecoveryGeneration = { id: 'provider-recovery-generation' };
+  const turnActivityGeneration = { id: 'turn-activity-generation' };
   return {
     getAgentResources: vi.fn(() => ({
       projectRoot: process.cwd(),
@@ -104,6 +105,9 @@ function createGoalRuntimeMocks() {
     beginProviderRecovery: vi.fn(() => providerRecoveryGeneration),
     observeProviderRecovery: vi.fn(() => undefined),
     clearProviderRecovery: vi.fn(() => undefined),
+    beginTurnActivity: vi.fn(() => turnActivityGeneration),
+    observeTurnActivity: vi.fn(() => undefined),
+    clearTurnActivity: vi.fn(() => undefined),
   };
 }
 
@@ -129,6 +133,106 @@ describe('Agent.create', () => {
 });
 
 describe('Agent runLoop system prompt injection', () => {
+  it('publishes active turn updates and a terminal clear', async () => {
+    const turnHandle = { id: 'turn-activity-turn' };
+    const generation = { id: 'turn-activity-generation' };
+    const activity = {
+      version: 1 as const,
+      generation: generation.id,
+      revision: 1,
+      snapshot: {
+        phase: 'thinking' as const,
+        startedAt: 1_000,
+        updatedAt: 1_001,
+        turn: 1,
+        maxTurns: 20,
+        outputStarted: false,
+        toolCallsStarted: 0,
+        toolCallsCompleted: 0,
+        activeTools: [],
+        activeToolOverflow: 0,
+      },
+    };
+    const clear = {
+      version: 1 as const,
+      generation: generation.id,
+      revision: 2,
+      snapshot: null,
+    };
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      beginTurnActivity: vi.fn(() => generation),
+      observeTurnActivity: vi.fn((_generation, event: { kind: string }) =>
+        event.kind === 'turn_start' ? activity : undefined
+      ),
+      clearTurnActivity: vi.fn(() => clear),
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: turnHandle,
+        messageId: 'turn-activity-input',
+        queued: 1,
+        mode: 'direct',
+      })),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      { getRegistry: () => ({ getAll: () => [] }) } as unknown as ToolExecutor,
+      runtime as unknown as SessionRuntime
+    );
+    const testAgent = agent as unknown as {
+      isInitialized: boolean;
+      processAtMentionsForContent: (message: string) => Promise<string>;
+      runLoop: () => AsyncGenerator<
+        { kind: 'turn_start'; turn: number; maxTurns: number },
+        {
+          success: true;
+          finalMessage: string;
+          metadata: { turnsCount: number; toolCallsCount: number; duration: number };
+        },
+        void
+      >;
+    };
+    testAgent.isInitialized = true;
+    testAgent.processAtMentionsForContent = vi.fn(async () => 'work');
+    testAgent.runLoop = vi.fn(async function* () {
+      yield { kind: 'turn_start' as const, turn: 1, maxTurns: 20 };
+      return {
+        success: true as const,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const { events, result } = await drainAgentStream(
+      agent.chatStream('work', {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: process.cwd(),
+      })
+    );
+
+    expect(result).toMatchObject({ success: true });
+    expect(events).toContainEqual({
+      kind: 'turn_activity',
+      activity,
+    });
+    expect(events.at(-1)).toEqual({
+      kind: 'turn_activity',
+      activity: clear,
+    });
+    expect(runtime.beginTurnActivity).toHaveBeenCalledOnce();
+    expect(runtime.observeTurnActivity).toHaveBeenCalledWith(
+      generation,
+      expect.objectContaining({ kind: 'turn_start' })
+    );
+    expect(runtime.clearTurnActivity).toHaveBeenCalledWith(generation);
+  });
+
   it('publishes unified Provider recovery updates and a terminal clear', async () => {
     const turnHandle = { id: 'provider-recovery-turn' };
     const generation = { id: 'provider-recovery-generation' };
@@ -1275,6 +1379,9 @@ describe('Agent runLoop system prompt injection', () => {
     );
     expect(runtime.clearProviderRecovery).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'provider-recovery-generation' })
+    );
+    expect(runtime.clearTurnActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'turn-activity-generation' })
     );
     expect(loopClosed).toBe(true);
   });
