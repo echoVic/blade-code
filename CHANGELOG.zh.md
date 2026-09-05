@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.137] - 2026-09-05
+
+### 新增
+- 新增由 Runtime 统一持有、带 generation/revision fence 的 Provider 恢复投影，覆盖准入等待、重试、共享熔断、输出停滞和 typed 跨模型 fallback。
+- 重点建设两个主要用户表面：TUI 提供有界 loading/status 摘要与 Esc 提示，Web 在 composer 上方提供可访问恢复 banner 并复用既有 Stop 操作。
+- 新增 Web SSE 重连安全 hydration、ACP `blade/providerRecovery` metadata、封闭 schema 的 Headless JSONL 事件，以及所有入口一致的净化 fallback source/target identity。
+- 新增双语 reference 与 qualification evidence，记录 lifecycle、隐私、重放、清理、GUI、TUI、ACP 与 Headless 契约。
+
+### 修复
+- 阻止旧 generation、旧 revision 和未锚定的迟到 Web live 事件在终态清理或新 run 后复活恢复 UI。
+- 在输出推进、完成、失败、取消、Session 替换、rewind、consumer 关闭和 Runtime dispose 时一致清理恢复状态，同时让多轮 Agent 执行共享同一个 generation。
+- 保留绝对 retry deadline 与 waiting heartbeat，非法投影 fail closed，async generator 关闭会传播到底层 stream，旧 `model.fallback` 事件也不会覆盖权威 snapshot。
+
+### 测试
+- 新增 TypeBox、Runtime、Agent、TUI、Web、SSE、ACP、Headless、lifecycle、stale event 和隐私的确定性覆盖，并通过全仓 build、type-check、lint、test 与 performance 门禁。
+- 使用 `deepseek-v4-flash` 和 `deepseek-v4-pro` 在 Headless、真实 ACP、raw PTY TUI 与 production Chromium Web 完成 `8/8` 真实 API 矩阵，包含恢复中 Web reload hydration 与终态 clear。
+- 完成真实 Claude 到 GPT 的 pre-output fallback 验证，确认 typed identity 精确、credential channel 独立且不泄露 secret。
+
 ## [0.10.136] - 2026-09-05
 
 ### 修复

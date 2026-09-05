@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.137] - 2026-09-05
+
+### Added
+- Added one Runtime-owned, generation- and revision-fenced Provider recovery projection for admission waits, retries, shared circuit state, stream stalls, and typed cross-model fallback.
+- Added actionable recovery presentation to both primary user surfaces: a bounded TUI loading/status summary with Esc guidance and an accessible Web banner above the composer with the existing Stop action.
+- Added reconnect-safe Web SSE hydration, ACP `blade/providerRecovery` metadata, closed-schema Headless JSONL events, and sanitized fallback source/target identity across every entrypoint.
+- Added bilingual reference and qualification-evidence documentation for lifecycle, privacy, replay, cleanup, GUI, TUI, ACP, and Headless contracts.
+
+### Fixed
+- Prevented stale generations, old revisions, and unanchored late live Web events from reviving recovery UI after terminal cleanup or a newer run.
+- Cleared recovery state consistently on output progress, completion, failure, cancellation, Session replacement, rewind, consumer close, and Runtime disposal while preserving one generation across multi-turn Agent execution.
+- Preserved absolute retry deadlines and waiting heartbeats, failed closed on invalid projections, propagated async-generator close to the underlying stream, and kept legacy `model.fallback` events from overwriting the authoritative snapshot.
+
+### Tests
+- Added deterministic TypeBox, Runtime, Agent, TUI, Web, SSE, ACP, Headless, lifecycle, stale-event, and privacy coverage; completed the full repository build, type-check, lint, test, and performance gates.
+- Qualified `deepseek-v4-flash` and `deepseek-v4-pro` across Headless, real ACP, raw PTY TUI, and production Chromium Web with an `8/8` real-API matrix, including in-progress Web reload hydration and terminal clear.
+- Qualified a real Claude-to-GPT pre-output fallback with exact typed identity, independent credential channels, and no secret exposure.
+
 ## [0.10.136] - 2026-09-05
 
 ### Fixed
