@@ -2296,6 +2296,85 @@ describe('sessionSlice multimodal sendMessage', () => {
     }
   });
 
+  it('projects an authoritative Provider recovery snapshot before SSE readiness', async () => {
+    class RecoveryEventSource {
+      static instance: RecoveryEventSource | undefined;
+      static readonly CLOSED = 2;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readyState = 0;
+
+      constructor(readonly url: string) {
+        RecoveryEventSource.instance = this;
+      }
+
+      close(): void {
+        this.readyState = RecoveryEventSource.CLOSED;
+      }
+    }
+    const previousDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'EventSource'
+    );
+    Object.defineProperty(globalThis, 'EventSource', {
+      configurable: true,
+      writable: true,
+      value: RecoveryEventSource,
+    });
+    const onEvent = vi.fn();
+    const recovery = {
+      version: 1,
+      generation: 'generation-1',
+      revision: 2,
+      snapshot: {
+        activity: 'retry_wait',
+        reason: 'rate_limit',
+        updatedAt: 1_000,
+        nextActionAt: 3_000,
+        retry: { attempt: 1, maxRetries: 12, delayMs: 2_000 },
+      },
+    };
+    const actual = await vi.importActual<
+      typeof import('../../../src/services/sessionService')
+    >('../../../src/services/sessionService');
+
+    try {
+      const ready = actual.sessionService.openEventSubscription(
+        createRef('recovery-connected', '/tmp/recovery-connected'),
+        onEvent
+      );
+      RecoveryEventSource.instance?.onmessage?.({
+        data: JSON.stringify({
+          type: 'connected',
+          properties: {
+            sessionId: 'recovery-connected',
+            projectPath: '/tmp/recovery-connected',
+            status: 'running',
+            providerRecovery: recovery,
+          },
+        }),
+      });
+      const unsubscribe = await ready;
+      expect(onEvent).toHaveBeenNthCalledWith(2, {
+        type: 'provider.recovery',
+        properties: {
+          sessionId: 'recovery-connected',
+          projectPath: '/tmp/recovery-connected',
+          recovery,
+          authoritative: true,
+        },
+      });
+      unsubscribe();
+    } finally {
+      if (previousDescriptor) {
+        Object.defineProperty(globalThis, 'EventSource', previousDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, 'EventSource');
+      }
+    }
+  });
+
   it('calls all V2 surface routes with opaque locators and validates responses', async () => {
     const locator: SessionLocatorV2 = {
       version: 2,
