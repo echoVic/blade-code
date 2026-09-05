@@ -710,5 +710,3 @@ The `git tag -a` command must create an annotated tag. Do not run a release scri
 Release existence, `npm view blade-code version` equals `0.10.134`, and
 `npm view blade-code@0.10.134 gitHead` equals the tagged commit. Never move or rewrite a
 pushed tag.
-
-
