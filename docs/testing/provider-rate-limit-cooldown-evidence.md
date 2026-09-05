@@ -51,6 +51,10 @@ Edit、精确 Bash 验证、最终 marker、文件 diff 范围及无 secret/priv
 轨迹的 attempt 断言。修正为首个 429 的 `attempt=1` 与 circuit-first recovery 投影后，
 在 release 模式关闭框架重跑，完整八格一次通过。
 
+发布前复验第一次在高负载下捕获到 raw PTY 未绘制短暂 probe 的竞态；同一测试在此前
+确定性三轮与 coverage 中均通过。fixture 因此在首个 probe 上游响应前增加 1 秒观察窗，
+不改变产品代码或冷却时长。修正后 raw PTY 定向连续三次通过。
+
 ## 最终门禁
 
 在实现与文档 HEAD `d28fdcd28085b1940b87101200f0ebd29565dc50` 上取得：

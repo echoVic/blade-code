@@ -54,6 +54,12 @@ still carried attempt assertions from the older four-503 trajectory. After chang
 contract to `attempt=1` and circuit-first recovery projection, the complete eight-cell
 matrix passed once with framework retries disabled in release mode.
 
+The first pre-tag rerun then caught a raw-PTY race under full-suite load: the probe
+could complete before the TUI painted that short-lived state, although the same test
+had passed the earlier three deterministic runs and coverage. The fixture now holds
+the first probe response for a one-second observation window without changing product
+code or cooldown duration. Three focused raw-PTY reruns passed after that correction.
+
 ## Final Gates
 
 Evidence collected at implementation-and-documentation HEAD

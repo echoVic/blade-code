@@ -33,6 +33,7 @@ const ptyRunner = path.resolve(
   '../support/foregroundProviderRecoveryPtyRunner.ts'
 );
 const cooldownMs = 5_000;
+const probeObservationMs = 1_000;
 const roots: string[] = [];
 let createHttpServer: typeof import('node:http').createServer;
 
@@ -258,6 +259,9 @@ async function startProvider(
           })
         );
         return;
+      }
+      if (requests === 2) {
+        await new Promise((resolve) => setTimeout(resolve, probeObservationMs));
       }
       const text = body.toString('utf8');
       if (text.includes('SECONDARY_COOLDOWN_SESSION')) {
