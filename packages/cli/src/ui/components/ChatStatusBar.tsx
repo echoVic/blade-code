@@ -15,6 +15,7 @@ import {
   useIsReady,
   usePermissionMode,
   usePromptCacheHitRate,
+  useProviderRecovery,
   useReasoningEffort,
   useRecoveredSteeringCount,
   useResponseVerbosity,
@@ -28,6 +29,7 @@ import {
 } from '../../store/selectors/index.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
 import { useGitBranch } from '../hooks/useGitBranch.js';
+import { formatProviderRecoveryPresentation } from '../utils/providerRecoveryPresentation.js';
 
 /**
  * 聊天状态栏组件
@@ -55,12 +57,14 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const communicationStyle = useCommunicationStyle();
   const sessionCost = useSessionCost();
   const promptCacheHitRate = usePromptCacheHitRate();
+  const providerRecovery = useProviderRecovery();
   const followUpQueue = useFollowUpQueue();
   const recoveredSteeringCount = useRecoveredSteeringCount();
   const taskAttentionStatus = useTaskAttentionStatus();
   const taskAttentionUnreadKeys = useTaskAttentionUnreadKeys();
   const sessionId = useSessionId();
   const [goal, setGoal] = useState<GoalSnapshot | null>(null);
+  const recoveryPresentation = formatProviderRecoveryPresentation(providerRecovery);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,6 +238,12 @@ export const ChatStatusBar: React.FC = React.memo(() => {
               </>
             )}
             {currentModel && <Text color="gray">{currentModel.model}</Text>}
+            {recoveryPresentation && (
+              <>
+                <Text color="gray">·</Text>
+                <Text color="yellow">{recoveryPresentation.compact}</Text>
+              </>
+            )}
             <Text color="gray">·</Text>
             {isCompacting ? (
               <Text color="yellow">压缩中...</Text>

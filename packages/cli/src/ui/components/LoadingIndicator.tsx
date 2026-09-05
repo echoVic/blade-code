@@ -12,14 +12,12 @@ import {
   useActionStationarity,
   useIsProcessing,
   useIsReady,
-  useProviderAdmission,
-  useProviderCircuit,
-  useProviderRetry,
-  useProviderStall,
+  useProviderRecovery,
   useTheme,
 } from '../../store/selectors/index.js';
 import { useLoadingIndicator } from '../hooks/useLoadingIndicator.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
+import { formatProviderRecoveryPresentation } from '../utils/providerRecoveryPresentation.js';
 
 interface LoadingIndicatorProps {
   message?: string; // 自定义消息（中性/真实动作文案优先）
@@ -62,14 +60,12 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     // 使用 Zustand selectors 获取状态
     const isProcessing = useIsProcessing();
     const isReady = useIsReady();
-    const providerAdmission = useProviderAdmission();
-    const providerCircuit = useProviderCircuit();
-    const providerRetry = useProviderRetry();
-    const providerStall = useProviderStall();
+    const providerRecovery = useProviderRecovery();
     const actionStationarity = useActionStationarity();
     const visible = isProcessing || !isReady;
 
     const [spinnerFrame, setSpinnerFrame] = useState(0);
+    const [clock, setClock] = useState(Date.now());
     const theme = useTheme();
 
     // 使用 useTerminalWidth hook 获取终端宽度
@@ -99,51 +95,22 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
       return () => clearInterval(timer);
     }, [visible, paused]);
 
+    useEffect(() => {
+      if (!providerRecovery?.snapshot?.nextActionAt || paused) return;
+      setClock(Date.now());
+      const timer = setInterval(() => setClock(Date.now()), 1_000);
+      return () => clearInterval(timer);
+    }, [paused, providerRecovery?.snapshot?.nextActionAt]);
+
     if (!visible) {
       return null;
     }
 
     // 显示优先级：message（中性/真实动作）> currentPhrase（趣味短语）
-    const retryMessage =
-      providerRetry?.mode === 'bounded_foreground'
-        ? `Provider 暂时不可用，正在有界恢复 (${providerRetry.attempt}/${providerRetry.maxRetries})，剩余约 ${formatElapsedTime(
-            Math.max(0, Math.ceil((providerRetry.recoveryRemainingMs ?? 0) / 1_000))
-          )}`
-        : providerRetry?.phase === 'scheduled'
-          ? `Provider 暂时不可用，${providerRetry.attempt}/${providerRetry.maxRetries} 次重试将在 ${Math.max(0, Math.ceil((providerRetry.delayMs ?? 0) / 1000))}s 后开始`
-          : providerRetry?.phase === 'attempt'
-            ? `正在重试 Provider (${providerRetry.attempt}/${providerRetry.maxRetries})`
-            : null;
-    const circuitMessage = providerCircuit
-      ? providerCircuit.phase === 'probe'
-        ? 'Provider 正在执行唯一恢复探测'
-        : `Provider 故障已隔离，等待恢复探测${
-            providerCircuit.retryAfterMs !== undefined
-              ? ` (${formatElapsedTime(
-                  Math.max(0, Math.ceil(providerCircuit.retryAfterMs / 1_000))
-                )})`
-              : ''
-          }${
-            providerCircuit.recoveryRemainingMs !== undefined
-              ? `，剩余预算 ${formatElapsedTime(
-                  Math.max(0, Math.ceil(providerCircuit.recoveryRemainingMs / 1_000))
-                )}`
-              : ''
-          }`
-      : null;
-    const admissionMessage = providerAdmission
-      ? `等待 Provider 容量（${providerAdmission.scope}，队列 ${providerAdmission.queuePosition}/${Math.max(
-          providerAdmission.queueDepth,
-          providerAdmission.queuePosition
-        )}，已等待 ${formatElapsedTime(
-          Math.max(0, Math.ceil(providerAdmission.waitMs / 1_000))
-        )}）`
-      : null;
-    const stallMessage = providerStall
-      ? providerStall.outputStarted
-        ? `Provider 流已暂停 ${Math.ceil(providerStall.durationMs / 1000)}s，仍在等待（空闲超时上限 ${Math.ceil(providerStall.timeoutMs / 1000)}s）`
-        : `Provider 尚未返回流数据，已等待 ${Math.ceil(providerStall.durationMs / 1000)}s（空闲超时上限 ${Math.ceil(providerStall.timeoutMs / 1000)}s）`
-      : null;
+    const recoveryPresentation = formatProviderRecoveryPresentation(
+      providerRecovery,
+      clock
+    );
     const stationarityMessage =
       actionStationarity?.phase === 'detected'
         ? `检测到 ${actionStationarity.toolName} 连续 ${actionStationarity.runLength} 次无进展，正在要求 Agent 切换策略`
@@ -152,10 +119,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
           : null;
     const displayMessage =
       stationarityMessage ||
-      circuitMessage ||
-      admissionMessage ||
-      retryMessage ||
-      stallMessage ||
+      recoveryPresentation?.primary ||
       message ||
       currentPhrase ||
       '正在思考中...';
@@ -169,6 +133,9 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
             {SPINNER_FRAMES[spinnerFrame]}
           </Text>
           <Text color={theme.colors.text.primary}>{displayMessage}</Text>
+          {recoveryPresentation?.secondary && (
+            <Text color={theme.colors.info}>{recoveryPresentation.secondary}</Text>
+          )}
           {elapsedTime > 0 && (
             <>
               <Text color={theme.colors.muted}>|</Text>
@@ -193,6 +160,11 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
           </Text>
           <Text color={theme.colors.text.primary}>{displayMessage}</Text>
         </Box>
+        {recoveryPresentation?.secondary && (
+          <Box marginLeft={2}>
+            <Text color={theme.colors.info}>{recoveryPresentation.secondary}</Text>
+          </Box>
+        )}
 
         {/* 第二行：计时器 + 取消提示 */}
         {elapsedTime > 0 && (

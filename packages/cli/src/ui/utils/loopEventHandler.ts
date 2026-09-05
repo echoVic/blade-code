@@ -214,6 +214,7 @@ export function createLoopEventHandler(
         break;
       }
       case 'provider_recovery':
+        deps.sessionActions.setProviderRecovery(event.recovery);
         break;
       case 'action_stationarity': {
         const { kind: _kind, ...stationarity } = event;

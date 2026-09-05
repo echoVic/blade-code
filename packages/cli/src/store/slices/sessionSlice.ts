@@ -110,6 +110,7 @@ const initialSessionState: SessionState = {
   providerCircuit: null,
   providerRetry: null,
   providerStall: null,
+  providerRecovery: null,
   actionStationarity: null,
 };
 
@@ -721,6 +722,12 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     setProviderStall: (providerStall) => {
       set((state) => ({
         session: { ...state.session, providerStall },
+      }));
+    },
+
+    setProviderRecovery: (providerRecovery) => {
+      set((state) => ({
+        session: { ...state.session, providerRecovery },
       }));
     },
 

@@ -9,49 +9,11 @@ const mockUseLoadingIndicator = vi.fn(
   })
 );
 const mockUseTerminalWidth = vi.fn(() => 120);
-const mockUseProviderAdmission = vi.fn(
+const mockUseProviderRecovery = vi.fn(
   () =>
-    null as {
-      phase: 'queued';
-      requestClass: 'foreground' | 'background' | 'internal';
-      scope: 'global' | 'domain' | 'owner' | 'class';
-      queuePosition: number;
-      queueDepth: number;
-      inFlight: number;
-      limit: number;
-      waitMs: number;
-      maxWaitMs: number;
-    } | null
-);
-const mockUseProviderRetry = vi.fn(
-  () =>
-    null as {
-      phase: 'scheduled' | 'waiting' | 'attempt' | 'exhausted';
-      attempt: number;
-      maxRetries: number;
-      delayMs?: number;
-      mode?: 'standard' | 'bounded_foreground';
-      recoveryRemainingMs?: number;
-    } | null
-);
-const mockUseProviderCircuit = vi.fn(
-  () =>
-    null as {
-      phase: 'opened' | 'waiting' | 'probe' | 'closed' | 'reopened' | 'rejected';
-      retryAfterMs?: number;
-      recoveryRemainingMs?: number;
-    } | null
-);
-const mockUseProviderStall = vi.fn(
-  () =>
-    null as {
-      phase: 'detected';
-      stallCount: number;
-      durationMs: number;
-      warningAfterMs: number;
-      timeoutMs: number;
-      outputStarted: boolean;
-    } | null
+    null as
+      | import('../../../../src/api/providerRecoverySchemas.js').ProviderRecoveryProjection
+      | null
 );
 const mockUseActionStationarity = vi.fn(
   () =>
@@ -75,10 +37,7 @@ vi.mock('ink', () => ({
 vi.mock('../../../../src/store/selectors/index.js', () => ({
   useIsProcessing: () => true,
   useIsReady: () => true,
-  useProviderAdmission: () => mockUseProviderAdmission(),
-  useProviderCircuit: () => mockUseProviderCircuit(),
-  useProviderRetry: () => mockUseProviderRetry(),
-  useProviderStall: () => mockUseProviderStall(),
+  useProviderRecovery: () => mockUseProviderRecovery(),
   useActionStationarity: () => mockUseActionStationarity(),
   useTheme: () => ({
     colors: {
@@ -112,16 +71,39 @@ describe('LoadingIndicator', () => {
     });
     mockUseTerminalWidth.mockReset();
     mockUseTerminalWidth.mockReturnValue(120);
-    mockUseProviderAdmission.mockReset();
-    mockUseProviderAdmission.mockReturnValue(null);
-    mockUseProviderRetry.mockReset();
-    mockUseProviderRetry.mockReturnValue(null);
-    mockUseProviderCircuit.mockReset();
-    mockUseProviderCircuit.mockReturnValue(null);
-    mockUseProviderStall.mockReset();
-    mockUseProviderStall.mockReturnValue(null);
+    mockUseProviderRecovery.mockReset();
+    mockUseProviderRecovery.mockReturnValue(null);
     mockUseActionStationarity.mockReset();
     mockUseActionStationarity.mockReturnValue(null);
+  });
+
+  it('显示 Runtime-owned Provider 恢复状态和 fallback 目标', async () => {
+    mockUseProviderRecovery.mockReturnValue({
+      version: 1,
+      generation: 'generation-1',
+      revision: 1,
+      snapshot: {
+        activity: 'fallback',
+        reason: 'server_error',
+        updatedAt: Date.now(),
+        fallback: {
+          from: { provider: 'deepseek', model: 'deepseek-chat' },
+          to: { provider: 'deepseek', model: 'deepseek-reasoner' },
+          candidate: 1,
+          candidateCount: 1,
+          trigger: { source: 'retry', reason: 'server_error', statusCode: 503 },
+        },
+      },
+    });
+    const { LoadingIndicator } = await import(
+      '../../../../src/ui/components/LoadingIndicator.js'
+    );
+
+    const html = renderToStaticMarkup(React.createElement(LoadingIndicator));
+
+    expect(html).toContain('正在切换到 deepseek-reasoner');
+    expect(html).toContain('候选 1/1');
+    expect(html).toContain('Esc 取消');
   });
 
   it('短时间加载时应该优先显示中性文案而不是趣味短语', async () => {
@@ -138,11 +120,17 @@ describe('LoadingIndicator', () => {
   });
 
   it('优先显示可取消的 Provider 重试状态', async () => {
-    mockUseProviderRetry.mockReturnValue({
-      phase: 'scheduled',
-      attempt: 1,
-      maxRetries: 2,
-      delayMs: 1_250,
+    mockUseProviderRecovery.mockReturnValue({
+      version: 1,
+      generation: 'retry',
+      revision: 1,
+      snapshot: {
+        activity: 'retry_wait',
+        reason: 'server_error',
+        updatedAt: Date.now(),
+        nextActionAt: Date.now() + 1_250,
+        retry: { attempt: 1, maxRetries: 2, delayMs: 1_250 },
+      },
     });
     const { LoadingIndicator } = await import(
       '../../../../src/ui/components/LoadingIndicator.js'
@@ -158,22 +146,26 @@ describe('LoadingIndicator', () => {
   });
 
   it('在 Provider retry 前显示容量队列及等待时间', async () => {
-    mockUseProviderAdmission.mockReturnValue({
-      phase: 'queued',
-      requestClass: 'foreground',
-      scope: 'domain',
-      queuePosition: 1,
-      queueDepth: 2,
-      inFlight: 4,
-      limit: 4,
-      waitMs: 15_000,
-      maxWaitMs: 180_000,
-    });
-    mockUseProviderRetry.mockReturnValue({
-      phase: 'scheduled',
-      attempt: 1,
-      maxRetries: 2,
-      delayMs: 1_250,
+    mockUseProviderRecovery.mockReturnValue({
+      version: 1,
+      generation: 'admission',
+      revision: 1,
+      snapshot: {
+        activity: 'admission_wait',
+        reason: 'capacity',
+        updatedAt: Date.now(),
+        admission: {
+          requestClass: 'foreground',
+          resource: 'stream',
+          scope: 'domain',
+          queuePosition: 1,
+          queueDepth: 2,
+          inFlight: 4,
+          limit: 4,
+          waitMs: 15_000,
+          maxWaitMs: 180_000,
+        },
+      },
     });
     const { LoadingIndicator } = await import(
       '../../../../src/ui/components/LoadingIndicator.js'
@@ -190,12 +182,20 @@ describe('LoadingIndicator', () => {
   });
 
   it('显示有界前台恢复的剩余预算和取消入口', async () => {
-    mockUseProviderRetry.mockReturnValue({
-      phase: 'waiting',
-      attempt: 4,
-      maxRetries: 12,
-      mode: 'bounded_foreground',
-      recoveryRemainingMs: 585_000,
+    mockUseProviderRecovery.mockReturnValue({
+      version: 1,
+      generation: 'bounded-retry',
+      revision: 1,
+      snapshot: {
+        activity: 'retry_wait',
+        reason: 'server_error',
+        updatedAt: Date.now(),
+        retry: {
+          attempt: 4,
+          maxRetries: 12,
+          recoveryRemainingMs: 585_000,
+        },
+      },
     });
     const { LoadingIndicator } = await import(
       '../../../../src/ui/components/LoadingIndicator.js'
@@ -203,7 +203,7 @@ describe('LoadingIndicator', () => {
 
     const html = renderToStaticMarkup(React.createElement(LoadingIndicator));
 
-    expect(html).toContain('Provider 暂时不可用，正在有界恢复');
+    expect(html).toContain('Provider 暂时不可用');
     expect(html).toContain('4/12');
     expect(html).toContain('9m 45s');
     expect(html).toContain('Esc 取消');
@@ -211,17 +211,22 @@ describe('LoadingIndicator', () => {
   });
 
   it('优先显示共享 Provider circuit 等待和唯一 probe', async () => {
-    mockUseProviderRetry.mockReturnValue({
-      phase: 'scheduled',
-      attempt: 4,
-      maxRetries: 12,
-      mode: 'bounded_foreground',
-      recoveryRemainingMs: 598_000,
-    });
-    mockUseProviderCircuit.mockReturnValue({
-      phase: 'waiting',
-      retryAfterMs: 2_000,
-      recoveryRemainingMs: 598_000,
+    mockUseProviderRecovery.mockReturnValue({
+      version: 1,
+      generation: 'circuit',
+      revision: 1,
+      snapshot: {
+        activity: 'circuit_open',
+        reason: 'server_error',
+        updatedAt: Date.now(),
+        nextActionAt: Date.now() + 2_000,
+        circuit: {
+          phase: 'waiting',
+          retryAfterMs: 2_000,
+          openDurationMs: 2_000,
+          recoveryRemainingMs: 598_000,
+        },
+      },
     });
     const { LoadingIndicator } = await import(
       '../../../../src/ui/components/LoadingIndicator.js'
@@ -232,22 +237,40 @@ describe('LoadingIndicator', () => {
     expect(html).toContain('2s');
     expect(html).toContain('9m 58s');
     expect(html).toContain('Esc 取消');
-    expect(html).not.toContain('正在有界恢复');
 
-    mockUseProviderCircuit.mockReturnValue({ phase: 'probe' });
+    mockUseProviderRecovery.mockReturnValue({
+      version: 1,
+      generation: 'circuit',
+      revision: 2,
+      snapshot: {
+        activity: 'circuit_probe',
+        reason: 'server_error',
+        updatedAt: Date.now(),
+        circuit: { phase: 'probe', openDurationMs: 2_000 },
+      },
+    });
     html = renderToStaticMarkup(React.createElement(LoadingIndicator));
-    expect(html).toContain('Provider 正在执行唯一恢复探测');
+    expect(html).toContain('Provider 正在执行恢复探测');
     expect(html).toContain('Esc 取消');
   });
 
   it('在 Provider stall 时显示空闲上限并保留取消入口', async () => {
-    mockUseProviderStall.mockReturnValue({
-      phase: 'detected',
-      stallCount: 1,
-      durationMs: 30_000,
-      warningAfterMs: 30_000,
-      timeoutMs: 300_000,
-      outputStarted: false,
+    mockUseProviderRecovery.mockReturnValue({
+      version: 1,
+      generation: 'stall',
+      revision: 1,
+      snapshot: {
+        activity: 'stream_stall',
+        reason: 'stream_stall',
+        updatedAt: Date.now(),
+        stall: {
+          stallCount: 1,
+          durationMs: 30_000,
+          warningAfterMs: 30_000,
+          timeoutMs: 300_000,
+          outputStarted: false,
+        },
+      },
     });
     const { LoadingIndicator } = await import(
       '../../../../src/ui/components/LoadingIndicator.js'
@@ -257,7 +280,7 @@ describe('LoadingIndicator', () => {
 
     expect(html).toContain('Provider 尚未返回流数据');
     expect(html).toContain('30s');
-    expect(html).toContain('300s');
+    expect(html).toContain('5m 0s');
     expect(html).toContain('Esc 取消');
     expect(html).not.toContain('炼化代码灵气...');
   });

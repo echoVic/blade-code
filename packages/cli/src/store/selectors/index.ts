@@ -71,6 +71,9 @@ export const useProviderRetry = () =>
 export const useProviderStall = () =>
   useBladeStore((state) => state.session.providerStall);
 
+export const useProviderRecovery = () =>
+  useBladeStore((state) => state.session.providerRecovery);
+
 export const useActionStationarity = () =>
   useBladeStore((state) => state.session.actionStationarity);
 

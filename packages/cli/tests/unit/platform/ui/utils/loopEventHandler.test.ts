@@ -81,6 +81,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       setProviderCircuit: vi.fn(),
       setProviderRetry: vi.fn(),
       setProviderStall: vi.fn(),
+      setProviderRecovery: vi.fn(),
       setActionStationarity: vi.fn(),
       resetContextUsage: vi.fn(),
       resetTokenUsage: vi.fn(),
@@ -126,6 +127,27 @@ function createToolCall(id: string, name: string): ToolCallRef {
     function: { name, arguments: '{}' },
   };
 }
+
+it('projects unified Provider recovery state without rebuilding it in the UI', () => {
+  const deps = createMockDeps();
+  const handler = createLoopEventHandler(deps, createMockStats());
+  const recovery = {
+    version: 1 as const,
+    generation: 'generation-1',
+    revision: 1,
+    snapshot: {
+      activity: 'retry_wait' as const,
+      reason: 'rate_limit' as const,
+      updatedAt: 1_000,
+      retry: { attempt: 1, maxRetries: 12, delayMs: 2_000 },
+    },
+  };
+
+  handler({ kind: 'provider_recovery', recovery });
+
+  expect(deps.sessionActions.setProviderRecovery).toHaveBeenCalledWith(recovery);
+  expect(deps.sessionActions.setProviderRetry).not.toHaveBeenCalled();
+});
 
 // ==================== 测试 ====================
 

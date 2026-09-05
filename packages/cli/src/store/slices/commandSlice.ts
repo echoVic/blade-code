@@ -51,6 +51,7 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
                 providerCircuit: null,
                 providerRetry: null,
                 providerStall: null,
+                providerRecovery: null,
                 actionStationarity: null,
               },
             }
@@ -134,6 +135,7 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
           providerCircuit: null,
           providerRetry: null,
           providerStall: null,
+          providerRecovery: null,
           actionStationarity: null,
         },
       }));
