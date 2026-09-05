@@ -2130,6 +2130,19 @@ describe('eventHandlers', () => {
       properties: {
         sessionId: 'session-1',
         projectPath: '/workspace/a',
+        recovery: {
+          version: 1,
+          generation: 'generation-1',
+          revision: 0,
+          snapshot: null,
+        },
+      },
+    });
+    dispatch({
+      type: 'provider.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
         recovery: createProviderRecovery('generation-1', 2),
       },
     });
@@ -2172,6 +2185,26 @@ describe('eventHandlers', () => {
       revision: 0,
       snapshot: null,
     });
+  });
+
+  test('does not revive Provider recovery from an unanchored late live revision', () => {
+    const state = createState({ providerRecovery: null });
+    const set = vi.fn((partial) => {
+      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'provider.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        recovery: createProviderRecovery('late-generation', 4),
+      },
+    });
+
+    expect(set).not.toHaveBeenCalled();
+    expect(state.providerRecovery).toBeNull();
   });
 
   test('lets an authoritative reconnect replace or clear Provider recovery', () => {

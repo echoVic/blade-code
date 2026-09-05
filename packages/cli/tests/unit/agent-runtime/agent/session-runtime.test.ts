@@ -4893,6 +4893,27 @@ describe('SessionRuntime', () => {
     }
   });
 
+  it('forgets a recovery generation even when it never became visible', async () => {
+    const runtime = new SessionRuntime(DEFAULT_CONFIG, {
+      sessionId: 'provider-recovery-empty-runtime',
+      workspaceRoot: storageRoot,
+    });
+    const first = runtime.beginProviderRecovery();
+
+    expect(runtime.clearProviderRecovery(first)).toBeUndefined();
+
+    const second = runtime.beginProviderRecovery();
+    await runtime.dispose();
+
+    expect(runtime.observeProviderRecovery(second, {
+      kind: 'provider_retry',
+      phase: 'scheduled',
+      attempt: 1,
+      maxRetries: 1,
+      reason: 'transport',
+    })).toBeUndefined();
+  });
+
   it('keeps prompt artifact reads available through explicit tool filters', async () => {
     const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
     const { createReadPromptArtifactTool } = await import(

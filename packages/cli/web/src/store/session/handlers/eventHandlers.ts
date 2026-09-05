@@ -1938,6 +1938,7 @@ const handleProviderRecovery: EventHandler = (props, get, set) => {
   const parsed = ProviderRecoveryProjectionSchema.safeParse(props.recovery);
   if (!parsed.success) return;
   const current = get().providerRecovery;
+  if (props.authoritative !== true && !current && parsed.data.revision !== 0) return;
   if (
     props.authoritative !== true &&
     current &&

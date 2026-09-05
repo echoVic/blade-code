@@ -987,7 +987,7 @@ export class SessionRuntime {
     generation: ProviderRecoveryGeneration
   ): ProviderRecoveryProjection | undefined {
     const projection = this.providerRecovery.clear(generation);
-    if (projection && this.providerRecoveryGeneration?.id === generation.id) {
+    if (this.providerRecoveryGeneration?.id === generation.id) {
       this.providerRecoveryGeneration = undefined;
     }
     if (projection) this.publishProviderRecovery(projection);
