@@ -1898,7 +1898,6 @@ const handleModelFallback: EventHandler = (props, get, set) => {
     providerRetry: null,
     pendingResume: null,
     providerStall: null,
-    providerRecovery: null,
     actionStationarity: null,
   });
 };

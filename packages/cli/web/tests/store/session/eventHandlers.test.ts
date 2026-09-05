@@ -1990,7 +1990,8 @@ describe('eventHandlers', () => {
   });
 
   test('tracks compaction and model fallback phases', () => {
-    const state = createState();
+    const recovery = createProviderRecovery('fallback-generation', 1);
+    const state = createState({ providerRecovery: recovery });
     const set = vi.fn();
     const dispatch = createEventDispatcher(() => state, set);
 
@@ -2029,9 +2030,9 @@ describe('eventHandlers', () => {
       providerRetry: null,
       pendingResume: null,
       providerStall: null,
-      providerRecovery: null,
       actionStationarity: null,
     });
+    expect(state.providerRecovery).toEqual(recovery);
   });
 
   test('tracks bounded Provider retry lifecycle without exposing error details', () => {

@@ -179,6 +179,22 @@ describe('ProviderRecoveryState', () => {
     });
   });
 
+  it('preserves the absolute retry deadline instead of extending it from now', () => {
+    const state = new ProviderRecoveryState({
+      now: () => 2_500,
+      createGenerationId: () => 'generation-1',
+    });
+    const generation = state.begin();
+
+    expect(
+      state.observe(generation, {
+        ...retryScheduled,
+        delayMs: 10_000,
+        nextRetryAt: 4_000,
+      })?.snapshot?.nextActionAt
+    ).toBe(4_000);
+  });
+
   it('preserves fallback context after a recovered stall', () => {
     const state = new ProviderRecoveryState({
       now: () => 5_000,
@@ -253,5 +269,7 @@ describe('ProviderRecoveryState', () => {
 
     expect(state.clear(generation)).toMatchObject({ revision: 2, snapshot: null });
     expect(state.clear(generation)).toBeUndefined();
+    expect(state.observe(generation, retryScheduled)).toBeUndefined();
+    expect(state.snapshot()).toMatchObject({ revision: 2, snapshot: null });
   });
 });
