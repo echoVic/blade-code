@@ -51,6 +51,9 @@ bun run qualify:local
 
 每一步都在独立子进程中执行。第一步非零退出会立即停止，后续步骤不会被计为通过。该门禁不访问付费模型，也不依赖 `~/.blade/config.json`。
 
+`scripts/test.js` 的构建与测试命令在取消信号已触发时不启动子进程或 watchdog；运行中
+取消仍等待受管进程树退出，原超时预算不变。
+
 Vitest setup 为每个 test-file lifecycle 创建唯一的临时
 `BLADE_STORAGE_ROOT`，并在 teardown 时同步删除。调用方显式传入的
 `BLADE_STORAGE_ROOT` 始终由调用方管理，测试 harness 不会删除。

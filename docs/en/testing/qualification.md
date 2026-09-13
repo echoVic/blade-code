@@ -58,6 +58,8 @@ The command runs 14 checks in a fixed order:
 
 Each step runs in an independent subprocess. A non-zero exit from the first step immediately halts execution; subsequent steps are not counted as passed. This gate does not access paid models and does not depend on `~/.blade/config.json`.
 
+Build and test commands from `scripts/test.js` do not spawn a child or watchdog when their cancellation signal is already aborted. Cancellation during execution still waits for the owned process tree to exit, without changing timeout budgets.
+
 Vitest setup creates a unique temporary `BLADE_STORAGE_ROOT` for each test-file lifecycle, and deletes it synchronously during teardown. A `BLADE_STORAGE_ROOT` explicitly passed by the caller is always managed by the caller; the test harness does not delete it.
 
 The real-api setup loads credential configuration, the model catalog, and the application store only when `REAL_API_TEST=1`. With paid tests disabled, isolated storage is still created and reclaimed, and keyless regressions still run. Local keyless real-api files load in parallel within the existing four-worker ceiling, retaining process and file isolation. Paid matrices and CI remain serial with one worker. The test inventory, retry rules, and process timeout budgets are unchanged.

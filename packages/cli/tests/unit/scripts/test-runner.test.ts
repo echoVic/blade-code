@@ -462,6 +462,72 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     await expect(access(cliPath)).resolves.toBeUndefined();
   });
 
+  it('does not launch a command when its signal is already aborted', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-test-preabort-'));
+    tempRoots.push(root);
+    const marker = path.join(root, 'launched');
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await runOwnedCommand({
+      command: process.execPath,
+      args: [
+        '-e',
+        `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started')`,
+      ],
+      cwd: root,
+      timeoutMs: 5_000,
+      stdio: 'ignore',
+      signal: controller.signal,
+    });
+
+    await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(result).toEqual({
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      aborted: true,
+    });
+  });
+
+  it('waits for an active command to exit after cancellation', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-test-active-abort-'));
+    tempRoots.push(root);
+    const marker = path.join(root, 'started');
+    const controller = new AbortController();
+    const command = runOwnedCommand({
+      command: process.execPath,
+      args: [
+        '-e',
+        `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(() => {}, 1000);`,
+      ],
+      cwd: root,
+      timeoutMs: 5_000,
+      gracePeriodMs: 100,
+      stdio: 'ignore',
+      signal: controller.signal,
+    });
+    try {
+      expect(
+        await waitFor(async () => {
+          try {
+            await access(marker);
+            return true;
+          } catch {
+            return false;
+          }
+        })
+      ).toBe(true);
+      const pid = Number(await readFile(marker, 'utf8'));
+      controller.abort();
+      expect(await command).toMatchObject({ aborted: true, timedOut: false });
+      expect(await processIsGone(pid)).toBe(true);
+    } finally {
+      controller.abort();
+      await command;
+    }
+  });
+
   it('returns a normal exit without reporting timeout or abort', async () => {
     const result = await runOwnedCommand({
       command: process.execPath,

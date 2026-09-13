@@ -99,6 +99,9 @@ export async function runOwnedCommand({
   gracePeriodMs = DEFAULT_GRACE_PERIOD_MS,
   signal,
 }) {
+  if (signal?.aborted) {
+    return { exitCode: null, signal: null, timedOut: false, aborted: true };
+  }
   const child = spawn(command, args, {
     cwd,
     env,
