@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.181] - 2026-09-13
+
+### Fixed
+- Fail ordinary empty or whitespace-only final responses without a successful tool result instead of marking the turn completed. Reasoning alone is not an answer; no extra Provider request is introduced.
+- Preserve existing successful-tool correction, structured-output completion, length recovery, cancellation, and pending-input semantics.
+
+### Tests
+- Cover streamed and non-streamed empty finals with no tools or failed tools, no corrective request, and no successful finalization receipt.
+- Use real DeepSeek Flash/Pro stop sequences across Headless, ACP, raw PTY TUI, and Chromium to verify visible failure and a subsequent same-session replacement request, exactly two Provider requests, and zero tool calls. Split PTY answer markers so input echo cannot satisfy completion checks.
+
 ## [0.10.180] - 2026-09-13
 
 ### Fixed
