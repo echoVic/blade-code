@@ -555,6 +555,114 @@ describe('CompactionService - 输出协议', () => {
     }
   });
 
+  test('空摘要采样耗尽后 fallback 保留所有已返回 usage', async () => {
+    vi.useFakeTimers();
+    const usage = {
+      promptTokens: 10,
+      completionTokens: 2,
+      totalTokens: 12,
+      reasoningTokens: 1,
+      cacheReadInputTokens: 4,
+      cacheCreationInputTokens: 3,
+      costUsd: 0.125,
+    };
+    compactChat.mockResolvedValue({ content: '<summary> </summary>', usage });
+
+    try {
+      const pending = CompactionService.compact(
+        [{ role: 'user', content: 'Preserve the active task.' }],
+        { ...markerCompactionOptions, sessionId: 'empty-exhausted-usage' }
+      );
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result.success).toBe(false);
+      expect(result.failureReason).toBe('empty_exhausted');
+      expect(result.sampleAttempts).toBe(3);
+      expect(compactChat).toHaveBeenCalledTimes(3);
+      expect(result.usage).toEqual({
+        promptTokens: 30,
+        completionTokens: 6,
+        totalTokens: 36,
+        reasoningTokens: 3,
+        cacheReadInputTokens: 12,
+        cacheCreationInputTokens: 9,
+        costUsd: 0.375,
+      });
+      expect(usage.totalTokens).toBe(12);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test.each([
+    {
+      status: 503,
+      message: 'service unavailable',
+      reason: 'transient_exhausted',
+      attempts: 3,
+    },
+    { status: 400, message: 'invalid request', reason: 'deterministic', attempts: 2 },
+    {
+      status: 400,
+      message: 'context_length_exceeded',
+      reason: 'context_exhausted',
+      attempts: 2,
+    },
+  ])(
+    '空摘要后的 $reason fallback 保留此前 usage',
+    async ({ status, message, reason, attempts }) => {
+      vi.useFakeTimers();
+      const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12 };
+      compactChat
+        .mockResolvedValueOnce({ content: ' ', usage })
+        .mockRejectedValue(Object.assign(new Error(message), { status }));
+
+      try {
+        const pending = CompactionService.compact([{ role: 'user', content: 'tiny' }], {
+          ...markerCompactionOptions,
+          sessionId: `fallback-usage-${reason}`,
+        });
+        await vi.runAllTimersAsync();
+        const result = await pending;
+
+        expect(result.success).toBe(false);
+        expect(result.failureReason).toBe(reason);
+        expect(result.sampleAttempts).toBe(attempts);
+        expect(compactChat).toHaveBeenCalledTimes(attempts);
+        expect(result.usage).toEqual(usage);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  test('摘要后恢复文件失败时 fallback 保留已返回 usage', async () => {
+    const usage = { promptTokens: 100, completionTokens: 20, totalTokens: 120 };
+    compactChat.mockResolvedValueOnce({ content: '<summary>ledger</summary>', usage });
+    const trackerSpy = vi
+      .spyOn(FileAccessTracker.getInstance(), 'getTrackedRecords')
+      .mockImplementationOnce(() => {
+        throw new Error('file tracker unavailable');
+      });
+
+    try {
+      const result = await CompactionService.compact(
+        [{ role: 'user', content: 'Preserve the active task.' }],
+        { ...markerCompactionOptions, sessionId: 'postprocessing-fallback-usage' }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.failureReason).toBe('deterministic');
+      expect(result.error).toBe('file tracker unavailable');
+      expect(result.sampleAttempts).toBe(1);
+      expect(result.usage).toEqual(usage);
+      expect(compactChat).toHaveBeenCalledOnce();
+    } finally {
+      trackerSpy.mockRestore();
+    }
+  });
+
   test('三次瞬态失败后应记录 exhausted 分类并回退', async () => {
     vi.useFakeTimers();
     compactChat.mockRejectedValue(

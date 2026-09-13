@@ -137,6 +137,7 @@ class CompactionSamplingError extends Error {
     readonly inputReductions: number,
     readonly messagesOmitted: number,
     readonly filesOmitted: number,
+    readonly usage: UsageInfo | undefined,
     options?: ErrorOptions
   ) {
     super(message, options);
@@ -510,6 +511,7 @@ export class CompactionService {
     // Hook 可以阻止压缩
     let blockReason: string | undefined;
     let completedSampleAttempts = 0;
+    let completedUsage: UsageInfo | undefined;
     let imagesOmitted = 0;
     if (options.workspaceAccess !== 'none') {
       try {
@@ -589,6 +591,7 @@ export class CompactionService {
         options
       );
       completedSampleAttempts = generated.attempts;
+      completedUsage = generated.usage;
       const summary = reconcileExactContinuationRecords(
         generated.summary,
         sourceMessages
@@ -738,7 +741,8 @@ export class CompactionService {
         error instanceof CompactionSamplingError ? error.inputReductions : 0,
         error instanceof CompactionSamplingError ? error.messagesOmitted : 0,
         error instanceof CompactionSamplingError ? error.filesOmitted : 0,
-        imagesOmitted
+        imagesOmitted,
+        error instanceof CompactionSamplingError ? error.usage : completedUsage
       );
     }
   }
@@ -841,7 +845,8 @@ export class CompactionService {
             'empty_exhausted',
             sampleInput.inputReductions,
             sampleInput.messagesOmitted,
-            sampleInput.filesOmitted
+            sampleInput.filesOmitted,
+            usage
           );
         }
         logger.warn(
@@ -863,6 +868,7 @@ export class CompactionService {
               sampleInput.inputReductions,
               sampleInput.messagesOmitted,
               sampleInput.filesOmitted,
+              usage,
               { cause: error }
             );
           }
@@ -881,6 +887,7 @@ export class CompactionService {
             sampleInput.inputReductions,
             sampleInput.messagesOmitted,
             sampleInput.filesOmitted,
+            usage,
             { cause: error }
           );
         }
@@ -898,7 +905,8 @@ export class CompactionService {
       'transient_exhausted',
       sampleInput.inputReductions,
       sampleInput.messagesOmitted,
-      sampleInput.filesOmitted
+      sampleInput.filesOmitted,
+      usage
     );
   }
 

@@ -15,20 +15,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { afterEach, describe, expect, it, type TestContext } from 'vitest';
-import { SessionSchema } from '../../../src/api/schemas.js';
 import { Agent } from '../../../src/agent/Agent.js';
 import { drainLoop, type LoopEvent } from '../../../src/agent/loop/index.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { ChatContext } from '../../../src/agent/types.js';
-import { getState } from '../../../src/store/vanilla.js';
-import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { SessionSchema } from '../../../src/api/schemas.js';
 import { PermissionMode } from '../../../src/config/types.js';
-import { GoalStore } from '../../../src/goals/GoalStore.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import { getProjectStoragePath } from '../../../src/context/storage/pathUtils.js';
 import { resetProjectionDbCache } from '../../../src/context/storage/sqlite/projection.js';
+import { GoalStore } from '../../../src/goals/GoalStore.js';
 import { INTERNAL_CONTROL_MESSAGE_METADATA } from '../../../src/services/clientMessageVisibility.js';
 import { SessionService } from '../../../src/services/SessionService.js';
+import { getState } from '../../../src/store/vanilla.js';
+import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import {
   OpenAIResponseSummaryCollector,
@@ -88,6 +88,7 @@ interface ProxyEvidence {
     kind: 'compaction' | 'discovery' | 'primary';
     status: number;
     summary: RecordingProviderResponseSummary;
+    reportedTotalTokens?: number;
   }>;
 }
 
@@ -249,6 +250,7 @@ describe('memory request classification', () => {
 async function startProviderProxy(input: {
   upstreamBaseUrl: string;
   holdFinal: boolean;
+  emptyCompaction?: boolean;
 }): Promise<Fixture['proxy']> {
   const upstream = new URL(input.upstreamBaseUrl);
   let requests = 0;
@@ -299,13 +301,29 @@ async function startProviderProxy(input: {
       controllers.add(controller);
       try {
         forwarded++;
+        let upstreamBody = body;
+        if (compaction && input.emptyCompaction) {
+          const parsed: unknown = JSON.parse(bodyText);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Compaction sampling requires a JSON request object');
+          }
+          upstreamBody = Buffer.from(
+            JSON.stringify({
+              ...parsed,
+              messages: [
+                { role: 'user', content: 'Reply with exactly HELLO and nothing else.' },
+              ],
+              stop: ['HELLO'],
+            })
+          );
+        }
         const upstreamResponse = await fetch(upstreamUrl(upstream.href, request.url), {
           method: request.method ?? 'POST',
           headers: copyHeaders(request.headers),
           body:
             request.method === 'GET' || request.method === 'HEAD'
               ? undefined
-              : Uint8Array.from(body),
+              : Uint8Array.from(upstreamBody),
           redirect: 'manual',
           signal: controller.signal,
         });
@@ -324,6 +342,9 @@ async function startProviderProxy(input: {
         });
         response.writeHead(upstreamResponse.status, responseHeaders);
         const summary = new OpenAIResponseSummaryCollector(requestNumber);
+        const decoder = new TextDecoder();
+        let pending = '';
+        let reportedTotalTokens: number | undefined;
         try {
           if (upstreamResponse.body) {
             const reader = upstreamResponse.body.getReader();
@@ -331,6 +352,25 @@ async function startProviderProxy(input: {
               const chunk = await reader.read();
               if (chunk.done) break;
               summary.append(chunk.value);
+              pending += decoder.decode(chunk.value, { stream: true });
+              const lines = pending.split('\n');
+              pending = lines.pop() ?? '';
+              for (const line of lines) {
+                if (!line.startsWith('data:') || line.slice(5).trim() === '[DONE]')
+                  continue;
+                const event: unknown = JSON.parse(line.slice(5));
+                if (!event || typeof event !== 'object' || !('usage' in event))
+                  continue;
+                const usage = event.usage;
+                if (
+                  usage &&
+                  typeof usage === 'object' &&
+                  'total_tokens' in usage &&
+                  typeof usage.total_tokens === 'number'
+                ) {
+                  reportedTotalTokens = usage.total_tokens;
+                }
+              }
               response.write(Buffer.from(chunk.value));
             }
           }
@@ -340,6 +380,7 @@ async function startProviderProxy(input: {
             kind,
             status: upstreamResponse.status,
             summary: summary.finish(),
+            reportedTotalTokens,
           });
         }
       } finally {
@@ -400,7 +441,8 @@ async function withStorageRoot<T>(storageRoot: string, action: () => Promise<T>)
 
 async function createFixture(
   model: TestModelConfig,
-  surface: (typeof surfaces)[number]
+  surface: (typeof surfaces)[number],
+  emptyCompaction = false
 ): Promise<Fixture> {
   const root = await mkdtemp(
     path.join(os.tmpdir(), `blade-memory-real-${safeSlug(model.model)}-${surface}-`)
@@ -425,6 +467,7 @@ async function createFixture(
   const proxy = await startProviderProxy({
     upstreamBaseUrl: model.baseURL ?? 'https://api.deepseek.com',
     holdFinal: surface === 'web',
+    emptyCompaction,
   });
   const runtime = buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseUrl });
   const configured = runtime.models[0];
@@ -958,12 +1001,17 @@ describe
   .skipIf(!releaseMatrixEnabled)
   .sequential('compaction usage Goal accounting (real API)', () => {
     for (const model of models)
-      it.for([false, true])(
-        `${model.model} accounts compaction tokens (cancel: %s)`,
+      it.for([
+        { cancel: false, emptyCompaction: false },
+        { cancel: true, emptyCompaction: false },
+        { cancel: false, emptyCompaction: true },
+        { cancel: true, emptyCompaction: true },
+      ])(
+        `${model.model} accounts compaction tokens (cancel: $cancel, empty: $emptyCompaction)`,
         { timeout: 240_000 },
-        async (cancel, context) => {
+        async ({ cancel, emptyCompaction }, context) => {
           expect(frameworkRetryBudget(context)).toBe(0);
-          const fixture = await createFixture(model, 'headless');
+          const fixture = await createFixture(model, 'headless', emptyCompaction);
           const originalConfig = getState().config.config;
           const config = buildRealApiRuntimeConfig({
             ...model,
@@ -1025,7 +1073,37 @@ describe
                     sum + (event.kind === 'token_usage' ? event.usage.totalTokens : 0),
                   0
                 );
+                const compactionResponses = fixture.proxy
+                  .evidence()
+                  .responses.filter((response) => response.kind === 'compaction');
+                if (emptyCompaction) {
+                  expect(compactionResponses).toHaveLength(3);
+                  for (const response of compactionResponses) {
+                    expect(response.status).toBe(200);
+                    expect(response.summary).toMatchObject({
+                      contentChars: 0,
+                      done: true,
+                      parseStatus: 'complete',
+                    });
+                    expect(response.reportedTotalTokens).toBeGreaterThan(0);
+                  }
+                  expect(events).toContainEqual(
+                    expect.objectContaining({
+                      kind: 'compaction',
+                      phase: 'end',
+                      strategy: 'fallback',
+                      failureReason: 'empty_exhausted',
+                      sampleAttempts: 3,
+                    })
+                  );
+                }
                 expect(compactionTokens).toBeGreaterThan(0);
+                expect(compactionTokens).toBe(
+                  compactionResponses.reduce(
+                    (sum, response) => sum + (response.reportedTotalTokens ?? 0),
+                    0
+                  )
+                );
                 expect(result.metadata?.tokensUsed).toBe(total);
                 expect(result.success).toBe(!cancel);
                 if (cancel) expect(result.error?.type).toBe('aborted');
@@ -1055,7 +1133,7 @@ describe
                 }
                 assertNoSecrets({ events, result, goal }, [model.apiKey]);
                 console.log(
-                  `[compaction-usage] ${JSON.stringify({ model: model.model, cancel, compactionTokens, total, resultTokens: result.metadata?.tokensUsed, goalTokens: goal?.tokensUsed })}`
+                  `[compaction-usage] ${JSON.stringify({ model: model.model, cancel, emptyCompaction, compactionTokens, total, resultTokens: result.metadata?.tokensUsed, goalTokens: goal?.tokensUsed })}`
                 );
               })
             );

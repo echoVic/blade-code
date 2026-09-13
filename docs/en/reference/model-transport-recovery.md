@@ -40,6 +40,12 @@ subagents or other independent loops is not counted again in the current loop.
 Cumulative consumption is not current context occupancy and does not change compaction
 thresholds, output-continuation budgets, or transport retry budgets.
 
+Fallback results retain previously returned summary usage when empty responses exhaust
+sampling, a later sample fails, or summary post-processing fails, including reasoning,
+cache, and cost fields. Cancellation during sampling still throws `AbortError` without
+constructing a fallback result; sample usage not yet delivered to the loop is outside
+this loop-accounting guarantee.
+
 ## Foreground Long Task Recovery
 
 When there is no explicit model `overrides.maxRetries`, the root foreground turn defaults to a maximum of 12 additional requests, and `providerForegroundRecoveryMs` simultaneously limits the total recovery time after the first transient failure:
