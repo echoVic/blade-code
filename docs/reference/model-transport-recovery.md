@@ -18,6 +18,15 @@ Blade 会遍历 `lastError` 和 `cause` 错误链，并把以下错误视为瞬�
 
 上下文超限属于确定性错误。`prompt_too_long`、`maximum context length`、`context_length_exceeded` 等标记即使被网关包装成 HTTP `500`，也不会进入传输重试或模型 fallback，而是返回 Agent loop 触发反应式压缩。
 
+## 空的最终回复
+
+普通终态回复若没有正文、仅有空白或只有推理而没有答案，不视为成功完成。没有成功工具
+结果时，回合以 `intent_fulfillment_failed` 失败，不提交空的最终回复，也不额外发起模型
+请求；用户后续请求仍可按既有待处理输入恢复语义继续同一会话。
+
+成功工具执行后现有的单次纠正仍受原预算约束。已提交的有效结构化输出可以没有普通正文；
+输出长度恢复、传输重试预算及取消行为保持不变。
+
 ## 前台长任务恢复
 
 root foreground turn 在没有显式模型 `overrides.maxRetries` 时，默认最多追加 12 次

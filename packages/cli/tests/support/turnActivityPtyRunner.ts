@@ -4,6 +4,7 @@ import { spawn } from 'bun-pty';
 import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
+  createSplitPtyMarkerInstruction,
   projectForegroundBoundedPtyOutput,
   waitForPtyExit,
 } from './foregroundBoundedOutputPtyDriver.js';
@@ -22,6 +23,7 @@ interface RunnerInput {
   allowedTools?: string;
   maxTurns?: number;
   releaseFile?: string;
+  emptyFinalFailure?: boolean;
 }
 
 export const BLADE_TURN_ACTIVITY_PTY_USES_PRODUCTION_DIST = true;
@@ -143,11 +145,30 @@ async function main(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 250));
     markerLatch.arm();
     terminal.write('\r');
-    await waitFor(() => sawThinking, 'Turn activity TUI did not render thinking');
-    await waitFor(() => sawTool, 'Turn activity TUI did not render active Bash');
-    if (input.releaseFile && !releasedTool) {
-      releasedTool = true;
-      await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
+    if (input.emptyFinalFailure) {
+      const failureText = 'The model returned an empty final response.';
+      await waitFor(
+        () =>
+          plainOutput.includes(failureText) &&
+          plainOutput.lastIndexOf('yolo mode on') >
+            plainOutput.lastIndexOf(failureText),
+        'TUI did not report empty final failure and return to the composer',
+        60_000
+      );
+      await writeBracketedPaste(
+        terminal,
+        `Replace the previous failed request with this request.\n${createSplitPtyMarkerInstruction(input.marker)}`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      markerLatch.arm();
+      terminal.write('\r');
+    } else {
+      await waitFor(() => sawThinking, 'Turn activity TUI did not render thinking');
+      await waitFor(() => sawTool, 'Turn activity TUI did not render active Bash');
+      if (input.releaseFile && !releasedTool) {
+        releasedTool = true;
+        await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
+      }
     }
     await waitFor(
       () =>
@@ -157,6 +178,8 @@ async function main(): Promise<void> {
       60_000
     );
     if (secretLatch.seen) throw new Error('Turn activity TUI leaked a credential');
+    if (input.emptyFinalFailure && sawTool)
+      throw new Error('TUI empty final launched a tool');
 
     signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
     await waitForPtyExit(exitPromise, 'Turn activity TUI did not exit after SIGTERM');

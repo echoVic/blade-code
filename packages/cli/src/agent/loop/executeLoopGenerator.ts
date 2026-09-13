@@ -1264,7 +1264,23 @@ validates the object and may return a bounded corrective error.`;
         recoveredEmptyFinalStateLoaded = true;
       }
       if (!hasSuccessfulToolResult && !recoveredSuccessfulToolResult) {
-        return { action: 'none' };
+        if (turnResult.finishReason === 'length') return { action: 'none' };
+        return {
+          action: 'fail',
+          result: {
+            success: false,
+            error: {
+              type: 'intent_fulfillment_failed',
+              message: 'The model returned an empty final response.',
+            },
+            metadata: {
+              turnsCount,
+              toolCallsCount: allToolResults.length,
+              duration: Date.now() - startTime,
+              tokensUsed: totalTokens,
+            },
+          },
+        };
       }
       if (emptyFinalCorrectionSpent) {
         return {

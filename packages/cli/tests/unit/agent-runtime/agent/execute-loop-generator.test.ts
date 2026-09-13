@@ -4592,6 +4592,92 @@ describe('executeLoopGenerator', () => {
       ]);
     });
 
+    it.each(
+      [false, true].flatMap((stream) =>
+        [false, true].flatMap((failedTool) =>
+          ['', ' \n\t', undefined].map((content) => ({ stream, failedTool, content }))
+        )
+      )
+    )(
+      'rejects empty completion without successful tools: %j',
+      async ({ stream, failedTool, content }) => {
+        const { deps, saveMessage } = createTypedPersistenceHarness();
+        const response: ChatResponse = {
+          ...finalResponse(120, ''),
+          content: content ?? '',
+          reasoningContent: 'Thinking without an answer',
+        };
+        const chat = vi.mocked(deps.chatService.chat);
+        const streamChat = vi.mocked(deps.chatService.streamChat);
+        if (failedTool) {
+          vi.mocked(deps.toolExecutor.execute).mockResolvedValue({
+            success: false,
+            llmContent: 'Read failed',
+            error: { type: ToolErrorType.EXECUTION_ERROR, message: 'Read failed' },
+          });
+          if (stream) {
+            streamChat.mockImplementationOnce(async function* () {
+              yield {
+                toolCalls: [
+                  {
+                    index: 0,
+                    id: 'failed-read',
+                    type: 'function',
+                    function: { name: 'Read', arguments: '{"path":"package.json"}' },
+                  },
+                ],
+                finishReason: 'tool_calls',
+              } satisfies StreamChunk;
+            });
+          } else {
+            chat.mockResolvedValueOnce(toolResponse(100));
+          }
+        }
+        chat.mockResolvedValueOnce(response);
+        streamChat.mockImplementationOnce(async function* () {
+          yield {
+            content,
+            reasoningContent: response.reasoningContent,
+            finishReason: 'stop',
+          } satisfies StreamChunk;
+        });
+        const { result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            failedTool
+              ? 'Read the file and report the outcome.'
+              : 'Explain this briefly without tools.',
+            createMockContext(),
+            { stream },
+            'ROOT_SYSTEM_PROMPT'
+          )
+        );
+        expect(result).toMatchObject({
+          success: false,
+          error: {
+            type: 'intent_fulfillment_failed',
+            message: 'The model returned an empty final response.',
+          },
+          metadata: {
+            turnsCount: failedTool ? 2 : 1,
+            toolCallsCount: failedTool ? 1 : 0,
+          },
+        });
+        expect(chat).toHaveBeenCalledTimes(stream ? 0 : failedTool ? 2 : 1);
+        expect(streamChat).toHaveBeenCalledTimes(stream ? (failedTool ? 2 : 1) : 0);
+        expect(
+          saveMessage.mock.calls.filter(
+            (call) => call[4]?.emptyFinalCorrection === true
+          )
+        ).toHaveLength(0);
+        expect(
+          saveMessage.mock.calls.filter(
+            (call) => call[4]?.turnFinalization !== undefined
+          )
+        ).toHaveLength(0);
+      }
+    );
+
     it('recovers one empty final after a successful tool call', async () => {
       const { deps, saveMessage } = createTypedPersistenceHarness();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;

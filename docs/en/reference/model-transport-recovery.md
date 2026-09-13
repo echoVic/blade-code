@@ -17,6 +17,18 @@ Real API protocol tests use the same default retry count as production, rather t
 
 Context overflow is a deterministic error. Markers such as `prompt_too_long`, `maximum context length`, and `context_length_exceeded` do not enter transport retries or model fallback even when wrapped by the gateway as HTTP `500`; instead, they return to the Agent loop to trigger reactive compaction.
 
+## Empty Final Responses
+
+A normal final response with no text, only whitespace, or reasoning without an
+answer is not successful completion. Without a successful tool result, the turn
+fails with `intent_fulfillment_failed` rather than committing an empty final reply;
+no extra model request is issued. A subsequent user request can continue the same
+Session under the existing pending-input recovery semantics.
+
+The existing single corrective turn after successful tool execution remains bounded.
+Valid committed structured output may have empty prose, and output-length recovery,
+transport retry budgets, and cancellation behavior are unchanged.
+
 ## Foreground Long Task Recovery
 
 When there is no explicit model `overrides.maxRetries`, the root foreground turn defaults to a maximum of 12 additional requests, and `providerForegroundRecoveryMs` simultaneously limits the total recovery time after the first transient failure:

@@ -19,6 +19,7 @@ interface RunnerInput {
   cleanupCancellation?: boolean;
   creationCancellation?: 'reject' | 'late';
   reasoningEffort?: 'high';
+  emptyFinalFailure?: boolean;
 }
 
 function loadInput(): RunnerInput {
@@ -184,6 +185,69 @@ async function run(input: RunnerInput) {
         configId: 'reasoning_effort',
         value: input.reasoningEffort,
       });
+    }
+    if (input.emptyFinalFailure) {
+      let failure: unknown;
+      try {
+        await connection.prompt({
+          sessionId: created.sessionId,
+          prompt: [{ type: 'text', text: input.prompt }],
+        });
+      } catch (error) {
+        failure = error;
+      }
+      if (
+        !(failure instanceof acp.RequestError) ||
+        !failure.data ||
+        typeof failure.data !== 'object' ||
+        !('failureType' in failure.data) ||
+        failure.data.failureType !== 'intent_fulfillment_failed'
+      ) {
+        throw new Error(
+          'ACP accepted an empty final or reported an unexpected failure'
+        );
+      }
+      if (client.createRequests.length !== 0)
+        throw new Error('Empty final launched a terminal');
+      const updateIndex = client.sessionUpdates.length;
+      const resumed = await connection.prompt({
+        sessionId: created.sessionId,
+        prompt: [
+          {
+            type: 'text',
+            text: `Replace the previous failed request with this request: reply exactly ${input.marker}. Do not use tools.`,
+          },
+        ],
+      });
+      const answer = client.sessionUpdates
+        .slice(updateIndex)
+        .flatMap(({ update }) =>
+          update.sessionUpdate === 'agent_message_chunk' &&
+          update.content.type === 'text'
+            ? [update.content.text]
+            : []
+        )
+        .join('');
+      if (
+        resumed.stopReason !== 'end_turn' ||
+        answer.trim() !== input.marker ||
+        client.createRequests.length !== 0
+      )
+        throw new Error('ACP did not recover from an empty final');
+      if (JSON.stringify(client.sessionUpdates).includes(input.secret))
+        throw new Error('ACP leaked credentials');
+      child.kill('SIGTERM');
+      const exit = await waitForChildExit(child);
+      await connection.closed.catch(() => undefined);
+      if (exit.signal || exit.code !== 0)
+        throw new Error('ACP empty final runner did not exit cleanly');
+      return {
+        success: true,
+        sessionId: created.sessionId,
+        sawBash: false,
+        terminalClearSeen: true,
+        emptyFinalFailure: true,
+      };
     }
     const prompt = connection.prompt({
       sessionId: created.sessionId,

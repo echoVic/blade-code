@@ -1887,6 +1887,262 @@ describeTrajectory('ACP terminal cleanup failure (real API)', () => {
   }
 });
 
+describeTrajectory('empty final without tools (real API)', () => {
+  for (const model of models) {
+    for (const surface of surfaces) {
+      it(`${model.model} fails visibly through ${surface} and accepts a follow-up`, {
+        timeout: 240_000,
+      }, async (context) => {
+        expect(frameworkRetryBudget(context)).toBe(0);
+        if (!model.baseURL) throw new Error('Missing empty-final Provider');
+        const root = await realpath(
+          await mkdtemp(path.join(os.tmpdir(), 'blade-empty-no-tools-'))
+        );
+        const workspace = path.join(root, 'workspace');
+        const home = path.join(root, 'home');
+        const storageRoot = path.join(root, 'storage');
+        const marker = `EMPTY_RECOVERED_${surface.toUpperCase()}`;
+        const prompt = 'Reply exactly HELLO. Do not use tools.';
+        const proxy = await startRecordingProviderProxy(model.baseURL, {
+          stopSequenceOnce: {
+            requestNumber: 1,
+            stop: 'HELLO',
+            prompt: 'Reply exactly HELLO',
+          },
+        });
+        let sessionId = `empty-no-tools-${surface}-${Date.now()}`;
+        let server: ChildProcess | undefined;
+        let identity:
+          | Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>
+          | undefined;
+        let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+        try {
+          await mkdir(workspace, { recursive: true });
+          await writeRuntimeConfig(home, model, proxy.baseUrl);
+          if (surface === 'acp' || surface === 'pty') {
+            const evidence = await runRunner({
+              runner: surface === 'acp' ? acpRunner : ptyRunner,
+              envName:
+                surface === 'acp'
+                  ? 'BLADE_TURN_ACTIVITY_ACP_INPUT'
+                  : 'BLADE_TURN_ACTIVITY_PTY_INPUT',
+              payload: {
+                cliEntry,
+                workspace,
+                home,
+                storageRoot,
+                sessionId,
+                prompt,
+                marker,
+                secret: model.apiKey,
+                releaseFile: path.join(root, 'unused-release'),
+                emptyFinalFailure: true,
+              },
+            });
+            if (surface === 'acp') sessionId = evidence.sessionId;
+            expect(evidence.sawBash).toBe(false);
+          } else if (surface === 'headless') {
+            const invoke = async (input: string, resume: boolean) => {
+              const child = spawn(
+                process.execPath,
+                [
+                  cliEntry,
+                  '--headless',
+                  '--output-format',
+                  'jsonl',
+                  '--trust-workspace',
+                  '--permission-mode',
+                  'yolo',
+                  '--max-turns',
+                  '4',
+                  resume ? '--resume' : '--session-id',
+                  sessionId,
+                  '--no-verification-agent',
+                  input,
+                ],
+                {
+                  cwd: workspace,
+                  env: childEnvironment(home, storageRoot, model.apiKey),
+                  stdio: ['ignore', 'pipe', 'pipe'],
+                }
+              );
+              let stdout = '';
+              let stderr = '';
+              child.stdout?.on('data', (chunk) => {
+                stdout = (stdout + chunk.toString()).slice(-128_000);
+              });
+              child.stderr?.on('data', (chunk) => {
+                stderr = (stderr + chunk.toString()).slice(-128_000);
+              });
+              try {
+                const exit = await waitForChildExit(child, 120_000);
+                assertNoSecrets({ stdout, stderr }, [model.apiKey]);
+                return { ...exit, stdout };
+              } finally {
+                if (child.exitCode === null && child.signalCode === null)
+                  child.kill('SIGKILL');
+              }
+            };
+            const failed = await invoke(prompt, false);
+            expect(failed.signal).toBeNull();
+            expect(failed.code).not.toBe(0);
+            expect(failed.stdout).toContain(
+              'The model returned an empty final response.'
+            );
+            const recovered = await invoke(
+              `Replace the previous failed request with this request: reply exactly ${marker}. Do not use tools.`,
+              true
+            );
+            expect(recovered.code).toBe(0);
+            expect(headlessContent(recovered.stdout)).toBe(marker);
+          } else {
+            const port = await reservePort();
+            const origin = `http://127.0.0.1:${port}`;
+            server = spawn(
+              process.execPath,
+              [
+                cliEntry,
+                '--trust-workspace',
+                'serve',
+                '--hostname',
+                '127.0.0.1',
+                '--port',
+                String(port),
+              ],
+              {
+                cwd: workspace,
+                env: childEnvironment(home, storageRoot, model.apiKey),
+                detached: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+              }
+            );
+            server.stdout?.resume();
+            server.stderr?.resume();
+            if (!server.pid) throw new Error('Empty final Web server has no PID');
+            identity = await captureForegroundGuiLauncherIdentity(server.pid);
+            await waitFor(
+              async () => {
+                try {
+                  return (await fetch(`${origin}/health`)).ok;
+                } catch {
+                  return false;
+                }
+              },
+              'Empty final Web server not ready',
+              30_000
+            );
+            const response = await fetch(`${origin}/sessions`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ projectPath: workspace, title: 'Empty final' }),
+            });
+            expect(response.ok).toBe(true);
+            sessionId = SessionSchema.parse(await response.json()).sessionId;
+            browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage();
+            const faults: string[] = [];
+            page.on('pageerror', (error) => faults.push(error.name));
+            page.on('console', (message) => {
+              if (message.type() === 'error') faults.push(message.text());
+            });
+            const url = new URL(origin);
+            url.searchParams.set('session', sessionId);
+            url.searchParams.set('project', workspace);
+            await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+            const composer = page.locator('textarea[data-blade-composer]');
+            await composer.waitFor({ state: 'visible' });
+            await composer.fill(prompt);
+            await page.locator('[data-blade-submit]').click();
+            await page
+              .locator('[data-blade-session-error]')
+              .waitFor({ state: 'visible', timeout: 60_000 });
+            expect(proxy.forwardedRequestNumbers).toEqual([1]);
+            await composer.fill(
+              `Replace the previous failed request with this request: reply exactly ${marker}. Do not use tools.`
+            );
+            await page.locator('[data-blade-submit]').click();
+            const transcriptPath = findSessionTranscript(storageRoot, sessionId);
+            await waitFor(
+              () =>
+                readSessionEvents(transcriptPath).some(
+                  (event) => event.type === 'turn_completed'
+                ),
+              'Web follow-up did not settle',
+              60_000
+            );
+            const settledFinal = inspectFinalAssistantText(
+              readSessionEvents(transcriptPath)
+            );
+            expect(
+              settledFinal.state !== 'structural_mismatch' &&
+                settledFinal.text === marker,
+              JSON.stringify({
+                finalState: settledFinal.state,
+                responses: proxy.responseSummaries,
+              })
+            ).toBe(true);
+            await page
+              .getByText(marker, { exact: true })
+              .waitFor({ state: 'visible', timeout: 60_000 });
+            expect(faults).toEqual([]);
+            assertNoSecrets(await page.content(), [model.apiKey]);
+          }
+          const transcript = findSessionTranscript(storageRoot, sessionId);
+          await waitFor(
+            () =>
+              readSessionEvents(transcript).some(
+                (event) => event.type === 'turn_completed'
+              ),
+            'Empty final follow-up did not commit'
+          );
+          const events = readSessionEvents(transcript);
+          expect(toolCallNames(events)).toEqual([]);
+          expect(events.filter((event) => event.type === 'turn_aborted')).toHaveLength(
+            1
+          );
+          expect(
+            events.filter((event) => event.type === 'turn_completed')
+          ).toHaveLength(1);
+          const final = inspectFinalAssistantText(events);
+          expect(
+            events.filter(
+              (event) =>
+                event.type === 'message_created' &&
+                event.data.metadata &&
+                typeof event.data.metadata === 'object' &&
+                !Array.isArray(event.data.metadata) &&
+                event.data.metadata.emptyFinalCorrection === true
+            )
+          ).toHaveLength(0);
+          expect(final.state).not.toBe('structural_mismatch');
+          if (final.state !== 'structural_mismatch') expect(final.text).toBe(marker);
+          expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+          expect(proxy.stopSequenceRequestNumbers).toEqual([1]);
+          expect(proxy.injectedRequestNumbers).toEqual([]);
+          expect(proxy.responseSummaries[0]).toMatchObject({
+            contentChars: 0,
+            toolCallDeltas: 0,
+            finishReasons: ['stop'],
+            done: true,
+            parseStatus: 'complete',
+          });
+          assertNoSecrets({ events, responses: proxy.responseSummaries }, [
+            model.apiKey,
+          ]);
+          console.log(
+            `[empty-final-no-tools] ${JSON.stringify({ model: model.model, surface, requests: proxy.forwardedRequestNumbers, tools: 0, failedThenRecovered: true })}`
+          );
+        } finally {
+          await browser?.close();
+          if (server) await stopForegroundGuiLauncher(server, identity);
+          await proxy.close();
+          await removeTestDirectory(root);
+        }
+      });
+    }
+  }
+});
+
 describeTrajectory('turn activity empty-final recovery (real API)', () => {
   for (const model of models) {
     for (const surface of surfaces) {
