@@ -7,7 +7,13 @@ import {
   createSplitPtyMarkerInstruction,
   projectForegroundBoundedPtyOutput,
   waitForPtyExit,
+  waitForPtyFinalization,
 } from './foregroundBoundedOutputPtyDriver.js';
+import {
+  findSessionTranscript,
+  inspectFinalAssistantText,
+  readSessionEvents,
+} from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 import { createTuiTaskAttentionRunnerEnvironment } from './tuiTaskAttentionPtyDriver.js';
 
@@ -170,12 +176,19 @@ async function main(): Promise<void> {
         await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });
       }
     }
+    const completionDeadline = Date.now() + 60_000;
     await waitFor(
       () =>
         markerLatch.seen &&
         plainOutput.lastIndexOf('yolo mode on') > plainOutput.lastIndexOf(input.marker),
       'Turn activity TUI did not complete and return to the composer',
       60_000
+    );
+    const transcript = findSessionTranscript(input.storageRoot, input.sessionId);
+    await waitForPtyFinalization(
+      () => inspectFinalAssistantText(readSessionEvents(transcript)),
+      input.marker,
+      completionDeadline
     );
     if (secretLatch.seen) throw new Error('Turn activity TUI leaked a credential');
     if (input.emptyFinalFailure && sawTool)

@@ -12,9 +12,51 @@ import {
   parseForegroundBoundedOutputPtyEvidence,
   projectForegroundBoundedPtyOutput,
   waitForPtyExit,
+  waitForPtyFinalization,
 } from '../../support/foregroundBoundedOutputPtyDriver.js';
 
 describe('foreground bounded output PTY driver', () => {
+  it('does not treat rendered text as durable completion and obeys the shared deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      let final = { state: 'structural_mismatch', text: 'DONE' };
+      let settled = false;
+      const promise = waitForPtyFinalization(
+        () => final,
+        'DONE',
+        Date.now() + 200
+      ).then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(settled).toBe(false);
+      final = { state: 'awaiting_task_completion', text: 'DONE' };
+      await vi.advanceTimersByTimeAsync(50);
+      expect(settled).toBe(false);
+      final = { state: 'ready', text: 'DONE' };
+      await vi.advanceTimersByTimeAsync(50);
+      await promise;
+      const timeout = waitForPtyFinalization(
+        () => ({ state: 'structural_mismatch' }),
+        'DONE',
+        Date.now() + 50
+      );
+      const rejection = expect(timeout).rejects.toThrow('durable completion');
+      await vi.advanceTimersByTimeAsync(50);
+      await rejection;
+      await expect(
+        waitForPtyFinalization(
+          () => ({ state: 'ready', text: 'WRONG' }),
+          'DONE',
+          Date.now() + 50
+        )
+      ).rejects.toThrow('mismatch');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('arms after prompt echo and latches a split marker across output rotation', () => {
     const marker = 'FINAL_MARKER_123456';
     const latch = new ArmedPtyMarkerLatch(marker);

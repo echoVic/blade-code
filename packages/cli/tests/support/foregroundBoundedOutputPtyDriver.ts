@@ -153,6 +153,25 @@ export function projectForegroundBoundedPtyOutput(output: string): string {
   return appendBoundedPtyEvidence('', plain, SERIALIZED_PTY_OUTPUT_MAX_CHARS);
 }
 
+export async function waitForPtyFinalization(
+  readFinal: () => { state: string; text?: string },
+  expected: string,
+  deadline: number
+): Promise<void> {
+  while (Date.now() < deadline) {
+    const final = readFinal();
+    if (final.state === 'ready') {
+      if (final.text !== expected)
+        throw new Error('PTY durable final response mismatch');
+      return;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(50, deadline - Date.now()))
+    );
+  }
+  throw new Error('PTY final response did not reach durable completion');
+}
+
 export function latchPtyEvidence(current: boolean, observed: boolean): boolean {
   return current || observed;
 }

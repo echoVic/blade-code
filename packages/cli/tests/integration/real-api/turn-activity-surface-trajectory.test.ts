@@ -2242,7 +2242,22 @@ describeTrajectory('turn activity empty-final recovery (real API)', () => {
             events.filter((event) => event.type === 'turn_completed')
           ).toMatchObject([{ data: { turnsCount: 3, toolCallsCount: 1 } }]);
           const final = inspectFinalAssistantText(events);
-          expect(final.state).not.toBe('structural_mismatch');
+          expect(
+            final.state,
+            JSON.stringify({
+              surface,
+              terminals: events.filter(
+                (event) =>
+                  event.type === 'turn_completed' || event.type === 'turn_aborted'
+              ),
+              lastTypes: events.slice(-15).map((event) => event.type),
+              responses: proxy.responseSummaries,
+              finalMessageCount: events.filter(
+                (event) =>
+                  event.type === 'message_created' && event.data.role === 'assistant'
+              ).length,
+            })
+          ).not.toBe('structural_mismatch');
           if (final.state !== 'structural_mismatch') expect(final.text).toBe(marker);
           expect(proxy.forwardedRequestNumbers).toEqual([1, 2, 3]);
           assertTurnActivityProviderTrajectory(proxy, events);
