@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.183] - 2026-09-14
+
+### Fixed
+- Stop the test command runner before spawning when its cancellation signal is already aborted. Cancelled build/test stages no longer execute commands or start owner watchdogs.
+
+### Tests
+- Reproduce a pre-cancelled command's unwanted file write and verify zero launch after the fix. Retain running-command cancellation, timeout, and owner-exit process-tree checks without changing budgets.
+
 ## [0.10.182] - 2026-09-14
 
 ### Fixed
