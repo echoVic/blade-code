@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.186] - 2026-09-14
+
+### Fixed
+- Preserve returned summary usage when compaction falls back after empty-response exhaustion, a later sampling error, or post-processing failure. Retain token, reasoning, cache, and cost totals without changing retry or cancellation semantics.
+
+### Tests
+- Cover all sampling failure classifications and post-summary file-restoration failure with deterministic usage regressions.
+- Verify real DeepSeek Flash/Pro summary success and stop-sequence-induced empty exhaustion, both with normal completion and cancellation after usage delivery, against Provider totals, loop events, results, and freshly read Goal budgets.
+
 ## [0.10.185] - 2026-09-14
 
 ### Fixed
