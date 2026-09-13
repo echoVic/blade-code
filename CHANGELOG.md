@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.187] - 2026-09-14
+
+### Fixed
+- Keep TUI and Web main-context meters unchanged when `/btw` replies arrive. Side requests still accumulate tokens, cache usage, and cost, without replacing newer main-turn readings or restoring context cleared by compaction.
+
+### Tests
+- Cover auxiliary usage accounting, delayed side replies after main updates or context reset, and TUI command routing.
+- Verify real DeepSeek Flash/Pro main-context meter stability in production/development Chromium and raw PTY, retaining side cancellation, ACP recovery, transcript isolation, and IME assertions.
+
 ## [0.10.186] - 2026-09-14
 
 ### Fixed
