@@ -2,6 +2,35 @@
 
 Blade Code separates deterministic regression and paid model verification into two gates. Both gates must pass before a feature patch can be marked production-ready.
 
+## Controlled Coding Benchmark
+
+`bun run benchmark:repo -- --model <configured-model-id>` runs `controlled-coding-v2`:
+read-only diagnosis, single-file repair, and cross-module API migration in three small
+fixed projects. This is not a large real-repository benchmark; passing DeepSeek
+Flash/Pro across these three tasks does not establish overall parity with other coding
+agents. Run `bun run build:cli` first. The benchmark uses production dist, Node, npm,
+and configured API-key model authentication, without installing dependencies or creating
+worktrees.
+
+Each task has its own temporary project, HOME, and Session storage, with MCP, LSP,
+hooks, and plugins disabled. Diagnosis requires a successful file read, exact structured
+findings, and unchanged file inventory/content. Repairs require the exact allowed file
+changes and a successful `npm test` after the last edit. The host then copies source bytes
+to a separate directory, runs boundary examples, and compares returned values. Changed
+tests/package.json, added files/directories, symlinks, missing tool evidence, success
+claims, and `exit(0)` alone cannot pass. Verification has a five-second budget; each
+Agent has 240 seconds, 16 turns, a 4 MiB output limit, and zero additional transport retries.
+
+Temporary-directory isolation is not an OS security sandbox: candidate code and tools
+still run as the current user. Do not use it for hostile code; finite checks do not prove
+correctness for every input. Subprocess environments contain only required settings, and
+scores retain no credentials, model prose, or raw tool output. Results default to
+`.blade/benchmarks/controlled-coding-v2-history.json`, recording source SHA-256, changed
+paths, individual checks, cumulative request tokens, successful reads, and Agent time.
+Use `--history-path` to change the destination. Legacy v1 keyword scores are neither
+overwritten nor merged. Any failed task makes the command exit nonzero. History writes
+are not concurrent-safe; use separate paths for parallel runs.
+
 ## Local Gate
 
 Execute from the repository root:

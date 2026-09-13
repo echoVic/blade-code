@@ -14,7 +14,7 @@ async function main() {
   const historyPath = getArgValue('--history-path');
   const result = await runRealRepoBenchmark({ model, historyPath });
 
-  console.log('Real repo benchmark completed.');
+  console.log('Controlled coding benchmark v2 completed (not a real-repository score).');
   console.log(`History: ${result.historyPath}`);
   for (const benchmarkCase of result.results) {
     console.log(
@@ -24,8 +24,8 @@ async function main() {
         `duration_ms=${benchmarkCase.durationMs.toFixed(1)}`,
         `tokens=${benchmarkCase.totalTokens}`,
         `read_files=${benchmarkCase.readFilesCount}`,
-        `blind_search=${benchmarkCase.blindSearchEvents}`,
-        `target_hit=${benchmarkCase.targetHitEvents}`,
+        `host_verified=${benchmarkCase.verification.passed}`,
+        `changed_files=${benchmarkCase.verification.changedPaths.join(',')}`,
       ].join(' | ')
     );
   }
@@ -39,6 +39,10 @@ async function main() {
       `cases=${DEFAULT_REAL_REPO_BENCHMARK_CASES.length}`,
     ].join(' | ')
   );
+  if (result.results.some((benchmarkCase) => !benchmarkCase.success)) process.exitCode = 1;
 }
 
-void main();
+void main().catch(() => {
+  console.error('Controlled benchmark failed; no successful score was issued.');
+  process.exitCode = 1;
+});
