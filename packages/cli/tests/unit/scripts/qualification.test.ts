@@ -443,7 +443,9 @@ describe('production qualification contract', () => {
     expect(realApi).toContain('await chromium.launch({ headless: true })');
     expect(runner).toContain("import { spawn } from 'bun-pty'");
     expect(runner).toContain('BLADE_TURN_ACTIVITY_PTY_USES_PRODUCTION_DIST');
-    expect(acpRunner).toContain("[input.cliEntry, '--acp']");
+    expect(acpRunner).toContain(
+      "[input.cliEntry, ...(input.codingTask ? ['--trust-workspace'] : []), '--acp']"
+    );
     expect(acpRunner).toContain('blade/turnActivity');
   });
 

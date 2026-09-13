@@ -30,6 +30,7 @@ interface RunnerInput {
   maxTurns?: number;
   releaseFile?: string;
   emptyFinalFailure?: boolean;
+  codingTask?: boolean;
 }
 
 export const BLADE_TURN_ACTIVITY_PTY_USES_PRODUCTION_DIST = true;
@@ -170,7 +171,11 @@ async function main(): Promise<void> {
       terminal.write('\r');
     } else {
       await waitFor(() => sawThinking, 'Turn activity TUI did not render thinking');
-      await waitFor(() => sawTool, 'Turn activity TUI did not render active Bash');
+      await waitFor(
+        () => sawTool,
+        'Turn activity TUI did not render active Bash',
+        input.codingTask ? 120_000 : 30_000
+      );
       if (input.releaseFile && !releasedTool) {
         releasedTool = true;
         await writeFile(input.releaseFile, 'release\n', { mode: 0o600 });

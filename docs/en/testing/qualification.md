@@ -31,6 +31,16 @@ Use `--history-path` to change the destination. Legacy v1 keyword scores are nei
 overwritten nor merged. Any failed task makes the command exit nonzero. History writes
 are not concurrent-safe; use separate paths for parallel runs.
 
+A separate cross-surface migration qualification covers DeepSeek Flash/Pro across
+production Chromium, Vite development Chromium, raw PTY TUI, and ACP (eight cells).
+Each cell must modify both source files, preserve tests and package.json, and execute
+exactly `npm test` after the edit results commit. Host verification uses durable
+result-commit order, not invocation order, and checks copied source in a separate
+verification directory. GUI assertions match each visible tool ID; ACP terminal updates
+must match durable tool IDs; TUI waits for exact durable final output before exiting.
+These controlled integration checks do not establish large-repository success rates or
+native desktop Computer Use coverage.
+
 ## Local Gate
 
 Execute from the repository root:

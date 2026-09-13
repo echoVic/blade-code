@@ -24,6 +24,13 @@ API-key 模型；不会安装依赖或创建 worktree。
 可用 `--history-path` 改位置；旧 v1 关键词评分文件不会被覆盖或合并。任一任务不通过时
 命令非零退出。历史文件不支持多个评测进程并发写入，请为并发运行使用不同路径。
 
+跨界面迁移验收另外覆盖 DeepSeek Flash/Pro × production Chromium、Vite development
+Chromium、raw PTY TUI、ACP 八格。每格必须实际修改两个源码文件、保持测试与 package.json
+不变，并在修改结果提交后执行精确的 `npm test`。宿主按 durable tool-result 的提交顺序
+校验，而不是按调用开始顺序；最后将源码复制到独立验证目录检查行为。GUI 逐一核对工具
+ID 的可见结果，ACP 核对终态更新与 durable tool ID，TUI 等待精确回复持久化后退出。
+这些是受控任务的集成验收，不代表大型仓库成功率或原生桌面 Computer Use 测试。
+
 ## 本地门禁
 
 在仓库根目录执行：

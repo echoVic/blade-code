@@ -20,6 +20,7 @@ interface RunnerInput {
   creationCancellation?: 'reject' | 'late';
   reasoningEffort?: 'high';
   emptyFinalFailure?: boolean;
+  codingTask?: boolean;
 }
 
 function loadInput(): RunnerInput {
@@ -84,20 +85,24 @@ function activityProjections(
 }
 
 async function run(input: RunnerInput) {
-  const child = spawn(process.execPath, [input.cliEntry, '--acp'], {
-    cwd: input.workspace,
-    env: {
-      ...createTuiTaskAttentionRunnerEnvironment(process.env, {
-        HOME: input.home,
-        BLADE_STORAGE_ROOT: input.storageRoot,
-        BLADE_AUTO_MEMORY: '0',
-        BLADE_TELEMETRY_DISABLED: '1',
-        TERM: 'xterm-256color',
-      }),
-      BLADE_API_KEY: input.secret,
-    },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  const child = spawn(
+    process.execPath,
+    [input.cliEntry, ...(input.codingTask ? ['--trust-workspace'] : []), '--acp'],
+    {
+      cwd: input.workspace,
+      env: {
+        ...createTuiTaskAttentionRunnerEnvironment(process.env, {
+          HOME: input.home,
+          BLADE_STORAGE_ROOT: input.storageRoot,
+          BLADE_AUTO_MEMORY: '0',
+          BLADE_TELEMETRY_DISABLED: '1',
+          TERM: 'xterm-256color',
+        }),
+        BLADE_API_KEY: input.secret,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }
+  );
   if (!child.stdin || !child.stdout) {
     child.kill('SIGKILL');
     throw new Error('Turn activity ACP stdio was unavailable');
@@ -185,6 +190,38 @@ async function run(input: RunnerInput) {
         configId: 'reasoning_effort',
         value: input.reasoningEffort,
       });
+    }
+    if (input.codingTask) {
+      const result = await connection.prompt({
+        sessionId: created.sessionId,
+        prompt: [{ type: 'text', text: input.prompt }],
+      });
+      const toolUpdates = client.sessionUpdates.flatMap(({ update }) =>
+        update.sessionUpdate === 'tool_call_update'
+          ? [{ id: update.toolCallId, status: update.status }]
+          : []
+      );
+      if (
+        result.stopReason !== 'end_turn' ||
+        toolUpdates.filter((update) => update.status === 'completed').length < 3
+      )
+        throw new Error('ACP coding task did not complete with visible tools');
+      if (client.activeTerminalCount() !== 0)
+        throw new Error('ACP coding terminal was not released');
+      if (JSON.stringify(client.sessionUpdates).includes(input.secret))
+        throw new Error('ACP coding task leaked credentials');
+      child.kill('SIGTERM');
+      const exit = await waitForChildExit(child);
+      await connection.closed.catch(() => undefined);
+      if (exit.signal || exit.code !== 0)
+        throw new Error('ACP coding runner did not exit cleanly');
+      return {
+        success: true,
+        sessionId: created.sessionId,
+        toolUpdates,
+        terminalRequests: client.createRequests.length,
+        activeTerminals: 0,
+      };
     }
     if (input.emptyFinalFailure) {
       let failure: unknown;
