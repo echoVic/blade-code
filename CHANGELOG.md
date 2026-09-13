@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.184] - 2026-09-14
+
+### Tests
+- Qualify real DeepSeek Flash/Pro cross-module migrations through production/development Chromium, raw PTY TUI, and ACP. Require both source changes, unchanged tests and package.json, successful verification, and independent host checks of the resulting code.
+- Match visible GUI cards and ACP terminal tool updates to durable tool-call IDs. Check tool results in commit order rather than invocation order, wait for Web history synchronization, and retain exact-command and final-response assertions.
+- Reuse the existing controlled benchmark fixtures; these eight integration cells do not represent large-repository benchmarks or native desktop Computer Use coverage.
+
 ## [0.10.183] - 2026-09-14
 
 ### Fixed
