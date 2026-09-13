@@ -353,7 +353,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     updateTokenUsage: (usage: TokenUsageUpdate) => {
       set((state) => {
         const prev = state.session.tokenUsage;
-        const { costUsd, ...currentUsage } = usage;
+        const { costUsd, scope, ...currentUsage } = usage;
         const inputTokens = Math.max(0, usage.inputTokens ?? 0);
         const outputTokens = Math.max(0, usage.outputTokens ?? 0);
         const cacheReadTokens = Math.max(0, usage.cacheReadTokens ?? 0);
@@ -384,7 +384,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
             ...state.session,
             tokenUsage: {
               ...prev,
-              ...currentUsage,
+              ...(scope === 'auxiliary' ? {} : currentUsage),
               totalInputTokens: newTotalInput,
               totalOutputTokens: newTotalOutput,
               cacheReadTokens: newCacheRead,

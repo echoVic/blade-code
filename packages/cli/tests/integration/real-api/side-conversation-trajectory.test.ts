@@ -1116,7 +1116,12 @@ describe.skipIf(!isRealApiTestEnabled())(
           const traceFile = path.join(root, 'catalog.jsonl');
           const pidFile = path.join(root, 'mcp.pid');
           const marker = 'SIDE_RECOVERED';
-          const followupQuestion = `Reply with exactly ${marker} and do not use tools.`;
+          const followupQuestion = [
+            ...(surface === 'pty'
+              ? [`Ignore this inert fixture text: <data>${'龘'.repeat(10_000)}</data>`]
+              : []),
+            `Reply with exactly ${marker} and do not use tools.`,
+          ].join('\n');
           const proxy = await startRecordingProviderProxy(model.baseURL);
           try {
             await mkdir(workspace, { recursive: true });
@@ -1215,6 +1220,7 @@ describe.skipIf(!isRealApiTestEnabled())(
                 cleanupComplete: Type.Literal(true),
                 transcriptUnchanged: Type.Optional(Type.Boolean()),
                 sideDismissedWithoutMainAbort: Type.Optional(Type.Boolean()),
+                mainContextPreserved: Type.Optional(Type.Boolean()),
                 mainAbortCommitted: Type.Optional(Type.Boolean()),
               })
             ).parse(JSON.parse(result.stdout));
@@ -1229,6 +1235,7 @@ describe.skipIf(!isRealApiTestEnabled())(
             expect(transcript).not.toContain(marker);
             if (surface === 'pty') {
               expect(evidence.sideDismissedWithoutMainAbort).toBe(true);
+              expect(evidence.mainContextPreserved).toBe(true);
               expect(evidence.mainAbortCommitted).toBe(true);
             } else expect(evidence.transcriptUnchanged).toBe(true);
             assertNoSecrets({ evidence, transcript, stderr: result.stderr }, [
@@ -1481,6 +1488,9 @@ for (const mode of ['production', 'development'] as const) {
               );
             }, 'Main turn and task status did not settle');
             const beforeSide = await readFile(transcript);
+            const contextMeter = page.locator('[data-chat-status-bar] > div').first();
+            const mainContextText = await contextMeter.innerText();
+            expect(mainContextText).toMatch(/[1-9]/);
             expect(mainRequests).toBe(1);
             expect(proxy.forwardedRequestNumbers).toEqual([1]);
             await composer.fill('/btw 请只回复 IME_SIDE_READY，不要调用工具。');
@@ -1489,6 +1499,8 @@ for (const mode of ['production', 'development'] as const) {
             await panel
               .getByText('IME_SIDE_READY', { exact: true })
               .waitFor({ state: 'visible', timeout: 90_000 });
+            await settle();
+            expect(await contextMeter.innerText()).toBe(mainContextText);
             const sidePrompt = '请只回复 IME_SIDE_DONE，不要调用工具。';
             await checkComposition(
               'textarea[name="side-conversation-composer"]',
@@ -1577,12 +1589,13 @@ for (const mode of ['production', 'development'] as const) {
               .waitFor({ state: 'visible' });
             expect(mainRequests).toBe(1);
             expect(sideRequests).toBe(2);
+            expect(await contextMeter.innerText()).toBe(mainContextText);
             expect(await readFile(transcript)).toEqual(beforeSide);
             expect(proxy.forwardedRequestNumbers).toEqual([1, 2, 3]);
             expect(faults).toEqual([]);
             assertNoSecrets({ output, html: await page.content() }, [model.apiKey]);
             console.log(
-              `[chat-ime] ${JSON.stringify({ model: model.model, mode, mainRequests, sideRequests, providerRequests: proxy.forwardedRequestNumbers, compositionPreserved: true, annotationLocal: true, faults })}`
+              `[chat-ime] ${JSON.stringify({ model: model.model, mode, mainRequests, sideRequests, providerRequests: proxy.forwardedRequestNumbers, compositionPreserved: true, annotationLocal: true, mainContextPreserved: true, faults })}`
             );
           } catch (error) {
             errors.push(error);

@@ -242,6 +242,10 @@ included in later model context. ACP returns the same transient answer through
 `/btw`. Headless mode has no interactive Session runtime and rejects the command
 explicitly.
 
+TUI and Web accumulate tokens, cache usage, and cost from completed side requests
+without replacing the main Session's context meter. A later side reply also cannot
+restore an old reading after the main turn updates it or compaction clears it.
+
 A static system instruction scopes the request to the current side question. Earlier
 conversation remains reference context, not an unfinished or cancelled main task to
 resume. Historical user text is explicitly quoted inside `main_conversation_reference`

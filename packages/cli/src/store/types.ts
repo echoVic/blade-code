@@ -97,6 +97,7 @@ export interface TokenUsage {
 }
 
 export interface TokenUsageUpdate extends Partial<TokenUsage> {
+  scope?: 'main' | 'auxiliary';
   /** 本次模型调用费用；优先使用 pi-ai 的精确计算结果。 */
   costUsd?: number;
 }

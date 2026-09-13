@@ -381,6 +381,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       });
       if (result.usage) {
         get().updateTokenUsage({
+          scope: 'auxiliary',
           inputTokens: result.usage.promptTokens,
           outputTokens: result.usage.completionTokens,
           totalTokens: result.usage.totalTokens,

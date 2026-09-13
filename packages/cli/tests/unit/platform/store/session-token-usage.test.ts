@@ -37,6 +37,42 @@ describe('session token usage', () => {
     });
   });
 
+  it.each([false, true])(
+    'adds auxiliary costs without replacing main context (reset: %s)',
+    (reset) => {
+      sessionActions().updateTokenUsage({
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 120,
+        maxContextTokens: 128_000,
+        costUsd: 0.125,
+      });
+      if (reset) sessionActions().resetContextUsage();
+      sessionActions().updateTokenUsage({
+        scope: 'auxiliary',
+        inputTokens: 40,
+        outputTokens: 5,
+        totalTokens: 45,
+        maxContextTokens: 64_000,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 2,
+        costUsd: 0.25,
+      });
+      expect(getState().session.tokenUsage).toMatchObject({
+        inputTokens: reset ? 0 : 100,
+        outputTokens: reset ? 0 : 20,
+        totalTokens: reset ? 0 : 120,
+        maxContextTokens: 128_000,
+        totalInputTokens: 140,
+        totalOutputTokens: 25,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 2,
+        estimatedCostUsd: 0.375,
+      });
+      expect(getState().session.tokenUsage).not.toHaveProperty('scope');
+    }
+  );
+
   it('uses catalog cache prices when exact pi cost is unavailable', () => {
     getState().config.actions.setConfig({
       ...DEFAULT_CONFIG,

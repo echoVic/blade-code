@@ -76,6 +76,7 @@ export interface TokenUsage {
 }
 
 export interface TokenUsageUpdate extends Partial<TokenUsage> {
+  scope?: 'main' | 'auxiliary';
   costUsd?: number;
 }
 

@@ -6,11 +6,11 @@ export const createUiSlice: SliceCreator<UiSlice> = (set) => ({
 
   updateTokenUsage: (usage) =>
     set((state) => {
-      const { costUsd, ...currentUsage } = usage;
+      const { costUsd, scope, ...currentUsage } = usage;
       return {
         tokenUsage: {
           ...state.tokenUsage,
-          ...currentUsage,
+          ...(scope === 'auxiliary' ? {} : currentUsage),
           totalInputTokens:
             state.tokenUsage.totalInputTokens + Math.max(0, usage.inputTokens ?? 0),
           totalOutputTokens:

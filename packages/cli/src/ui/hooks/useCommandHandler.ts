@@ -478,6 +478,7 @@ export const useCommandHandler = (
         appActions.completeSideConversation(requestId, result);
         if (result.usage) {
           sessionActions.updateTokenUsage({
+            scope: 'auxiliary',
             inputTokens: result.usage.promptTokens,
             outputTokens: result.usage.completionTokens,
             totalTokens: result.usage.totalTokens,

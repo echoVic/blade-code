@@ -131,10 +131,11 @@ async function runPty(input: Input) {
   };
   const send = async (text: string) => {
     await writeBracketedPaste(terminal, text);
-    await waitFor(
-      () => plain.includes(text.split('\n')[0]!.slice(0, 40)),
-      'PTY paste was not rendered'
-    );
+    const projectedPaste = text.length > 500 || text.split('\n').length > 10;
+    const expectedPaste = projectedPaste
+      ? `${text.length} chars, ${text.split('\n').length} lines:`
+      : text.split('\n')[0]!.slice(0, 40);
+    await waitFor(() => plain.includes(expectedPaste), 'PTY paste was not rendered');
     terminal.write('\r');
   };
   try {
@@ -222,7 +223,15 @@ async function runPty(input: Input) {
         (await readFile(input.traceFile, 'utf8')).includes('catalog_released'),
       'Shared MCP refresh did not resume'
     );
+    const contextPercent = () =>
+      [...stripVTControlCharacters(output).matchAll(/(\d+)%\s*·\s*Cache/g)].at(-1)?.[1];
+    await waitFor(
+      () => contextPercent() !== undefined,
+      'TUI context meter was not rendered'
+    );
+    const mainContextPercent = contextPercent();
     plain = '';
+    output = '';
     const prompt = `/btw ${input.followupQuestion}`;
     await send(prompt);
     await waitFor(
@@ -238,6 +247,17 @@ async function runPty(input: Input) {
       'TUI side follow-up did not render the exact answer line',
       90_000
     );
+    output = '';
+    terminal.write('\u001b');
+    await waitFor(
+      () => contextPercent() !== undefined,
+      'TUI context meter did not return after side dismissal'
+    );
+    if (contextPercent() !== mainContextPercent) {
+      throw new Error(
+        `Side usage replaced main context: ${mainContextPercent}% -> ${contextPercent()}%`
+      );
+    }
     if (!(await readFile(transcript)).equals(afterAbort)) {
       const baselineLength = afterAbort.toString().trim().split('\n').length;
       const appended = readSessionEvents(transcript)
@@ -279,6 +299,7 @@ async function runPty(input: Input) {
       sessionId: input.sessionId,
       cancellationMs,
       sideDismissedWithoutMainAbort: true,
+      mainContextPreserved: true,
       mainAbortCommitted: true,
       followup: input.marker,
       cleanupComplete: true,

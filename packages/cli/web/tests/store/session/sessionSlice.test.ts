@@ -555,6 +555,59 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
   });
 
+  it.each([false, true])(
+    'keeps the latest main context after side usage returns (reset: %s)',
+    async (reset) => {
+      const ref = createRef('side-usage', '/tmp/side-workspace');
+      useSessionStore.setState({
+        currentSessionId: ref.sessionId,
+        currentSessionRef: ref,
+        isTemporarySession: false,
+      });
+      useSessionStore.getState().updateTokenUsage({
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 120,
+        costUsd: 0.125,
+      });
+      const response =
+        deferred<Awaited<ReturnType<typeof sessionService.askSideQuestion>>>();
+      vi.mocked(sessionService.askSideQuestion).mockReturnValueOnce(response.promise);
+      const pending = useSessionStore.getState().askSideConversation('Explain this.');
+      useSessionStore.getState().updateTokenUsage({
+        inputTokens: 200,
+        outputTokens: 30,
+        totalTokens: 230,
+        costUsd: 0.25,
+      });
+      if (reset) useSessionStore.getState().resetContextUsage();
+      response.resolve({
+        response: 'Side answer',
+        durationMs: 10,
+        modelId: 'model-1',
+        usage: {
+          promptTokens: 40,
+          completionTokens: 5,
+          totalTokens: 45,
+          cacheReadInputTokens: 10,
+          cacheCreationInputTokens: 2,
+          costUsd: 0.125,
+        },
+      });
+      await expect(pending).resolves.toBe(true);
+      expect(useSessionStore.getState().tokenUsage).toMatchObject({
+        inputTokens: reset ? 0 : 200,
+        outputTokens: reset ? 0 : 30,
+        totalTokens: reset ? 0 : 230,
+        totalInputTokens: 340,
+        totalOutputTokens: 55,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 2,
+        estimatedCostUsd: 0.5,
+      });
+    }
+  );
+
   it('opens an empty side conversation for selected text without a provider call', () => {
     const ref = createRef('side-draft', '/tmp/side-workspace');
     useSessionStore.setState({

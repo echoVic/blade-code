@@ -1914,6 +1914,11 @@ describe('useCommandHandler durable recovery', () => {
   });
 
   it('runs /btw beside an active turn without steering or changing main messages', async () => {
+    mocks.askSideQuestion.mockResolvedValueOnce({
+      response: 'Side answer',
+      durationMs: 12,
+      usage: { promptTokens: 40, completionTokens: 5, totalTokens: 45, costUsd: 0.125 },
+    });
     mocks.isProcessing = true;
     mocks.storeProcessing = true;
 
@@ -1941,6 +1946,15 @@ describe('useCommandHandler durable recovery', () => {
       expect.stringMatching(/^side-/),
       expect.objectContaining({ response: 'Side answer' })
     );
+    expect(mocks.updateTokenUsage).toHaveBeenCalledWith({
+      scope: 'auxiliary',
+      inputTokens: 40,
+      outputTokens: 5,
+      totalTokens: 45,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0.125,
+    });
     expect(mocks.steerActiveTurn).not.toHaveBeenCalled();
     expect(mocks.addUserMessage).not.toHaveBeenCalled();
     expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
