@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.185] - 2026-09-14
+
+### Fixed
+- Include reported compaction usage in loop totals and Goal budget accounting. Threshold, reactive, and turn-limit summary requests now use the same normalized counts as usage events.
+- Retain already consumed tokens on cancellation, Provider or persistence failure, and early tool exit without changing context thresholds, retry limits, or output recovery budgets.
+
+### Tests
+- Cover compaction success/fallback, failure and cancellation, terminal persistence paths, and total normalization.
+- Verify real DeepSeek Flash/Pro compaction and cancellation against loop usage events and a freshly read durable Goal budget; confirm no continuation occurs after the budget is exhausted.
+
 ## [0.10.184] - 2026-09-14
 
 ### Tests
