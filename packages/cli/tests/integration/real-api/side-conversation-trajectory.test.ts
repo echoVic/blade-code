@@ -1221,6 +1221,8 @@ describe.skipIf(!isRealApiTestEnabled())(
                 transcriptUnchanged: Type.Optional(Type.Boolean()),
                 sideDismissedWithoutMainAbort: Type.Optional(Type.Boolean()),
                 mainContextPreserved: Type.Optional(Type.Boolean()),
+                boundedSideHeader: Type.Optional(Type.Boolean()),
+                sideHeaderSurvivedResize: Type.Optional(Type.Boolean()),
                 mainAbortCommitted: Type.Optional(Type.Boolean()),
               })
             ).parse(JSON.parse(result.stdout));
@@ -1236,6 +1238,17 @@ describe.skipIf(!isRealApiTestEnabled())(
             if (surface === 'pty') {
               expect(evidence.sideDismissedWithoutMainAbort).toBe(true);
               expect(evidence.mainContextPreserved).toBe(true);
+              expect(evidence.boundedSideHeader).toBe(true);
+              expect(evidence.sideHeaderSurvivedResize).toBe(true);
+              const sideRequest: unknown = JSON.parse(proxy.requestBodies[1]!);
+              expect(sideRequest).toMatchObject({
+                messages: expect.arrayContaining([
+                  expect.objectContaining({
+                    role: 'user',
+                    content: expect.stringContaining(followupQuestion),
+                  }),
+                ]),
+              });
               expect(evidence.mainAbortCommitted).toBe(true);
             } else expect(evidence.transcriptUnchanged).toBe(true);
             assertNoSecrets({ evidence, transcript, stderr: result.stderr }, [

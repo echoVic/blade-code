@@ -247,6 +247,33 @@ async function runPty(input: Input) {
       'TUI side follow-up did not render the exact answer line',
       90_000
     );
+    const visibleSideFrame = () => {
+      const rendered = stripVTControlCharacters(output).replaceAll('\r', '');
+      const start = [...rendered.matchAll(/(?:^|\n) *┌─+┐\n *│ BTW/g)].at(-1)?.index;
+      return start === undefined ? undefined : rendered.slice(start).trim();
+    };
+    const assertSideLayout = async (rows: number) => {
+      await waitFor(() => {
+        const frame = visibleSideFrame();
+        return Boolean(
+          frame?.includes(input.marker) &&
+            frame.includes('输入命令...') &&
+            /\d+%\s*·\s*Cache/.test(frame) &&
+            !frame.includes('Answering...')
+        );
+      }, 'Long side question displaced the answer or main context meter');
+      const frame = visibleSideFrame();
+      if (!frame || frame.split('\n').length > rows) {
+        throw new Error('Long side question exceeded the terminal height');
+      }
+      if (!frame.split('\n')[1]?.includes('…')) {
+        throw new Error('Long side question was not visibly truncated');
+      }
+    };
+    await assertSideLayout(48);
+    output = '';
+    terminal.resize(100, 36);
+    await assertSideLayout(36);
     output = '';
     terminal.write('\u001b');
     await waitFor(
@@ -300,6 +327,8 @@ async function runPty(input: Input) {
       cancellationMs,
       sideDismissedWithoutMainAbort: true,
       mainContextPreserved: true,
+      boundedSideHeader: true,
+      sideHeaderSurvivedResize: true,
       mainAbortCommitted: true,
       followup: input.marker,
       cleanupComplete: true,
@@ -313,6 +342,9 @@ async function runPty(input: Input) {
           completeFrameSeen: frame !== undefined,
           mainToolVisible: frame?.includes('Bash') ?? false,
           sidePanelVisible: frame?.includes('Answering...') ?? false,
+          frameAnswerVisible: frame?.includes(input.marker) ?? false,
+          frameMeterVisible: frame ? /\d+%\s*·\s*Cache/.test(frame) : false,
+          frameLines: frame?.split('\n').length,
         }
       )}`
     );

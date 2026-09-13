@@ -34,17 +34,22 @@ export const SideConversationPanel: React.FC = React.memo(() => {
       marginBottom={1}
       paddingX={1}
     >
-      <Box>
-        <Text bold color={theme.colors.info}>
-          BTW
-        </Text>
-        <Text color={theme.colors.muted}> | {sideConversation.question}</Text>
-        {sideConversation.durationMs !== undefined && (
-          <Text color={theme.colors.muted} dimColor>
-            {' '}
-            | {sideConversation.durationMs}ms
+      <Box height={1} flexShrink={0}>
+        <Text wrap="truncate-end">
+          <Text bold color={theme.colors.info}>
+            BTW
           </Text>
-        )}
+          <Text color={theme.colors.muted}>
+            {' | '}
+            {sideConversation.question.replace(/\s+/g, ' ')}
+          </Text>
+          {sideConversation.durationMs !== undefined && (
+            <Text color={theme.colors.muted} dimColor>
+              {' '}
+              | {sideConversation.durationMs}ms
+            </Text>
+          )}
+        </Text>
       </Box>
 
       {sideConversation.status === 'loading' && (

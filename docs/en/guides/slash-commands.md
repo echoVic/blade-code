@@ -245,6 +245,10 @@ explicitly.
 TUI and Web accumulate tokens, cache usage, and cost from completed side requests
 without replacing the main Session's context meter. A later side reply also cannot
 restore an old reading after the main turn updates it or compaction clears it.
+The TUI question header is a single-line preview, truncated to terminal width with
+whitespace folded only for display. The original Provider question remains intact;
+narrowing the terminal does not let the question header push out a short answer or
+the main input area.
 
 A static system instruction scopes the request to the current side question. Earlier
 conversation remains reference context, not an unfinished or cancelled main task to
