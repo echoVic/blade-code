@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.182] - 2026-09-14
+
+### Fixed
+- Replace keyword-based benchmark success with host-verified controlled coding tasks. Run each task in a separate temporary project and Session environment instead of modifying the caller's repository.
+- Require exact change scope, real successful tool evidence, tests after the final edit, and independently checked source behavior. Accumulate usage across requests and store source digests and verification checks without model text or credentials.
+- Write versioned `controlled-coding-v2` scores separately from legacy history and exit nonzero on failed cases. These small fixed tasks are not a real-repository capability score or an OS security sandbox.
+
+### Tests
+- Reject success claims without edits, modified tests, symlinks, added directories, premature test runs, assertion-library tampering, and early successful exits; bound non-returning verification.
+- Exercise real DeepSeek Flash/Pro diagnosis, single-file repair, and cross-module migration, verify the caller's files remain unchanged, and require all six host checks to pass.
+- Wait for the PTY response's exact durable finalization before terminating the test process, within the existing completion budget; retain structural diagnostics instead of relying on rendered text alone.
+
 ## [0.10.181] - 2026-09-13
 
 ### Fixed
