@@ -729,7 +729,8 @@ export async function* checkAndCompactInLoop(
   signal?: AbortSignal,
   lastApiCallTime?: number,
   activeTask?: string,
-  compactionState?: LoopCompactionState
+  compactionState?: LoopCompactionState,
+  onUsage?: (usage: UsageInfo) => void
 ): AsyncGenerator<LoopEvent, CompactResult, void> {
   const contextTokens = snapshot.contextTokens;
 
@@ -836,6 +837,7 @@ export async function* checkAndCompactInLoop(
       sessionId: context.sessionId,
     });
     if (result.usage) {
+      onUsage?.(result.usage);
       yield {
         kind: 'token_usage',
         usage: toTokenUsageInfo(result.usage, maxContextTokens),
@@ -947,6 +949,7 @@ function makeAbortResult(
   turnsCount: number,
   toolCallsCount: number,
   startTime: number,
+  tokensUsed: number,
   signal?: AbortSignal
 ): LoopResult {
   const reason = signal ? getAbortReason(signal) : 'user-cancel';
@@ -960,6 +963,7 @@ function makeAbortResult(
       turnsCount,
       toolCallsCount,
       duration: Date.now() - startTime,
+      tokensUsed,
       abortReason: reason,
     },
   };
@@ -968,7 +972,8 @@ function makeAbortResult(
 function makeToolResultPersistenceFailure(
   turnsCount: number,
   toolCallsCount: number,
-  startTime: number
+  startTime: number,
+  tokensUsed: number
 ): LoopResult {
   return {
     success: false,
@@ -980,6 +985,7 @@ function makeToolResultPersistenceFailure(
       turnsCount,
       toolCallsCount,
       duration: Date.now() - startTime,
+      tokensUsed,
     },
   };
 }
@@ -988,7 +994,8 @@ function makeContextCompactionFailure(
   turnsCount: number,
   toolCallsCount: number,
   startTime: number,
-  phase: 'compaction' | 'checkpoint'
+  phase: 'compaction' | 'checkpoint',
+  tokensUsed: number
 ): LoopResult {
   return {
     success: false,
@@ -1001,6 +1008,7 @@ function makeContextCompactionFailure(
       turnsCount,
       toolCallsCount,
       duration: Date.now() - startTime,
+      tokensUsed,
     },
   };
 }
@@ -1013,6 +1021,13 @@ export async function* executeLoopGenerator(
   systemPrompt: string | undefined
 ): AsyncGenerator<LoopEvent, LoopResult, void> {
   const startTime = Date.now();
+  let totalTokens = 0;
+  const recordUsage = (usage: UsageInfo) => {
+    totalTokens = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      totalTokens + (resolveProviderContextTokens(usage) ?? 0)
+    );
+  };
   // 提到 try 外，使 catch 中的 makeAbortResult 能拿到真实进度
   let turnsCount = 0;
   const allToolResults: import('../../tools/types/index.js').ToolResult[] = [];
@@ -1024,7 +1039,13 @@ export async function* executeLoopGenerator(
     signal?: AbortSignal
   ) => {
     interruptedTurn = true;
-    return makeAbortResult(completedTurns, completedToolCalls, startTime, signal);
+    return makeAbortResult(
+      completedTurns,
+      completedToolCalls,
+      startTime,
+      totalTokens,
+      signal
+    );
   };
 
   try {
@@ -1175,7 +1196,6 @@ validates the object and may return a bounded corrective error.`;
 
     const maxTurns = configuredMaxTurns === -1 ? Infinity : configuredMaxTurns;
 
-    let totalTokens = 0;
     let lastApiCallTime: number | undefined;
     let handoffAttemptSpent = false;
     let maxOutputRecoveryCount = 0;
@@ -1894,6 +1914,7 @@ validates the object and may return a bounded corrective error.`;
                   }
                 );
                 if (compactResult.usage) {
+                  recordUsage(compactResult.usage);
                   yield {
                     kind: 'token_usage',
                     usage: toTokenUsageInfo(
@@ -2401,7 +2422,8 @@ validates the object and may return a bounded corrective error.`;
           options?.signal,
           lastApiCallTime,
           activeUserRequest,
-          compactionState
+          compactionState,
+          recordUsage
         );
 
         if (compactResult.kind === 'failed') {
@@ -2409,7 +2431,8 @@ validates the object and may return a bounded corrective error.`;
             turnsCount,
             allToolResults.length,
             startTime,
-            compactResult.phase
+            compactResult.phase,
+            totalTokens
           );
         }
 
@@ -2607,21 +2630,22 @@ validates the object and may return a bounded corrective error.`;
               fallbackMessagesOmitted = result.fallbackMessagesOmitted;
               fallbackMessagesTruncated = result.fallbackMessagesTruncated;
               failureReason = result.failureReason;
+              if (result.usage) {
+                recordUsage(result.usage);
+                yield {
+                  kind: 'token_usage',
+                  usage: toTokenUsageInfo(
+                    result.usage,
+                    chatConfig.maxContextTokens ?? 0
+                  ),
+                };
+              }
               if (
                 result.success &&
                 result.strategy &&
                 result.summary !== undefined &&
                 result.preTokens !== undefined
               ) {
-                if (result.usage) {
-                  yield {
-                    kind: 'token_usage',
-                    usage: toTokenUsageInfo(
-                      result.usage,
-                      chatConfig.maxContextTokens ?? 0
-                    ),
-                  };
-                }
                 const checkpointId = await persistCompaction(
                   deps,
                   context,
@@ -2720,9 +2744,7 @@ validates the object and may return a bounded corrective error.`;
         // Token 使用量
         lastApiCallTime = Date.now();
         if (turnResult.usage) {
-          if (turnResult.usage.totalTokens) {
-            totalTokens += turnResult.usage.totalTokens;
-          }
+          recordUsage(turnResult.usage);
           yield {
             kind: 'token_usage',
             usage: toTokenUsageInfo(
@@ -4017,7 +4039,8 @@ validates the object and may return a bounded corrective error.`;
                 return makeToolResultPersistenceFailure(
                   turnsCount,
                   allToolResults.length,
-                  startTime
+                  startTime,
+                  totalTokens
                 );
               }
             }
@@ -4120,7 +4143,8 @@ validates the object and may return a bounded corrective error.`;
                 return makeToolResultPersistenceFailure(
                   turnsCount,
                   allToolResults.length,
-                  startTime
+                  startTime,
+                  totalTokens
                 );
               }
             }
@@ -4504,6 +4528,7 @@ validates the object and may return a bounded corrective error.`;
                 turnsCount,
                 toolCallsCount: allToolResults.length,
                 duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
               },
             };
           }
@@ -4592,6 +4617,7 @@ validates the object and may return a bounded corrective error.`;
                 turnsCount,
                 toolCallsCount: allToolResults.length,
                 duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
                 shouldExitLoop: true,
                 targetMode: result.metadata?.targetMode,
                 planContent:
@@ -4706,6 +4732,7 @@ validates the object and may return a bounded corrective error.`;
           turnsCount,
           toolCallsCount: allToolResults.length,
           duration: Date.now() - startTime,
+          tokensUsed: totalTokens,
         },
       };
     }
@@ -4718,6 +4745,7 @@ validates the object and may return a bounded corrective error.`;
         turnsCount,
         toolCallsCount: allToolResults.length,
         duration: Date.now() - startTime,
+        tokensUsed: totalTokens,
       },
     };
   } finally {

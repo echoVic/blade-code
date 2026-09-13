@@ -29,6 +29,17 @@ The existing single corrective turn after successful tool execution remains boun
 Valid committed structured output may have empty prose, and output-length recovery,
 transport retry budgets, and cancellation behavior are unchanged.
 
+## Turn Usage Accounting
+
+The loop result's `tokensUsed` accumulates reported Provider usage, including summary
+requests for threshold, reactive, and turn-limit compaction. Fallback, later persistence
+failure, and cancellation retain already reported usage. It uses the same normalized
+counts as `token_usage` events, which the existing Goal budget accumulates and persists
+at the turn boundary. Unreported Provider consumption is not estimated, and usage from
+subagents or other independent loops is not counted again in the current loop.
+Cumulative consumption is not current context occupancy and does not change compaction
+thresholds, output-continuation budgets, or transport retry budgets.
+
 ## Foreground Long Task Recovery
 
 When there is no explicit model `overrides.maxRetries`, the root foreground turn defaults to a maximum of 12 additional requests, and `providerForegroundRecoveryMs` simultaneously limits the total recovery time after the first transient failure:

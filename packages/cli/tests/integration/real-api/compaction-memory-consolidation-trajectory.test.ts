@@ -16,7 +16,14 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { afterEach, describe, expect, it, type TestContext } from 'vitest';
 import { SessionSchema } from '../../../src/api/schemas.js';
+import { Agent } from '../../../src/agent/Agent.js';
+import { drainLoop, type LoopEvent } from '../../../src/agent/loop/index.js';
+import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
+import type { ChatContext } from '../../../src/agent/types.js';
+import { getState } from '../../../src/store/vanilla.js';
+import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import { PermissionMode } from '../../../src/config/types.js';
+import { GoalStore } from '../../../src/goals/GoalStore.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import { getProjectStoragePath } from '../../../src/context/storage/pathUtils.js';
 import { resetProjectionDbCache } from '../../../src/context/storage/sqlite/projection.js';
@@ -946,6 +953,121 @@ afterEach(async () => {
   else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
   await Promise.all(roots.splice(0).map((root) => removeTestDirectory(root)));
 });
+
+describe
+  .skipIf(!releaseMatrixEnabled)
+  .sequential('compaction usage Goal accounting (real API)', () => {
+    for (const model of models)
+      it.for([false, true])(
+        `${model.model} accounts compaction tokens (cancel: %s)`,
+        { timeout: 240_000 },
+        async (cancel, context) => {
+          expect(frameworkRetryBudget(context)).toBe(0);
+          const fixture = await createFixture(model, 'headless');
+          const originalConfig = getState().config.config;
+          const config = buildRealApiRuntimeConfig({
+            ...model,
+            baseURL: fixture.proxy.baseUrl,
+          });
+          getState().config.actions.setConfig({
+            ...config,
+            models: config.models.map((entry) => ({
+              ...entry,
+              overrides: { ...entry.overrides, maxRetries: 0 },
+            })),
+          });
+          let runtime: SessionRuntime | undefined;
+          let agent: Agent | undefined;
+          try {
+            await withStorageRoot(fixture.storageRoot, async () =>
+              runWithCwdOverride(fixture.workspace, async () => {
+                runtime = await SessionRuntime.create({
+                  sessionId: fixture.sessionId,
+                  workspaceRoot: fixture.workspace,
+                  permissionMode: PermissionMode.YOLO,
+                });
+                await runtime.createGoal({ objective: fixture.prompt, tokenBudget: 1 });
+                agent = await Agent.createWithRuntime(runtime, {
+                  sessionId: fixture.sessionId,
+                });
+                const controller = new AbortController();
+                const chatContext: ChatContext = {
+                  messages: await SessionService.loadSessionModelContext(
+                    fixture.sessionId,
+                    fixture.workspace
+                  ),
+                  userId: 'compaction-usage',
+                  sessionId: fixture.sessionId,
+                  workspaceRoot: fixture.workspace,
+                  permissionMode: PermissionMode.YOLO,
+                  signal: controller.signal,
+                };
+                const events: LoopEvent[] = [];
+                let compacting = false;
+                let compactionTokens = 0;
+                const result = await drainLoop(
+                  agent.chatStream(fixture.prompt, chatContext, {
+                    stream: true,
+                    signal: controller.signal,
+                  }),
+                  (event) => {
+                    events.push(event);
+                    if (event.kind === 'compaction')
+                      compacting = event.phase === 'start';
+                    if (event.kind === 'token_usage' && compacting) {
+                      compactionTokens += event.usage.totalTokens;
+                      if (cancel) controller.abort();
+                    }
+                  }
+                );
+                const total = events.reduce(
+                  (sum, event) =>
+                    sum + (event.kind === 'token_usage' ? event.usage.totalTokens : 0),
+                  0
+                );
+                expect(compactionTokens).toBeGreaterThan(0);
+                expect(result.metadata?.tokensUsed).toBe(total);
+                expect(result.success).toBe(!cancel);
+                if (cancel) expect(result.error?.type).toBe('aborted');
+                const goal = await runtime.getGoal();
+                expect(goal).toMatchObject({
+                  status: 'budget_limited',
+                  tokensUsed: total,
+                });
+                await expect(
+                  new GoalStore(fixture.workspace, fixture.sessionId).get()
+                ).resolves.toMatchObject({
+                  status: 'budget_limited',
+                  tokensUsed: total,
+                });
+                expect(
+                  events.filter((event) => event.kind === 'goal_continuation_started')
+                ).toHaveLength(0);
+                expect(fixture.proxy.evidence().contextLimits).toBe(1);
+                expect(fixture.proxy.evidence().compactions).toBeGreaterThanOrEqual(1);
+                if (cancel) {
+                  expect(total).toBe(compactionTokens);
+                  expect(
+                    fixture.proxy
+                      .evidence()
+                      .responses.every((response) => response.kind === 'compaction')
+                  ).toBe(true);
+                }
+                assertNoSecrets({ events, result, goal }, [model.apiKey]);
+                console.log(
+                  `[compaction-usage] ${JSON.stringify({ model: model.model, cancel, compactionTokens, total, resultTokens: result.metadata?.tokensUsed, goalTokens: goal?.tokensUsed })}`
+                );
+              })
+            );
+          } finally {
+            await agent?.destroy();
+            await runtime?.dispose();
+            await fixture.proxy.close();
+            if (originalConfig) getState().config.actions.setConfig(originalConfig);
+          }
+        }
+      );
+  });
 
 describe
   .skipIf(!releaseMatrixEnabled || process.platform === 'win32')

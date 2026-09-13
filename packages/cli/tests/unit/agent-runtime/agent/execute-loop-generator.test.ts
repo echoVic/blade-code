@@ -1106,6 +1106,159 @@ describe('executeLoopGenerator', () => {
   });
 
   describe('compaction lifecycle', () => {
+    it.each([
+      'threshold',
+      'fallback',
+      'reactive',
+      'reactive-failure',
+      'turn-limit',
+      'checkpoint-failure',
+      'provider-failure',
+      'cancel',
+    ] as const)(
+      'includes reported compaction usage in final accounting: %s',
+      async (mode) => {
+        const { deps, contextManager } = createHandoffPersistenceHarness();
+        const controller = new AbortController();
+        const usage = { promptTokens: 100, completionTokens: 20, totalTokens: 120 };
+        const compacted: CompactionResult = {
+          success: mode !== 'fallback',
+          summary: 'summary',
+          preTokens: 80_000,
+          postTokens: 1_000,
+          filesIncluded: [],
+          compactedMessages: [{ role: 'user', content: 'summary' }],
+          boundaryMessage: { role: 'system', content: '' },
+          summaryMessage: { role: 'user', content: 'summary' },
+          usage,
+        };
+        vi.spyOn(contextManager, 'saveCompaction').mockImplementation(async () => {
+          if (mode === 'checkpoint-failure') throw new Error('checkpoint failed');
+          if (mode === 'cancel') controller.abort();
+          return 'compaction-checkpoint';
+        });
+        const chat = vi.mocked(deps.chatService.chat);
+        if (mode === 'reactive' || mode === 'reactive-failure') {
+          chat
+            .mockRejectedValueOnce(new Error('context_length_exceeded'))
+            .mockResolvedValueOnce(finalResponse(1000, 'done'));
+          reactiveCompactionState.tryReactiveCompact.mockResolvedValueOnce({
+            success: mode === 'reactive',
+            strategy: 'llm',
+            summary: 'summary',
+            preTokens: 80_000,
+            postTokens: 1000,
+            messages: compacted.compactedMessages,
+            filesIncluded: [],
+            usage,
+          });
+        } else {
+          chat.mockResolvedValueOnce(
+            toolResponse(mode === 'turn-limit' ? 100 : 80_000)
+          );
+          if (mode === 'provider-failure')
+            chat.mockRejectedValueOnce(new Error('provider failed'));
+          else chat.mockResolvedValueOnce(finalResponse(1000, 'done'));
+          vi.mocked(CompactionService.compact).mockResolvedValueOnce(compacted);
+        }
+        if (mode === 'turn-limit') deps.runtimeOptions.maxTurns = 1;
+        const { events, result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Read then finish.',
+            createMockContext(),
+            {
+              stream: false,
+              signal: controller.signal,
+              ...(mode === 'turn-limit'
+                ? { onTurnLimitReached: async () => ({ continue: true }) }
+                : {}),
+            },
+            undefined
+          )
+        );
+        const counts = events.flatMap((event) =>
+          event.kind === 'token_usage' ? [event.usage.totalTokens] : []
+        );
+        expect(counts).toContain(120);
+        expect(result.metadata?.tokensUsed).toBe(
+          counts.reduce((sum, count) => sum + count, 0)
+        );
+        expect(result.success).toBe(
+          ![
+            'checkpoint-failure',
+            'provider-failure',
+            'reactive-failure',
+            'cancel',
+          ].includes(mode)
+        );
+      }
+    );
+
+    it.each([
+      'tool-use',
+      'tool-result',
+      'early-exit',
+      'assistant-persistence',
+    ] as const)('retains consumed usage on terminal path: %s', async (mode) => {
+      const { deps } = createTypedPersistenceHarness({
+        rejectToolUse: mode === 'tool-use',
+        rejectToolResult: mode === 'tool-result',
+        rejectAssistantMessage: mode === 'assistant-persistence',
+      });
+      vi.mocked(deps.chatService.chat).mockResolvedValueOnce(
+        mode === 'assistant-persistence'
+          ? finalResponse(100, 'done')
+          : toolResponse(100)
+      );
+      if (mode === 'early-exit')
+        vi.mocked(deps.toolExecutor.execute).mockResolvedValueOnce({
+          success: true,
+          llmContent: 'done',
+          metadata: { shouldExitLoop: true },
+        });
+      const { result, events } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read and finish.',
+          createMockContext(),
+          { stream: false },
+          undefined
+        )
+      );
+      const tokens = events.reduce(
+        (sum, event) =>
+          sum + (event.kind === 'token_usage' ? event.usage.totalTokens : 0),
+        0
+      );
+      expect(tokens).toBeGreaterThan(0);
+      expect(result.metadata?.tokensUsed).toBe(tokens);
+    });
+
+    it('normalizes reported totals consistently with the usage event', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      vi.mocked(deps.chatService.chat).mockResolvedValueOnce({
+        ...finalResponse(100, 'done'),
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 0 },
+      });
+      const { result, events } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Answer.',
+          createMockContext(),
+          { stream: false },
+          undefined
+        )
+      );
+      expect(result.metadata?.tokensUsed).toBe(120);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'token_usage',
+          usage: expect.objectContaining({ totalTokens: 120 }),
+        })
+      );
+    });
+
     it('preserves deterministic micro compaction for unknown usage', async () => {
       const deps = createMockDeps();
       const context = createMockContext({
