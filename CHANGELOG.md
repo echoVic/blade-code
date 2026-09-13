@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.188] - 2026-09-14
+
+### Fixed
+- Keep long or multiline TUI side-question headers on one truncating display line, preserving the full Provider request and leaving short answers and the main input area visible after terminal resize.
+
+### Tests
+- Cover loading, completed, and failed header states without mutating the question.
+- Require real DeepSeek Flash/Pro long-question answers, composer, and context meter in the same bounded PTY view at 150x48 and 100x36, and verify the Provider receives the complete question.
+
 ## [0.10.187] - 2026-09-14
 
 ### Fixed
