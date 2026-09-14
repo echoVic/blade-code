@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.194] - 2026-09-15
+
+### Fixed
+- Use the owning ACP Session's selected model, context window, credentials, endpoint, and model catalog for manual compaction instead of global defaults. Preserve channel headers and keep summary sampling budgets independent.
+
+### Tests
+- Verify model-boundary failures do not fall back to global settings and that summary retry, timeout, output, and temperature limits stay unchanged.
+- Exercise two real Pro-backed ACP channels: each Session makes one summary request through its own endpoint while the global default receives none.
+
 ## [0.10.193] - 2026-09-15
 
 ### Fixed
