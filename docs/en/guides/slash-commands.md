@@ -249,6 +249,11 @@ The TUI question header is a single-line preview, truncated to terminal width wi
 whitespace folded only for display. The original Provider question remains intact;
 narrowing the terminal does not let the question header push out a short answer or
 the main input area.
+Side answers and errors use a terminal-height-bounded scroll area that preserves
+Markdown. With the main composer focused, `PgUp` / `PgDn` page the side content;
+ordinary typing and arrow keys still belong to the composer. New questions start
+at the top, and dismissed panels, modal dialogs, or transcript browsing disable
+side paging.
 
 A static system instruction scopes the request to the current side question. Earlier
 conversation remains reference context, not an unfinished or cancelled main task to

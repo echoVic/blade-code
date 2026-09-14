@@ -221,7 +221,7 @@ describe
             (entry) => entry.id === 'cross_module_fix'
           );
           if (!task) throw new Error('Missing migration task');
-          const prompt = `${task.prompt}\nBash already starts in the project directory. Its verification command must be exactly npm test: no cd prefix, shell wrapper, redirection, or extra flags.\n${createSplitPtyMarkerInstruction(marker)}`;
+          const prompt = `${task.prompt}\nUse Edit or Write to update each source file. Reserve Bash for verification, not file reads or mutations. Bash already starts in the project directory. Its verification command must be exactly npm test: no cd prefix, shell wrapper, redirection, or extra flags.\n${createSplitPtyMarkerInstruction(marker)}`;
           const config = buildRealApiRuntimeConfig({
             ...model,
             baseURL: proxy.baseUrl,
@@ -460,6 +460,21 @@ describe
                   });
                 await card.waitFor({ state: 'visible' });
               }
+              const toolEvidence = {
+                durable: durableTools.map((tool) => ({
+                  name: tool.toolName,
+                  succeeded: tool.error === null && tool.output !== null,
+                })),
+                cards: await page.locator('[data-tool-status]').evaluateAll((cards) =>
+                  cards.map((card) => ({
+                    name: card.getAttribute('data-tool-name'),
+                    status: card.getAttribute('data-tool-status'),
+                  }))
+                ),
+              };
+              console.log(
+                `[coding-tool-evidence] ${JSON.stringify({ model: model.model, surface, ...toolEvidence })}`
+              );
               expect(
                 await page
                   .locator('[data-tool-status="success"][data-tool-name="Bash"]')

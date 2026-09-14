@@ -1097,10 +1097,14 @@ describe.skipIf(!isRealApiTestEnabled())(
   'Side cancellation production terminal surfaces',
   () => {
     for (const model of cancellationModels) {
-      it.for(['pty', 'acp'] as const)(
-        `${model.model} cancels and recovers through %s`,
+      it.for([
+        { surface: 'pty', longAnswer: false },
+        { surface: 'pty', longAnswer: true },
+        { surface: 'acp', longAnswer: false },
+      ] as const)(
+        `${model.model} cancels and recovers through $surface (long answer: $longAnswer)`,
         { timeout: 240_000 },
-        async (surface, context) => {
+        async ({ surface, longAnswer }, context) => {
           const retry = context.task.retry;
           expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
           if (!model.baseURL) throw new Error('Missing terminal cancellation Provider');
@@ -1115,12 +1119,26 @@ describe.skipIf(!isRealApiTestEnabled())(
           const releaseFile = path.join(root, 'release');
           const traceFile = path.join(root, 'catalog.jsonl');
           const pidFile = path.join(root, 'mcp.pid');
-          const marker = 'SIDE_RECOVERED';
+          const marker = longAnswer ? 'SIDE_PAGE_FIRST' : 'SIDE_RECOVERED';
+          const lastMarker = longAnswer ? 'SIDE_PAGE_LAST' : undefined;
+          const expectedAnswer = longAnswer
+            ? [
+                marker,
+                ...Array.from(
+                  { length: 48 },
+                  (_, index) =>
+                    `ROW_${String(index + 1).padStart(2, '0')} bounded answer`
+                ),
+                lastMarker,
+              ].join('\n')
+            : marker;
           const followupQuestion = [
             ...(surface === 'pty'
               ? [`Ignore this inert fixture text: <data>${'龘'.repeat(10_000)}</data>`]
               : []),
-            `Reply with exactly ${marker} and do not use tools.`,
+            longAnswer
+              ? `Reply with exactly the following text, preserving every line. Do not add markdown fences or use tools:\n${expectedAnswer}`
+              : `Reply with exactly ${marker} and do not use tools.`,
           ].join('\n');
           const proxy = await startRecordingProviderProxy(model.baseURL);
           try {
@@ -1176,6 +1194,8 @@ describe.skipIf(!isRealApiTestEnabled())(
               traceFile,
               pidFile,
               marker,
+              lastMarker,
+              answerLines: longAnswer ? expectedAnswer.split('\n') : undefined,
               followupQuestion,
               sessionId: `side-terminal-${randomUUID()}`,
               mainPrompt: `Call Bash exactly once with this command and timeout 120000. Do not use any other tools: ${command}`,
@@ -1223,6 +1243,7 @@ describe.skipIf(!isRealApiTestEnabled())(
                 mainContextPreserved: Type.Optional(Type.Boolean()),
                 boundedSideHeader: Type.Optional(Type.Boolean()),
                 sideHeaderSurvivedResize: Type.Optional(Type.Boolean()),
+                sideAnswerPaged: Type.Optional(Type.Boolean()),
                 mainAbortCommitted: Type.Optional(Type.Boolean()),
               })
             ).parse(JSON.parse(result.stdout));
@@ -1240,6 +1261,7 @@ describe.skipIf(!isRealApiTestEnabled())(
               expect(evidence.mainContextPreserved).toBe(true);
               expect(evidence.boundedSideHeader).toBe(true);
               expect(evidence.sideHeaderSurvivedResize).toBe(true);
+              expect(evidence.sideAnswerPaged).toBe(longAnswer);
               const sideRequest: unknown = JSON.parse(proxy.requestBodies[1]!);
               expect(sideRequest).toMatchObject({
                 messages: expect.arrayContaining([

@@ -44,6 +44,8 @@ const Input = Type.Object({
   traceFile: Type.String(),
   pidFile: Type.String(),
   marker: Type.String(),
+  lastMarker: Type.Optional(Type.String()),
+  answerLines: Type.Optional(Type.Array(Type.String())),
   followupQuestion: Type.String(),
   secret: Type.String(),
 });
@@ -241,7 +243,10 @@ async function runPty(input: Input) {
           return (
             content.startsWith('│') &&
             content.endsWith('│') &&
-            content.slice(1, -1).trim() === input.marker
+            content
+              .slice(1, -1)
+              .replace(/[█▀▄]\s*$/, '')
+              .trim() === input.marker
           );
         }),
       'TUI side follow-up did not render the exact answer line',
@@ -252,11 +257,11 @@ async function runPty(input: Input) {
       const start = [...rendered.matchAll(/(?:^|\n) *┌─+┐\n *│ BTW/g)].at(-1)?.index;
       return start === undefined ? undefined : rendered.slice(start).trim();
     };
-    const assertSideLayout = async (rows: number) => {
+    const assertSideLayout = async (rows: number, marker = input.marker) => {
       await waitFor(() => {
         const frame = visibleSideFrame();
         return Boolean(
-          frame?.includes(input.marker) &&
+          frame?.includes(marker) &&
             frame.includes('输入命令...') &&
             /\d+%\s*·\s*Cache/.test(frame) &&
             !frame.includes('Answering...')
@@ -271,9 +276,98 @@ async function runPty(input: Input) {
       }
     };
     await assertSideLayout(48);
-    output = '';
-    terminal.resize(100, 36);
-    await assertSideLayout(36);
+    if (input.lastMarker) {
+      if (visibleSideFrame()?.includes(input.lastMarker)) {
+        throw new Error('Long side answer was not clipped at the first page');
+      }
+      const observedLines = new Set<string>();
+      const recordVisibleLines = () => {
+        for (const line of visibleSideFrame()?.split('\n') ?? []) {
+          const content = line.trim();
+          if (content.startsWith('│') && content.endsWith('│')) {
+            observedLines.add(
+              content
+                .slice(1, -1)
+                .replace(/[█▀▄]\s*$/, '')
+                .trim()
+            );
+          }
+        }
+      };
+      recordVisibleLines();
+      let viewportRows = 48;
+      const draft = 'MAIN_DRAFT_PRESERVED';
+      await writeBracketedPaste(terminal, draft);
+      await waitFor(() => plain.includes(draft), 'Main draft did not render');
+      const page = async (key: string) => {
+        output = '';
+        terminal.write(key);
+        await waitFor(
+          () => Boolean(visibleSideFrame()?.includes('PgUp/PgDn')),
+          'Side page did not render'
+        );
+        const frame = visibleSideFrame();
+        if (!frame?.includes(draft)) throw new Error('Paging changed the main draft');
+        if (frame.split('\n').length > viewportRows) {
+          throw new Error('Side answer exceeded the viewport');
+        }
+        recordVisibleLines();
+      };
+      for (
+        let index = 0;
+        index < 12 && !visibleSideFrame()?.includes(input.lastMarker);
+        index++
+      ) {
+        await page('\u001b[6~');
+      }
+      if (!visibleSideFrame()?.includes(input.lastMarker))
+        throw new Error('Side answer bottom was not reachable');
+      output = '';
+      viewportRows = 36;
+      terminal.resize(100, 36);
+      await waitFor(
+        () => Boolean(visibleSideFrame()?.includes('PgUp/PgDn')),
+        'Resized side page did not render'
+      );
+      for (
+        let index = 0;
+        index < 12 && !visibleSideFrame()?.includes(input.lastMarker);
+        index++
+      ) {
+        await page('\u001b[6~');
+      }
+      await page('\u001b[5~');
+      if (visibleSideFrame()?.includes(input.lastMarker))
+        throw new Error('Page up did not leave the bottom');
+      for (
+        let index = 0;
+        index < 12 && !visibleSideFrame()?.includes(input.marker);
+        index++
+      ) {
+        await page('\u001b[5~');
+      }
+      if (!visibleSideFrame()?.includes(input.marker))
+        throw new Error('Side answer top was not reachable');
+      const missingLines = input.answerLines?.filter(
+        (line) => !observedLines.has(line)
+      );
+      if (!missingLines || missingLines.length > 0) {
+        throw new Error(
+          `Side paging omitted ${missingLines?.length ?? 'unknown'} answer lines`
+        );
+      }
+      output = '';
+      terminal.write('\u0015');
+      await waitFor(
+        () => Boolean(visibleSideFrame()?.includes('输入命令...')),
+        'Main draft did not clear'
+      );
+      await assertSideLayout(36);
+    } else {
+      output = '';
+      terminal.resize(100, 36);
+      await assertSideLayout(36);
+    }
     output = '';
     terminal.write('\u001b');
     await waitFor(
@@ -329,6 +423,7 @@ async function runPty(input: Input) {
       mainContextPreserved: true,
       boundedSideHeader: true,
       sideHeaderSurvivedResize: true,
+      sideAnswerPaged: Boolean(input.lastMarker),
       mainAbortCommitted: true,
       followup: input.marker,
       cleanupComplete: true,
