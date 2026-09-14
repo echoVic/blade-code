@@ -53,6 +53,10 @@ catalog, channel headers, credentials, and endpoint rather than resolving a same
 global channel again. Summary temperature, output limits, timeout, and sampling retry
 budgets remain independent of the main request.
 
+A leading `<analysis>` block is excluded before extracting the public summary, including
+any `<summary>` tags quoted inside that block. Unterminated or analysis-only responses use
+the existing bounded empty-summary retries and fallback, retaining reported usage.
+
 ## Foreground Long Task Recovery
 
 When there is no explicit model `overrides.maxRetries`, the root foreground turn defaults to a maximum of 12 additional requests, and `providerForegroundRecoveryMs` simultaneously limits the total recovery time after the first transient failure:
