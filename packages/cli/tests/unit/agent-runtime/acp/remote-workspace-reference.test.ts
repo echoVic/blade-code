@@ -143,14 +143,23 @@ function startReferenceChild(input: {
     'const moduleUrl = process.env.BLADE_REFERENCE_MODULE_URL;',
     "if (!rawInput || !moduleUrl) throw new Error('Reference child input is missing');",
     'const input = JSON.parse(rawInput);',
+    'const started = Date.now();',
+    "const phase = (value) => process.stderr.write(JSON.stringify({ phase: value, elapsedMs: Date.now() - started }) + '\\n');",
+    "phase('started');",
     'process.env.BLADE_STORAGE_ROOT = input.storageRoot;',
     'const module = await import(moduleUrl);',
+    "phase('imported');",
     'if (input.readyPath && input.releasePath) {',
     'module.__setAcpRemoteWorkspaceReferenceHooksForTesting({',
     'beforeCapacityLockAttempt: async () => {',
+    "phase('barrier-ready');",
     "await writeFile(input.readyPath, 'ready', 'utf8');",
     'while (!(await Bun.file(input.releasePath).exists())) await delay(5);',
+    "phase('barrier-released');",
     '},',
+    "afterCapacityLockAcquired: async () => phase('lock-acquired'),",
+    "beforePublish: async () => phase('before-publish'),",
+    "afterPublish: async () => phase('after-publish'),",
     '});',
     '}',
     'if (input.waitAfterLockPath) {',
@@ -182,7 +191,7 @@ function startReferenceChild(input: {
     let stderr = '';
     const timeout = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error('Reference child timed out'));
+      reject(new Error(`Reference child timed out: ${stderr.slice(-2048)}`));
     }, CHILD_TIMEOUT_MS);
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -205,6 +214,9 @@ function startReferenceChild(input: {
       if (code !== 0 || signal || !line) {
         reject(new Error(`Reference child failed (${code ?? signal}): ${stderr}`));
         return;
+      }
+      if (process.env.BLADE_REFERENCE_DIAGNOSTICS === '1') {
+        process.stderr.write(`[reference-child-phases] ${stderr.slice(-2048)}\n`);
       }
       resolve(JSON.parse(line) as ReferenceOutcome);
     });
