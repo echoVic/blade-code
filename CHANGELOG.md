@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.193] - 2026-09-15
+
+### Fixed
+- Pass TUI/ACP cancellation through manual `/compact` and refuse replacement-context or memory commits when cancellation is observed before checkpoint persistence. Preserve already returned usage on cancellation without resetting TUI context occupancy; committed checkpoints remain authoritative.
+
+### Tests
+- Cover pre-cancelled input, interrupted sampling, cancellation before persistence, committed-checkpoint races, and TUI usage-only handling.
+- Verify real DeepSeek Flash/Pro manual compaction cancellation through ACP and raw PTY, including Provider connection closure, unchanged transcripts, and restored TUI input.
+
 ## [0.10.192] - 2026-09-15
 
 ### Fixed
