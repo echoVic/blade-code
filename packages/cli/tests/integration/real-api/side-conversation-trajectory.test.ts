@@ -1098,13 +1098,14 @@ describe.skipIf(!isRealApiTestEnabled())(
   () => {
     for (const model of cancellationModels) {
       it.for([
-        { surface: 'pty', longAnswer: false },
-        { surface: 'pty', longAnswer: true },
-        { surface: 'acp', longAnswer: false },
+        { surface: 'pty', longAnswer: false, dismissWhileMainRunning: false },
+        { surface: 'pty', longAnswer: true, dismissWhileMainRunning: false },
+        { surface: 'pty', longAnswer: false, dismissWhileMainRunning: true },
+        { surface: 'acp', longAnswer: false, dismissWhileMainRunning: false },
       ] as const)(
-        `${model.model} cancels and recovers through $surface (long answer: $longAnswer)`,
+        `${model.model} cancels and recovers through $surface (long answer: $longAnswer, dismiss during main: $dismissWhileMainRunning)`,
         { timeout: 240_000 },
-        async ({ surface, longAnswer }, context) => {
+        async ({ surface, longAnswer, dismissWhileMainRunning }, context) => {
           const retry = context.task.retry;
           expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
           if (!model.baseURL) throw new Error('Missing terminal cancellation Provider');
@@ -1196,6 +1197,7 @@ describe.skipIf(!isRealApiTestEnabled())(
               marker,
               lastMarker,
               answerLines: longAnswer ? expectedAnswer.split('\n') : undefined,
+              dismissWhileMainRunning,
               followupQuestion,
               sessionId: `side-terminal-${randomUUID()}`,
               mainPrompt: `Call Bash exactly once with this command and timeout 120000. Do not use any other tools: ${command}`,
@@ -1244,13 +1246,17 @@ describe.skipIf(!isRealApiTestEnabled())(
                 boundedSideHeader: Type.Optional(Type.Boolean()),
                 sideHeaderSurvivedResize: Type.Optional(Type.Boolean()),
                 sideAnswerPaged: Type.Optional(Type.Boolean()),
+                completedSideDismissedWithDraft: Type.Optional(Type.Boolean()),
+                completedSideDismissedWhileMainRunning: Type.Optional(Type.Boolean()),
                 mainAbortCommitted: Type.Optional(Type.Boolean()),
               })
             ).parse(JSON.parse(result.stdout));
             expect(evidence.surface).toBe(surface);
             expect(evidence.followup).toBe(marker);
             expect(evidence.cancellationMs).toBeLessThan(3_000);
-            expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+            expect(proxy.forwardedRequestNumbers).toEqual(
+              dismissWhileMainRunning ? [1, 2, 3] : [1, 2]
+            );
             const transcript = await readFile(
               findSessionTranscript(storageRoot, evidence.sessionId),
               'utf8'
@@ -1262,7 +1268,11 @@ describe.skipIf(!isRealApiTestEnabled())(
               expect(evidence.boundedSideHeader).toBe(true);
               expect(evidence.sideHeaderSurvivedResize).toBe(true);
               expect(evidence.sideAnswerPaged).toBe(longAnswer);
-              const sideRequest: unknown = JSON.parse(proxy.requestBodies[1]!);
+              expect(evidence.completedSideDismissedWithDraft).toBe(true);
+              expect(evidence.completedSideDismissedWhileMainRunning).toBe(
+                dismissWhileMainRunning
+              );
+              const sideRequest: unknown = JSON.parse(proxy.requestBodies.at(-1)!);
               expect(sideRequest).toMatchObject({
                 messages: expect.arrayContaining([
                   expect.objectContaining({

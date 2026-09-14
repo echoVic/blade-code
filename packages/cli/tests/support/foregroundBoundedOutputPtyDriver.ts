@@ -122,7 +122,10 @@ export function isCompleteRawPtyMarkerEvidence(value: unknown): boolean {
   );
 }
 
-export function latestCompleteStandardPtyFrame(output: string): string | undefined {
+export function latestCompleteStandardPtyFrame(
+  output: string,
+  completeFooter?: RegExp
+): string | undefined {
   const frameStart = '\u001b[2K\u001b[G';
   let latest: string | undefined;
   let start = output.indexOf(frameStart);
@@ -133,10 +136,13 @@ export function latestCompleteStandardPtyFrame(output: string): string | undefin
     const cursor = [...candidate.matchAll(/\[\d+G/g)].find(
       (match) => candidate[match.index - 1] === '\u001b'
     );
-    if (cursor) {
+    const plain = stripVTControlCharacters(candidate);
+    if (completeFooter?.test(plain)) {
+      latest = plain;
+    } else if (cursor) {
       latest = stripVTControlCharacters(candidate.slice(0, cursor.index - 1));
     } else if (next >= 0) {
-      latest = stripVTControlCharacters(candidate);
+      latest = plain;
     }
     start = next;
   }

@@ -252,6 +252,36 @@ describe('foreground bounded output PTY driver', () => {
     ).toBe('Answering...\r\nBash active\r\n');
   });
 
+  it('accepts a complete footer-delimited redraw without retaining the previous side panel', () => {
+    const footer = /\n[^\r\n]*\d+%\s*·\s*Cache[^\r\n]*\r?\n$/;
+    const erase = '\u001b[2K\u001b[G';
+    const previous = `${erase}BTW\nSIDE_PAGE_FIRST\n99% · Cache 18%\n`;
+    const closed = '│ > MAIN_DRAFT_AFTER_SIDE │\r\n99% · Cache 18%\r\n';
+
+    expect(latestCompleteStandardPtyFrame(previous + erase + closed, footer)).toBe(
+      closed
+    );
+    expect(
+      latestCompleteStandardPtyFrame(previous + erase + closed.slice(0, -1), footer)
+    ).toContain('BTW');
+    expect(
+      latestCompleteStandardPtyFrame(
+        previous + erase + '│ > MAIN_DRAFT_AFTER_SIDE │\n',
+        footer
+      )
+    ).toContain('BTW');
+    expect(latestCompleteStandardPtyFrame(erase + closed, footer)).not.toContain('BTW');
+    expect(
+      latestCompleteStandardPtyFrame(
+        previous + erase + 'BTW\n99% · Cache 18%\n',
+        footer
+      )
+    ).toContain('BTW');
+    expect(
+      latestCompleteStandardPtyFrame(erase + closed.slice(0, -1), footer)
+    ).toBeUndefined();
+  });
+
   it('retains only the latest bounded ANSI evidence', () => {
     const output = appendBoundedPtyEvidence('prefix-', `${'x'.repeat(100)}TAIL`, 16);
 

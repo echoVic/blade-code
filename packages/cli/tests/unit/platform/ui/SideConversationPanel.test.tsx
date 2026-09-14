@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   focus: 'main-input',
   handler: undefined as TerminalInputHandler | undefined,
   active: false,
+  dismissSideConversation: vi.fn(),
   listeners: new Set<() => void>(),
   scroll: { scrollHeight: 100, clientHeight: 12, scrollTop: 0 },
   sideConversation: null as {
@@ -72,6 +73,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   },
   useActiveModal: () => mocks.modal,
   useCurrentFocus: () => mocks.focus,
+  useAppActions: () => ({ dismissSideConversation: mocks.dismissSideConversation }),
   useTheme: () => ({
     colors: {
       info: 'cyan',
@@ -139,6 +141,7 @@ describe('SideConversationPanel', () => {
     mocks.focus = 'main-input';
     mocks.handler = undefined;
     mocks.active = false;
+    mocks.dismissSideConversation.mockClear();
     mocks.listeners.clear();
     mocks.scroll = { scrollHeight: 100, clientHeight: 12, scrollTop: 0 };
     container = document.createElement('div');
@@ -149,6 +152,33 @@ describe('SideConversationPanel', () => {
     root = undefined;
     container.remove();
   });
+
+  it.each(['completed', 'error'] as const)(
+    'dismisses a %s side panel on Escape without consuming ordinary keys',
+    (status) => {
+      mocks.sideConversation = {
+        requestId: 'dismiss-side',
+        question: 'Question',
+        status,
+        response: 'Answer',
+        error: 'Provider unavailable',
+      };
+      root = ReactDOM.createRoot(container);
+      act(() => root?.render(<SideConversationPanel />));
+      expect(mocks.active).toBe(true);
+      expect(mocks.handler?.(' ', plainKey)).toBe(false);
+      expect(mocks.handler?.('', { ...plainKey, return: true })).toBe(false);
+      expect(mocks.handler?.('c', { ...plainKey, ctrl: true })).toBe(false);
+      expect(mocks.dismissSideConversation).not.toHaveBeenCalled();
+      let consumed: boolean | void = undefined;
+      act(() => {
+        consumed = mocks.handler?.('', { ...plainKey, escape: true });
+      });
+      expect(consumed).toBe(true);
+      expect(mocks.dismissSideConversation).toHaveBeenCalledOnce();
+      expect(container.textContent).toContain('Esc: dismiss');
+    }
+  );
 
   it('bounds long answers and errors to the terminal with an explicit paging hint', () => {
     for (const status of ['completed', 'error'] as const) {

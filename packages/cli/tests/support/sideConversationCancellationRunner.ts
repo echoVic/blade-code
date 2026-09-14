@@ -46,6 +46,7 @@ const Input = Type.Object({
   marker: Type.String(),
   lastMarker: Type.Optional(Type.String()),
   answerLines: Type.Optional(Type.Array(Type.String())),
+  dismissWhileMainRunning: Type.Optional(Type.Boolean()),
   followupQuestion: Type.String(),
   secret: Type.String(),
 });
@@ -160,21 +161,46 @@ async function runPty(input: Input) {
     );
     const before = await readFile(transcript);
     plain = '';
-    await send('/btw Explain the running task without using tools.');
+    await send(
+      input.dismissWhileMainRunning
+        ? '/btw Reply with exactly SIDE_ACTIVE_DONE and do not use tools.'
+        : '/btw Explain the running task without using tools.'
+    );
     await waitFor(
       () => plain.includes('Answering...'),
       'TUI side question did not start'
     );
+    if (input.dismissWhileMainRunning) {
+      await writeFile(input.releaseFile, 'release');
+      await waitFor(
+        () =>
+          plain
+            .split(/\r?\n/)
+            .some((line) => /^\s*│\s+SIDE_ACTIVE_DONE\s+│\s*$/.test(line)),
+        'Side answer did not complete while main Bash was running',
+        90_000
+      );
+      output = '';
+      await writeBracketedPaste(terminal, 'ACTIVE_MAIN_DRAFT');
+      await waitFor(
+        () => stripVTControlCharacters(output).includes('ACTIVE_MAIN_DRAFT'),
+        'Active main draft did not render'
+      );
+    }
     plain = '';
     output = '';
     terminal.write('\u001b');
     await waitFor(
       () => {
-        const frame = latestCompleteStandardPtyFrame(output);
+        const frame = input.dismissWhileMainRunning
+          ? stripVTControlCharacters(output)
+          : latestCompleteStandardPtyFrame(output);
         return (
           frame !== undefined &&
           frame.includes('Bash') &&
-          !frame.includes('Answering...')
+          !frame.includes('Answering...') &&
+          (!input.dismissWhileMainRunning ||
+            (!frame.includes('BTW') && frame.includes('ACTIVE_MAIN_DRAFT')))
         );
       },
       'First Escape did not dismiss the side question',
@@ -206,7 +232,10 @@ async function runPty(input: Input) {
       'Cancelled TUI main tool remained alive',
       3_000
     );
-    if ((await readFile(input.traceFile, 'utf8')).includes('catalog_released')) {
+    if (
+      !input.dismissWhileMainRunning &&
+      (await readFile(input.traceFile, 'utf8')).includes('catalog_released')
+    ) {
       throw new Error('TUI cancellation released the shared MCP refresh');
     }
     await waitFor(
@@ -219,6 +248,14 @@ async function runPty(input: Input) {
       3_000
     );
     const afterAbort = await readFile(transcript);
+    if (input.dismissWhileMainRunning) {
+      output = '';
+      terminal.write('\u0015');
+      await waitFor(
+        () => stripVTControlCharacters(output).includes('输入命令...'),
+        'Active draft did not clear after main cancellation'
+      );
+    }
     await writeFile(input.releaseFile, 'release');
     await waitFor(
       async () =>
@@ -368,12 +405,27 @@ async function runPty(input: Input) {
       terminal.resize(100, 36);
       await assertSideLayout(36);
     }
+    const dismissalDraft = 'MAIN_DRAFT_AFTER_SIDE';
+    output = '';
+    await writeBracketedPaste(terminal, dismissalDraft);
+    await waitFor(
+      () => stripVTControlCharacters(output).includes(dismissalDraft),
+      'Dismissal draft did not render'
+    );
     output = '';
     terminal.write('\u001b');
-    await waitFor(
-      () => contextPercent() !== undefined,
-      'TUI context meter did not return after side dismissal'
-    );
+    await waitFor(() => {
+      const rendered = latestCompleteStandardPtyFrame(
+        output,
+        /\n[^\r\n]*\d+%\s*·\s*Cache[^\r\n]*\r?\n$/
+      );
+      return Boolean(
+        rendered?.includes(dismissalDraft) &&
+          /\d+%\s*·\s*Cache/.test(rendered) &&
+          !rendered.includes('BTW') &&
+          !rendered.includes('PgUp/PgDn')
+      );
+    }, 'Escape did not dismiss the completed side panel while preserving the draft');
     if (contextPercent() !== mainContextPercent) {
       throw new Error(
         `Side usage replaced main context: ${mainContextPercent}% -> ${contextPercent()}%`
@@ -424,6 +476,8 @@ async function runPty(input: Input) {
       boundedSideHeader: true,
       sideHeaderSurvivedResize: true,
       sideAnswerPaged: Boolean(input.lastMarker),
+      completedSideDismissedWithDraft: true,
+      completedSideDismissedWhileMainRunning: Boolean(input.dismissWhileMainRunning),
       mainAbortCommitted: true,
       followup: input.marker,
       cleanupComplete: true,

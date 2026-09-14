@@ -254,6 +254,10 @@ Markdown. With the main composer focused, `PgUp` / `PgDn` page the side content;
 ordinary typing and arrow keys still belong to the composer. New questions start
 at the top, and dismissed panels, modal dialogs, or transcript browsing disable
 side paging.
+After a side reply completes or fails, `Esc` with the main composer focused closes
+only the side panel, preserves the main draft, and leaves an active main task running.
+Subsequent `Esc` presses use the normal main-input behavior. Cancelling a loading
+side request is unchanged.
 
 A static system instruction scopes the request to the current side question. Earlier
 conversation remains reference context, not an unfinished or cancelled main task to

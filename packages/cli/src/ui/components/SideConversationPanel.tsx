@@ -2,6 +2,7 @@ import { Box, type DOMElement, getInnerHeight, getScrollHeight, Text } from 'ink
 import React, { useEffect, useRef, useState } from 'react';
 import {
   useActiveModal,
+  useAppActions,
   useCurrentFocus,
   useSideConversation,
   useTheme,
@@ -20,6 +21,7 @@ export const SideConversationPanel: React.FC = React.memo(() => {
   const terminalWidth = useTerminalWidth();
   const terminalHeight = useTerminalHeight();
   const activeModal = useActiveModal();
+  const { dismissSideConversation } = useAppActions();
   const focus = useCurrentFocus();
   const viewport = useRef<DOMElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -35,6 +37,10 @@ export const SideConversationPanel: React.FC = React.memo(() => {
 
   useTerminalInput(
     (_input, key) => {
+      if (key.escape) {
+        dismissSideConversation();
+        return true;
+      }
       if (!key.pageDown && !key.pageUp) return false;
       const element = viewport.current;
       if (!element) return false;
@@ -126,7 +132,7 @@ export const SideConversationPanel: React.FC = React.memo(() => {
             </Box>
           </Box>
           <Text color={theme.colors.muted} dimColor wrap="truncate-end">
-            PgUp/PgDn: scroll side answer
+            PgUp/PgDn: scroll side answer · Esc: dismiss
           </Text>
         </>
       )}
