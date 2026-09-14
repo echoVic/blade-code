@@ -1,6 +1,18 @@
 # Changelog
 
+## [0.10.196] - 2026-09-15
+
+### Fixed
+- Include the Session-owned automatic compaction channel fix prepared in the unpublished 0.10.195 candidate.
+- Remove the leading compaction analysis block before extracting the public summary so quoted summary tags cannot leak analysis into replacement context. Analysis-only or unterminated analysis responses use the existing bounded empty-summary retries and preserve reported usage.
+
+### Tests
+- Cover literal and paired summary tags inside analysis, plain public summaries after analysis, and bounded fallback for missing public summaries.
+- Assert that real workspace-channel continuation requests retain the active task without analysis delimiters in their compacted summaries.
+
 ## [0.10.195] - 2026-09-15
+
+Unpublished candidate. Its changes are included in 0.10.196 together with the summary parsing fix found during qualification.
 
 ### Fixed
 - Preserve Session-owned model catalogs, channel headers, credentials, and endpoints across threshold, reactive, and turn-limit compaction without changing summary sampling budgets.
