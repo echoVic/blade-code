@@ -313,6 +313,48 @@ describe('isFallbackablePiError', () => {
 });
 
 describe('observePiProviderResponses', () => {
+  it.each([undefined, '1.3.11'])(
+    'preserves request options and disables only Bun connection reuse: %s',
+    async (bunVersion) => {
+      const previous = Object.getOwnPropertyDescriptor(process.versions, 'bun');
+      Object.defineProperty(process.versions, 'bun', {
+        configurable: true,
+        value: bunVersion,
+      });
+      const controller = new AbortController();
+      const init: RequestInit = {
+        method: 'POST',
+        body: 'request',
+        headers: { 'x-request-id': 'owned' },
+        signal: controller.signal,
+        keepalive: true,
+      };
+      const providerFetch = vi.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('ok')
+      );
+      const options: Record<string, unknown> = { fetch: providerFetch };
+      try {
+        observePiProviderResponses(
+          options,
+          { api: 'openai-completions' } as Model<Api>,
+          () => undefined
+        );
+        if (typeof options.fetch !== 'function')
+          throw new Error('Provider fetch wrapper missing');
+        await options.fetch('https://provider.example/v1/chat/completions', init);
+        expect(providerFetch).toHaveBeenCalledWith(
+          'https://provider.example/v1/chat/completions',
+          bunVersion ? { ...init, keepalive: false } : init
+        );
+        if (!bunVersion) expect(providerFetch.mock.calls[0]?.[1]).toBe(init);
+        expect(init.keepalive).toBe(true);
+      } finally {
+        if (previous) Object.defineProperty(process.versions, 'bun', previous);
+        else Reflect.deleteProperty(process.versions, 'bun');
+      }
+    }
+  );
+
   it('captures bounded retry directives from failed HTTP responses', async () => {
     const previousFetch = globalThis.fetch;
     const fetchMock = vi.fn(

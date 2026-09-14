@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import {
   access,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -12,7 +13,16 @@ import {
 import os from 'node:os';
 import { promisify } from 'node:util';
 import { join } from 'pathe';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { bashTool } from '../../src/tools/builtin/shell/bash.js';
 import { createWorktreeTools } from '../../src/tools/builtin/worktree/worktreeTools.js';
 import {
@@ -40,23 +50,33 @@ describe('WorktreeManager integration', () => {
   let repoRoot: string;
   let sourceCwd: string;
   let manager: WorktreeManager;
+  let seedRoot: string;
+
+  beforeAll(async () => {
+    seedRoot = await mkdtemp(join(os.tmpdir(), 'blade-worktree-seed-'));
+    const source = join(seedRoot, 'packages', 'demo');
+    await mkdir(source, { recursive: true });
+    await writeFile(
+      join(seedRoot, 'package.json'),
+      JSON.stringify({ name: 'fixture', private: true }, null, 2)
+    );
+    await writeFile(join(source, 'value.txt'), 'original\n');
+    await git(seedRoot, 'init', '-b', 'main');
+    await git(seedRoot, 'config', 'user.email', 'blade-test@example.com');
+    await git(seedRoot, 'config', 'user.name', 'Blade Test');
+    await git(seedRoot, 'add', '.');
+    await git(seedRoot, 'commit', '-m', 'initial');
+  });
+
+  afterAll(async () => {
+    await removeTestDirectory(seedRoot);
+  });
 
   beforeEach(async () => {
     tempRoot = await mkdtemp(join(os.tmpdir(), 'blade-worktree-test-'));
     repoRoot = join(tempRoot, 'repo');
     sourceCwd = join(repoRoot, 'packages', 'demo');
-    await mkdir(sourceCwd, { recursive: true });
-    await writeFile(
-      join(repoRoot, 'package.json'),
-      JSON.stringify({ name: 'fixture', private: true }, null, 2)
-    );
-    await writeFile(join(sourceCwd, 'value.txt'), 'original\n');
-
-    await git(repoRoot, 'init', '-b', 'main');
-    await git(repoRoot, 'config', 'user.email', 'blade-test@example.com');
-    await git(repoRoot, 'config', 'user.name', 'Blade Test');
-    await git(repoRoot, 'add', '.');
-    await git(repoRoot, 'commit', '-m', 'initial');
+    await cp(seedRoot, repoRoot, { recursive: true });
 
     manager = new WorktreeManager({
       storageRoot: join(tempRoot, 'storage'),
@@ -64,6 +84,8 @@ describe('WorktreeManager integration', () => {
   });
 
   afterEach(async () => {
+    expect(await git(seedRoot, 'status', '--porcelain')).toBe('');
+    expect(await git(seedRoot, 'branch', '--format=%(refname:short)')).toBe('main');
     expect(manager.coordinationStatsForTests()).toEqual({
       keys: 0,
       operations: 0,

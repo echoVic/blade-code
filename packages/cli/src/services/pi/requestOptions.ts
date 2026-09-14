@@ -288,7 +288,11 @@ export function observePiProviderResponses(
     input: RequestInfo | URL,
     init?: RequestInit
   ): Promise<Response> => {
-    const response = await providerFetch(input, init);
+    // Bun may silently replay POSTs after a reused connection loses its response.
+    const response = await providerFetch(
+      input,
+      process.versions.bun ? { ...init, keepalive: false } : init
+    );
     onResponse(projectProviderResponse(response.status, response.headers));
     return response;
   };

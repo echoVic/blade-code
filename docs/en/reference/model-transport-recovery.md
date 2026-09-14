@@ -244,6 +244,11 @@ Errors occurring after crossing the boundary are thrown directly; the current mo
 
 Only after the primary model exhausts retries in the zero-output state are configured fallback models permitted. Once a fallback produces a chunk, further switching to other models is also prohibited.
 
+On Bun, Provider fetch disables connection reuse so a lost connection cannot silently
+replay a POST outside `maxRetries` and retry events. Node fetch options are unchanged.
+This trades connection reuse on Bun for authoritative Blade retry budgets and replay
+boundaries.
+
 ## Design Rationale and Verification
 
 This boundary synthesizes Codex's centralized stream retry, Claude Code's foreground bounded recovery, Neovate Code's cancellable exponential backoff, and Grok Build's explicit classification of deterministic and transient errors. Blade additionally incorporates its own streaming tool pre-launch into replay determination, thus using the first outbound chunk as the commit boundary.

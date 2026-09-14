@@ -1,9 +1,13 @@
+import { execFile } from 'node:child_process';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { promisify } from 'node:util';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StreamChunk } from '../../src/services/ChatServiceInterface.js';
 import { PiAIChatService } from '../../src/services/PiAIChatService.js';
 import { ProviderCircuitRegistry } from '../../src/services/pi/providerCircuitBreaker.js';
+
+vi.unmock('node:child_process');
 
 describe('pi provider retry integration', () => {
   let server: Server | undefined;
@@ -97,6 +101,77 @@ describe('pi provider retry integration', () => {
       activeServer.close((error) => (error ? reject(error) : resolve()));
     });
   });
+
+  it.each([
+    { maxRetries: 0, partial: false },
+    { maxRetries: 1, partial: false },
+    { maxRetries: 1, partial: true },
+  ])(
+    'keeps Bun POST replay bounded (retries: $maxRetries, partial: $partial)',
+    async ({ maxRetries, partial }) => {
+      server?.removeAllListeners('request');
+      server?.on('request', async (request, response) => {
+        for await (const chunk of request) {
+          void chunk;
+        }
+        requestCount++;
+        if (requestCount === 2) {
+          response.writeHead(200, { 'content-type': 'text/event-stream' });
+          response.flushHeaders();
+          if (partial) {
+            response.write(
+              `data: ${JSON.stringify({
+                id: 'bounded-post',
+                object: 'chat.completion.chunk',
+                created: 1,
+                model: 'deepseek-v4-flash',
+                choices: [
+                  { index: 0, delta: { content: 'PARTIAL' }, finish_reason: null },
+                ],
+              })}\n\n`
+            );
+          }
+          setTimeout(() => response.destroy(), 100);
+          return;
+        }
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.end(
+          `data: ${JSON.stringify({
+            id: 'bounded-post',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: 'deepseek-v4-flash',
+            choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          })}\n\ndata: [DONE]\n\n`
+        );
+      });
+      const modulePath = new URL(
+        '../../src/services/PiAIChatService.ts',
+        import.meta.url
+      ).href;
+      const source = `import { PiAIChatService } from ${JSON.stringify(modulePath)};
+      const service = new PiAIChatService({provider:'deepseek',model:'deepseek-v4-flash',apiKey:'integration-test-key',baseUrl:${JSON.stringify(baseUrl)},maxRetries:${maxRetries},timeout:5000});
+      await service.chat([{role:'user',content:'warmup'}]);
+      const phases=[]; let failed=false; let content='';
+      try { for await(const chunk of service.streamChat([{role:'user',content:'second'}])) { if(chunk.providerRetry) phases.push(chunk.providerRetry.phase); content+=chunk.content??''; } }
+      catch { failed=true; }
+      console.log(JSON.stringify({failed,phases,content}));`;
+      const result = await promisify(execFile)('bun', ['-e', source], {
+        timeout: 15_000,
+      });
+      expect(JSON.parse(result.stdout)).toEqual({
+        failed: partial || maxRetries === 0,
+        phases: partial
+          ? []
+          : maxRetries === 0
+            ? ['exhausted']
+            : ['scheduled', 'attempt', 'recovered'],
+        content: partial ? 'PARTIAL' : maxRetries === 0 ? '' : 'OK',
+      });
+      expect(requestCount).toBe(partial || maxRetries === 0 ? 2 : 3);
+    }
+  );
 
   it('honors Retry-After and recovers before surfacing model output', async () => {
     const service = new PiAIChatService({

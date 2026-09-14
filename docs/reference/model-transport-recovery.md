@@ -261,6 +261,10 @@ text、reasoning、tool、usage 或 finish 后则标记 replay boundary 并 fail
 
 主模型在零输出状态下耗尽重试后，才允许进入配置的 fallback 模型。fallback 一旦产出 chunk，同样禁止继续切换其他模型。
 
+在 Bun 下，Provider fetch 禁用连接复用，避免连接丢失时底层静默重发 POST、绕过
+`maxRetries` 和重试事件。Node 的 fetch 选项不变；代价是 Bun 请求需要重新建立连接，
+失败恢复仍由 Blade 的原有重试预算和重放边界控制。
+
 ## 设计依据与验证
 
 该边界综合了 Codex 的集中式 stream retry、Claude Code 的前台有界恢复、Neovate Code 的可取消指数退避，以及 Grok Build 对确定性和瞬时错误的显式分类。Blade 额外把自身的流式工具预启动纳入重放判定，因此以首个对外 chunk 作为提交边界。
