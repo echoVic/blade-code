@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.189] - 2026-09-14
+
+### Fixed
+- Bound TUI side answers and error output to a terminal-sized Markdown scroll area. PgUp/PgDn page without editing the main draft, respect modal/history focus, clamp at content boundaries, and reset for a new question.
+
+### Tests
+- Cover scroll bounds, viewport changes, ordinary-key passthrough, loading/dismissal, and request reset.
+- Verify real DeepSeek Flash/Pro long-answer paging in raw PTY: every requested line is reachable, top and bottom remain accessible after resize, and main drafts, context readings, cancellation, and durable transcripts stay intact.
+- Make the cross-surface coding fixture explicitly require Edit/Write, matching its existing verifier, and record structural durable-tool/card evidence without changing assertions or retry budgets.
+
 ## [0.10.188] - 2026-09-14
 
 ### Fixed
