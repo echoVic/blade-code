@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.190] - 2026-09-14
+
+### Fixed
+- Disable Provider fetch connection reuse on Bun to prevent hidden POST replay after a reused connection loses its response. Preserve Node request options and keep retry limits and events under Blade control.
+
+### Tests
+- Verify Bun zero/one-retry behavior with real HTTP disconnects, including failure without replay after partial output, and preserve request headers, body, signal, and Node options.
+- Reuse an immutable committed worktree-test seed through independent directory copies, retaining commit hooks and isolation checks while reducing repeated fixture setup within the existing suite budget.
+
 ## [0.10.189] - 2026-09-14
 
 ### Fixed
