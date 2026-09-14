@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.191] - 2026-09-14
+
+### Fixed
+- Let Escape dismiss completed or failed TUI side panels before main-task cancellation or draft handling. Preserve main drafts, focus ownership, paging, and loading-request cancellation, and show the dismissal shortcut.
+
+### Tests
+- Verify real DeepSeek Flash/Pro dismissal after short and long replies with drafts intact, including dismissal while the main Bash is still running and a subsequent Escape that explicitly cancels it.
+- Check the latest complete PTY redraw instead of stale accumulated panel text; keep incomplete-frame and visible-panel rejection tests.
+
 ## [0.10.190] - 2026-09-14
 
 ### Fixed
