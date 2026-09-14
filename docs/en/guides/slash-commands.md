@@ -291,6 +291,12 @@ Manually compact the context to generate a summary and save tokens:
 /compact
 ```
 
+TUI Escape and ACP cancel abort pending manual summary requests. Cancellation observed
+before checkpoint persistence leaves the original context and project memory unchanged.
+Previously returned usage is still delivered; TUI accumulates consumption without resetting
+context occupancy. Once the checkpoint commits, later cancellation does not roll it back.
+Web does not currently expose a separate manual compaction entry point.
+
 ### /memory
 
 Manage the project's automatic memory system. Project knowledge that the Agent records automatically during work (build commands, code patterns, debugging insights, etc.) persists across sessions.

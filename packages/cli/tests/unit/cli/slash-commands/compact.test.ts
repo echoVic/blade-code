@@ -80,7 +80,10 @@ vi.mock('../../../../src/context/ContextManager.js', () => ({
   },
 }));
 
-vi.mock('../../../../src/context/CompactionService.js', () => ({
+vi.mock('../../../../src/context/CompactionService.js', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('../../../../src/context/CompactionService.js')
+  >()),
   CompactionService: { compact: compactionState.compact },
 }));
 
@@ -166,6 +169,103 @@ describe('/compact slash command', () => {
         rejectedSensitive: 0,
       },
     });
+  });
+
+  it('passes the caller cancellation signal to summary sampling', async () => {
+    const { default: compactCommand } = await import(
+      '../../../../src/slash-commands/compact.js'
+    );
+    const controller = new AbortController();
+    await compactCommand.handler([], {
+      cwd: '/workspace/original',
+      sessionId: 'shared-session',
+      messages: [{ role: 'user', content: 'compact this history' }],
+      signal: controller.signal,
+      acp: { sendMessage: vi.fn() },
+    });
+    expect(compactionState.compact).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ signal: controller.signal })
+    );
+  });
+
+  it.each(['before-sampling', 'during-sampling', 'before-checkpoint'] as const)(
+    'cancels at %s without committing replacement context or memory',
+    async (phase) => {
+      const { default: compactCommand } = await import(
+        '../../../../src/slash-commands/compact.js'
+      );
+      const { CompactionAbortedError } = await import(
+        '../../../../src/context/CompactionService.js'
+      );
+      const controller = new AbortController();
+      const sendMessage = vi.fn();
+      const usage = { promptTokens: 100, completionTokens: 20, totalTokens: 120 };
+      const source: Message[] = [{ role: 'user', content: 'original history' }];
+      const original = structuredClone(source);
+      if (phase === 'before-sampling') controller.abort();
+      else {
+        compactionState.compact.mockImplementationOnce(async () => {
+          controller.abort();
+          if (phase === 'during-sampling')
+            throw new CompactionAbortedError(controller.signal.reason, usage);
+          return {
+            success: true,
+            summary: 'summary',
+            preTokens: 600_000,
+            postTokens: 1_000,
+            filesIncluded: [],
+            compactedMessages: [{ role: 'user', content: 'summary' }],
+            boundaryMessage: { role: 'system', content: 'boundary' },
+            summaryMessage: { role: 'user', content: 'summary' },
+            usage,
+          };
+        });
+      }
+      const result = await compactCommand.handler([], {
+        cwd: '/workspace/original',
+        sessionId: 'shared-session',
+        messages: source,
+        signal: controller.signal,
+        acp: { sendMessage },
+      });
+      expect(result).toMatchObject({ success: false, message: 'compact_cancelled' });
+      expect(result.error).toBeUndefined();
+      expect(result.data?.compactedMessages).toBeUndefined();
+      expect(result.data?.usage).toEqual(
+        phase === 'before-sampling' ? undefined : usage
+      );
+      expect(contextManagerState.saveCompaction).not.toHaveBeenCalled();
+      expect(memoryConsolidationState.commit).not.toHaveBeenCalled();
+      expect(source).toEqual(original);
+      expect(sendMessage).not.toHaveBeenCalledWith(expect.stringContaining('[FAIL]'));
+      if (phase === 'before-sampling')
+        expect(compactionState.compact).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps a committed checkpoint authoritative if cancelled during persistence', async () => {
+    const { default: compactCommand } = await import(
+      '../../../../src/slash-commands/compact.js'
+    );
+    const controller = new AbortController();
+    contextManagerState.saveCompaction.mockImplementationOnce(async () => {
+      controller.abort();
+      return 'committed-summary';
+    });
+    const result = await compactCommand.handler([], {
+      cwd: '/workspace/original',
+      sessionId: 'shared-session',
+      messages: [{ role: 'user', content: 'compact this history' }],
+      signal: controller.signal,
+      acp: { sendMessage: vi.fn() },
+    });
+    expect(result).toMatchObject({
+      success: true,
+      message: 'compact_completed',
+      data: { compactedMessages: [{ role: 'user', content: 'summary' }] },
+    });
+    expect(contextManagerState.saveCompaction).toHaveBeenCalledOnce();
   });
 
   it('persists manual compaction in the active workspace transcript', async () => {

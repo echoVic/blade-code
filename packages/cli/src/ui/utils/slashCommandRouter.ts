@@ -347,7 +347,8 @@ function handleSlashMessage(
       appActions.setTasks([]);
       return true;
     case 'compact_completed':
-    case 'compact_fallback': {
+    case 'compact_fallback':
+    case 'compact_cancelled': {
       const compactData = data as
         | {
             compactedMessages?: Message[];
@@ -356,11 +357,12 @@ function handleSlashMessage(
           }
         | undefined;
       const compactedMessages = compactData?.compactedMessages;
-      if (compactedMessages) {
+      if (compactedMessages && message !== 'compact_cancelled') {
         sessionActions.setCompactedContext(compactedMessages);
       }
       if (compactData?.usage) {
         sessionActions.updateTokenUsage({
+          ...(message === 'compact_cancelled' ? { scope: 'auxiliary' as const } : {}),
           inputTokens: compactData.usage.promptTokens,
           outputTokens: compactData.usage.completionTokens,
           totalTokens: compactData.usage.totalTokens,
@@ -370,7 +372,7 @@ function handleSlashMessage(
           costUsd: compactData.usage.costUsd,
         });
       }
-      sessionActions.resetContextUsage();
+      if (message !== 'compact_cancelled') sessionActions.resetContextUsage();
       return true;
     }
     case 'exit_application':
@@ -507,7 +509,10 @@ export async function processSlashCommand(
       sessionActions
     );
     if (handled) {
-      return { type: 'handled', commandResult: { success: true } };
+      return {
+        type: 'handled',
+        commandResult: { success: slashResult.message !== 'compact_cancelled' },
+      };
     }
   }
 

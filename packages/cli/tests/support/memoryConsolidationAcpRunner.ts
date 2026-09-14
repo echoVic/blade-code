@@ -1,6 +1,8 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { access, readFile } from 'node:fs/promises';
 import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
+import { findSessionTranscript } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
 
 interface RunnerInput {
@@ -9,6 +11,7 @@ interface RunnerInput {
   home: string;
   storageRoot: string;
   sessionId: string;
+  manualCompaction?: { readyFile: string; cancelledFile: string };
   prompt: string;
   marker: string;
   discoveryPrompt: string;
@@ -109,6 +112,50 @@ async function run(input: RunnerInput) {
     });
     sessionId = input.sessionId;
     await connection.setSessionMode({ sessionId, modeId: 'yolo' });
+    if (input.manualCompaction) {
+      const waitForFile = async (file: string, timeoutMs: number) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (
+            await access(file).then(
+              () => true,
+              () => false
+            )
+          )
+            return;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        throw new Error('Manual compaction ACP barrier expired');
+      };
+      const transcript = findSessionTranscript(input.storageRoot, sessionId);
+      const before = await readFile(transcript);
+      const pending = connection.prompt({
+        sessionId,
+        prompt: [{ type: 'text', text: '/compact' }],
+      });
+      await waitForFile(input.manualCompaction.readyFile, 90_000);
+      const started = Date.now();
+      await connection.cancel({ sessionId });
+      await waitForFile(input.manualCompaction.cancelledFile, 10_000);
+      const result = await pending;
+      if (result.stopReason !== 'cancelled')
+        throw new Error('Manual compaction ACP did not report cancellation');
+      if (!(await readFile(transcript)).equals(before))
+        throw new Error('Cancelled manual compaction changed the transcript');
+      const content = agentText(client, sessionId);
+      if (!content.includes('上下文压缩已取消') || content.includes('[FAIL]'))
+        throw new Error('Manual compaction ACP cancellation output is incorrect');
+      child.kill('SIGTERM');
+      const exit = await waitForChildExit(child);
+      if (exit.signal || exit.code !== 0)
+        throw new Error(`Manual compaction ACP exited ${exit.code ?? exit.signal}`);
+      return {
+        success: true,
+        cancelled: true,
+        transcriptUnchanged: true,
+        cancellationMs: Date.now() - started,
+      };
+    }
     const result = await connection.prompt({
       sessionId,
       prompt: [{ type: 'text', text: input.prompt }],

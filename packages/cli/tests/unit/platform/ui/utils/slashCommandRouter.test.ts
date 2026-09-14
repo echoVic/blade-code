@@ -18,6 +18,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSurfaceSummary } from '../../../../../src/api/sessionSurfaceSchemas.js';
 import type { SessionMetadata } from '../../../../../src/services/SessionService.js';
 import type { AppActions, SessionActions } from '../../../../../src/store/types.js';
+import {
+  getState,
+  sessionActions as realSessionActions,
+} from '../../../../../src/store/vanilla.js';
 import type { ResolvedInput } from '../../../../../src/ui/hooks/useInputBuffer.js';
 import {
   isInvokeCustomCommandAction,
@@ -378,6 +382,92 @@ describe('processSlashCommand', () => {
           mcp,
         })
       );
+    });
+
+    it('取消手动压缩只累计已返回用量，不替换或重置上下文', async () => {
+      executeSlashCommand.mockResolvedValueOnce({
+        success: false,
+        message: 'compact_cancelled',
+        data: {
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          maxContextTokens: 128000,
+        },
+      });
+      const sessionActions = createMockSessionActions();
+      const controller = new AbortController();
+      controller.abort();
+      const result = await processSlashCommand(
+        createResolvedInput('/compact'),
+        createMockAppActions(),
+        sessionActions,
+        controller.signal,
+        async () => undefined,
+        'session-owner'
+      );
+      expect(result).toMatchObject({
+        type: 'handled',
+        commandResult: { success: false },
+      });
+      expect(sessionActions.updateTokenUsage).toHaveBeenCalledOnce();
+      expect(sessionActions.updateTokenUsage).toHaveBeenCalledWith({
+        scope: 'auxiliary',
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 120,
+        maxContextTokens: 128000,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: undefined,
+      });
+      expect(sessionActions.setCompactedContext).not.toHaveBeenCalled();
+      expect(sessionActions.resetContextUsage).not.toHaveBeenCalled();
+      expect(sessionActions.addAssistantMessage).not.toHaveBeenCalled();
+    });
+
+    it('keeps real store context occupancy when cancelled sampling returns usage', async () => {
+      const actions = realSessionActions();
+      actions.resetTokenUsage();
+      actions.updateTokenUsage({
+        inputTokens: 60_000,
+        outputTokens: 100,
+        totalTokens: 60_100,
+        maxContextTokens: 128_000,
+        costUsd: 0.125,
+      });
+      executeSlashCommand.mockResolvedValueOnce({
+        success: false,
+        message: 'compact_cancelled',
+        data: {
+          usage: {
+            promptTokens: 100,
+            completionTokens: 20,
+            totalTokens: 120,
+            costUsd: 0.25,
+          },
+          maxContextTokens: 64_000,
+        },
+      });
+      try {
+        await processSlashCommand(
+          createResolvedInput('/compact'),
+          createMockAppActions(),
+          actions,
+          new AbortController().signal,
+          async () => undefined,
+          'session-owner'
+        );
+        expect(getState().session.tokenUsage).toMatchObject({
+          inputTokens: 60_000,
+          outputTokens: 100,
+          totalTokens: 60_100,
+          maxContextTokens: 128_000,
+          totalInputTokens: 60_100,
+          totalOutputTokens: 120,
+          estimatedCostUsd: 0.375,
+        });
+      } finally {
+        actions.resetTokenUsage();
+      }
     });
 
     it('手动压缩后应接管下一轮模型上下文', async () => {

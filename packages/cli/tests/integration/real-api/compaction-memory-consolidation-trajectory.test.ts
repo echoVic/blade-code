@@ -24,8 +24,10 @@ import { PermissionMode } from '../../../src/config/types.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import { getProjectStoragePath } from '../../../src/context/storage/pathUtils.js';
 import { resetProjectionDbCache } from '../../../src/context/storage/sqlite/projection.js';
+import { TokenCounter } from '../../../src/context/TokenCounter.js';
 import { GoalStore } from '../../../src/goals/GoalStore.js';
 import { INTERNAL_CONTROL_MESSAGE_METADATA } from '../../../src/services/clientMessageVisibility.js';
+import { resolveModelConfig } from '../../../src/services/pi/resolveModelConfig.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
@@ -106,6 +108,7 @@ interface Fixture {
   safeEntry: string;
   secret: string;
   apiKey: string;
+  manualCompaction?: { readyFile: string; cancelledFile: string };
   proxy: {
     baseUrl: string;
     evidence(): ProxyEvidence;
@@ -252,6 +255,7 @@ async function startProviderProxy(input: {
   holdFinal: boolean;
   emptyCompaction?: boolean;
   onCompactionRetry?: () => void;
+  manualCompaction?: Fixture['manualCompaction'];
 }): Promise<Fixture['proxy']> {
   const upstream = new URL(input.upstreamBaseUrl);
   let requests = 0;
@@ -286,7 +290,7 @@ async function startProviderProxy(input: {
       }
       if (!compaction && !discovery) {
         primaryRequests++;
-        if (primaryRequests === 1) {
+        if (primaryRequests === 1 && !input.manualCompaction) {
           contextLimits++;
           response.writeHead(413, { 'content-type': 'application/json' });
           response.end(
@@ -333,6 +337,35 @@ async function startProviderProxy(input: {
           redirect: 'manual',
           signal: controller.signal,
         });
+        if (compaction && input.manualCompaction) {
+          if (!upstreamResponse.ok || !upstreamResponse.body)
+            throw new Error('Manual compaction Provider response unavailable');
+          try {
+            await writeFile(input.manualCompaction.readyFile, 'ready', { mode: 0o600 });
+            await new Promise<void>((resolve, reject) => {
+              const closed = () => {
+                clearTimeout(timer);
+                resolve();
+              };
+              const timer = setTimeout(() => {
+                response.off('close', closed);
+                reject(new Error('Manual compaction cancellation barrier expired'));
+              }, 15_000);
+              response.once('close', closed);
+              if (response.destroyed) {
+                response.off('close', closed);
+                closed();
+              }
+            });
+          } finally {
+            controller.abort();
+            await upstreamResponse.body.cancel().catch(() => undefined);
+          }
+          await writeFile(input.manualCompaction.cancelledFile, 'cancelled', {
+            mode: 0o600,
+          });
+          return;
+        }
         const responseHeaders: Record<string, string> = {};
         upstreamResponse.headers.forEach((value, name) => {
           if (
@@ -449,7 +482,8 @@ async function createFixture(
   model: TestModelConfig,
   surface: (typeof surfaces)[number],
   emptyCompaction = false,
-  onCompactionRetry?: () => void
+  onCompactionRetry?: () => void,
+  cancelManualCompaction = false
 ): Promise<Fixture> {
   const root = await mkdtemp(
     path.join(os.tmpdir(), `blade-memory-real-${safeSlug(model.model)}-${surface}-`)
@@ -471,11 +505,18 @@ async function createFixture(
   const discoveryMarker = `MEMORY_REAL_DISCOVERY_${nonce}`;
   const safeEntry = `prefer verified memory workflows ${nonce}`;
   const secret = `sk-${randomBytes(12).toString('hex')}`;
+  const manualCompaction = cancelManualCompaction
+    ? {
+        readyFile: path.join(root, 'manual-compaction-ready'),
+        cancelledFile: path.join(root, 'manual-compaction-cancelled'),
+      }
+    : undefined;
   const proxy = await startProviderProxy({
     upstreamBaseUrl: model.baseURL ?? 'https://api.deepseek.com',
     holdFinal: surface === 'web',
     emptyCompaction,
     onCompactionRetry,
+    manualCompaction,
   });
   const runtime = buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseUrl });
   const configured = runtime.models[0];
@@ -516,6 +557,24 @@ async function createFixture(
       permissionMode: PermissionMode.YOLO,
     });
     const store = new PersistentStore(workspace);
+    if (manualCompaction) {
+      const limit = resolveModelConfig(configured, runtime, 'off').model.contextWindow;
+      const padding = 'historical context '.repeat(500);
+      const paddingTokens = TokenCounter.countTextTokens(padding, model.model);
+      const reasoning = padding.repeat(Math.ceil((limit * 0.55) / paddingTokens));
+      expect(TokenCounter.countTextTokens(reasoning, model.model)).toBeGreaterThan(
+        limit * 0.5
+      );
+      await store.saveMessage(
+        sessionId,
+        'assistant',
+        'Earlier completed context.',
+        null,
+        undefined,
+        undefined,
+        reasoning
+      );
+    }
     await store.saveMessage(
       sessionId,
       'user',
@@ -559,6 +618,7 @@ async function createFixture(
     safeEntry,
     secret,
     apiKey: model.apiKey,
+    manualCompaction,
     proxy,
   };
 }
@@ -734,6 +794,7 @@ async function runRunner(
       sessionId: test.sessionId,
       discoverySessionId: `memory-discovery-${randomBytes(6).toString('hex')}`,
       historyReady: test.historyReady,
+      manualCompaction: test.manualCompaction,
       prompt: test.prompt,
       marker: test.finalMarker,
       discoveryPrompt: test.discoveryPrompt,
@@ -745,13 +806,20 @@ async function runRunner(
     cwd: path.resolve(import.meta.dirname, '../../..'),
     env: { ...childEnvironment(test), [envName]: encoded },
   });
+  if (test.manualCompaction && result.code !== 0) {
+    assertNoSecrets({ stdout: result.stdout, stderr: result.stderr }, [
+      test.apiKey,
+      test.secret,
+    ]);
+    console.error('[manual-compaction-runner]', result.stdout);
+  }
   assertProcessSucceeded(test, result, path.basename(runner));
   const evidence = JSON.parse(result.stdout) as Record<string, unknown>;
-  expect(evidence).toMatchObject({
-    success: true,
-    finalMarkerSeen: true,
-    discoveryMarkerSeen: true,
-  });
+  expect(evidence).toMatchObject(
+    test.manualCompaction
+      ? { success: true, cancelled: true, transcriptUnchanged: true }
+      : { success: true, finalMarkerSeen: true, discoveryMarkerSeen: true }
+  );
   return evidence;
 }
 
@@ -1185,6 +1253,45 @@ describe
           }
         }
       );
+  });
+
+describe
+  .skipIf(!releaseMatrixEnabled || process.platform === 'win32')
+  .sequential('manual compaction cancellation (real API)', () => {
+    for (const model of models) {
+      for (const surface of ['acp', 'pty'] as const) {
+        it(`${model.model} cancels manual compaction through ${surface}`, async (context) => {
+          expect(frameworkRetryBudget(context)).toBe(0);
+          const fixture = await createFixture(model, surface, false, undefined, true);
+          try {
+            const evidence = await runRunner(
+              fixture,
+              surface === 'acp' ? acpRunner : ptyRunner,
+              surface === 'acp'
+                ? 'BLADE_MEMORY_CONSOLIDATION_ACP_INPUT'
+                : 'BLADE_MEMORY_CONSOLIDATION_PTY_INPUT'
+            );
+            expect(fixture.proxy.evidence()).toMatchObject({
+              compactions: 1,
+              forwarded: 1,
+              requests: 1,
+              contextLimits: 0,
+            });
+            if (surface === 'pty') expect(evidence.composerRecovered).toBe(true);
+            console.log(
+              '[manual-compaction-cancellation]',
+              JSON.stringify({
+                model: model.model,
+                surface,
+                ...evidence,
+              })
+            );
+          } finally {
+            await fixture.proxy.close();
+          }
+        });
+      }
+    }
   });
 
 describe

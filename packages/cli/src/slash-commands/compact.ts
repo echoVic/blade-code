@@ -2,15 +2,20 @@
  * /compact 命令 - 手动压缩上下文
  */
 
-import { CompactionService } from '../context/CompactionService.js';
+import {
+  CompactionAbortedError,
+  CompactionService,
+} from '../context/CompactionService.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { TokenCounter } from '../context/TokenCounter.js';
 import {
   commitMemoryConsolidation,
   type MemoryConsolidationProjection,
 } from '../memory/MemoryConsolidation.js';
+import type { UsageInfo } from '../services/ChatServiceInterface.js';
 import { resolveModelConfig } from '../services/pi/resolveModelConfig.js';
 import { getConfig, getCurrentModel, getState } from '../store/vanilla.js';
+import { isAbortError } from '../utils/abort.js';
 import {
   getUI,
   type SlashCommand,
@@ -27,8 +32,11 @@ async function compactCommandHandler(
   context: SlashCommandContext
 ): Promise<SlashCommandResult> {
   const ui = getUI(context);
+  let completedUsage: UsageInfo | undefined;
+  let tokenLimit: number | undefined;
 
   try {
+    if (context.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     // 从 Store 获取配置
     const config = getConfig();
     const currentModel = getCurrentModel();
@@ -65,7 +73,7 @@ async function compactCommandHandler(
     // 显示压缩前信息
     const preTokens = TokenCounter.countTokens(messages, currentModel.model);
     const resolvedModel = resolveModelConfig(currentModel, config, 'off');
-    const tokenLimit = resolvedModel.model.contextWindow;
+    tokenLimit = resolvedModel.model.contextWindow;
     const usagePercent = ((preTokens / tokenLimit) * 100).toFixed(1);
 
     ui.sendMessage(`**当前上下文统计**
@@ -97,7 +105,10 @@ async function compactCommandHandler(
       baseURL: resolvedModel.chat.baseUrl,
       workspaceRoot: context.workspaceRoot ?? context.cwd,
       sessionId,
+      signal: context.signal,
     });
+    completedUsage = result.usage;
+    if (context.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
     // Apply the replacement context only after its durable checkpoint commits.
     let memory: MemoryConsolidationProjection = {
@@ -238,6 +249,17 @@ async function compactCommandHandler(
       };
     }
   } catch (error) {
+    if (isAbortError(error)) {
+      ui.sendMessage('上下文压缩已取消，原上下文保持不变。');
+      return {
+        success: false,
+        message: 'compact_cancelled',
+        data: {
+          usage: error instanceof CompactionAbortedError ? error.usage : completedUsage,
+          maxContextTokens: tokenLimit,
+        },
+      };
+    }
     const errorMsg = error instanceof Error ? error.message : String(error);
     ui.sendMessage(`[FAIL] **压缩失败**: ${errorMsg}`);
 

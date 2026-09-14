@@ -1,4 +1,4 @@
-import { access, writeFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { spawn } from 'bun-pty';
@@ -22,6 +22,7 @@ interface RunnerInput {
   storageRoot: string;
   memoryDir: string;
   compactionObservedFile?: string;
+  manualCompaction?: { readyFile: string; cancelledFile: string };
   sessionId: string;
   discoverySessionId: string;
   historyReady: string;
@@ -142,6 +143,70 @@ async function main(): Promise<void> {
       'Memory consolidation TUI did not restore the target Session',
       60_000
     );
+    if (input.manualCompaction) {
+      const { readyFile, cancelledFile } = input.manualCompaction;
+      const transcript = findSessionTranscript(input.storageRoot, input.sessionId);
+      const before = await readFile(transcript);
+      const cancelledMarker = new ArmedPtyMarkerLatch('上下文压缩已取消');
+      cancelledMarker.arm();
+      terminal.onData((chunk) =>
+        cancelledMarker.observe(stripVTControlCharacters(chunk))
+      );
+      await writeBracketedPaste(terminal, '/compact');
+      await waitFor(
+        () => plainOutput.includes('/compact'),
+        'Manual compaction command did not reach the composer',
+        5_000
+      );
+      terminal.write('\r');
+      await waitFor(
+        () =>
+          access(readyFile).then(
+            () => true,
+            () => false
+          ),
+        'Manual compaction Provider did not start'
+      );
+      const started = Date.now();
+      terminal.write('\u001b');
+      await waitFor(
+        () => cancelledMarker.seen,
+        'Manual compaction did not acknowledge Escape',
+        10_000
+      );
+      await waitFor(
+        () =>
+          access(cancelledFile).then(
+            () => true,
+            () => false
+          ),
+        'Manual compaction did not close its Provider request',
+        10_000
+      );
+      if (!(await readFile(transcript)).equals(before))
+        throw new Error('Cancelled manual compaction changed the transcript');
+      const draft = 'MANUAL_COMPACTION_DRAFT';
+      await writeBracketedPaste(terminal, draft);
+      await waitFor(
+        () => plainOutput.includes(draft),
+        'Composer did not recover after manual compaction cancellation',
+        5_000
+      );
+      terminal.write('\u0015');
+      signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
+      await waitForPtyExit(exitPromise, 'Manual compaction TUI did not exit');
+      if (exitCode !== 0) throw new Error(`Manual compaction TUI exited ${exitCode}`);
+      process.stdout.write(
+        JSON.stringify({
+          success: true,
+          cancelled: true,
+          transcriptUnchanged: true,
+          composerRecovered: true,
+          cancellationMs: Date.now() - started,
+        })
+      );
+      return;
+    }
     await writeBracketedPaste(terminal, input.prompt);
     await new Promise((resolve) => setTimeout(resolve, 250));
     finalMarker.arm();
