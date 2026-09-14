@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.192] - 2026-09-15
+
+### Fixed
+- Retain previously returned compaction usage when cancellation interrupts retry waiting, later sampling, or summary post-processing. Threshold, reactive, and turn-limit loops account for it once and preserve Goal budget accounting without fallback checkpoints or additional circuit-breaker failures.
+
+### Tests
+- Cover cancellation usage propagation, original error causes, circuit isolation, and all three loop entry points.
+- Verify real DeepSeek Flash/Pro cancellation during compaction sampling against Provider totals, loop usage events, final results, and cold-read Goal budgets, with no compaction checkpoint or subsequent Provider replay.
+
 ## [0.10.191] - 2026-09-14
 
 ### Fixed
