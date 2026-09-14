@@ -15,6 +15,7 @@ import {
   planMemoryConsolidation,
 } from '../memory/MemoryConsolidation.js';
 import {
+  type ChatConfig,
   createChatServiceAsync,
   type Message,
   type UsageInfo,
@@ -57,6 +58,7 @@ export interface CompactionOptions {
   apiKey?: string;
   /** Base URL（可选，默认使用环境变量） */
   baseURL?: string;
+  chatConfig?: ChatConfig;
   /** 真实的 preTokens（可选，来自 LLM usage，比估算更准确） */
   actualPreTokens?: number;
   /** 会话 ID（用于 hooks） */
@@ -788,14 +790,27 @@ export class CompactionService {
 
     // 创建 ChatService
     const chatService = await createChatServiceAsync({
-      apiKey: options.apiKey || process.env.BLADE_API_KEY,
-      baseUrl: options.baseURL || process.env.BLADE_BASE_URL,
-      model: options.modelName,
+      ...(options.chatConfig
+        ? {
+            provider: options.chatConfig.provider,
+            model: options.chatConfig.model,
+            apiKey: options.chatConfig.apiKey,
+            baseUrl: options.chatConfig.baseUrl,
+            customHeaders: options.chatConfig.customHeaders,
+            apiVersion: options.chatConfig.apiVersion,
+            modelCatalog: options.chatConfig.modelCatalog,
+            enablePromptCaching: options.chatConfig.enablePromptCaching,
+          }
+        : {
+            apiKey: options.apiKey || process.env.BLADE_API_KEY,
+            baseUrl: options.baseURL || process.env.BLADE_BASE_URL,
+            model: options.modelName,
+            provider: options.modelProvider ?? 'openai',
+          }),
       temperature: 0,
       maxOutputTokens: 8000, // 压缩输出限制
       timeout: 60000,
       maxRetries: 0,
-      provider: options.modelProvider ?? 'openai',
     });
 
     let usage: UsageInfo | undefined;

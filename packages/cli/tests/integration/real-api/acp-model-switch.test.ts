@@ -10,10 +10,20 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
+import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
+import { TokenCounter } from '../../../src/context/TokenCounter.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
+import { getModelApiKeyEnvironmentVariable } from '../../../src/services/pi/resolveModelConfig.js';
+import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import { ChildProcessRecordingAcpClient } from '../../support/acp/ChildProcessRecordingAcpClient.js';
+import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
+import {
+  assertNoSecrets,
+  findSessionTranscript,
+  readSessionEvents,
+} from './sessionForkTrajectoryHarness.js';
 import {
   isRealApiTestEnabled,
   resolveDeepSeekQualificationSettings,
@@ -160,6 +170,171 @@ afterAll(() => {
 });
 
 describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () => {
+  it('keeps manual compaction on each Session channel instead of the global default', {
+    timeout: 240_000,
+    retry: 0,
+  }, async (context) => {
+    const retry = context.task.retry;
+    expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-compact-model-'));
+    const storageRoot = path.join(root, 'storage');
+    const original = getState().config.config;
+    const proxies = await Promise.all([
+      startRecordingProviderProxy(upstreamBaseUrl),
+      startRecordingProviderProxy(upstreamBaseUrl),
+      startRecordingProviderProxy(upstreamBaseUrl),
+    ]);
+    const client = new ChildProcessRecordingAcpClient();
+    const harness = createHarness(client);
+    const ids = ['compact-global', 'compact-a', 'compact-b'];
+    const priorVariables = ids.map((id) => {
+      const name = getModelApiKeyEnvironmentVariable(id);
+      const previous = process.env[name];
+      process.env[name] = apiKey;
+      return { name, previous };
+    });
+    process.env.BLADE_STORAGE_ROOT = storageRoot;
+    try {
+      const [globalProxy, proxyA, proxyB] = proxies;
+      const config: RuntimeConfig = {
+        ...DEFAULT_CONFIG,
+        currentModelId: ids[0],
+        modelProviders: {
+          'compact-channel-a': {
+            name: 'Compact A',
+            baseUrl: proxyA.baseUrl,
+            wireApi: 'openai-completions',
+          },
+          'compact-channel-b': {
+            name: 'Compact B',
+            baseUrl: proxyB.baseUrl,
+            wireApi: 'openai-completions',
+          },
+        },
+        models: [
+          {
+            id: ids[0],
+            provider: 'deepseek',
+            model: flashModel,
+            overrides: { baseUrl: globalProxy.baseUrl },
+          },
+          {
+            id: ids[1],
+            provider: 'compact-channel-a',
+            model: proModel,
+            overrides: { maxRetries: 0 },
+          },
+          {
+            id: ids[2],
+            provider: 'compact-channel-b',
+            model: proModel,
+            overrides: { maxRetries: 0 },
+          },
+        ],
+        mcpEnabled: false,
+        mcpServers: {},
+        disableAllHooks: true,
+      };
+      getState().config.actions.setConfig(config);
+      const workspace = path.join(root, 'workspace');
+      await mkdir(path.join(workspace, '.blade'), { recursive: true });
+      await writeFile(
+        path.join(workspace, '.blade', 'config.json'),
+        JSON.stringify({
+          currentModelId: config.currentModelId,
+          modelProviders: config.modelProviders,
+          models: config.models,
+          disableAllHooks: true,
+          mcpEnabled: false,
+          mcpServers: {},
+        })
+      );
+      await WorkspaceTrustService.getInstance().trust(workspace);
+      await harness.connection.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: { terminal: true },
+      });
+      const padding = 'historical context '.repeat(500);
+      const reasoning = padding.repeat(
+        Math.ceil(600_000 / TokenCounter.countTextTokens(padding, proModel))
+      );
+      const sessions: string[] = [];
+      for (const [index, selected] of [ids[1], ids[2]].entries()) {
+        const sessionId = `compact-model-${index}-${Date.now()}`;
+        await SessionService.createSessionMetadata(sessionId, workspace, {
+          title: 'Manual compaction model owner',
+          taskStatus: 'completed',
+          selectedModelId: ids[0],
+        });
+        const store = new PersistentStore(workspace);
+        await store.saveMessage(
+          sessionId,
+          'assistant',
+          'The previous task is complete.',
+          null,
+          undefined,
+          undefined,
+          reasoning
+        );
+        await store.saveMessage(
+          sessionId,
+          'user',
+          'Preserve the completed task state.'
+        );
+        await store.saveMessage(sessionId, 'assistant', 'Ready for the next task.');
+        await harness.connection.loadSession({
+          sessionId,
+          cwd: workspace,
+          mcpServers: [],
+        });
+        await harness.connection.setSessionConfigOption({
+          sessionId,
+          configId: 'model',
+          value: selected,
+        });
+        sessions.push(sessionId);
+      }
+      for (const sessionId of sessions) {
+        const response = await harness.connection.prompt({
+          sessionId,
+          prompt: [{ type: 'text', text: '/compact' }],
+        });
+        expect(response.stopReason).toBe('end_turn');
+        const events = readSessionEvents(findSessionTranscript(storageRoot, sessionId));
+        expect(
+          events.filter(
+            (event) =>
+              event.type === 'part_created' && event.data.partType === 'summary'
+          )
+        ).toHaveLength(1);
+      }
+      expect(globalProxy.forwardedRequestNumbers).toEqual([]);
+      for (const proxy of [proxyA, proxyB]) {
+        expect(proxy.forwardedRequestNumbers).toEqual([1]);
+        const request: unknown = JSON.parse(proxy.requestBodies[0]);
+        expect(request).toMatchObject({ model: proModel });
+        expect(proxy.responseSummaries).toEqual([
+          expect.objectContaining({ done: true, parseStatus: 'complete' }),
+        ]);
+      }
+      expect(getState().config.config?.currentModelId).toBe(ids[0]);
+      assertNoSecrets(client.sessionUpdates, [apiKey]);
+      console.log(
+        '[manual-compaction-model]',
+        JSON.stringify({ globalRequests: 0, sessionRequests: [1, 1], model: proModel })
+      );
+    } finally {
+      await harness.agent.destroy();
+      await client.close();
+      await Promise.all(proxies.map((proxy) => proxy.close()));
+      for (const { name, previous } of priorVariables) {
+        if (previous === undefined) delete process.env[name];
+        else process.env[name] = previous;
+      }
+      if (original) getState().config.actions.setConfig(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it('routes the next coding turn through the selected model', async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-model-switch-'));
     const proxy = await startModelRecordingProxy();

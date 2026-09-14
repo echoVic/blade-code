@@ -297,6 +297,10 @@ Previously returned usage is still delivered; TUI accumulates consumption withou
 context occupancy. Once the checkpoint commits, later cancellation does not roll it back.
 Web does not currently expose a separate manual compaction entry point.
 
+ACP manual compaction uses the owning Session's selected model, context window, and
+channel configuration rather than the process-wide default model. Failure to resolve
+that Session channel fails closed; summary sampling retains its independent budgets.
+
 ### /memory
 
 Manage the project's automatic memory system. Project knowledge that the Agent records automatically during work (build commands, code patterns, debugging insights, etc.) persists across sessions.

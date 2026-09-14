@@ -29,6 +29,7 @@ import { TokenCounter } from '../../../../src/context/TokenCounter.js';
 import type { TokenBudgetHandoffRecordedEvent } from '../../../../src/context/types.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
 import {
+  type ChatConfig,
   createChatServiceAsync,
   type Message,
 } from '../../../../src/services/ChatServiceInterface.js';
@@ -99,6 +100,49 @@ const markerCompactionOptions: CompactionOptions = {
 };
 
 describe('CompactionService - 输出协议', () => {
+  test('摘要使用 Session 渠道配置但保持独立采样预算', async () => {
+    const { PiModelCatalog } = await import(
+      '../../../../src/services/pi/PiModelCatalog.js'
+    );
+    const modelCatalog = new PiModelCatalog();
+    const chatConfig: ChatConfig = {
+      provider: 'session-channel',
+      model: 'session-model',
+      apiKey: 'owned-key',
+      baseUrl: 'https://owned.invalid/v1',
+      customHeaders: { 'x-channel': 'owned' },
+      modelCatalog,
+      maxRetries: 9,
+      timeout: 123_000,
+      maxOutputTokens: 256,
+      temperature: 0.9,
+    };
+    compactChat.mockResolvedValueOnce({ content: '<summary>ledger</summary>' });
+    const options: CompactionOptions = {
+      ...markerCompactionOptions,
+      sessionId: 'owned-channel-sampling',
+      chatConfig,
+    };
+    await CompactionService.compact(
+      [{ role: 'user', content: 'compact history' }],
+      options
+    );
+    expect(createChatServiceAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'session-channel',
+        model: 'session-model',
+        apiKey: 'owned-key',
+        baseUrl: 'https://owned.invalid/v1',
+        customHeaders: { 'x-channel': 'owned' },
+        modelCatalog,
+        maxRetries: 0,
+        timeout: 60_000,
+        maxOutputTokens: 8000,
+        temperature: 0,
+      })
+    );
+    expect(chatConfig.maxRetries).toBe(9);
+  });
   test('LLM compaction 只为未保留的前缀生成 memory plan', async () => {
     const messages: Message[] = [
       { role: 'user', content: 'convention: persist the omitted prefix' },

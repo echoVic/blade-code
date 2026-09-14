@@ -19,7 +19,7 @@ import type { McpNormalizedPromptResult } from '../mcp/McpContentCatalog.js';
 import type { McpLogLevel } from '../mcp/McpLogging.js';
 import type { McpInstructionsSnapshot, McpLogSnapshot } from '../mcp/McpRegistry.js';
 import type { McpTaskSnapshot } from '../mcp/McpTasks.js';
-import type { Message } from '../services/ChatServiceInterface.js';
+import type { ChatConfig, Message } from '../services/ChatServiceInterface.js';
 import type {
   CommunicationStyleConfiguration,
   CommunicationStyleSelection,
@@ -194,6 +194,7 @@ export interface SlashCommandContext {
   workspaceRoot?: string;
   /** 当前调用方拥有的会话历史；ACP 等非 UI 表面应显式传入 */
   messages?: Message[];
+  model?: { getChatConfig: () => ChatConfig };
   /** Lifecycle-owned, UI-safe Session history catalog boundary. */
   sessionSurfaces?: {
     list: () => Promise<SessionSurfaceSummary[]>;

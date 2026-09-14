@@ -37,15 +37,18 @@ async function compactCommandHandler(
 
   try {
     if (context.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    // 从 Store 获取配置
-    const config = getConfig();
-    const currentModel = getCurrentModel();
-
-    if (!config || !currentModel) {
-      return {
-        success: false,
-        error: '配置未初始化',
-      };
+    let chatConfig = context.model?.getChatConfig();
+    if (!chatConfig) {
+      const config = getConfig();
+      const currentModel = getCurrentModel();
+      if (!config || !currentModel) {
+        return { success: false, error: '配置未初始化' };
+      }
+      chatConfig = resolveModelConfig(currentModel, config, 'off').chat;
+    }
+    tokenLimit = chatConfig.maxContextTokens;
+    if (!tokenLimit || tokenLimit <= 0) {
+      return { success: false, error: '当前会话模型上下文窗口未配置' };
     }
 
     // 从 store 获取会话消息和 sessionId
@@ -71,9 +74,7 @@ async function compactCommandHandler(
         }));
 
     // 显示压缩前信息
-    const preTokens = TokenCounter.countTokens(messages, currentModel.model);
-    const resolvedModel = resolveModelConfig(currentModel, config, 'off');
-    tokenLimit = resolvedModel.model.contextWindow;
+    const preTokens = TokenCounter.countTokens(messages, chatConfig.model);
     const usagePercent = ((preTokens / tokenLimit) * 100).toFixed(1);
 
     ui.sendMessage(`**当前上下文统计**
@@ -98,11 +99,12 @@ async function compactCommandHandler(
     // 执行压缩
     const result = await CompactionService.compact(messages, {
       trigger: 'manual',
-      modelName: currentModel.model,
-      modelProvider: currentModel.provider,
+      modelName: chatConfig.model,
+      modelProvider: chatConfig.provider,
       maxContextTokens: tokenLimit,
-      apiKey: resolvedModel.chat.apiKey,
-      baseURL: resolvedModel.chat.baseUrl,
+      apiKey: chatConfig.apiKey,
+      baseURL: chatConfig.baseUrl,
+      chatConfig,
       workspaceRoot: context.workspaceRoot ?? context.cwd,
       sessionId,
       signal: context.signal,

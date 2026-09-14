@@ -12,7 +12,10 @@ import type {
   ContextManagerOptions,
   TokenBudgetHandoffRecordedEvent,
 } from '../../../../src/context/types.js';
-import type { Message } from '../../../../src/services/ChatServiceInterface.js';
+import type {
+  ChatConfig,
+  Message,
+} from '../../../../src/services/ChatServiceInterface.js';
 import type { SlashCommandContext } from '../../../../src/slash-commands/types.js';
 
 type SaveCompaction = (
@@ -169,6 +172,65 @@ describe('/compact slash command', () => {
         rejectedSensitive: 0,
       },
     });
+  });
+
+  it('uses the owning Session model and channel instead of global defaults', async () => {
+    const { default: compactCommand } = await import(
+      '../../../../src/slash-commands/compact.js'
+    );
+    const owned: ChatConfig = {
+      provider: 'session-channel',
+      model: 'session-model',
+      apiKey: 'owned-key',
+      baseUrl: 'https://owned.invalid/v1',
+      maxContextTokens: 1_000_000,
+      customHeaders: { 'x-channel': 'owned' },
+    };
+    const context: SlashCommandContext = {
+      cwd: '/workspace/original',
+      sessionId: 'shared-session',
+      messages: [{ role: 'user', content: 'compact this history' }],
+      model: { getChatConfig: () => owned },
+      acp: { sendMessage: vi.fn() },
+    };
+    const result = await compactCommand.handler([], context);
+    expect(result.success).toBe(true);
+    expect(storeState.getCurrentModel).not.toHaveBeenCalled();
+    expect(compactionState.compact).toHaveBeenCalledWith(
+      context.messages,
+      expect.objectContaining({
+        modelName: owned.model,
+        modelProvider: owned.provider,
+        apiKey: owned.apiKey,
+        baseURL: owned.baseUrl,
+        maxContextTokens: owned.maxContextTokens,
+        chatConfig: owned,
+      })
+    );
+    expect(result.data?.maxContextTokens).toBe(owned.maxContextTokens);
+  });
+
+  it('does not fall back to global defaults when the Session model boundary fails', async () => {
+    const { default: compactCommand } = await import(
+      '../../../../src/slash-commands/compact.js'
+    );
+    const context: SlashCommandContext = {
+      cwd: '/workspace/original',
+      sessionId: 'shared-session',
+      messages: [{ role: 'user', content: 'compact this history' }],
+      model: {
+        getChatConfig: () => {
+          throw new Error('Session model unavailable');
+        },
+      },
+      acp: { sendMessage: vi.fn() },
+    };
+    expect(await compactCommand.handler([], context)).toMatchObject({
+      success: false,
+      error: 'Session model unavailable',
+    });
+    expect(compactionState.compact).not.toHaveBeenCalled();
+    expect(contextManagerState.saveCompaction).not.toHaveBeenCalled();
   });
 
   it('passes the caller cancellation signal to summary sampling', async () => {

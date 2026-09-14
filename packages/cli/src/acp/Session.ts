@@ -863,6 +863,12 @@ export class AcpSession {
         workspaceRoot: this.roots.hostStateRoot,
         sessionId: this.id,
         messages: [...this.contextMessages],
+        model: {
+          getChatConfig: () => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getChatService().getConfig();
+          },
+        },
         rewind: {
           listCheckpoints: async () => {
             if (!this.runtime) throw new Error('Session runtime is unavailable');

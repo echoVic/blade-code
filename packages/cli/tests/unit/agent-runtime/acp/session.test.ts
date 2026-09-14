@@ -21,7 +21,10 @@ import type { FollowUpQueueSnapshot } from '../../../../src/api/followUpQueueSch
 import type { ProviderRecoveryProjection } from '../../../../src/api/providerRecoverySchemas.js';
 import type { TurnActivityProjection } from '../../../../src/api/turnActivitySchemas.js';
 import { Bus } from '../../../../src/server/bus.js';
-import type { Message } from '../../../../src/services/ChatServiceInterface.js';
+import type {
+  ChatConfig,
+  Message,
+} from '../../../../src/services/ChatServiceInterface.js';
 import { ProviderAdmissionError } from '../../../../src/services/pi/providerRequestAdmission.js';
 import type {
   ConfirmationDetails,
@@ -111,6 +114,19 @@ const runtimeState = vi.hoisted(() => ({
       () => ReturnType<SessionRuntime['getTurnRecoveryAssessment']>
     >(() => ({ state: 'none' })),
     getCurrentModelId: vi.fn(() => 'model-1'),
+    getChatService: vi.fn<SessionRuntime['getChatService']>(() => ({
+      chat: vi.fn<ReturnType<SessionRuntime['getChatService']>['chat']>(),
+      streamChat: vi.fn<ReturnType<SessionRuntime['getChatService']>['streamChat']>(),
+      updateConfig:
+        vi.fn<ReturnType<SessionRuntime['getChatService']>['updateConfig']>(),
+      getConfig: (): ChatConfig => ({
+        provider: 'session-channel',
+        model: 'session-model',
+        apiKey: 'session-key',
+        baseUrl: 'https://session.invalid/v1',
+        maxContextTokens: 128_000,
+      }),
+    })),
     getReasoningConfiguration: vi.fn(() => ({
       selection: 'off' as const,
       effective: 'off' as const,
@@ -5410,6 +5426,30 @@ describe('AcpSession', () => {
         'test-session-id',
         '/tmp/test'
       );
+    });
+
+    it('passes the current Session model boundary to manual compaction', async () => {
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      let ownedConfig: ChatConfig | undefined;
+      vi.mocked(executeSlashCommand).mockImplementationOnce(
+        async (_message, context) => {
+          ownedConfig = context.model?.getChatConfig();
+          return { success: true };
+        }
+      );
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '/compact' }],
+      });
+      expect(ownedConfig).toEqual({
+        provider: 'session-channel',
+        model: 'session-model',
+        apiKey: 'session-key',
+        baseUrl: 'https://session.invalid/v1',
+        maxContextTokens: 128_000,
+      });
     });
 
     it('手动压缩后下一轮 prompt 应使用 compacted history', async () => {
