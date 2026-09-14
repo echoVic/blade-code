@@ -294,6 +294,29 @@ describe('ReactiveCompaction', () => {
     expect(result.messages.some(isTokenBudgetHandoffMessage)).toBe(false);
   });
 
+  it('rethrows cancellation with its reported usage without snip fallback', async () => {
+    const { CompactionAbortedError } = await vi.importActual<
+      typeof import('../../../../src/context/CompactionService.js')
+    >('../../../../src/context/CompactionService.js');
+    const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12 };
+    const error = new CompactionAbortedError(
+      new DOMException('Cancelled', 'AbortError'),
+      usage
+    );
+    mockedSnipCompact.mockReturnValue({
+      messages: snippedMsgs,
+      snippedCount: 1,
+      estimatedTokensFreed: 200,
+    });
+    mockedCompact.mockRejectedValueOnce(error);
+
+    await expect(rc.tryReactiveCompact(originalMsgs, defaultOptions)).rejects.toBe(
+      error
+    );
+    expect(error.usage).toEqual(usage);
+    expect(mockedCompact).toHaveBeenCalledOnce();
+  });
+
   it('falls back to snipped messages when compact throws but snip had effect', async () => {
     mockedSnipCompact.mockReturnValue({
       messages: snippedMsgs,

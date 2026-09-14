@@ -129,6 +129,16 @@ export {
   MIN_COMPACTION_EFFECTIVENESS_TOKENS,
 } from './CompactionFallback.js';
 
+export class CompactionAbortedError extends Error {
+  constructor(
+    cause: unknown,
+    readonly usage: UsageInfo
+  ) {
+    super(cause instanceof Error ? cause.message : 'Aborted', { cause });
+    this.name = 'AbortError';
+  }
+}
+
 class CompactionSamplingError extends Error {
   constructor(
     message: string,
@@ -723,7 +733,9 @@ export class CompactionService {
     } catch (error) {
       // AbortError（宽口径）: 用户取消/interrupt，不应计入失败次数也不应走 fallback
       if (isAbortError(error)) {
-        throw error;
+        throw completedUsage
+          ? new CompactionAbortedError(error, completedUsage)
+          : error;
       }
       sessionFailures.set(sessionKey, (sessionFailures.get(sessionKey) ?? 0) + 1);
       logger.error('[CompactionService] 压缩失败，使用降级策略', error);
@@ -853,7 +865,9 @@ export class CompactionService {
           `[CompactionService] 摘要响应为空，准备重试 (${attempt}/${MAX_COMPACTION_SAMPLE_ATTEMPTS})`
         );
       } catch (error) {
-        if (isAbortError(error)) throw error;
+        if (isAbortError(error)) {
+          throw usage ? new CompactionAbortedError(error, usage) : error;
+        }
         if (error instanceof CompactionSamplingError) throw error;
         if (isProviderContextLimitError(error)) {
           const reduced =
@@ -896,7 +910,13 @@ export class CompactionService {
         );
       }
       const delayMs = computeProviderRetryDelay(attempt, undefined, { random: 0 });
-      await abortableSleep(delayMs, options.signal, { throwOnAbort: true });
+      try {
+        await abortableSleep(delayMs, options.signal, { throwOnAbort: true });
+      } catch (error) {
+        throw isAbortError(error) && usage
+          ? new CompactionAbortedError(error, usage)
+          : error;
+      }
     }
 
     throw new CompactionSamplingError(

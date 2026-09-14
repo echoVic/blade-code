@@ -7,7 +7,10 @@
 
 import { createHash } from 'node:crypto';
 import { type PermissionMode } from '../../config/index.js';
-import { CompactionService } from '../../context/CompactionService.js';
+import {
+  CompactionAbortedError,
+  CompactionService,
+} from '../../context/CompactionService.js';
 import {
   type ContextTokenSource,
   ContextTokenTracker,
@@ -910,6 +913,13 @@ export async function* checkAndCompactInLoop(
     // AbortError（宽口径）: 返回 'none' 让控制流回到主循环的下一个 signal 检查点
     // 注意：abort 时不写入 snip 结果到 context.messages，保持原始状态
     if (isAbortError(error)) {
+      if (error instanceof CompactionAbortedError) {
+        onUsage?.(error.usage);
+        yield {
+          kind: 'token_usage',
+          usage: toTokenUsageInfo(error.usage, maxContextTokens),
+        };
+      }
       logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩被中止`);
       return { kind: 'none' };
     }
@@ -1993,6 +2003,16 @@ validates the object and may return a bounded corrective error.`;
                 contextTokenTracker.reset();
                 compactionOutcome = compactResult.success ? 'completed' : 'fallback';
               } catch (compactError) {
+                if (compactError instanceof CompactionAbortedError) {
+                  recordUsage(compactError.usage);
+                  yield {
+                    kind: 'token_usage',
+                    usage: toTokenUsageInfo(
+                      compactError.usage,
+                      deps.chatService.getConfig().maxContextTokens ?? 0
+                    ),
+                  };
+                }
                 logger.error('[Loop] 轮次上限压缩失败，停止继续执行:', compactError);
                 throw compactError;
               } finally {
@@ -2685,6 +2705,16 @@ validates the object and may return a bounded corrective error.`;
                 logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
               }
             } catch (compactionError) {
+              if (compactionError instanceof CompactionAbortedError) {
+                recordUsage(compactionError.usage);
+                yield {
+                  kind: 'token_usage',
+                  usage: toTokenUsageInfo(
+                    compactionError.usage,
+                    chatConfig.maxContextTokens ?? 0
+                  ),
+                };
+              }
               if (isAbortError(compactionError)) throw compactionError;
               logger.error(
                 '[Loop] 反应式压缩失败，不重放 Provider 请求',

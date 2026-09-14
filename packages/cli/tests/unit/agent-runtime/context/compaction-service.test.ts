@@ -1115,6 +1115,111 @@ describe('CompactionService - 输出协议', () => {
     expect(compactChat).toHaveBeenCalledOnce();
   });
 
+  test.each(['retry-wait', 'next-sample', 'postprocessing'] as const)(
+    '压缩在 %s 取消时上抛已返回 usage 而不是 fallback',
+    async (phase) => {
+      vi.useFakeTimers();
+      compactChat.mockReset();
+      const controller = new AbortController();
+      const reason = new DOMException('Cancelled during compaction', 'AbortError');
+      const usage = {
+        promptTokens: 10,
+        completionTokens: 2,
+        totalTokens: 12,
+        reasoningTokens: 1,
+        cacheReadInputTokens: 4,
+        cacheCreationInputTokens: 3,
+        costUsd: 0.125,
+      };
+      const trackerSpy = vi.spyOn(FileAccessTracker.getInstance(), 'getTrackedRecords');
+      if (phase === 'postprocessing') {
+        compactChat.mockResolvedValueOnce({
+          content: '<summary>ledger</summary>',
+          usage,
+        });
+        trackerSpy.mockImplementationOnce(() => {
+          controller.abort(reason);
+          throw reason;
+        });
+      } else {
+        compactChat.mockImplementationOnce(async () => {
+          if (phase === 'retry-wait') setTimeout(() => controller.abort(reason), 10);
+          return { content: ' ', usage };
+        });
+        if (phase === 'next-sample') {
+          compactChat.mockResolvedValueOnce({ content: ' ', usage });
+          compactChat.mockImplementationOnce(async () => {
+            controller.abort(reason);
+            throw reason;
+          });
+        }
+      }
+
+      try {
+        const pending = CompactionService.compact(
+          [{ role: 'user', content: 'Preserve the active task.' }],
+          {
+            ...markerCompactionOptions,
+            sessionId: `cancelled-usage-${phase}`,
+            signal: controller.signal,
+          }
+        );
+        const rejected = pending.catch((error: unknown) => error);
+        await vi.runAllTimersAsync();
+        const error = await rejected;
+        const samples = phase === 'next-sample' ? 2 : 1;
+        expect(error).toMatchObject({
+          name: 'AbortError',
+          cause: expect.objectContaining({ name: 'AbortError' }),
+          usage: {
+            promptTokens: 10 * samples,
+            completionTokens: 2 * samples,
+            totalTokens: 12 * samples,
+            reasoningTokens: samples,
+            cacheReadInputTokens: 4 * samples,
+            cacheCreationInputTokens: 3 * samples,
+            costUsd: 0.125 * samples,
+          },
+        });
+        if (phase !== 'retry-wait') expect(error).toHaveProperty('cause', reason);
+        expect(compactChat).toHaveBeenCalledTimes(phase === 'next-sample' ? 3 : 1);
+        expect(usage.totalTokens).toBe(12);
+      } finally {
+        trackerSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  test('已返回 usage 的取消不应增加 session circuit failure', async () => {
+    compactChat.mockReset();
+    const options = {
+      ...markerCompactionOptions,
+      sessionId: 'cancelled-usage-circuit',
+    };
+    const messages: Message[] = [
+      { role: 'user', content: 'Preserve the active task.' },
+    ];
+    for (let index = 0; index < 2; index++) {
+      compactChat.mockRejectedValueOnce(new Error('invalid request'));
+      expect((await CompactionService.compact(messages, options)).success).toBe(false);
+    }
+    const controller = new AbortController();
+    compactChat.mockImplementationOnce(async () => {
+      controller.abort();
+      return {
+        content: ' ',
+        usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+      };
+    });
+    await expect(
+      CompactionService.compact(messages, { ...options, signal: controller.signal })
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    compactChat.mockResolvedValueOnce({ content: '<summary>ledger</summary>' });
+    expect((await CompactionService.compact(messages, options)).success).toBe(true);
+    expect(compactChat).toHaveBeenCalledTimes(4);
+  });
+
   test('abort 应在重试等待前终止且不得写入 fallback', async () => {
     const controller = new AbortController();
     compactChat.mockImplementationOnce(async () => {

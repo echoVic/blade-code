@@ -22,7 +22,10 @@ const streamingToolExecutorState = vi.hoisted(() => ({
 
 vi.mock('nanoid', () => ({ nanoid: () => 'mock-nanoid' }));
 
-vi.mock('../../../../src/context/CompactionService.js', () => ({
+vi.mock('../../../../src/context/CompactionService.js', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('../../../../src/context/CompactionService.js')
+  >()),
   CompactionService: { compact: vi.fn() },
 }));
 
@@ -165,7 +168,10 @@ import type {
 import type { BladeConfig } from '../../../../src/config/types.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import type { CompactionResult } from '../../../../src/context/CompactionService.js';
-import { CompactionService } from '../../../../src/context/CompactionService.js';
+import {
+  CompactionAbortedError,
+  CompactionService,
+} from '../../../../src/context/CompactionService.js';
 import { ContextManager } from '../../../../src/context/ContextManager.js';
 import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
 import { microCompact, snipCompact } from '../../../../src/context/SnipCompaction.js';
@@ -1106,6 +1112,64 @@ describe('executeLoopGenerator', () => {
   });
 
   describe('compaction lifecycle', () => {
+    it.each(['threshold', 'reactive', 'turn-limit'] as const)(
+      'accounts cancelled compaction usage once without persisting a checkpoint: %s',
+      async (mode) => {
+        const { deps, contextManager } = createHandoffPersistenceHarness();
+        const saveCompaction = vi.spyOn(contextManager, 'saveCompaction');
+        const context = createMockContext();
+        const controller = new AbortController();
+        const usage = { promptTokens: 100, completionTokens: 20, totalTokens: 120 };
+        const cancelCompaction = async () => {
+          controller.abort('interrupt');
+          throw new CompactionAbortedError(controller.signal.reason, usage);
+        };
+        const chat = vi.mocked(deps.chatService.chat);
+        if (mode === 'reactive') {
+          chat.mockRejectedValueOnce(new Error('context_length_exceeded'));
+          reactiveCompactionState.tryReactiveCompact.mockImplementationOnce(
+            cancelCompaction
+          );
+        } else {
+          chat.mockResolvedValueOnce(
+            toolResponse(mode === 'turn-limit' ? 100 : 80_000)
+          );
+          vi.mocked(CompactionService.compact).mockImplementationOnce(cancelCompaction);
+        }
+        if (mode === 'turn-limit') deps.runtimeOptions.maxTurns = 1;
+        const { events, result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Read then finish.',
+            context,
+            {
+              stream: false,
+              signal: controller.signal,
+              ...(mode === 'turn-limit'
+                ? { onTurnLimitReached: async () => ({ continue: true }) }
+                : {}),
+            },
+            undefined
+          )
+        );
+        const counts = events.flatMap((event) =>
+          event.kind === 'token_usage' ? [event.usage.totalTokens] : []
+        );
+        expect(counts.filter((tokens) => tokens === 120)).toEqual([120]);
+        expect(result.metadata?.tokensUsed).toBe(
+          counts.reduce((sum, count) => sum + count, 0)
+        );
+        expect(result).toMatchObject({
+          success: false,
+          error: { type: 'aborted' },
+          metadata: { abortReason: 'interrupt' },
+        });
+        expect(saveCompaction).not.toHaveBeenCalled();
+        expect(memoryConsolidationState.commit).not.toHaveBeenCalled();
+        expect(chat).toHaveBeenCalledOnce();
+      }
+    );
+
     it.each([
       'threshold',
       'fallback',

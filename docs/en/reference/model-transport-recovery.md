@@ -42,9 +42,11 @@ thresholds, output-continuation budgets, or transport retry budgets.
 
 Fallback results retain previously returned summary usage when empty responses exhaust
 sampling, a later sample fails, or summary post-processing fails, including reasoning,
-cache, and cost fields. Cancellation during sampling still throws `AbortError` without
-constructing a fallback result; sample usage not yet delivered to the loop is outside
-this loop-accounting guarantee.
+cache, and cost fields. Cancellation during retry waiting, later sampling, or summary
+post-processing still throws `AbortError`, retaining the original exception as its cause
+and carrying previously returned cumulative usage. The loop accounts for that usage once,
+without a fallback result, compaction checkpoint, or additional circuit-breaker failure.
+Usage not returned before cancellation is still not estimated.
 
 ## Foreground Long Task Recovery
 

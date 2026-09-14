@@ -251,6 +251,7 @@ async function startProviderProxy(input: {
   upstreamBaseUrl: string;
   holdFinal: boolean;
   emptyCompaction?: boolean;
+  onCompactionRetry?: () => void;
 }): Promise<Fixture['proxy']> {
   const upstream = new URL(input.upstreamBaseUrl);
   let requests = 0;
@@ -274,6 +275,11 @@ async function startProviderProxy(input: {
       const compaction = kind === 'compaction';
       const discovery = kind === 'discovery';
       if (compaction) compactions++;
+      if (compaction && compactions === 2 && input.onCompactionRetry) {
+        input.onCompactionRetry();
+        response.destroy();
+        return;
+      }
       if (discovery) {
         discoverySawIndex =
           bodyText.includes('<auto-memory>') && bodyText.includes('conventions.md');
@@ -442,7 +448,8 @@ async function withStorageRoot<T>(storageRoot: string, action: () => Promise<T>)
 async function createFixture(
   model: TestModelConfig,
   surface: (typeof surfaces)[number],
-  emptyCompaction = false
+  emptyCompaction = false,
+  onCompactionRetry?: () => void
 ): Promise<Fixture> {
   const root = await mkdtemp(
     path.join(os.tmpdir(), `blade-memory-real-${safeSlug(model.model)}-${surface}-`)
@@ -468,6 +475,7 @@ async function createFixture(
     upstreamBaseUrl: model.baseURL ?? 'https://api.deepseek.com',
     holdFinal: surface === 'web',
     emptyCompaction,
+    onCompactionRetry,
   });
   const runtime = buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseUrl });
   const configured = runtime.models[0];
@@ -1002,16 +1010,23 @@ describe
   .sequential('compaction usage Goal accounting (real API)', () => {
     for (const model of models)
       it.for([
-        { cancel: false, emptyCompaction: false },
-        { cancel: true, emptyCompaction: false },
-        { cancel: false, emptyCompaction: true },
-        { cancel: true, emptyCompaction: true },
+        { cancel: false, emptyCompaction: false, cancelDuringSampling: false },
+        { cancel: true, emptyCompaction: false, cancelDuringSampling: false },
+        { cancel: false, emptyCompaction: true, cancelDuringSampling: false },
+        { cancel: true, emptyCompaction: true, cancelDuringSampling: false },
+        { cancel: true, emptyCompaction: true, cancelDuringSampling: true },
       ])(
-        `${model.model} accounts compaction tokens (cancel: $cancel, empty: $emptyCompaction)`,
+        `${model.model} accounts compaction tokens (cancel: $cancel, empty: $emptyCompaction, sampling: $cancelDuringSampling)`,
         { timeout: 240_000 },
-        async ({ cancel, emptyCompaction }, context) => {
+        async ({ cancel, emptyCompaction, cancelDuringSampling }, context) => {
           expect(frameworkRetryBudget(context)).toBe(0);
-          const fixture = await createFixture(model, 'headless', emptyCompaction);
+          const controller = new AbortController();
+          const fixture = await createFixture(
+            model,
+            'headless',
+            emptyCompaction,
+            cancelDuringSampling ? () => controller.abort() : undefined
+          );
           const originalConfig = getState().config.config;
           const config = buildRealApiRuntimeConfig({
             ...model,
@@ -1038,7 +1053,6 @@ describe
                 agent = await Agent.createWithRuntime(runtime, {
                   sessionId: fixture.sessionId,
                 });
-                const controller = new AbortController();
                 const chatContext: ChatContext = {
                   messages: await SessionService.loadSessionModelContext(
                     fixture.sessionId,
@@ -1064,7 +1078,7 @@ describe
                       compacting = event.phase === 'start';
                     if (event.kind === 'token_usage' && compacting) {
                       compactionTokens += event.usage.totalTokens;
-                      if (cancel) controller.abort();
+                      if (cancel && !cancelDuringSampling) controller.abort();
                     }
                   }
                 );
@@ -1077,7 +1091,9 @@ describe
                   .evidence()
                   .responses.filter((response) => response.kind === 'compaction');
                 if (emptyCompaction) {
-                  expect(compactionResponses).toHaveLength(3);
+                  expect(compactionResponses).toHaveLength(
+                    cancelDuringSampling ? 1 : 3
+                  );
                   for (const response of compactionResponses) {
                     expect(response.status).toBe(200);
                     expect(response.summary).toMatchObject({
@@ -1087,15 +1103,39 @@ describe
                     });
                     expect(response.reportedTotalTokens).toBeGreaterThan(0);
                   }
-                  expect(events).toContainEqual(
-                    expect.objectContaining({
-                      kind: 'compaction',
-                      phase: 'end',
-                      strategy: 'fallback',
-                      failureReason: 'empty_exhausted',
-                      sampleAttempts: 3,
-                    })
-                  );
+                  if (cancelDuringSampling) {
+                    expect(controller.signal.aborted).toBe(true);
+                    expect(fixture.proxy.evidence().compactions).toBe(2);
+                    expect(fixture.proxy.evidence().forwarded).toBe(1);
+                    expect(events).toContainEqual(
+                      expect.objectContaining({
+                        kind: 'compaction',
+                        phase: 'end',
+                        outcome: 'failed',
+                        strategy: undefined,
+                      })
+                    );
+                    const persisted = readSessionEvents(
+                      findSessionTranscript(fixture.storageRoot, fixture.sessionId)
+                    );
+                    expect(
+                      persisted.filter(
+                        (event) =>
+                          event.type === 'part_created' &&
+                          event.data.partType === 'summary'
+                      )
+                    ).toHaveLength(0);
+                  } else {
+                    expect(events).toContainEqual(
+                      expect.objectContaining({
+                        kind: 'compaction',
+                        phase: 'end',
+                        strategy: 'fallback',
+                        failureReason: 'empty_exhausted',
+                        sampleAttempts: 3,
+                      })
+                    );
+                  }
                 }
                 expect(compactionTokens).toBeGreaterThan(0);
                 expect(compactionTokens).toBe(
@@ -1133,7 +1173,7 @@ describe
                 }
                 assertNoSecrets({ events, result, goal }, [model.apiKey]);
                 console.log(
-                  `[compaction-usage] ${JSON.stringify({ model: model.model, cancel, emptyCompaction, compactionTokens, total, resultTokens: result.metadata?.tokensUsed, goalTokens: goal?.tokensUsed })}`
+                  `[compaction-usage] ${JSON.stringify({ model: model.model, cancel, emptyCompaction, cancelDuringSampling, compactionTokens, total, resultTokens: result.metadata?.tokensUsed, goalTokens: goal?.tokensUsed })}`
                 );
               })
             );
