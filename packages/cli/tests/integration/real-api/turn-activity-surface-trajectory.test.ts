@@ -1440,18 +1440,46 @@ describeTrajectory('Bash finalization failure production Chromium (real API)', (
             ].join('\n')
           );
           await page.locator('[data-blade-submit]').click();
-          await waitFor(
-            async () => {
-              try {
-                toolPid = Number(await readFile(startedFile, 'utf8'));
-                return Number.isSafeInteger(toolPid);
-              } catch {
-                return false;
-              }
-            },
-            'Real model did not start Bash',
-            90_000
-          );
+          try {
+            await waitFor(
+              async () => {
+                try {
+                  toolPid = Number(await readFile(startedFile, 'utf8'));
+                  return Number.isSafeInteger(toolPid);
+                } catch {
+                  return false;
+                }
+              },
+              'Real model did not start Bash',
+              90_000
+            );
+          } catch (error) {
+            const events = readSessionEvents(
+              findSessionTranscript(storageRoot, session.sessionId)
+            );
+            const final = inspectFinalAssistantText(events);
+            console.error(
+              '[bash-start-evidence]',
+              JSON.stringify({
+                model: model.model,
+                ending,
+                mode,
+                lifecycle: proxy.requestLifecycle,
+                responses: proxy.responseSummaries,
+                toolCalls: toolCallNames(events),
+                terminalEvents: events
+                  .filter(
+                    (event) =>
+                      event.type === 'turn_aborted' || event.type === 'turn_completed'
+                  )
+                  .map((event) => event.type),
+                finalState: final.state,
+                finalChars:
+                  final.state === 'structural_mismatch' ? null : final.text.length,
+              })
+            );
+            throw error;
+          }
           const transcriptPath = findSessionTranscript(storageRoot, session.sessionId);
           const leaseRoot = path.join(
             path.dirname(transcriptPath),
