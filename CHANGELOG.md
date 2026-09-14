@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.195] - 2026-09-15
+
+### Fixed
+- Preserve Session-owned model catalogs, channel headers, credentials, and endpoints across threshold, reactive, and turn-limit compaction without changing summary sampling budgets.
+
+### Tests
+- Cover channel propagation through all automatic compaction entries and verify real concurrent workspace channels retain their original endpoints and headers through context-limit recovery.
+- Retain bounded child-stage diagnostics for cross-process workspace-reference capacity tests without increasing their timeout budget.
+
 ## [0.10.194] - 2026-09-15
 
 ### Fixed
