@@ -1113,6 +1113,70 @@ describe('executeLoopGenerator', () => {
 
   describe('compaction lifecycle', () => {
     it.each(['threshold', 'reactive', 'turn-limit'] as const)(
+      'preserves the Session channel config through %s compaction',
+      async (mode) => {
+        const { deps } = createHandoffPersistenceHarness();
+        const chatConfig = {
+          ...deps.chatService.getConfig(),
+          customHeaders: { 'x-session-channel': 'owned' },
+          apiVersion: 'session-version',
+          enablePromptCaching: true,
+        };
+        vi.mocked(deps.chatService.getConfig).mockReturnValue(chatConfig);
+        const compacted: CompactionResult = {
+          success: true,
+          summary: 'summary',
+          preTokens: 80_000,
+          postTokens: 1_000,
+          filesIncluded: [],
+          compactedMessages: [{ role: 'user', content: 'summary' }],
+          boundaryMessage: { role: 'system', content: '' },
+          summaryMessage: { role: 'user', content: 'summary' },
+        };
+        const chat = vi.mocked(deps.chatService.chat);
+        if (mode === 'reactive') {
+          chat.mockRejectedValueOnce(new Error('context_length_exceeded'));
+          reactiveCompactionState.tryReactiveCompact.mockResolvedValueOnce({
+            success: true,
+            strategy: 'llm',
+            summary: compacted.summary,
+            preTokens: compacted.preTokens,
+            postTokens: compacted.postTokens,
+            messages: compacted.compactedMessages,
+          });
+        } else {
+          chat.mockResolvedValueOnce(
+            toolResponse(mode === 'turn-limit' ? 100 : 80_000)
+          );
+          vi.mocked(CompactionService.compact).mockResolvedValueOnce(compacted);
+        }
+        chat.mockResolvedValueOnce(finalResponse(1_000, 'done'));
+        if (mode === 'turn-limit') deps.runtimeOptions.maxTurns = 1;
+        const { result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Read then finish.',
+            createMockContext(),
+            {
+              stream: false,
+              ...(mode === 'turn-limit'
+                ? { onTurnLimitReached: async () => ({ continue: true }) }
+                : {}),
+            },
+            undefined
+          )
+        );
+        expect(result.success).toBe(true);
+        const calls =
+          mode === 'reactive'
+            ? reactiveCompactionState.tryReactiveCompact.mock.calls
+            : vi.mocked(CompactionService.compact).mock.calls;
+        expect(calls).toHaveLength(1);
+        expect(calls[0]?.[1]).toMatchObject({ chatConfig });
+      }
+    );
+
+    it.each(['threshold', 'reactive', 'turn-limit'] as const)(
       'accounts cancelled compaction usage once without persisting a checkpoint: %s',
       async (mode) => {
         const { deps, contextManager } = createHandoffPersistenceHarness();

@@ -127,6 +127,35 @@ describe('ReactiveCompaction', () => {
     });
   });
 
+  it('forwards the Session channel configuration to summary sampling', async () => {
+    const chatConfig = {
+      provider: 'owned-channel',
+      model: 'owned-model',
+      customHeaders: { 'x-session-channel': 'owned' },
+    };
+    mockedSnipCompact.mockReturnValue({
+      messages: originalMsgs,
+      snippedCount: 0,
+      estimatedTokensFreed: 0,
+    });
+    mockedCompact.mockResolvedValueOnce({
+      success: true,
+      summary: 'summary',
+      preTokens: 96,
+      postTokens: 24,
+      filesIncluded: [],
+      compactedMessages: compactedMsgs,
+      boundaryMessage: { role: 'system', content: 'boundary' },
+      summaryMessage: { role: 'user', content: 'summary' },
+    });
+    const options = { ...defaultOptions, chatConfig };
+    await rc.tryReactiveCompact(originalMsgs, options);
+    expect(mockedCompact).toHaveBeenCalledWith(
+      originalMsgs,
+      expect.objectContaining({ chatConfig })
+    );
+  });
+
   it('returns false immediately on second call without reset', async () => {
     mockedSnipCompact.mockReturnValue({
       messages: snippedMsgs,

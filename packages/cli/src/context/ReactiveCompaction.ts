@@ -6,7 +6,11 @@
  */
 
 import type { MemoryConsolidationPlan } from '../memory/MemoryConsolidation.js';
-import type { Message, UsageInfo } from '../services/ChatServiceInterface.js';
+import type {
+  ChatConfig,
+  Message,
+  UsageInfo,
+} from '../services/ChatServiceInterface.js';
 import { isAbortError } from '../utils/abort.js';
 import { CompactionService, isCompactionBlockedError } from './CompactionService.js';
 import type {
@@ -23,6 +27,7 @@ export interface ReactiveCompactOptions {
   maxContextTokens: number;
   apiKey?: string;
   baseURL?: string;
+  chatConfig?: ChatConfig;
   signal?: AbortSignal;
   activeTask?: string;
   workspaceRoot?: string;
@@ -92,6 +97,7 @@ export class ReactiveCompaction {
         maxContextTokens: options.maxContextTokens,
         apiKey: options.apiKey,
         baseURL: options.baseURL,
+        chatConfig: options.chatConfig,
         signal: options.signal,
         activeTask: options.activeTask,
         workspaceRoot: options.workspaceRoot,

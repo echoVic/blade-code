@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { Agent } from '../../../src/agent/Agent.js';
+import { drainLoop, type LoopEvent } from '../../../src/agent/loop/index.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { setCwdState } from '../../../src/bootstrap/state.js';
 import { ConfigManager } from '../../../src/config/ConfigManager.js';
@@ -13,6 +15,10 @@ import { getPiModelCatalog } from '../../../src/services/pi/PiModelCatalog.js';
 import { getModelApiKeyEnvironmentVariable } from '../../../src/services/pi/resolveModelConfig.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { getCwd } from '../../../src/utils/cwd.js';
+import {
+  OpenAIResponseSummaryCollector,
+  type RecordingProviderResponseSummary,
+} from '../../support/recordingProviderProxy.js';
 import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
@@ -27,8 +33,14 @@ const describeReal = gpt ? describe.sequential : describe.skip;
 const PROVIDER_ID = 'workspace-shared-gpt';
 const MODEL_ID = 'workspace-gpt';
 
-async function startRecordingProxy(upstreamBaseUrl: string) {
+async function startRecordingProxy(upstreamBaseUrl: string, contextLimitOnce = false) {
   let requestCount = 0;
+  let compactionRequests = 0;
+  let channelHeaders = 0;
+  const responses: Array<{
+    status: number;
+    summary: RecordingProviderResponseSummary;
+  }> = [];
   const upstream = new URL(upstreamBaseUrl);
   const server = createServer(async (request, response) => {
     try {
@@ -36,6 +48,31 @@ async function startRecordingProxy(upstreamBaseUrl: string) {
       const chunks: Buffer[] = [];
       for await (const chunk of request) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const body = Buffer.concat(chunks);
+      const parsed: { messages?: Array<{ role?: string; content?: unknown }> } =
+        JSON.parse(body.toString('utf8'));
+      const first = parsed.messages?.[0];
+      if (
+        parsed.messages?.length === 1 &&
+        first?.role === 'user' &&
+        typeof first.content === 'string' &&
+        first.content.startsWith('Your task is to create a bounded continuation ledger')
+      ) {
+        compactionRequests++;
+      }
+      if (request.headers['x-workspace-channel'] === 'owned') channelHeaders++;
+      if (contextLimitOnce && requestCount === 1) {
+        response.writeHead(413, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            error: {
+              code: 'context_length_exceeded',
+              message: 'context_length_exceeded',
+            },
+          })
+        );
+        return;
       }
       const incoming = new URL(request.url ?? '/', 'http://blade-proxy.invalid');
       const target = new URL(upstream.toString());
@@ -69,7 +106,11 @@ async function startRecordingProxy(upstreamBaseUrl: string) {
           response.setHeader(name, value);
         }
       });
-      response.end(Buffer.from(await upstreamResponse.arrayBuffer()));
+      const responseBytes = Buffer.from(await upstreamResponse.arrayBuffer());
+      const collector = new OpenAIResponseSummaryCollector(requestCount);
+      collector.append(responseBytes);
+      responses.push({ status: upstreamResponse.status, summary: collector.finish() });
+      response.end(responseBytes);
     } catch {
       response.statusCode = 502;
       response.setHeader('content-type', 'application/json');
@@ -94,6 +135,9 @@ async function startRecordingProxy(upstreamBaseUrl: string) {
   return {
     baseUrl: `http://127.0.0.1:${address.port}/v1`,
     requestCount: () => requestCount,
+    compactionRequests: () => compactionRequests,
+    channelHeaders: () => channelHeaders,
+    responses,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -101,7 +145,7 @@ async function startRecordingProxy(upstreamBaseUrl: string) {
   };
 }
 
-async function writeWorkspaceConfig(root: string, baseUrl: string) {
+async function writeWorkspaceConfig(root: string, baseUrl: string, compaction = false) {
   await mkdir(path.join(root, '.blade'), { recursive: true });
   await writeFile(
     path.join(root, '.blade', 'config.json'),
@@ -125,6 +169,9 @@ async function writeWorkspaceConfig(root: string, baseUrl: string) {
               timeout: 90_000,
               streamIdleTimeout: 90_000,
               maxRetries: 0,
+              ...(compaction
+                ? { customHeaders: { 'x-workspace-channel': 'owned' } }
+                : {}),
             },
           },
         ],
@@ -144,93 +191,165 @@ describeReal('workspace model resources trajectory (real API)', () => {
     else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
   });
 
-  it('keeps concurrent same-id channels on their immutable project endpoints', async () => {
-    if (!gpt) throw new Error('GPT qualification model is unavailable');
-    if (!gpt.baseURL) throw new Error('GPT qualification base URL is unavailable');
-    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-model-resources-'));
-    const workspaceA = path.join(root, 'project-a');
-    const workspaceB = path.join(root, 'project-b');
-    const proxyA = await startRecordingProxy(gpt.baseURL);
-    const proxyB = await startRecordingProxy(gpt.baseURL);
-    const originalCwd = getCwd();
-    const originalConfig = getState().config.config;
-    const credentialVariable = getModelApiKeyEnvironmentVariable(MODEL_ID);
-    const originalCredential = process.env[credentialVariable];
-    let runtimeA: SessionRuntime | undefined;
-    let runtimeB: SessionRuntime | undefined;
+  it.each([false, true])(
+    'keeps concurrent same-id channels on their immutable project endpoints (compaction: %s)',
+    { timeout: 180_000, retry: 0 },
+    async (compaction) => {
+      if (!gpt) throw new Error('GPT qualification model is unavailable');
+      if (!gpt.baseURL) throw new Error('GPT qualification base URL is unavailable');
+      const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-model-resources-'));
+      const workspaceA = path.join(root, 'project-a');
+      const workspaceB = path.join(root, 'project-b');
+      const proxyA = await startRecordingProxy(gpt.baseURL, compaction);
+      const proxyB = await startRecordingProxy(gpt.baseURL, compaction);
+      const originalCwd = getCwd();
+      const originalConfig = getState().config.config;
+      const credentialVariable = getModelApiKeyEnvironmentVariable(MODEL_ID);
+      const originalCredential = process.env[credentialVariable];
+      let runtimeA: SessionRuntime | undefined;
+      let runtimeB: SessionRuntime | undefined;
 
-    try {
-      process.env.BLADE_STORAGE_ROOT = path.join(root, 'storage');
-      process.env[credentialVariable] = gpt.apiKey;
-      await Promise.all([
-        writeWorkspaceConfig(workspaceA, proxyA.baseUrl),
-        writeWorkspaceConfig(workspaceB, proxyB.baseUrl),
-      ]);
-      ConfigManager.resetInstance();
-      WorkspaceTrustService.resetInstance();
-      resetWorkspaceIdentityCache();
-      await Promise.all([
-        WorkspaceTrustService.getInstance().trust(workspaceA),
-        WorkspaceTrustService.getInstance().trust(workspaceB),
-      ]);
-      const startupConfig = buildRealApiRuntimeConfig(gpt);
-      getState().config.actions.setConfig({
-        ...startupConfig,
-        permissionMode: PermissionMode.YOLO,
-        hooks: { ...startupConfig.hooks, enabled: false },
-      });
+      try {
+        process.env.BLADE_STORAGE_ROOT = path.join(root, 'storage');
+        process.env[credentialVariable] = gpt.apiKey;
+        await Promise.all([
+          writeWorkspaceConfig(workspaceA, proxyA.baseUrl, compaction),
+          writeWorkspaceConfig(workspaceB, proxyB.baseUrl, compaction),
+        ]);
+        ConfigManager.resetInstance();
+        WorkspaceTrustService.resetInstance();
+        resetWorkspaceIdentityCache();
+        await Promise.all([
+          WorkspaceTrustService.getInstance().trust(workspaceA),
+          WorkspaceTrustService.getInstance().trust(workspaceB),
+        ]);
+        const startupConfig = buildRealApiRuntimeConfig(gpt);
+        getState().config.actions.setConfig({
+          ...startupConfig,
+          permissionMode: PermissionMode.YOLO,
+          hooks: { ...startupConfig.hooks, enabled: false },
+        });
 
-      [runtimeA, runtimeB] = await Promise.all([
-        SessionRuntime.create({
-          sessionId: `model-route-a-${Date.now()}`,
-          workspaceRoot: workspaceA,
-        }),
-        SessionRuntime.create({
-          sessionId: `model-route-b-${Date.now()}`,
-          workspaceRoot: workspaceB,
-        }),
-      ]);
+        [runtimeA, runtimeB] = await Promise.all([
+          SessionRuntime.create({
+            sessionId: `model-route-a-${Date.now()}`,
+            workspaceRoot: workspaceA,
+          }),
+          SessionRuntime.create({
+            sessionId: `model-route-b-${Date.now()}`,
+            workspaceRoot: workspaceB,
+          }),
+        ]);
 
-      await Promise.all([
-        writeWorkspaceConfig(workspaceA, 'http://127.0.0.1:9/v1'),
-        writeWorkspaceConfig(workspaceB, 'http://127.0.0.1:9/v1'),
-      ]);
-      getPiModelCatalog().configureModelProviders(
-        {
-          [PROVIDER_ID]: {
-            name: 'Mutated global channel',
-            baseUrl: 'http://127.0.0.1:9/v1',
-            wireApi: 'openai-completions',
+        await Promise.all([
+          writeWorkspaceConfig(workspaceA, 'http://127.0.0.1:9/v1'),
+          writeWorkspaceConfig(workspaceB, 'http://127.0.0.1:9/v1'),
+        ]);
+        getPiModelCatalog().configureModelProviders(
+          {
+            [PROVIDER_ID]: {
+              name: 'Mutated global channel',
+              baseUrl: 'http://127.0.0.1:9/v1',
+              wireApi: 'openai-completions',
+            },
           },
-        },
-        runtimeA.getAvailableModels()
-      );
+          runtimeA.getAvailableModels()
+        );
 
-      const [responseA, responseB] = await Promise.all([
-        runtimeA
-          .getChatService()
-          .chat([{ role: 'user', content: 'Reply with exactly ROUTE_A.' }]),
-        runtimeB
-          .getChatService()
-          .chat([{ role: 'user', content: 'Reply with exactly ROUTE_B.' }]),
-      ]);
+        if (compaction) {
+          const run = async (
+            runtime: SessionRuntime,
+            workspace: string,
+            marker: string
+          ) => {
+            const agent = await Agent.createWithRuntime(runtime, {
+              sessionId: runtime.sessionId,
+            });
+            const events: LoopEvent[] = [];
+            try {
+              const result = await drainLoop(
+                agent.chatStream(
+                  `Reply with exactly ${marker}. Do not use tools.`,
+                  {
+                    sessionId: runtime.sessionId,
+                    workspaceRoot: workspace,
+                    userId: 'channel-compaction',
+                    messages: [
+                      { role: 'user', content: 'The previous task is complete.' },
+                    ],
+                    permissionMode: PermissionMode.YOLO,
+                  },
+                  { stream: true }
+                ),
+                (event) => {
+                  events.push(event);
+                }
+              );
+              expect(result.success).toBe(true);
+              expect(result.finalMessage).toContain(marker);
+              expect(events).toContainEqual(
+                expect.objectContaining({
+                  kind: 'compaction',
+                  phase: 'end',
+                  reason: 'context_limit',
+                  strategy: 'llm',
+                  outcome: 'completed',
+                })
+              );
+              assertNoSecrets({ result, events }, [gpt.apiKey]);
+            } finally {
+              await agent.destroy();
+            }
+          };
+          await Promise.all([
+            run(runtimeA, workspaceA, 'ROUTE_A'),
+            run(runtimeB, workspaceB, 'ROUTE_B'),
+          ]);
+          for (const proxy of [proxyA, proxyB]) {
+            expect(proxy.requestCount()).toBe(3);
+            expect(proxy.compactionRequests()).toBe(1);
+            expect(proxy.channelHeaders()).toBe(3);
+          }
+          console.log(
+            '[workspace-compaction-channel]',
+            JSON.stringify({
+              requests: [3, 3],
+              summaries: [1, 1],
+              headerCounts: [3, 3],
+            })
+          );
+          return;
+        }
+        const [responseA, responseB] = await Promise.all([
+          runtimeA
+            .getChatService()
+            .chat([{ role: 'user', content: 'Reply with exactly ROUTE_A.' }]),
+          runtimeB
+            .getChatService()
+            .chat([{ role: 'user', content: 'Reply with exactly ROUTE_B.' }]),
+        ]);
 
-      expect(responseA.content).toContain('ROUTE_A');
-      expect(responseB.content).toContain('ROUTE_B');
-      expect(proxyA.requestCount()).toBe(1);
-      expect(proxyB.requestCount()).toBe(1);
-      assertNoSecrets(JSON.stringify({ responseA, responseB }), [gpt.apiKey]);
-    } finally {
-      await Promise.allSettled([runtimeA?.dispose(), runtimeB?.dispose()]);
-      await Promise.allSettled([proxyA.close(), proxyB.close()]);
-      if (originalCredential === undefined) delete process.env[credentialVariable];
-      else process.env[credentialVariable] = originalCredential;
-      WorkspaceTrustService.resetInstance();
-      resetWorkspaceIdentityCache();
-      ConfigManager.resetInstance();
-      setCwdState(originalCwd);
-      if (originalConfig) getState().config.actions.setConfig(originalConfig);
-      await rm(root, { recursive: true, force: true });
+        expect(responseA.content, JSON.stringify(proxyA.responses)).toContain(
+          'ROUTE_A'
+        );
+        expect(responseB.content, JSON.stringify(proxyB.responses)).toContain(
+          'ROUTE_B'
+        );
+        expect(proxyA.requestCount()).toBe(1);
+        expect(proxyB.requestCount()).toBe(1);
+        assertNoSecrets(JSON.stringify({ responseA, responseB }), [gpt.apiKey]);
+      } finally {
+        await Promise.allSettled([runtimeA?.dispose(), runtimeB?.dispose()]);
+        await Promise.allSettled([proxyA.close(), proxyB.close()]);
+        if (originalCredential === undefined) delete process.env[credentialVariable];
+        else process.env[credentialVariable] = originalCredential;
+        WorkspaceTrustService.resetInstance();
+        resetWorkspaceIdentityCache();
+        ConfigManager.resetInstance();
+        setCwdState(originalCwd);
+        if (originalConfig) getState().config.actions.setConfig(originalConfig);
+        await rm(root, { recursive: true, force: true });
+      }
     }
-  }, 180_000);
+  );
 });

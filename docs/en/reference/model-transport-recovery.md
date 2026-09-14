@@ -48,6 +48,11 @@ and carrying previously returned cumulative usage. The loop accounts for that us
 without a fallback result, compaction checkpoint, or additional circuit-breaker failure.
 Usage not returned before cancellation is still not estimated.
 
+Threshold, reactive, and turn-limit compaction inherit the current Session's model
+catalog, channel headers, credentials, and endpoint rather than resolving a same-named
+global channel again. Summary temperature, output limits, timeout, and sampling retry
+budgets remain independent of the main request.
+
 ## Foreground Long Task Recovery
 
 When there is no explicit model `overrides.maxRetries`, the root foreground turn defaults to a maximum of 12 additional requests, and `providerForegroundRecoveryMs` simultaneously limits the total recovery time after the first transient failure:
