@@ -848,7 +848,10 @@ export class CompactionService {
         usage = mergeUsage(usage, response.usage);
 
         // 提取 <summary> 标签内容
-        const content = response.content || '';
+        const content = (response.content || '').replace(
+          /^\s*<analysis>[\s\S]*?(?:<\/analysis>|$)\s*/,
+          ''
+        );
         const summaryMatch = content.match(/<summary>([\s\S]*?)<\/summary>/);
         const summary = (summaryMatch ? summaryMatch[1] : content).trim();
         if (summary) {

@@ -41,6 +41,12 @@ async function startRecordingProxy(upstreamBaseUrl: string, contextLimitOnce = f
     status: number;
     summary: RecordingProviderResponseSummary;
   }> = [];
+  const replayEvidence: Array<{
+    request: number;
+    roles: string[];
+    currentRequestPreserved: boolean;
+    summary: string[];
+  }> = [];
   const upstream = new URL(upstreamBaseUrl);
   const server = createServer(async (request, response) => {
     try {
@@ -53,6 +59,25 @@ async function startRecordingProxy(upstreamBaseUrl: string, contextLimitOnce = f
       const parsed: { messages?: Array<{ role?: string; content?: unknown }> } =
         JSON.parse(body.toString('utf8'));
       const first = parsed.messages?.[0];
+      if (contextLimitOnce && requestCount > 2 && replayEvidence.length < 4) {
+        replayEvidence.push({
+          request: requestCount,
+          roles: (parsed.messages ?? []).map((message) => message.role ?? 'unknown'),
+          currentRequestPreserved: (parsed.messages ?? []).some(
+            (message) =>
+              typeof message.content === 'string' &&
+              /Reply with exactly ROUTE_[AB]/.test(message.content)
+          ),
+          summary: (parsed.messages ?? [])
+            .filter(
+              (message) =>
+                message.role !== 'system' &&
+                typeof message.content === 'string' &&
+                message.content.includes('## Objective and constraints')
+            )
+            .map((message) => String(message.content).slice(0, 8000)),
+        });
+      }
       if (
         parsed.messages?.length === 1 &&
         first?.role === 'user' &&
@@ -138,6 +163,7 @@ async function startRecordingProxy(upstreamBaseUrl: string, contextLimitOnce = f
     compactionRequests: () => compactionRequests,
     channelHeaders: () => channelHeaders,
     responses,
+    replayEvidence,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -285,8 +311,16 @@ describeReal('workspace model resources trajectory (real API)', () => {
                   events.push(event);
                 }
               );
-              expect(result.success).toBe(true);
-              expect(result.finalMessage).toContain(marker);
+              const diagnostic = {
+                marker,
+                proxyA: proxyA.replayEvidence,
+                proxyB: proxyB.replayEvidence,
+                responsesA: proxyA.responses,
+                responsesB: proxyB.responses,
+              };
+              assertNoSecrets(diagnostic, [gpt.apiKey]);
+              expect(result.success, JSON.stringify(diagnostic)).toBe(true);
+              expect(result.finalMessage, JSON.stringify(diagnostic)).toContain(marker);
               expect(events).toContainEqual(
                 expect.objectContaining({
                   kind: 'compaction',
@@ -309,6 +343,10 @@ describeReal('workspace model resources trajectory (real API)', () => {
             expect(proxy.requestCount()).toBe(3);
             expect(proxy.compactionRequests()).toBe(1);
             expect(proxy.channelHeaders()).toBe(3);
+            expect(proxy.replayEvidence).toHaveLength(1);
+            expect(proxy.replayEvidence[0].currentRequestPreserved).toBe(true);
+            expect(proxy.replayEvidence[0].summary).toHaveLength(1);
+            expect(proxy.replayEvidence[0].summary[0]).not.toMatch(/<\/?analysis>/);
           }
           console.log(
             '[workspace-compaction-channel]',

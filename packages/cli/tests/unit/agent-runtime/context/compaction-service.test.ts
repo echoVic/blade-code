@@ -143,6 +143,51 @@ describe('CompactionService - 输出协议', () => {
     );
     expect(chatConfig.maxRetries).toBe(9);
   });
+  test.each([
+    '<analysis>PRIVATE_ANALYSIS mentions the literal <summary> tag.</analysis>\n<summary>Public ledger.</summary>',
+    '<analysis>PRIVATE_ANALYSIS quotes <summary>example</summary>.</analysis>\n<summary>Public ledger.</summary>',
+    '<analysis>PRIVATE_ANALYSIS describes the output format.</analysis>\nPublic ledger.',
+  ])('摘要不得包含分析段或其中的示例标签: %s', async (content) => {
+    compactChat.mockResolvedValueOnce({ content });
+    const result = await CompactionService.compact(
+      [{ role: 'user', content: 'Preserve the active task.' }],
+      { ...markerCompactionOptions, sessionId: 'summary-analysis-exclusion' }
+    );
+    expect(result.success).toBe(true);
+    expect(result.summary).toBe('Public ledger.');
+    expect(result.summaryMessage.content).toBe('Public ledger.');
+    expect(JSON.stringify(result.compactedMessages)).not.toContain('PRIVATE_ANALYSIS');
+  });
+
+  test.each([
+    '<analysis>PRIVATE_ANALYSIS without a closing delimiter or public summary.',
+    '<analysis>PRIVATE_ANALYSIS only.</analysis>',
+  ])('只有分析段时应有界重试并回退而不是发布分析: %s', async (content) => {
+    vi.useFakeTimers();
+    const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12 };
+    compactChat.mockResolvedValue({ content, usage });
+    try {
+      const pending = CompactionService.compact(
+        [{ role: 'user', content: 'Preserve the active task.' }],
+        { ...markerCompactionOptions, sessionId: `analysis-only-${content.length}` }
+      );
+      await vi.runAllTimersAsync();
+      const result = await pending;
+      expect(result.success).toBe(false);
+      expect(result.failureReason).toBe('empty_exhausted');
+      expect(result.sampleAttempts).toBe(3);
+      expect(compactChat).toHaveBeenCalledTimes(3);
+      expect(result.usage).toEqual({
+        promptTokens: 30,
+        completionTokens: 6,
+        totalTokens: 36,
+      });
+      expect(JSON.stringify(result)).not.toContain('PRIVATE_ANALYSIS');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('LLM compaction 只为未保留的前缀生成 memory plan', async () => {
     const messages: Message[] = [
       { role: 'user', content: 'convention: persist the omitted prefix' },
