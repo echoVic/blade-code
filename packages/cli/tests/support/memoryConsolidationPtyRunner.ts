@@ -11,6 +11,7 @@ import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
   projectForegroundBoundedPtyOutput,
+  latestCompleteStandardPtyFrame,
   waitForPtyExit,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
@@ -23,6 +24,7 @@ interface RunnerInput {
   memoryDir: string;
   compactionObservedFile?: string;
   manualCompaction?: { readyFile: string; cancelledFile: string };
+  autoCompaction?: { readyFile: string; cancelledFile: string; warmupMarker: string };
   sessionId: string;
   discoverySessionId: string;
   historyReady: string;
@@ -143,6 +145,96 @@ async function main(): Promise<void> {
       'Memory consolidation TUI did not restore the target Session',
       60_000
     );
+    if (input.autoCompaction) {
+      const { readyFile, cancelledFile, warmupMarker } = input.autoCompaction;
+      const transcript = findSessionTranscript(input.storageRoot, input.sessionId);
+      const submit = async (text: string) => {
+        await writeBracketedPaste(terminal, text);
+        await waitFor(
+          () => plainOutput.includes(text),
+          'Auto compaction input was not rendered',
+          5_000
+        );
+        terminal.write('\r');
+      };
+      await submit(`Reply with exactly ${warmupMarker}. Do not use tools.`);
+      await waitFor(
+        () => finalAssistantText(readSessionEvents(transcript)) === warmupMarker,
+        'Warmup response was not committed'
+      );
+      const contextValue = () =>
+        latestCompleteStandardPtyFrame(output, /Cache[^\r\n]*\r?\n?$/)?.match(
+          /·\s*(\d+)%\s*·\s*Cache/
+        )?.[1];
+      await waitFor(
+        () => contextValue() !== undefined && contextValue() !== '100',
+        'Warmup did not report nonzero context'
+      );
+      const before = contextValue();
+      await submit(input.prompt);
+      await waitFor(
+        () =>
+          access(readyFile).then(
+            () => true,
+            () => false
+          ),
+        'Automatic summary did not reach cancellation barrier'
+      );
+      terminal.write('\u001b');
+      await waitFor(
+        () =>
+          access(cancelledFile).then(
+            () => true,
+            () => false
+          ),
+        'Automatic summary request did not close',
+        10_000
+      );
+      await waitFor(
+        () =>
+          readSessionEvents(transcript).some((event) => event.type === 'turn_aborted'),
+        'Automatic compaction turn did not abort',
+        10_000
+      );
+      const draft = 'AUTO_COMPACTION_DRAFT';
+      await writeBracketedPaste(terminal, draft);
+      await waitFor(
+        () =>
+          latestCompleteStandardPtyFrame(output, /Cache[^\r\n]*\r?\n?$/)?.includes(
+            draft
+          ) === true,
+        'Composer did not recover after automatic compaction',
+        5_000
+      );
+      const after = contextValue();
+      if (before !== after)
+        throw new Error(
+          `Automatic compaction changed context from ${before} to ${after}`
+        );
+      const events = readSessionEvents(transcript);
+      if (
+        events.some(
+          (event) => event.type === 'part_created' && event.data.partType === 'summary'
+        )
+      )
+        throw new Error('Cancelled automatic compaction committed a summary');
+      if (secret.seen) throw new Error('Automatic compaction leaked a credential');
+      terminal.write('\u0015');
+      signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
+      await waitForPtyExit(exitPromise, 'Automatic compaction TUI did not exit');
+      if (exitCode !== 0)
+        throw new Error(`Automatic compaction TUI exited ${exitCode}`);
+      process.stdout.write(
+        JSON.stringify({
+          success: true,
+          cancelled: true,
+          contextPreserved: true,
+          before,
+          after,
+        })
+      );
+      return;
+    }
     if (input.manualCompaction) {
       const { readyFile, cancelledFile } = input.manualCompaction;
       const transcript = findSessionTranscript(input.storageRoot, input.sessionId);

@@ -40,6 +40,12 @@ subagents or other independent loops is not counted again in the current loop.
 Cumulative consumption is not current context occupancy and does not change compaction
 thresholds, output-continuation budgets, or transport retry budgets.
 
+Automatic-summary `token_usage` / Web `token.usage` events carry `scope: auxiliary`,
+retained under the same field in Headless JSONL. TUI/Web accumulate usage and costs
+without replacing the main request's context occupancy or window limit. Cancellation,
+sampling failure, and checkpoint failure preserve those readings; only committed
+compaction resets the old context reading.
+
 Fallback results retain previously returned summary usage when empty responses exhaust
 sampling, a later sample fails, or summary post-processing fails, including reasoning,
 cache, and cost fields. Cancellation during retry waiting, later sampling, or summary

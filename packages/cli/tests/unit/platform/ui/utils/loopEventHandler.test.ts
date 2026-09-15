@@ -16,6 +16,10 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { LoopEvent } from '../../../../../src/agent/loop/types.js';
+import {
+  getState,
+  sessionActions as realSessionActions,
+} from '../../../../../src/store/vanilla.js';
 import type { TaskListItem } from '../../../../../src/tools/builtin/task/taskListTypes.js';
 import {
   type ToolDisplayOutput,
@@ -1310,6 +1314,59 @@ describe('createLoopEventHandler', () => {
         }
       );
     });
+
+    it.each(['failed', 'completed', 'fallback'] as const)(
+      'keeps real store occupancy until compaction commits: %s',
+      (outcome) => {
+        const actions = realSessionActions();
+        actions.resetTokenUsage();
+        actions.updateTokenUsage({
+          inputTokens: 60_000,
+          outputTokens: 100,
+          totalTokens: 60_100,
+          maxContextTokens: 128_000,
+          costUsd: 0.125,
+        });
+        const stats = createMockStats();
+        const handler = createLoopEventHandler(
+          createMockDeps({ sessionActions: actions }),
+          stats
+        );
+        try {
+          handler({ kind: 'compaction', phase: 'start', reason: 'threshold' });
+          handler({
+            kind: 'token_usage',
+            usage: {
+              scope: 'auxiliary',
+              inputTokens: 100,
+              outputTokens: 20,
+              totalTokens: 120,
+              maxContextTokens: 64_000,
+              costUsd: 0.25,
+            },
+          });
+          expect(getState().session.tokenUsage).toMatchObject({
+            inputTokens: 60_000,
+            outputTokens: 100,
+            totalTokens: 60_100,
+            maxContextTokens: 128_000,
+            totalInputTokens: 60_100,
+            totalOutputTokens: 120,
+            estimatedCostUsd: 0.375,
+          });
+          handler({ kind: 'compaction', phase: 'end', reason: 'threshold', outcome });
+          expect(getState().session.tokenUsage).toMatchObject({
+            totalTokens: outcome === 'failed' ? 60_100 : 0,
+            totalInputTokens: 60_100,
+            totalOutputTokens: 120,
+            estimatedCostUsd: 0.375,
+          });
+          expect(getState().session.isCompacting).toBe(false);
+        } finally {
+          actions.resetTokenUsage();
+        }
+      }
+    );
 
     it('failed compaction does not replace the retained CLI model context', () => {
       const deps = createMockDeps();

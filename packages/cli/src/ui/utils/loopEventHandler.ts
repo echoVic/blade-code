@@ -318,8 +318,8 @@ export function createLoopEventHandler(
       case 'compaction':
         deps.sessionActions.setCompacting(event.phase === 'start');
         if (event.phase === 'end') {
-          deps.sessionActions.resetContextUsage();
           if (event.outcome !== 'failed') {
+            deps.sessionActions.resetContextUsage();
             stats.compactionCount = (stats.compactionCount ?? 0) + 1;
           }
           if (event.memory?.outcome === 'written') {

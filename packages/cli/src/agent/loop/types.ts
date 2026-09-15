@@ -283,6 +283,7 @@ export type ToolKindStr = 'readonly' | 'write' | 'execute';
 // ===== Token Usage =====
 
 export interface TokenUsageInfo {
+  scope?: 'auxiliary';
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;

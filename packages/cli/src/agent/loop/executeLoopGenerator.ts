@@ -165,8 +165,13 @@ import type {
 
 const logger = createLogger(LogCategory.AGENT);
 
-function toTokenUsageInfo(usage: UsageInfo, maxContextTokens: number): TokenUsageInfo {
+function toTokenUsageInfo(
+  usage: UsageInfo,
+  maxContextTokens: number,
+  scope?: TokenUsageInfo['scope']
+): TokenUsageInfo {
   return {
+    ...(scope ? { scope } : {}),
     inputTokens: usage.promptTokens ?? 0,
     outputTokens: usage.completionTokens ?? 0,
     totalTokens: resolveProviderContextTokens(usage) ?? 0,
@@ -844,7 +849,7 @@ export async function* checkAndCompactInLoop(
       onUsage?.(result.usage);
       yield {
         kind: 'token_usage',
-        usage: toTokenUsageInfo(result.usage, maxContextTokens),
+        usage: toTokenUsageInfo(result.usage, maxContextTokens, 'auxiliary'),
       };
     }
 
@@ -918,7 +923,7 @@ export async function* checkAndCompactInLoop(
         onUsage?.(error.usage);
         yield {
           kind: 'token_usage',
-          usage: toTokenUsageInfo(error.usage, maxContextTokens),
+          usage: toTokenUsageInfo(error.usage, maxContextTokens, 'auxiliary'),
         };
       }
       logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩被中止`);
@@ -1931,7 +1936,8 @@ validates the object and may return a bounded corrective error.`;
                     kind: 'token_usage',
                     usage: toTokenUsageInfo(
                       compactResult.usage,
-                      chatConfig.maxContextTokens ?? 0
+                      chatConfig.maxContextTokens ?? 0,
+                      'auxiliary'
                     ),
                   };
                 }
@@ -2011,7 +2017,8 @@ validates the object and may return a bounded corrective error.`;
                     kind: 'token_usage',
                     usage: toTokenUsageInfo(
                       compactError.usage,
-                      deps.chatService.getConfig().maxContextTokens ?? 0
+                      deps.chatService.getConfig().maxContextTokens ?? 0,
+                      'auxiliary'
                     ),
                   };
                 }
@@ -2659,7 +2666,8 @@ validates the object and may return a bounded corrective error.`;
                   kind: 'token_usage',
                   usage: toTokenUsageInfo(
                     result.usage,
-                    chatConfig.maxContextTokens ?? 0
+                    chatConfig.maxContextTokens ?? 0,
+                    'auxiliary'
                   ),
                 };
               }
@@ -2714,7 +2722,8 @@ validates the object and may return a bounded corrective error.`;
                   kind: 'token_usage',
                   usage: toTokenUsageInfo(
                     compactionError.usage,
-                    chatConfig.maxContextTokens ?? 0
+                    chatConfig.maxContextTokens ?? 0,
+                    'auxiliary'
                   ),
                 };
               }

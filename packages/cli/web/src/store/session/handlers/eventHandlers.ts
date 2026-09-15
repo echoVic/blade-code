@@ -1154,6 +1154,7 @@ const handleTokenUsage: EventHandler = (props, get) => {
   if (props.sessionId !== currentSessionId) return;
 
   updateTokenUsage({
+    ...(props.scope === 'auxiliary' ? { scope: 'auxiliary' as const } : {}),
     inputTokens: props.inputTokens as number,
     outputTokens: props.outputTokens as number,
     totalTokens: props.totalTokens as number,
@@ -1165,7 +1166,7 @@ const handleTokenUsage: EventHandler = (props, get) => {
     costUsd: props.costUsd as number | undefined,
   });
 
-  if (props.maxContextTokens) {
+  if (props.scope !== 'auxiliary' && props.maxContextTokens) {
     setMaxContextTokens(props.maxContextTokens as number, false);
   }
 };
@@ -1894,7 +1895,7 @@ const handleCompactionStarted: EventHandler = (props, get, set) => {
 
 const handleCompactionCompleted: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
-  get().resetContextUsage();
+  if (props.outcome !== 'failed') get().resetContextUsage();
   const memory = MemoryConsolidationProjectionSchema.safeParse(props.memory);
   if (props.memory !== undefined && !memory.success) {
     set({ agentPhase: 'running' });

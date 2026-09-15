@@ -6,6 +6,8 @@ import type {
   TurnActivityProjection,
 } from '@api/schemas';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { createStore } from 'zustand/vanilla';
+import { createUiSlice } from '../../../src/store/session/slices/uiSlice';
 
 import type { Message as ServiceMessage, StreamEvent } from '../../../src/services';
 import { useAppStore } from '../../../src/store/AppStore';
@@ -2016,6 +2018,71 @@ describe('eventHandlers', () => {
     expect(state.appendDelta).toHaveBeenCalledWith('assistant-1', 'accepted', 'before');
     expect(state.messages[0]?.content).toBe('accepted');
   });
+
+  test.each(['failed', 'completed', 'fallback'] as const)(
+    'preserves real token state until a compaction checkpoint commits: %s',
+    (outcome) => {
+      const store = createStore<SessionStoreState>((set, get, api) => ({
+        ...createState(),
+        ...createUiSlice(set, get, api),
+      }));
+      const dispatch = createEventDispatcher(store.getState, store.setState);
+      store.getState().updateTokenUsage({
+        inputTokens: 60_000,
+        outputTokens: 100,
+        totalTokens: 60_100,
+        costUsd: 0.125,
+      });
+      store.getState().setMaxContextTokens(128_000, false);
+      const owner = { sessionId: 'session-1', projectPath: '/workspace/a' };
+      dispatch({ type: 'compaction.started', properties: owner });
+      dispatch({
+        type: 'token.usage',
+        properties: {
+          ...owner,
+          scope: 'auxiliary',
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+          maxContextTokens: 64_000,
+          costUsd: 0.25,
+        },
+      });
+      expect(store.getState().tokenUsage).toMatchObject({
+        inputTokens: 60_000,
+        outputTokens: 100,
+        totalTokens: 60_100,
+        maxContextTokens: 128_000,
+        totalInputTokens: 60_100,
+        totalOutputTokens: 120,
+        estimatedCostUsd: 0.375,
+      });
+      dispatch({ type: 'compaction.completed', properties: { ...owner, outcome } });
+      expect(store.getState().tokenUsage).toMatchObject({
+        totalTokens: outcome === 'failed' ? 60_100 : 0,
+        totalInputTokens: 60_100,
+        totalOutputTokens: 120,
+        estimatedCostUsd: 0.375,
+      });
+      expect(store.getState().agentPhase).toBe('running');
+      dispatch({
+        type: 'token.usage',
+        properties: {
+          ...owner,
+          inputTokens: 1_000,
+          outputTokens: 10,
+          totalTokens: 1_010,
+          maxContextTokens: 128_000,
+          costUsd: 0.1,
+        },
+      });
+      expect(store.getState().tokenUsage).toMatchObject({
+        totalTokens: 1_010,
+        totalInputTokens: 61_100,
+        totalOutputTokens: 130,
+      });
+    }
+  );
 
   test('tracks compaction and model fallback phases', () => {
     const recovery = createProviderRecovery('fallback-generation', 1);

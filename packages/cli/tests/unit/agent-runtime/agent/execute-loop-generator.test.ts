@@ -1220,6 +1220,12 @@ describe('executeLoopGenerator', () => {
           event.kind === 'token_usage' ? [event.usage.totalTokens] : []
         );
         expect(counts.filter((tokens) => tokens === 120)).toEqual([120]);
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            kind: 'token_usage',
+            usage: expect.objectContaining({ totalTokens: 120, scope: 'auxiliary' }),
+          })
+        );
         expect(result.metadata?.tokensUsed).toBe(
           counts.reduce((sum, count) => sum + count, 0)
         );
@@ -1309,6 +1315,12 @@ describe('executeLoopGenerator', () => {
           event.kind === 'token_usage' ? [event.usage.totalTokens] : []
         );
         expect(counts).toContain(120);
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            kind: 'token_usage',
+            usage: expect.objectContaining({ totalTokens: 120, scope: 'auxiliary' }),
+          })
+        );
         expect(result.metadata?.tokensUsed).toBe(
           counts.reduce((sum, count) => sum + count, 0)
         );
@@ -1513,6 +1525,7 @@ describe('executeLoopGenerator', () => {
       expect(events).toContainEqual({
         kind: 'token_usage',
         usage: {
+          scope: 'auxiliary',
           inputTokens: 100,
           outputTokens: 20,
           totalTokens: 120,

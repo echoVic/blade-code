@@ -379,6 +379,7 @@ const SubagentEventSchema = event({
 
 const TokenUsageEventSchema = event({
   type: Type.Literal('token_usage'),
+  scope: Type.Optional(Type.Literal('auxiliary')),
   input_tokens: Type.Number(),
   output_tokens: Type.Number(),
   total_tokens: Type.Number(),

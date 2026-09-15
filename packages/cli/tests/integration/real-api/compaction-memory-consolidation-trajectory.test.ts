@@ -33,6 +33,10 @@ import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import {
+  captureForegroundGuiLauncherIdentity,
+  stopForegroundGuiLauncher,
+} from '../../support/foregroundBoundedOutputWebDriver.js';
+import {
   OpenAIResponseSummaryCollector,
   type RecordingProviderResponseSummary,
 } from '../../support/recordingProviderProxy.js';
@@ -109,6 +113,12 @@ interface Fixture {
   secret: string;
   apiKey: string;
   manualCompaction?: { readyFile: string; cancelledFile: string };
+  autoCompaction?: {
+    readyFile: string;
+    cancelledFile: string;
+    warmupMarker: string;
+    triggerPrompt: string;
+  };
   proxy: {
     baseUrl: string;
     evidence(): ProxyEvidence;
@@ -198,6 +208,76 @@ function classifyMemoryRequest(
 }
 
 describe('memory request classification', () => {
+  it('does not inject a context limit during warmup continuation', {
+    retry: 0,
+  }, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-compaction-trigger-'));
+    roots.push(root);
+    const upstream = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ choices: [{ message: { content: 'ready' } }] }));
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+    const address = upstream.address() as AddressInfo;
+    const autoCompaction = {
+      readyFile: path.join(root, 'ready'),
+      cancelledFile: path.join(root, 'cancelled'),
+      warmupMarker: 'WARMUP_READY',
+      triggerPrompt: 'Recover the target request.',
+    };
+    const proxy = await startProviderProxy({
+      upstreamBaseUrl: `http://127.0.0.1:${address.port}`,
+      holdFinal: false,
+      autoCompaction,
+    });
+    const warmup = [
+      { role: 'user', content: 'Reply with WARMUP_READY.' },
+      { role: 'assistant', content: 'Partial warmup response' },
+      { role: 'user', content: 'Continue the interrupted response.' },
+    ];
+    const send = async (messages: Array<{ role: string; content: unknown }>) => {
+      const response = await fetch(`${proxy.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages }),
+      });
+      await response.text();
+      return response.status;
+    };
+    try {
+      expect(await send(warmup.slice(0, 1))).toBe(200);
+      expect(await send(warmup)).toBe(200);
+      expect(
+        await send([
+          { role: 'system', content: autoCompaction.triggerPrompt },
+          ...warmup,
+        ])
+      ).toBe(200);
+      expect(proxy.evidence().contextLimits).toBe(0);
+      const target = [
+        ...warmup,
+        { role: 'user', content: autoCompaction.triggerPrompt },
+      ];
+      expect(await send(target)).toBe(413);
+      expect(await send(target)).toBe(200);
+      expect(proxy.evidence()).toMatchObject({
+        requests: 5,
+        forwarded: 4,
+        contextLimits: 1,
+        compactions: 0,
+      });
+      await expect(access(autoCompaction.readyFile)).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    } finally {
+      await proxy.close();
+      upstream.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        upstream.close((error) => (error ? reject(error) : resolve()))
+      );
+    }
+  });
+
   it.each([
     {
       messages: [
@@ -256,6 +336,7 @@ async function startProviderProxy(input: {
   emptyCompaction?: boolean;
   onCompactionRetry?: () => void;
   manualCompaction?: Fixture['manualCompaction'];
+  autoCompaction?: Fixture['autoCompaction'];
 }): Promise<Fixture['proxy']> {
   const upstream = new URL(input.upstreamBaseUrl);
   let requests = 0;
@@ -279,6 +360,34 @@ async function startProviderProxy(input: {
       const compaction = kind === 'compaction';
       const discovery = kind === 'discovery';
       if (compaction) compactions++;
+      if (compaction && compactions === 2 && input.autoCompaction) {
+        const heldAt = Date.now();
+        const closed = new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            response.off('close', onClose);
+            console.error(
+              '[auto-compaction-barrier]',
+              JSON.stringify({
+                heldMs: Date.now() - heldAt,
+                destroyed: response.destroyed,
+                requestAborted: request.aborted,
+              })
+            );
+            reject(new Error('Auto compaction cancellation barrier expired'));
+          }, 15_000);
+          const onClose = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          response.once('close', onClose);
+        });
+        await writeFile(input.autoCompaction.readyFile, 'ready', { mode: 0o600 });
+        await closed;
+        await writeFile(input.autoCompaction.cancelledFile, 'cancelled', {
+          mode: 0o600,
+        });
+        return;
+      }
       if (compaction && compactions === 2 && input.onCompactionRetry) {
         input.onCompactionRetry();
         response.destroy();
@@ -290,7 +399,25 @@ async function startProviderProxy(input: {
       }
       if (!compaction && !discovery) {
         primaryRequests++;
-        if (primaryRequests === 1 && !input.manualCompaction) {
+        const request = JSON.parse(bodyText) as {
+          messages: Array<{ role: string; content: unknown }>;
+        };
+        const last = request.messages.at(-1);
+        const targetRequest = input.autoCompaction
+          ? contextLimits === 0 &&
+            last?.role === 'user' &&
+            (typeof last.content === 'string'
+              ? last.content === input.autoCompaction.triggerPrompt
+              : Array.isArray(last.content) &&
+                last.content.some(
+                  (part) =>
+                    part &&
+                    typeof part === 'object' &&
+                    part.type === 'text' &&
+                    part.text === input.autoCompaction?.triggerPrompt
+                ))
+          : primaryRequests === 1;
+        if (targetRequest && !input.manualCompaction) {
           contextLimits++;
           response.writeHead(413, { 'content-type': 'application/json' });
           response.end(
@@ -304,7 +431,7 @@ async function startProviderProxy(input: {
           );
           return;
         }
-        if (input.holdFinal) await finalRelease;
+        if (input.holdFinal && !input.autoCompaction) await finalRelease;
       }
 
       const controller = new AbortController();
@@ -483,7 +610,8 @@ async function createFixture(
   surface: (typeof surfaces)[number],
   emptyCompaction = false,
   onCompactionRetry?: () => void,
-  cancelManualCompaction = false
+  cancelManualCompaction = false,
+  cancelAutoCompaction = false
 ): Promise<Fixture> {
   const root = await mkdtemp(
     path.join(os.tmpdir(), `blade-memory-real-${safeSlug(model.model)}-${surface}-`)
@@ -511,10 +639,23 @@ async function createFixture(
         cancelledFile: path.join(root, 'manual-compaction-cancelled'),
       }
     : undefined;
+  const prompt = [
+    'Recover from the context limit without tools.',
+    `Reply with exactly ${finalMarker} and no other text.`,
+  ].join(' ');
+  const autoCompaction = cancelAutoCompaction
+    ? {
+        readyFile: path.join(root, 'auto-compaction-ready'),
+        cancelledFile: path.join(root, 'auto-compaction-cancelled'),
+        warmupMarker: `CONTEXT_READY_${nonce}`,
+        triggerPrompt: prompt,
+      }
+    : undefined;
   const proxy = await startProviderProxy({
     upstreamBaseUrl: model.baseURL ?? 'https://api.deepseek.com',
     holdFinal: surface === 'web',
-    emptyCompaction,
+    emptyCompaction: emptyCompaction || cancelAutoCompaction,
+    autoCompaction,
     onCompactionRetry,
     manualCompaction,
   });
@@ -590,13 +731,15 @@ async function createFixture(
       null,
       INTERNAL_CONTROL_MESSAGE_METADATA
     );
-    await store.saveMessage(
-      sessionId,
-      'user',
-      `remember: api_key: ${secret}`,
-      null,
-      INTERNAL_CONTROL_MESSAGE_METADATA
-    );
+    if (!autoCompaction) {
+      await store.saveMessage(
+        sessionId,
+        'user',
+        `remember: api_key: ${secret}`,
+        null,
+        INTERNAL_CONTROL_MESSAGE_METADATA
+      );
+    }
   });
   return {
     root,
@@ -605,10 +748,7 @@ async function createFixture(
     storageRoot,
     sessionId,
     historyReady,
-    prompt: [
-      'Recover from the context limit without tools.',
-      `Reply with exactly ${finalMarker} and no other text.`,
-    ].join(' '),
+    prompt,
     finalMarker,
     discoveryPrompt: [
       'DISCOVER_MEMORY_INDEX.',
@@ -619,6 +759,7 @@ async function createFixture(
     secret,
     apiKey: model.apiKey,
     manualCompaction,
+    autoCompaction,
     proxy,
   };
 }
@@ -795,6 +936,7 @@ async function runRunner(
       discoverySessionId: `memory-discovery-${randomBytes(6).toString('hex')}`,
       historyReady: test.historyReady,
       manualCompaction: test.manualCompaction,
+      autoCompaction: test.autoCompaction,
       prompt: test.prompt,
       marker: test.finalMarker,
       discoveryPrompt: test.discoveryPrompt,
@@ -806,7 +948,7 @@ async function runRunner(
     cwd: path.resolve(import.meta.dirname, '../../..'),
     env: { ...childEnvironment(test), [envName]: encoded },
   });
-  if (test.manualCompaction && result.code !== 0) {
+  if ((test.manualCompaction || test.autoCompaction) && result.code !== 0) {
     assertNoSecrets({ stdout: result.stdout, stderr: result.stderr }, [
       test.apiKey,
       test.secret,
@@ -816,9 +958,11 @@ async function runRunner(
   assertProcessSucceeded(test, result, path.basename(runner));
   const evidence = JSON.parse(result.stdout) as Record<string, unknown>;
   expect(evidence).toMatchObject(
-    test.manualCompaction
-      ? { success: true, cancelled: true, transcriptUnchanged: true }
-      : { success: true, finalMarkerSeen: true, discoveryMarkerSeen: true }
+    test.autoCompaction
+      ? { success: true, cancelled: true, contextPreserved: true }
+      : test.manualCompaction
+        ? { success: true, cancelled: true, transcriptUnchanged: true }
+        : { success: true, finalMarkerSeen: true, discoveryMarkerSeen: true }
   );
   return evidence;
 }
@@ -937,6 +1081,291 @@ async function submitWebPrompt(
     body: JSON.stringify({ content, permissionMode: 'yolo' }),
   });
   if (!response.ok) throw new Error(`Memory prompt failed: ${response.status}`);
+}
+
+async function runAutoCompactionWeb(
+  test: Fixture,
+  development: boolean
+): Promise<void> {
+  if (!test.autoCompaction) throw new Error('Missing auto compaction fixture');
+  const transcript = findSessionTranscript(test.storageRoot, test.sessionId);
+  const originalEvents = readSessionEvents(transcript);
+  const port = await reservePort();
+  const origin = `http://127.0.0.1:${port}`;
+  const child = spawn(
+    process.execPath,
+    [cliEntry, 'serve', '--hostname', '127.0.0.1', '--port', String(port)],
+    {
+      cwd: test.workspace,
+      env: childEnvironment(test),
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  );
+  if (!child.pid) throw new Error('Auto compaction server has no PID');
+  const identity = await captureForegroundGuiLauncherIdentity(child.pid);
+  let devChild: ReturnType<typeof spawn> | undefined;
+  let devIdentity:
+    | Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>
+    | undefined;
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  let probe: EventProbe | undefined;
+  const faults: string[] = [];
+  let output = '';
+  for (const stream of [child.stdout, child.stderr])
+    stream?.on('data', (chunk) => {
+      output = `${output}${chunk}`.slice(-64_000);
+    });
+  try {
+    await waitFor(
+      async () => {
+        try {
+          return (await fetch(`${origin}/health`)).ok;
+        } catch {
+          return false;
+        }
+      },
+      'Auto compaction server did not become ready',
+      20_000
+    );
+    let guiOrigin = origin;
+    if (development) {
+      const webRoot = path.resolve(import.meta.dirname, '../../../web');
+      const webPort = await reservePort();
+      const dependencyRoot = await realpath(
+        path.resolve(webRoot, '../../../node_modules')
+      );
+      devChild = spawn(
+        process.execPath,
+        [
+          '--input-type=module',
+          '--eval',
+          'import { createServer, searchForWorkspaceRoot } from "vite";' +
+            `const server = await createServer({server: {host: "127.0.0.1", port: ${webPort}, strictPort: true, fs: {allow: [searchForWorkspaceRoot(process.cwd()), ${JSON.stringify(dependencyRoot)}]}}});` +
+            'await server.listen();',
+        ],
+        {
+          cwd: webRoot,
+          env: { ...childEnvironment(test), VITE_API_TARGET: origin },
+          detached: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
+      for (const stream of [devChild.stdout, devChild.stderr])
+        stream?.on('data', (chunk) => {
+          output = `${output}${chunk}`.slice(-64_000);
+        });
+      if (!devChild.pid) throw new Error('Auto compaction dev server has no PID');
+      devIdentity = await captureForegroundGuiLauncherIdentity(devChild.pid);
+      guiOrigin = `http://127.0.0.1:${webPort}`;
+      await waitFor(
+        async () => {
+          try {
+            return (await fetch(guiOrigin)).ok;
+          } catch {
+            return false;
+          }
+        },
+        'Auto compaction dev server not ready',
+        20_000
+      );
+    }
+    probe = await openEventProbe(origin, test.sessionId, test.workspace);
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    page.on('pageerror', (error) => faults.push(error.name));
+    page.on('console', (message) => {
+      if (message.type() === 'error') faults.push(message.text());
+    });
+    const url = new URL(guiOrigin);
+    url.searchParams.set('session', test.sessionId);
+    url.searchParams.set('project', test.workspace);
+    await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+    const composer = page.locator('textarea[data-blade-composer]');
+    await composer.waitFor({ state: 'visible' });
+    await composer.fill(
+      `Reply with exactly ${test.autoCompaction.warmupMarker}. Do not use tools.`
+    );
+    await page.locator('[data-blade-submit]').click();
+    try {
+      await page
+        .locator('[data-chat-role="assistant"]')
+        .getByText(test.autoCompaction.warmupMarker, { exact: true })
+        .waitFor({ state: 'visible', timeout: 90_000 });
+    } catch (error) {
+      const final = inspectFinalAssistantText(readSessionEvents(transcript));
+      const diagnostic = {
+        development,
+        final,
+        provider: test.proxy.evidence(),
+        terminalEvents: probe.events.filter((event) =>
+          ['session.completed', 'session.failed', 'run.error'].includes(event.type)
+        ),
+        faults,
+      };
+      assertNoSecrets(diagnostic, [test.apiKey, test.secret]);
+      console.error('[auto-compaction-warmup]', JSON.stringify(diagnostic));
+      throw error;
+    }
+    await waitFor(
+      () => probe?.events.some((event) => event.type === 'session.completed') === true,
+      'Warmup did not complete'
+    );
+    const meter = page.locator('[data-chat-status-bar] > div').first();
+    await waitFor(
+      async () => /[1-9][\d.]*[kKmM]?\s*\//.test((await meter.textContent()) ?? ''),
+      'Warmup context was not rendered',
+      10_000
+    );
+    const before = await meter.textContent();
+    const priorEvents = probe.events.length;
+    await composer.fill(test.prompt);
+    await page.locator('[data-blade-submit]').click();
+    await waitFor(
+      () =>
+        access(test.autoCompaction!.readyFile).then(
+          () => true,
+          () => false
+        ),
+      'Auto summary retry did not begin'
+    );
+    const stopStarted = Date.now();
+    const cancelRequests: Array<{ method: string; path: string; elapsedMs: number }> =
+      [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST')
+        cancelRequests.push({
+          method: request.method(),
+          path: new URL(request.url()).pathname,
+          elapsedMs: Date.now() - stopStarted,
+        });
+    });
+    await page.getByRole('button', { name: 'Stop active turn', exact: true }).click();
+    try {
+      await waitFor(
+        () =>
+          access(test.autoCompaction!.cancelledFile).then(
+            () => true,
+            () => false
+          ),
+        'Auto summary did not close',
+        10_000
+      );
+    } catch (error) {
+      const diagnostic = {
+        development,
+        elapsedMs: Date.now() - stopStarted,
+        cancelRequests,
+        provider: test.proxy.evidence(),
+        phases: probe.events.slice(priorEvents).map((event) => ({
+          type: event.type,
+          outcome: event.properties.outcome,
+        })),
+        terminal: readSessionEvents(transcript)
+          .filter(
+            (event) => event.type === 'turn_completed' || event.type === 'turn_aborted'
+          )
+          .map((event) => event.type),
+      };
+      assertNoSecrets(diagnostic, [test.apiKey, test.secret]);
+      console.error('[auto-compaction-cancel]', JSON.stringify(diagnostic));
+      throw error;
+    }
+    await waitFor(
+      () =>
+        probe?.events
+          .slice(priorEvents)
+          .some(
+            (event) =>
+              event.type === 'compaction.completed' &&
+              event.properties.outcome === 'failed'
+          ) === true,
+      'Failed compaction event missing',
+      10_000
+    );
+    await page
+      .getByRole('button', { name: 'Stop active turn', exact: true })
+      .waitFor({ state: 'hidden' });
+    expect(await meter.textContent()).toBe(before);
+    expect(
+      probe.events.slice(priorEvents).filter((event) => event.type === 'token.usage')
+    ).toEqual([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          scope: 'auxiliary',
+          totalTokens: expect.any(Number),
+        }),
+      }),
+    ]);
+    const returnedUsage = test.proxy
+      .evidence()
+      .responses.find(
+        (response) => response.kind === 'compaction'
+      )?.reportedTotalTokens;
+    expect(returnedUsage).toBeGreaterThan(0);
+    expect(
+      probe.events.slice(priorEvents).find((event) => event.type === 'token.usage')
+        ?.properties.totalTokens
+    ).toBe(returnedUsage);
+    const events = readSessionEvents(
+      findSessionTranscript(test.storageRoot, test.sessionId)
+    );
+    expect(
+      events.filter(
+        (event) => event.type === 'part_created' && event.data.partType === 'summary'
+      )
+    ).toHaveLength(0);
+    expect(events.some((event) => event.type === 'turn_aborted')).toBe(true);
+    await composer.fill('AUTO_CONTEXT_DRAFT');
+    expect(await composer.inputValue()).toBe('AUTO_CONTEXT_DRAFT');
+    expect(faults).toEqual([]);
+    expect(events.slice(0, originalEvents.length)).toEqual(originalEvents);
+    assertNoSecrets({ output, events, dom: await page.content() }, [test.apiKey]);
+    const newEvents = events.slice(originalEvents.length);
+    const secretLocations = newEvents.flatMap((event, index) =>
+      JSON.stringify(event).includes(test.secret)
+        ? [
+            {
+              index,
+              type: event.type,
+              partType:
+                event.type === 'part_created' || event.type === 'part_updated'
+                  ? event.data.partType
+                  : undefined,
+            },
+          ]
+        : []
+    );
+    if (secretLocations.length > 0) {
+      console.error(
+        '[auto-compaction-secret-location]',
+        JSON.stringify(secretLocations)
+      );
+    }
+    assertNoSecrets(
+      {
+        output,
+        events: newEvents,
+        dom: await page.content(),
+        surfaceEvents: probe.events,
+      },
+      [test.secret]
+    );
+    console.log(
+      '[auto-compaction-context]',
+      JSON.stringify({
+        development,
+        before,
+        after: await meter.textContent(),
+        returnedUsage,
+      })
+    );
+  } finally {
+    await probe?.close();
+    await browser?.close();
+    if (devChild) await stopForegroundGuiLauncher(devChild, devIdentity);
+    await stopForegroundGuiLauncher(child, identity);
+  }
 }
 
 async function runWeb(test: Fixture): Promise<unknown> {
@@ -1253,6 +1682,68 @@ describe
           }
         }
       );
+  });
+
+describe
+  .skipIf(!releaseMatrixEnabled || process.platform === 'win32')
+  .sequential('automatic compaction context occupancy (real API)', () => {
+    for (const model of models) {
+      for (const surface of ['web-production', 'web-development', 'pty'] as const) {
+        it(`${model.model} preserves context after cancelling compaction through ${surface}`, {
+          timeout: 240_000,
+        }, async (context) => {
+          expect(frameworkRetryBudget(context)).toBe(0);
+          const fixture = await createFixture(
+            model,
+            surface === 'pty' ? 'pty' : 'web',
+            false,
+            undefined,
+            false,
+            true
+          );
+          try {
+            if (surface === 'pty') {
+              await runRunner(
+                fixture,
+                ptyRunner,
+                'BLADE_MEMORY_CONSOLIDATION_PTY_INPUT'
+              );
+            } else {
+              await runAutoCompactionWeb(fixture, surface === 'web-development');
+            }
+            const evidence = fixture.proxy.evidence();
+            const warmupResponses = evidence.responses.filter(
+              (response) => response.kind === 'primary'
+            );
+            expect(warmupResponses.length).toBeGreaterThan(0);
+            for (const response of warmupResponses.slice(0, -1)) {
+              expect(response.status).toBe(200);
+              expect(response.summary).toMatchObject({
+                done: true,
+                parseStatus: 'complete',
+                finishReasons: ['length'],
+              });
+            }
+            expect(warmupResponses.at(-1)?.summary).toMatchObject({
+              done: true,
+              parseStatus: 'complete',
+              finishReasons: ['stop'],
+            });
+            expect(
+              evidence.responses.filter((response) => response.kind === 'compaction')
+            ).toHaveLength(1);
+            expect(evidence).toMatchObject({
+              requests: warmupResponses.length + 3,
+              forwarded: warmupResponses.length + 1,
+              compactions: 2,
+              contextLimits: 1,
+            });
+          } finally {
+            await fixture.proxy.close();
+          }
+        });
+      }
+    }
   });
 
 describe

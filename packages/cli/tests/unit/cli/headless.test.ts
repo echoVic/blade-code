@@ -1028,6 +1028,7 @@ describe('headless runner', () => {
         {
           kind: 'token_usage',
           usage: {
+            scope: 'auxiliary',
             inputTokens: 10,
             outputTokens: 20,
             totalTokens: 30,
@@ -1179,6 +1180,7 @@ describe('headless runner', () => {
         }),
         expect.objectContaining({
           type: 'token_usage',
+          scope: 'auxiliary',
           input_tokens: 10,
           output_tokens: 20,
           total_tokens: 30,

@@ -1041,6 +1041,7 @@ function createEventWriter(
       );
     },
     tokenUsage(usage: {
+      scope?: 'auxiliary';
       inputTokens: number;
       outputTokens: number;
       totalTokens: number;
@@ -1052,6 +1053,7 @@ function createEventWriter(
     }) {
       if (outputFormat === 'jsonl') {
         writeJsonl('token_usage', {
+          ...(usage.scope ? { scope: usage.scope } : {}),
           input_tokens: usage.inputTokens,
           output_tokens: usage.outputTokens,
           total_tokens: usage.totalTokens,
