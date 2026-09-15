@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.202] - 2026-09-15
+
+### Fixed
+- Record returned usage for the matching in-flight turn after a Goal becomes blocked, preserving the blocker and recovery evidence. Keep identity checks and refuse over-budget resume without starting another request.
+
+### Tests
+- Cover blocked usage boundaries and stale or missing Goal/turn identities with real stores.
+- Verify real Flash/Pro paused and blocked usage across Headless, ACP, raw PTY, and production/development Chromium, including deferred ToolSearch and bounded-turn finalization.
+
 ## [0.10.201] - 2026-09-15
 
 ### Fixed
