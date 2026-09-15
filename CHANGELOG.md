@@ -1,6 +1,17 @@
 # Changelog
 
+## [0.10.204] - 2026-09-15
+
+### Fixed
+- Include the admitted-tool schema fix from the unpublished 0.10.203 candidate: tools remain callable without ToolSearch, while Plan and execution filters retain their boundaries.
+
+### Tests
+- Use a type-correct catalog-only loader fixture in Browser tests so strict TypeScript checking passes without weakening production tool types.
+- Retain real Flash/Pro direct-schema and cross-surface coding qualification.
+
 ## [0.10.203] - 2026-09-15
+
+Unpublished candidate. CI rejected a Browser test fixture's generic type; its runtime changes are included in 0.10.204 with the corrected fixture.
 
 ### Fixed
 - Expose full schemas for admitted tools when ToolSearch is unavailable, so explicit tool filters do not leave deferred tools uncallable. Preserve Plan read-only projection, execution filters, and lazy loading whenever the loader is available.
