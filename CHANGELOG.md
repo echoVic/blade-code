@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.201] - 2026-09-15
+
+### Fixed
+- Preserve pending TUI stream finalization through an empty-text tool response, so later tool results and local command messages are not skipped by Ink's static output queue.
+
+### Tests
+- Reproduce the lost-message sequence with real Ink rendering and the session store, retaining checks for both tool results and subsequent status messages.
+
 ## [0.10.200] - 2026-09-15
 
 ### Fixed
