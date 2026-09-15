@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionBrowserRuntime } from '../../../../../src/browser/SessionBrowserRuntime.js';
 import { PermissionMode } from '../../../../../src/config/types.js';
+import { Type } from '../../../../../src/schema/index.js';
+import { createTool } from '../../../../../src/tools/core/createTool.js';
 import { createBrowserTools } from '../../../../../src/tools/builtin/browser/browserTools.js';
 import { toolSearchTool } from '../../../../../src/tools/builtin/system/ToolSearchTool.js';
 import { ToolExecutor } from '../../../../../src/tools/execution/ToolExecutor.js';
@@ -74,7 +76,18 @@ describe('native Browser tools', () => {
     expect(tools.every((tool) => tool.parallelism === 'exclusive')).toBe(true);
 
     const registry = new ToolRegistry();
-    registry.register(toolSearchTool);
+    registry.register(
+      createTool({
+        name: toolSearchTool.name,
+        displayName: toolSearchTool.displayName,
+        kind: toolSearchTool.kind,
+        schema: Type.Unknown(),
+        description: toolSearchTool.description,
+        async execute() {
+          throw new Error('Catalog-only loader fixture must not execute');
+        },
+      })
+    );
     registry.registerAll(tools);
     expect(
       registry
