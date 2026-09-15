@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.197] - 2026-09-15
+
+### Fixed
+- Mark automatic compaction usage as auxiliary so TUI/Web accumulate summary cost without overwriting main context readings. Failed or cancelled compaction no longer resets context occupancy; committed compaction still resets it.
+- Preserve the auxiliary usage marker in Headless JSONL without changing loop or Goal token accounting.
+
+### Tests
+- Exercise real stores for successful, fallback, and failed compaction, plus usage propagation through all loop entry points and Headless output.
+- Verify real Flash/Pro cancellation through production/development Chromium and raw PTY, checking preserved context readings, reported summary usage, and absence of a compaction checkpoint.
+
 ## [0.10.196] - 2026-09-15
 
 ### Fixed
