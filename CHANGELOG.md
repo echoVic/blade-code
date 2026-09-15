@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.203] - 2026-09-15
+
+### Fixed
+- Expose full schemas for admitted tools when ToolSearch is unavailable, so explicit tool filters do not leave deferred tools uncallable. Preserve Plan read-only projection, execution filters, and lazy loading whenever the loader is available.
+
+### Tests
+- Cover loader removal and restoration, dynamic MCP replacement, and Runtime allowlist/denylist boundaries.
+- Verify real Flash/Pro direct-schema calls across Headless, ACP, raw PTY, and production/development Chromium, checking exact request tool sets and per-response text delivery.
+
 ## [0.10.202] - 2026-09-15
 
 ### Fixed
