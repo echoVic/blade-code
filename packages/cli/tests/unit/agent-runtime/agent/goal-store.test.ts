@@ -350,6 +350,108 @@ describe('GoalStore', () => {
     }
   );
 
+  it.each([99, 100, 101])(
+    'settles %i tokens after blocking without losing the blocker or bypassing resume budget',
+    async (tokens) => {
+      const store = new GoalStore(workspaceRoot, sessionId);
+      const created = await store.create(
+        { objective: 'wait for required access', tokenBudget: 100 },
+        { turnId: 'blocked-turn' }
+      );
+      await store.recordProgress({
+        tokens: 0,
+        elapsedMs: 0,
+        executionHostFailureCategory: 'spawn',
+        prematureStopPattern: 'self_deferral',
+      });
+      const blocked = await store.block('required access is unavailable');
+      const settled = await new GoalStore(workspaceRoot, sessionId).recordProgress({
+        goalId: created.goalId,
+        objective: created.objective,
+        turnId: 'blocked-turn',
+        tokens,
+        elapsedMs: 2_000,
+        executionHostFailureCategory: 'timeout',
+        prematureStopPattern: 'stopping_here',
+      });
+
+      expect(settled).toEqual({
+        ...blocked,
+        tokensUsed: tokens,
+        timeUsedSeconds: 2,
+        updatedAt: expect.any(String),
+      });
+      await expect(store.get()).resolves.toEqual(settled);
+      await expect(store.tryBeginContinuation()).resolves.toBeNull();
+      await expect(store.prepareTurnBinding('new-turn', true)).resolves.toBeNull();
+      await expect(store.resume()).resolves.toMatchObject({
+        tokensUsed: tokens,
+        status: tokens >= 100 ? 'budget_limited' : 'active',
+        statusReason: tokens >= 100 ? 'token budget exhausted' : undefined,
+      });
+    }
+  );
+
+  it.each([
+    { goalId: undefined },
+    { objective: undefined },
+    { turnId: undefined },
+    { goalId: 'different-goal' },
+    { objective: 'different objective' },
+    { turnId: 'previous-turn' },
+  ])('rejects unbound blocked progress with %j', async (override) => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create(
+      { objective: 'protect the blocked goal identity' },
+      { turnId: 'blocked-turn' }
+    );
+    const blocked = await store.block('waiting for credentials');
+    await expect(
+      store.recordProgress({
+        goalId: created.goalId,
+        objective: created.objective,
+        turnId: 'blocked-turn',
+        tokens: 10,
+        elapsedMs: 1_000,
+        ...override,
+      })
+    ).resolves.toEqual(blocked);
+    await expect(store.get()).resolves.toEqual(blocked);
+  });
+
+  it.each(['edit', 'replace'] as const)(
+    'rejects blocked progress after %s even with the same objective',
+    async (action) => {
+      const store = new GoalStore(workspaceRoot, sessionId);
+      const created = await store.create(
+        { objective: 'preserve the blocked identity fence' },
+        { turnId: 'blocked-turn' }
+      );
+      await store.block('waiting for credentials');
+      if (action === 'edit') {
+        await store.edit(created.objective);
+      } else {
+        await store.clear();
+        await store.create(
+          { objective: created.objective },
+          { turnId: 'blocked-turn' }
+        );
+        await store.block('replacement blocker');
+      }
+      const current = await store.get();
+      await expect(
+        store.recordProgress({
+          goalId: created.goalId,
+          objective: created.objective,
+          turnId: 'blocked-turn',
+          tokens: 10,
+          elapsedMs: 1_000,
+        })
+      ).resolves.toEqual(current);
+      await expect(store.get()).resolves.toEqual(current);
+    }
+  );
+
   it('invalidates only the root of the matching active turn lineage', async () => {
     const store = new GoalStore(workspaceRoot, sessionId);
     await store.create(

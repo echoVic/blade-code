@@ -73,9 +73,11 @@ Pausing a Goal stops subsequent automatic continuations without cancelling the r
 When that turn returns usage, tokens and elapsed time are recorded only if its Goal ID,
 objective, and current turn ID all match. The paused status, reason, and recovery evidence
 remain unchanged. Missing identities, stale turns, and results from before an edit or
-clear/recreate cannot update the paused Goal.
+clear/recreate cannot update the paused Goal. The same identity checks apply to a running
+turn after `UpdateGoal(blocked)`: settlement preserves the blocker and recovery evidence
+without starting another continuation.
 
-If settlement reaches the token budget, the Goal remains paused. An explicit resume then
+If settlement reaches the token budget, the Goal remains paused or blocked. An explicit resume then
 transitions it to `budget_limited` without starting another model request. Below budget,
 resume still restores the existing active or verifying path.
 

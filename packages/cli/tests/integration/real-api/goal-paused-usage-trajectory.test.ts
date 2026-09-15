@@ -45,13 +45,16 @@ const surfaces = [
   'web-production',
   'web-development',
 ] as const;
-if (enabled && models.length * surfaces.length !== 10) {
-  throw new Error('Paused Goal usage qualification requires ten surface cells');
+const settlementStates = ['paused', 'blocked'] as const;
+if (enabled && models.length * surfaces.length * settlementStates.length !== 20) {
+  throw new Error('Goal usage qualification requires twenty surface/state cells');
 }
 const cliEntry = path.resolve(import.meta.dirname, '../../../dist/blade.js');
 const roots: string[] = [];
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 const marker = 'GOAL_PAUSED_USAGE_READY';
+const blocker = 'Required external credentials are unavailable';
+type SettlementState = 'paused' | 'blocked';
 
 afterEach(async () => {
   resetProjectionDbCache();
@@ -85,9 +88,14 @@ async function reservePort(): Promise<number> {
   return port;
 }
 
-function responseEvidence(text: string): { tokens: number; content: string } {
+function responseEvidence(text: string): {
+  tokens: number;
+  content: string;
+  toolNames: string[];
+} {
   let tokens = 0;
   let content = '';
+  const toolNames: string[] = [];
   for (const line of text.split(/\r?\n/)) {
     if (!line.startsWith('data:')) continue;
     const data = line.slice(5).trim();
@@ -98,6 +106,24 @@ function responseEvidence(text: string): { tokens: number; content: string } {
       for (const choice of payload.choices) {
         if (!choice || typeof choice !== 'object' || !('delta' in choice)) continue;
         const delta: unknown = choice.delta;
+        if (
+          delta &&
+          typeof delta === 'object' &&
+          'tool_calls' in delta &&
+          Array.isArray(delta.tool_calls)
+        ) {
+          for (const call of delta.tool_calls) {
+            if (!call || typeof call !== 'object' || !('function' in call)) continue;
+            const fn: unknown = call.function;
+            if (
+              fn &&
+              typeof fn === 'object' &&
+              'name' in fn &&
+              typeof fn.name === 'string'
+            )
+              toolNames.push(fn.name);
+          }
+        }
         if (
           delta &&
           typeof delta === 'object' &&
@@ -117,10 +143,10 @@ function responseEvidence(text: string): { tokens: number; content: string } {
     )
       tokens = usage.total_tokens;
   }
-  return { tokens, content };
+  return { tokens, content, toolNames };
 }
 
-async function createFixture(model: TestModelConfig) {
+async function createFixture(model: TestModelConfig, settlementState: SettlementState) {
   if (!model.baseURL) throw new Error('Missing real model base URL');
   const root = await mkdtemp(path.join(os.tmpdir(), 'blade-goal-paused-usage-'));
   roots.push(root);
@@ -136,13 +162,17 @@ async function createFixture(model: TestModelConfig) {
   ]);
   let requests = 0;
   let tokens = 0;
+  let discovered = false;
+  let blockingToolSeen = false;
+  let finalResponseSeen = false;
   let failure: string | undefined;
   const abort = new AbortController();
   const server = createServer((request, response) => {
     void (async () => {
       requests++;
-      if (requests !== 1)
-        throw new Error('Paused Goal unexpectedly requested another response');
+      const expectedRequests = settlementState === 'blocked' ? 2 : 1;
+      if (finalResponseSeen || requests > expectedRequests)
+        throw new Error('Stopped Goal unexpectedly requested another response');
       const chunks: Buffer[] = [];
       for await (const chunk of request)
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -169,22 +199,43 @@ async function createFixture(model: TestModelConfig) {
       });
       if (!upstream.ok) throw new Error(`Real Provider returned ${upstream.status}`);
       const text = await upstream.text();
-      const summary = new OpenAIResponseSummaryCollector(1);
+      const summary = new OpenAIResponseSummaryCollector(requests);
       summary.append(Buffer.from(text));
       const observed = summary.finish();
       const evidence = responseEvidence(text);
-      tokens = evidence.tokens;
+      tokens += evidence.tokens;
+      const discoveryResponse =
+        settlementState === 'blocked' &&
+        !discovered &&
+        !blockingToolSeen &&
+        requests === 1 &&
+        evidence.toolNames.join(',') === 'ToolSearch';
+      const blockingResponse =
+        settlementState === 'blocked' && !blockingToolSeen && !discoveryResponse;
       if (
         observed.parseStatus !== 'complete' ||
-        !observed.finishReasons.includes('stop') ||
-        observed.toolCallDeltas !== 0 ||
-        tokens <= 0 ||
-        evidence.content !== marker
+        evidence.tokens <= 0 ||
+        (blockingResponse || discoveryResponse
+          ? !observed.finishReasons.includes('tool_calls') ||
+            evidence.toolNames.join(',') !==
+              (discoveryResponse ? 'ToolSearch' : 'UpdateGoal')
+          : !observed.finishReasons.includes('stop') ||
+            observed.toolCallDeltas !== 0 ||
+            evidence.content !== marker)
       ) {
         throw new Error(
-          `Unexpected real Provider response: ${JSON.stringify({ observed, tokens })}`
+          `Unexpected real Provider response: ${JSON.stringify({ observed, tokens, toolNames: evidence.toolNames })}`
         );
       }
+      if (blockingResponse || discoveryResponse) {
+        discovered ||= discoveryResponse;
+        blockingToolSeen ||= blockingResponse;
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.end(text);
+        if (blockingResponse && discovered) await writeFile(readyFile, 'turn-limit');
+        return;
+      }
+      finalResponseSeen = true;
       await writeFile(readyFile, 'ready');
       await waitFor(
         async () =>
@@ -220,8 +271,9 @@ async function createFixture(model: TestModelConfig) {
     },
   }));
   config.permissionMode = PermissionMode.YOLO;
-  config.allowedTools = ['Read'];
-  config.maxTurns = 1;
+  config.allowedTools =
+    settlementState === 'blocked' ? ['ToolSearch', 'UpdateGoal'] : ['Read'];
+  config.maxTurns = settlementState === 'blocked' ? 2 : 1;
   config.hooks = { enabled: false };
   config.disableAllHooks = true;
   config.mcpServers = {};
@@ -258,7 +310,15 @@ async function createFixture(model: TestModelConfig) {
         },
       });
       await runtime.createGoal({
-        objective: createSplitPtyMarkerInstruction(marker),
+        objective:
+          settlementState === 'blocked'
+            ? `This Goal cannot proceed because required credentials are unavailable and only the user can provide them.\n` +
+              `Step 1: You MUST call UpdateGoal with {"status":"blocked","reason":"${blocker}"}. ` +
+              `If its schema is deferred, first load it with ToolSearch. Never answer before the UpdateGoal tool succeeds.\n` +
+              `Step 2 (only after successful UpdateGoal): output PART_A immediately followed by PART_B, with no extra text or whitespace.\n` +
+              `PART_A=GOAL_PAUSED_\nPART_B=USAGE_READY\n` +
+              `Do not perform other work. The blocking tool call is mandatory; the final response cannot replace it.`
+            : createSplitPtyMarkerInstruction(marker),
         tokenBudget: 1,
       });
     } finally {
@@ -278,6 +338,7 @@ async function createFixture(model: TestModelConfig) {
     TERM: 'xterm-256color',
   };
   return {
+    settlementState,
     workspace,
     home,
     storageRoot,
@@ -288,9 +349,12 @@ async function createFixture(model: TestModelConfig) {
     store: new GoalStore(workspace, sessionId),
     tokens: () => tokens,
     requests: () => requests,
+    discoveryRequests: () => Number(discovered),
+    turnLimitReached: () => discovered && blockingToolSeen,
     ready: async () => {
       await waitFor(async () => {
         if (failure) throw new Error(failure);
+        if (discovered && blockingToolSeen) return true;
         return access(readyFile).then(
           () => true,
           () => false
@@ -343,13 +407,26 @@ async function assertSettlement(test: Fixture) {
   );
   const goal = await test.store.get();
   expect(goal).toMatchObject({
-    status: 'paused',
-    statusReason: 'paused by user',
+    status: test.settlementState,
+    statusReason: test.settlementState === 'paused' ? 'paused by user' : blocker,
     tokensUsed: test.tokens(),
     continuationCount: 1,
     turnLineage: { currentTurnId: expect.any(String) },
   });
-  const events = await new PersistentStore(test.workspace).loadEvents(test.sessionId);
+  const persistence = new PersistentStore(test.workspace);
+  if (test.turnLimitReached()) {
+    await waitFor(
+      async () =>
+        (await persistence.loadEvents(test.sessionId))?.some(
+          (event) =>
+            event.type === 'turn_aborted' &&
+            event.data.turnId === goal?.turnLineage?.currentTurnId
+        ) === true,
+      'Bounded Goal turn did not finish',
+      30_000
+    );
+  }
+  const events = await persistence.loadEvents(test.sessionId);
   expect(
     events?.filter((event) => event.type === 'turn_started' && event.data.goalLineage)
   ).toHaveLength(1);
@@ -439,17 +516,63 @@ async function runWeb(test: Fixture, development: boolean, secret: string) {
     url.searchParams.set('session', test.sessionId);
     url.searchParams.set('project', test.workspace);
     await page.goto(url.href, { waitUntil: 'domcontentloaded' });
-    await test.ready();
-    const section = page.locator('[data-blade-goal-status="active"]');
-    await section.getByRole('button', { name: /暂停|Pause/i }).click();
-    await page.locator('[data-blade-goal-status="paused"]').waitFor();
-    expect((await test.store.get())?.tokensUsed).toBe(0);
-    await test.release();
-    await assertSettlement(test);
-    await page
-      .locator('[data-chat-role="assistant"]')
-      .getByText(marker, { exact: true })
-      .waitFor({ timeout: 30_000 });
+    try {
+      await test.ready();
+    } catch (error) {
+      throw new Error(
+        JSON.stringify({
+          cause: error instanceof Error ? error.message : String(error),
+          requests: test.requests(),
+          discoveryRequests: test.discoveryRequests(),
+          goal: await test.store.get(),
+          tools: await page.locator('[data-tool-name]').evaluateAll((elements) =>
+            elements.map((element) => ({
+              name: element.getAttribute('data-tool-name'),
+              status: element.getAttribute('data-tool-status'),
+            }))
+          ),
+        }).replaceAll(secret, '[redacted]')
+      );
+    }
+    if (test.settlementState === 'paused') {
+      const section = page.locator('[data-blade-goal-status="active"]');
+      await section.getByRole('button', { name: /暂停|Pause/i }).click();
+    }
+    await page.locator(`[data-blade-goal-status="${test.settlementState}"]`).waitFor();
+    if (!test.turnLimitReached()) {
+      expect((await test.store.get())?.tokensUsed).toBe(0);
+      await test.release();
+    }
+    const settled = await assertSettlement(test);
+    if (test.turnLimitReached()) {
+      const persistence = new PersistentStore(test.workspace);
+      await waitFor(
+        async () =>
+          (await persistence.loadEvents(test.sessionId))?.some(
+            (event) =>
+              (event.type === 'turn_aborted' || event.type === 'turn_completed') &&
+              event.data.turnId === settled?.turnLineage?.currentTurnId
+          ) === true,
+        'Bounded Goal turn did not finish',
+        30_000
+      );
+      const events = await persistence.loadEvents(test.sessionId);
+      expect(events?.filter((event) => event.type === 'turn_aborted')).toEqual([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            turnId: settled?.turnLineage?.currentTurnId,
+            cause: 'failed',
+            turnsCount: 2,
+            toolCallsCount: 2,
+          }),
+        }),
+      ]);
+    } else {
+      await page
+        .locator('[data-chat-role="assistant"]')
+        .getByText(marker, { exact: true })
+        .waitFor({ timeout: 30_000 });
+    }
     const tokensText =
       test.tokens() >= 1000
         ? `${(test.tokens() / 1000).toFixed(1)}K`
@@ -457,12 +580,14 @@ async function runWeb(test: Fixture, development: boolean, secret: string) {
     await waitFor(
       async () =>
         (
-          await page.locator('[data-blade-goal-status="paused"]').textContent()
+          await page
+            .locator(`[data-blade-goal-status="${test.settlementState}"]`)
+            .textContent()
         )?.includes(`${tokensText}/1`) === true,
       'Web paused usage not rendered'
     );
     await page
-      .locator('[data-blade-goal-status="paused"]')
+      .locator(`[data-blade-goal-status="${test.settlementState}"]`)
       .getByRole('button', { name: /恢复|Resume/i })
       .click();
     await page.locator('[data-blade-goal-status="budget_limited"]').waitFor();
@@ -492,7 +617,7 @@ async function runHeadless(test: Fixture, secret: string) {
       '--resume',
       test.sessionId,
       '--allowed-tools',
-      'Read',
+      test.settlementState === 'blocked' ? 'ToolSearch,UpdateGoal' : 'Read',
       '--no-verification-agent',
     ],
     test.workspace,
@@ -502,11 +627,17 @@ async function runHeadless(test: Fixture, secret: string) {
   const identity = await captureForegroundGuiLauncherIdentity(host.child.pid);
   try {
     await test.ready();
-    await test.store.pause();
-    await test.release();
-    expect(await host.exited).toBe(0);
+    if (test.settlementState === 'paused') await test.store.pause();
+    if (!test.turnLimitReached()) {
+      await expect(test.store.get()).resolves.toMatchObject({
+        status: test.settlementState,
+        tokensUsed: 0,
+      });
+      await test.release();
+    }
+    expect(await host.exited).toBe(test.turnLimitReached() ? 1 : 0);
     await expect(test.store.get()).resolves.toMatchObject({
-      status: 'paused',
+      status: test.settlementState,
       tokensUsed: test.tokens(),
     });
     await assertSettlement(test);
@@ -518,7 +649,7 @@ async function runHeadless(test: Fixture, secret: string) {
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'goal',
-        status: 'paused',
+        status: test.settlementState,
         current_turn_id: expect.any(String),
       })
     );
@@ -534,13 +665,28 @@ async function runHeadless(test: Fixture, secret: string) {
           : []
       )
       .join('');
-    expect(content).toBe(marker);
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'token_usage',
-        total_tokens: test.tokens(),
-      })
+    if (test.turnLimitReached()) {
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'error',
+          message: expect.stringContaining('轮次上限'),
+        })
+      );
+    } else {
+      expect(content).toBe(marker);
+    }
+    const reported = events.flatMap((event) =>
+      event &&
+      typeof event === 'object' &&
+      'type' in event &&
+      event.type === 'token_usage' &&
+      'total_tokens' in event &&
+      typeof event.total_tokens === 'number'
+        ? [event.total_tokens]
+        : []
     );
+    expect(reported).toHaveLength(test.settlementState === 'blocked' ? 2 : 1);
+    expect(reported.reduce((sum, tokens) => sum + tokens, 0)).toBe(test.tokens());
     expect(host.stdout() + host.stderr()).not.toContain(secret);
     await expect(test.store.resume()).resolves.toMatchObject({
       status: 'budget_limited',
@@ -587,8 +733,14 @@ async function runAcp(test: Fixture, secret: string) {
       mcpServers: [],
     });
     await test.ready();
-    await test.store.pause();
-    await test.release();
+    if (test.settlementState === 'paused') await test.store.pause();
+    if (!test.turnLimitReached()) {
+      await expect(test.store.get()).resolves.toMatchObject({
+        status: test.settlementState,
+        tokensUsed: 0,
+      });
+      await test.release();
+    }
     await assertSettlement(test);
     await waitFor(
       () =>
@@ -598,7 +750,7 @@ async function runAcp(test: Fixture, secret: string) {
             goal &&
             typeof goal === 'object' &&
             'status' in goal &&
-            goal.status === 'paused'
+            goal.status === test.settlementState
           );
         }),
       'ACP paused Goal projection missing'
@@ -634,7 +786,7 @@ async function runAcp(test: Fixture, secret: string) {
 
 const suite =
   enabled && process.platform !== 'win32' ? describe.sequential : describe.skip;
-suite('Paused Goal usage surface matrix (real API)', () => {
+suite('Stopped Goal usage surface matrix (real API)', () => {
   it.skipIf(enabled)('requires the real API release matrix', () => undefined);
   for (const model of models) {
     it(`${model.model} settles a Goal created and paused inside the initiating turn`, async () => {
@@ -653,7 +805,7 @@ suite('Paused Goal usage surface matrix (real API)', () => {
       });
       const agent = await Agent.createWithRuntime(runtime, {
         sessionId,
-        toolWhitelist: ['CreateGoal'],
+        toolWhitelist: ['ToolSearch', 'CreateGoal'],
       });
       try {
         const context: ChatContext = {
@@ -702,12 +854,17 @@ suite('Paused Goal usage surface matrix (real API)', () => {
         if (previousConfig) getState().config.actions.setConfig(previousConfig);
       }
     }, 180_000);
-    for (const surface of surfaces) {
-      it(`${model.model} settles paused usage through ${surface} without resuming over budget`, async (context: TestContext) => {
+    for (const { surface, settlementState } of surfaces.flatMap((surface) =>
+      settlementStates.map((settlementState) => ({
+        surface,
+        settlementState,
+      }))
+    )) {
+      it(`${model.model} settles ${settlementState} usage through ${surface} without resuming over budget`, async (context: TestContext) => {
         const retry = context.task.retry;
         expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
         await access(cliEntry);
-        const test = await createFixture(model);
+        const test = await createFixture(model, settlementState);
         try {
           if (surface === 'headless') await runHeadless(test, model.apiKey);
           else if (surface === 'acp') await runAcp(test, model.apiKey);
@@ -733,6 +890,7 @@ suite('Paused Goal usage surface matrix (real API)', () => {
                     readyFile: test.readyFile,
                     releaseFile: test.releaseFile,
                     secret: model.apiKey,
+                    settlementState,
                   })
                 ).toString('base64'),
               }
@@ -761,15 +919,17 @@ suite('Paused Goal usage surface matrix (real API)', () => {
             tokensUsed: test.tokens(),
             continuationCount: 1,
           });
-          expect(test.requests()).toBe(1);
+          expect(test.requests()).toBe(settlementState === 'blocked' ? 2 : 1);
           expect(test.tokens()).toBeGreaterThan(1);
           console.log(
             'GOAL_PAUSED_USAGE_EVIDENCE',
             JSON.stringify({
               model: model.model,
               surface,
+              settlementState,
               tokens: test.tokens(),
               requests: test.requests(),
+              discoveryRequests: test.discoveryRequests(),
             })
           );
         } finally {

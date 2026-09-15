@@ -1,4 +1,5 @@
-import { access, writeFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
+import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { spawn } from 'bun-pty';
 import { GoalStore } from '../../src/goals/GoalStore.js';
 import {
@@ -18,6 +19,7 @@ interface RunnerInput {
   readyFile: string;
   releaseFile: string;
   secret: string;
+  settlementState: 'paused' | 'blocked';
 }
 
 async function waitFor(
@@ -58,7 +60,7 @@ async function main(): Promise<void> {
       '--resume',
       input.sessionId,
       '--allowed-tools',
-      'Read',
+      input.settlementState === 'blocked' ? 'ToolSearch,UpdateGoal' : 'Read',
       '--no-verification-agent',
     ],
     { cwd: input.workspace, cols: 160, rows: 48, env: handshake.env }
@@ -104,22 +106,43 @@ async function main(): Promise<void> {
         ),
       'Real Provider response did not reach the pause barrier'
     );
-    await submit('/goal pause');
+    if (input.settlementState === 'paused') await submit('/goal pause');
     await waitFor(
-      async () => (await store.get())?.status === 'paused',
-      'Goal did not pause'
+      async () => (await store.get())?.status === input.settlementState,
+      'Goal did not reach its settlement state'
     );
-    const paused = await store.get();
-    if (paused?.tokensUsed !== 0) throw new Error('Goal settled before pause barrier');
-    responseMarker.arm();
-    await writeFile(input.releaseFile, 'release');
+    const turnLimit = (await readFile(input.readyFile, 'utf8')) === 'turn-limit';
+    if (!turnLimit) {
+      const paused = await store.get();
+      if (paused?.tokensUsed !== 0)
+        throw new Error('Goal settled before pause barrier');
+      responseMarker.arm();
+      await writeFile(input.releaseFile, 'release');
+    }
     await waitFor(
       async () => ((await store.get())?.tokensUsed ?? 0) > 0,
       'Paused usage missing'
     );
     const settled = await store.get();
-    if (settled?.status !== 'paused') throw new Error('Settlement changed pause state');
-    await waitFor(() => responseMarker.seen, 'Real model response was not rendered');
+    if (settled?.status !== input.settlementState)
+      throw new Error('Settlement changed Goal state');
+    if (turnLimit) {
+      const persistence = new PersistentStore(input.workspace);
+      await waitFor(
+        async () =>
+          (await persistence.loadEvents(input.sessionId))?.some(
+            (event) =>
+              event.type === 'turn_aborted' &&
+              event.data.turnId === settled.turnLineage?.currentTurnId &&
+              event.data.cause === 'failed' &&
+              event.data.turnsCount === 2 &&
+              event.data.toolCallsCount === 2
+          ) === true,
+        'Blocked Goal did not persist its bounded turn outcome'
+      );
+    } else {
+      await waitFor(() => responseMarker.seen, 'Real model response was not rendered');
+    }
     await submit('/goal status');
     await waitFor(
       () =>

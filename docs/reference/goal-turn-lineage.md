@@ -64,9 +64,10 @@ Blade 只在能证明 origin 时保留 root：
 暂停 Goal 会阻止后续自动 continuation，但不会取消已经执行的回合。该回合返回用量后，
 只有 Goal ID、objective 和 current turn ID 全部匹配时才补记 tokens 与耗时；暂停状态、
 原因和恢复证据保持不变。缺少身份、旧回合，以及 edit 或 clear/recreate 前的结果不会被
-计入当前暂停的 Goal。
+计入当前暂停的 Goal。模型通过 `UpdateGoal(blocked)` 阻塞 Goal 后，同一身份校验也适用
+于尚未结束的回合；用量结算不会覆盖阻塞原因或恢复证据，不会自动续跑。
 
-若补记后达到 token budget，Goal 仍保持暂停；用户显式 resume 时会转为 `budget_limited`，
+若补记后达到 token budget，Goal 仍保持暂停或阻塞；用户显式 resume 时会转为 `budget_limited`，
 不会启动新的模型请求。预算内的 resume 仍恢复为原有 active 或 verifying 路径。
 
 ## 用户界面与协议

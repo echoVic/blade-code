@@ -603,12 +603,13 @@ export class GoalStore {
         !goal ||
         (goal.status !== 'active' &&
           goal.status !== 'verifying' &&
-          goal.status !== 'paused')
+          goal.status !== 'paused' &&
+          goal.status !== 'blocked')
       ) {
         return goal;
       }
       if (
-        goal.status === 'paused' &&
+        (goal.status === 'paused' || goal.status === 'blocked') &&
         (!progress.goalId || !progress.objective || !progress.turnId)
       ) {
         return goal;
@@ -626,7 +627,7 @@ export class GoalStore {
       const elapsedSeconds = Math.max(0, Math.round(progress.elapsedMs / 1000));
       const tokensUsed = goal.tokensUsed + tokens;
       const now = new Date().toISOString();
-      if (goal.status === 'paused') {
+      if (goal.status === 'paused' || goal.status === 'blocked') {
         const next: GoalSnapshot = {
           ...goal,
           version: 2,
