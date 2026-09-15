@@ -7,6 +7,11 @@ import { FocusId } from '../../src/store/types.js';
 import { getState } from '../../src/store/vanilla.js';
 import { CustomTextInput } from '../../src/ui/components/CustomTextInput.js';
 import { InputArea } from '../../src/ui/components/InputArea.js';
+import { MessageArea } from '../../src/ui/components/MessageArea.js';
+import {
+  appendMarkdownDelta,
+  finalizeMarkdownCache,
+} from '../../src/ui/utils/markdownIncremental.js';
 import { TranscriptPager } from '../../src/ui/components/TranscriptPager.js';
 import { useInputBuffer } from '../../src/ui/hooks/useInputBuffer.js';
 import { useTerminalInputModes } from '../../src/ui/hooks/useTerminalInputModes.js';
@@ -104,6 +109,65 @@ describe('TUI batched input integration', () => {
     for (const instance of activeRenders.splice(0)) instance.unmount();
     getState().session.actions.resetSession();
     getState().focus.actions.setFocus(FocusId.MAIN_INPUT);
+  });
+
+  it('renders a new status message after streamed tool output ends without text', async () => {
+    vi.stubEnv('CI', 'false');
+    const stdin = new TestInputStream();
+    const stdout = new TestOutputStream();
+    const stderr = new TestOutputStream();
+    const actions = getState().session.actions;
+    getState().command.actions.setProcessing(true);
+    const instance = render(<MessageArea />, {
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stderr: stderr as unknown as NodeJS.WriteStream,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
+    activeRenders.push(instance);
+    try {
+      await act(async () => {
+        instance.rerender(<MessageArea />);
+      });
+      let streamingId = '';
+      await act(async () => {
+        streamingId = actions.appendAssistantContent('Streaming heading\n\n');
+        appendMarkdownDelta(streamingId, 'Streaming heading\n\n');
+      });
+      await vi.waitFor(() => expect(stdout.output).toContain('Streaming heading'));
+      await act(async () => {
+        finalizeMarkdownCache(streamingId);
+        actions.finalizeStreamingMessage();
+      });
+      actions.addToolMessage('FIRST_TOOL_RESULT', {
+        toolName: 'ToolSearch',
+        phase: 'complete',
+        summary: 'FIRST_TOOL_RESULT',
+      });
+      await vi.waitFor(() => expect(stdout.output).toContain('FIRST_TOOL_RESULT'));
+      await act(async () => {
+        actions.finalizeStreamingMessage();
+      });
+      actions.addToolMessage('SECOND_TOOL_RESULT', {
+        toolName: 'UpdateGoal',
+        phase: 'complete',
+        summary: 'SECOND_TOOL_RESULT',
+      });
+      await vi.waitFor(() => expect(stdout.output).toContain('SECOND_TOOL_RESULT'));
+      getState().command.actions.setProcessing(false);
+      actions.addAssistantMessage('BOUNDED_TURN_FINISHED');
+      await vi.waitFor(() => expect(stdout.output).toContain('BOUNDED_TURN_FINISHED'));
+      actions.clearFinalizingStreamingMessageId();
+      actions.addAssistantMessage('GOAL_STATUS_AFTER_EMPTY_TOOL_TURN');
+      await vi.waitFor(() =>
+        expect(stdout.output).toContain('GOAL_STATUS_AFTER_EMPTY_TOOL_TURN')
+      );
+    } finally {
+      instance.unmount();
+      getState().command.actions.setProcessing(false);
+      vi.unstubAllEnvs();
+    }
   });
 
   function startHarness() {

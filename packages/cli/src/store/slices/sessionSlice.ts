@@ -656,7 +656,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
             currentStreamingLineCount: 0,
             currentStreamingVersion: 0,
             currentThinkingContent: null,
-            finalizingStreamingMessageId: null,
+            finalizingStreamingMessageId: state.session.finalizingStreamingMessageId,
           },
         };
       });
