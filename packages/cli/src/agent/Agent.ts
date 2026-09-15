@@ -1114,14 +1114,15 @@ export class Agent {
             return result;
           }
 
+          const progressGoal = persistedGoal ?? (await this.sessionRuntime.getGoal());
           let goal = await this.sessionRuntime.recordGoalProgress({
             tokens: result.metadata?.tokensUsed ?? 0,
             elapsedMs: result.metadata?.duration ?? 0,
-            ...(persistedGoal
+            turnId: ownedHandle.id,
+            ...(progressGoal
               ? {
-                  goalId: persistedGoal.goalId,
-                  objective: persistedGoal.objective,
-                  turnId: ownedHandle.id,
+                  goalId: progressGoal.goalId,
+                  objective: progressGoal.objective,
                 }
               : {}),
             executionHostFailureCategory: result.metadata?.executionHostFailureCategory,

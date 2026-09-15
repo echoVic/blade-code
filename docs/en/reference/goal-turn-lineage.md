@@ -67,6 +67,18 @@ These rules form an audit boundary, not a permission mechanism. A missing root m
 current host cannot prove the origin; it does not invalidate the Goal or prevent an explicit
 resume.
 
+## Pausing and in-flight usage
+
+Pausing a Goal stops subsequent automatic continuations without cancelling the running turn.
+When that turn returns usage, tokens and elapsed time are recorded only if its Goal ID,
+objective, and current turn ID all match. The paused status, reason, and recovery evidence
+remain unchanged. Missing identities, stale turns, and results from before an edit or
+clear/recreate cannot update the paused Goal.
+
+If settlement reaches the token budget, the Goal remains paused. An explicit resume then
+transitions it to `budget_limited` without starting another model request. Below budget,
+resume still restores the existing active or verifying path.
+
 ## User interfaces and protocols
 
 - The TUI status bar shows bounded `lineage:<root-or-?>:<current>` text with at most eight
@@ -84,7 +96,8 @@ becoming fabricated `null` values, and clients keep no local parent counter.
 
 Lineage never enters Provider prompts or request metadata. It contains no message text, tool
 arguments, commands, paths, output, errors, or credentials. It does not participate in
-authorization, permission inheritance, billing, or Goal completion verification. The current
+authorization, permission inheritance, or Goal completion verification and carries no pricing
+or cost data. The current turn ID only fences ownership of late usage. The current
 contract covers top-level Goal turns only; it is not a general provenance DAG for subagents,
 forks, MCP tasks, hooks, or compaction.
 

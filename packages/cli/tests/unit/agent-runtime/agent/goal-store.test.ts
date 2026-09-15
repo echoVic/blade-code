@@ -198,6 +198,158 @@ describe('GoalStore', () => {
     expect(resumed.turnLineage).toEqual(paused.turnLineage);
   });
 
+  it.each(['active', 'verifying'] as const)(
+    'settles a paused %s turn without changing the pause or recovery state',
+    async (status) => {
+      const store = new GoalStore(workspaceRoot, sessionId);
+      const created = await store.create(
+        { objective: 'settle the running turn', tokenBudget: 100 },
+        { turnId: 'running-turn' }
+      );
+      await store.recordProgress({
+        tokens: 10,
+        elapsedMs: 1_000,
+        prematureStopPattern: 'self_deferral',
+        executionHostFailureCategory: 'spawn',
+      });
+      if (status === 'verifying') await store.requestCompletion();
+      const paused = await store.pause('manual inspection');
+
+      const settled = await new GoalStore(workspaceRoot, sessionId).recordProgress({
+        goalId: created.goalId,
+        objective: created.objective,
+        turnId: 'running-turn',
+        tokens: 25,
+        elapsedMs: 2_000,
+        prematureStopPattern: 'stopping_here',
+        executionHostFailureCategory: 'timeout',
+      });
+
+      expect(settled).toEqual({
+        ...paused,
+        tokensUsed: 35,
+        timeUsedSeconds: 3,
+        updatedAt: expect.any(String),
+      });
+      await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toEqual(
+        settled
+      );
+      await expect(store.tryBeginContinuation()).resolves.toBeNull();
+      await expect(store.prepareTurnBinding('new-turn', true)).resolves.toBeNull();
+      await expect(store.resume()).resolves.toMatchObject({
+        status,
+        tokensUsed: 35,
+        timeUsedSeconds: 3,
+        turnLineage: paused.turnLineage,
+      });
+    }
+  );
+
+  it.each([99, 100, 101])(
+    'enforces the budget on resume after settling %i tokens while paused',
+    async (tokens) => {
+      const store = new GoalStore(workspaceRoot, sessionId);
+      const created = await store.create(
+        { objective: 'respect the budget after pause', tokenBudget: 100 },
+        { turnId: 'budget-turn' }
+      );
+      await store.requestCompletion();
+      await store.pause('manual pause');
+
+      await expect(
+        store.recordProgress({
+          goalId: created.goalId,
+          objective: created.objective,
+          turnId: 'budget-turn',
+          tokens,
+          elapsedMs: 1_000,
+        })
+      ).resolves.toMatchObject({
+        status: 'paused',
+        statusReason: 'manual pause',
+        tokensUsed: tokens,
+        timeUsedSeconds: 1,
+      });
+      const resumed = await new GoalStore(workspaceRoot, sessionId).resume();
+      expect(resumed).toMatchObject({
+        status: tokens >= 100 ? 'budget_limited' : 'verifying',
+        tokensUsed: tokens,
+        completionVerification: { status: 'pending' },
+      });
+      if (tokens >= 100) {
+        expect(resumed.statusReason).toBe('token budget exhausted');
+        await expect(store.tryBeginContinuation()).resolves.toBeNull();
+        await expect(
+          store.prepareTurnBinding('over-budget-turn', true)
+        ).resolves.toBeNull();
+        await expect(store.resume()).rejects.toThrow('budget_limited');
+      }
+      await expect(store.get()).resolves.toEqual(resumed);
+    }
+  );
+
+  it.each([
+    { goalId: undefined },
+    { objective: undefined },
+    { turnId: undefined },
+    { goalId: 'different-goal' },
+    { objective: 'different objective' },
+    { turnId: 'previous-turn' },
+  ])('ignores unbound paused progress with %j', async (override) => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create(
+      { objective: 'settle only the bound turn' },
+      { turnId: 'running-turn' }
+    );
+    const paused = await store.pause();
+
+    await expect(
+      store.recordProgress({
+        goalId: created.goalId,
+        objective: created.objective,
+        turnId: 'running-turn',
+        tokens: 20,
+        elapsedMs: 1_000,
+        ...override,
+      })
+    ).resolves.toEqual(paused);
+    await expect(store.get()).resolves.toEqual(paused);
+  });
+
+  it.each(['edit', 'replace'] as const)(
+    'ignores a paused turn settlement after %s with the same objective',
+    async (action) => {
+      const store = new GoalStore(workspaceRoot, sessionId);
+      const created = await store.create(
+        { objective: 'retain identity boundaries' },
+        { turnId: 'running-turn' }
+      );
+      await store.pause();
+      if (action === 'edit') {
+        await store.edit(created.objective);
+      } else {
+        await store.clear();
+        await store.create(
+          { objective: created.objective },
+          { turnId: 'running-turn' }
+        );
+        await store.pause();
+      }
+      const current = await store.get();
+
+      await expect(
+        store.recordProgress({
+          goalId: created.goalId,
+          objective: created.objective,
+          turnId: 'running-turn',
+          tokens: 20,
+          elapsedMs: 1_000,
+        })
+      ).resolves.toEqual(current);
+      await expect(store.get()).resolves.toEqual(current);
+    }
+  );
+
   it('invalidates only the root of the matching active turn lineage', async () => {
     const store = new GoalStore(workspaceRoot, sessionId);
     await store.create(

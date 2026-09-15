@@ -72,6 +72,7 @@ export const testTypes = {
       'tests/integration/real-api/compaction-memory-consolidation-trajectory.test.ts',
       'tests/integration/real-api/goal-execution-host-failure-trajectory.test.ts',
       'tests/integration/real-api/goal-turn-lineage-trajectory.test.ts',
+      'tests/integration/real-api/goal-paused-usage-trajectory.test.ts',
       'tests/integration/real-api/textual-tool-call-trajectory.test.ts',
     ],
     env: {

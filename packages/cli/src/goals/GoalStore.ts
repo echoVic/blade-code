@@ -375,13 +375,19 @@ export class GoalStore {
       if (goal.status !== 'paused' && goal.status !== 'blocked') {
         throw new Error(`Cannot resume goal while status is ${goal.status}`);
       }
+      const budgetLimited =
+        goal.tokenBudget !== undefined && goal.tokensUsed >= goal.tokenBudget;
       const completionPending =
         goal.completionVerification?.status === 'pending' ||
         goal.completionVerification?.status === 'pass';
       return {
         ...goal,
-        status: completionPending ? 'verifying' : 'active',
-        statusReason: undefined,
+        status: budgetLimited
+          ? 'budget_limited'
+          : completionPending
+            ? 'verifying'
+            : 'active',
+        statusReason: budgetLimited ? 'token budget exhausted' : undefined,
         verificationStall: undefined,
         prematureStop: undefined,
         executionHostFailure: undefined,
@@ -593,7 +599,18 @@ export class GoalStore {
   async recordProgress(progress: GoalProgress): Promise<GoalSnapshot | null> {
     return GoalStore.locks.runExclusive(this.coordinationKey, async () => {
       const goal = await this.readUnlocked();
-      if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
+      if (
+        !goal ||
+        (goal.status !== 'active' &&
+          goal.status !== 'verifying' &&
+          goal.status !== 'paused')
+      ) {
+        return goal;
+      }
+      if (
+        goal.status === 'paused' &&
+        (!progress.goalId || !progress.objective || !progress.turnId)
+      ) {
         return goal;
       }
       if (
@@ -609,6 +626,18 @@ export class GoalStore {
       const elapsedSeconds = Math.max(0, Math.round(progress.elapsedMs / 1000));
       const tokensUsed = goal.tokensUsed + tokens;
       const now = new Date().toISOString();
+      if (goal.status === 'paused') {
+        const next: GoalSnapshot = {
+          ...goal,
+          version: 2,
+          tokensUsed,
+          timeUsedSeconds: goal.timeUsedSeconds + elapsedSeconds,
+          updatedAt: now,
+        };
+        await this.persistUnlocked(next);
+        this.emit(next);
+        return next;
+      }
       const budgetLimited =
         goal.tokenBudget !== undefined && tokensUsed >= goal.tokenBudget;
       const consecutivePrematureStops = progress.prematureStopPattern

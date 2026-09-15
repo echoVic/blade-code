@@ -59,6 +59,16 @@ Blade 只在能证明 origin 时保留 root：
 这些规则是审计边界，不是权限语义。root 缺失表示“当前宿主无法证明”，不表示 Goal
 无效，也不会阻止用户显式 resume。
 
+## 暂停与在途用量
+
+暂停 Goal 会阻止后续自动 continuation，但不会取消已经执行的回合。该回合返回用量后，
+只有 Goal ID、objective 和 current turn ID 全部匹配时才补记 tokens 与耗时；暂停状态、
+原因和恢复证据保持不变。缺少身份、旧回合，以及 edit 或 clear/recreate 前的结果不会被
+计入当前暂停的 Goal。
+
+若补记后达到 token budget，Goal 仍保持暂停；用户显式 resume 时会转为 `budget_limited`，
+不会启动新的模型请求。预算内的 resume 仍恢复为原有 active 或 verifying 路径。
+
 ## 用户界面与协议
 
 - TUI 状态栏显示有界 `lineage:<root-or-?>:<current>`，每个 ID 最多显示前 8 个字符；
@@ -76,7 +86,8 @@ Blade 只在能证明 origin 时保留 root：
 ## 隐私与非目标
 
 Lineage 不进入 Provider prompt 或请求 metadata，也不包含消息正文、工具参数、命令、路径、
-输出、错误或 credential。它不参与授权、权限继承、计费或 Goal completion verification。
+输出、错误或 credential。它不参与授权、权限继承或 Goal completion verification，也不
+包含定价或费用信息；current turn ID 仅用于核对迟到用量的归属。
 当前契约只覆盖顶层 Goal 回合，不是 subagent、fork、MCP task、hook 或 compaction 的通用
 provenance DAG。
 
