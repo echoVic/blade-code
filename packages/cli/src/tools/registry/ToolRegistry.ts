@@ -385,6 +385,7 @@ export class ToolRegistry extends EventEmitter {
    * 获取 deferred tools 的系统提示列表
    */
   getDeferredToolsListing(): string {
+    if (!this.get('ToolSearch')) return '';
     return this._deferredManager.getDeferredToolsListing();
   }
 

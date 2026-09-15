@@ -45,9 +45,15 @@ const surfaces = [
   'web-production',
   'web-development',
 ] as const;
-const settlementStates = ['paused', 'blocked'] as const;
-if (enabled && models.length * surfaces.length * settlementStates.length !== 20) {
-  throw new Error('Goal usage qualification requires twenty surface/state cells');
+const settlementCases = [
+  { settlementState: 'paused', directSchemas: false },
+  { settlementState: 'blocked', directSchemas: false },
+  { settlementState: 'blocked', directSchemas: true },
+] as const;
+if (enabled && models.length * surfaces.length * settlementCases.length !== 30) {
+  throw new Error(
+    'Goal usage qualification requires thirty surface/state/schema cells'
+  );
 }
 const cliEntry = path.resolve(import.meta.dirname, '../../../dist/blade.js');
 const roots: string[] = [];
@@ -146,7 +152,11 @@ function responseEvidence(text: string): {
   return { tokens, content, toolNames };
 }
 
-async function createFixture(model: TestModelConfig, settlementState: SettlementState) {
+async function createFixture(
+  model: TestModelConfig,
+  settlementState: SettlementState,
+  directSchemas = false
+) {
   if (!model.baseURL) throw new Error('Missing real model base URL');
   const root = await mkdtemp(path.join(os.tmpdir(), 'blade-goal-paused-usage-'));
   roots.push(root);
@@ -162,6 +172,7 @@ async function createFixture(model: TestModelConfig, settlementState: Settlement
   ]);
   let requests = 0;
   let tokens = 0;
+  const responseContents: string[] = [];
   let discovered = false;
   let blockingToolSeen = false;
   let finalResponseSeen = false;
@@ -176,6 +187,36 @@ async function createFixture(model: TestModelConfig, settlementState: Settlement
       const chunks: Buffer[] = [];
       for await (const chunk of request)
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const body = Buffer.concat(chunks);
+      if (directSchemas) {
+        const requestBody: unknown = JSON.parse(body.toString('utf8'));
+        if (
+          !requestBody ||
+          typeof requestBody !== 'object' ||
+          !('tools' in requestBody) ||
+          !Array.isArray(requestBody.tools)
+        ) {
+          throw new Error('Direct-schema request has no tool declarations');
+        }
+        const names = requestBody.tools.flatMap((tool) => {
+          if (!tool || typeof tool !== 'object' || !('function' in tool)) return [];
+          const fn: unknown = tool.function;
+          return fn &&
+            typeof fn === 'object' &&
+            'name' in fn &&
+            typeof fn.name === 'string'
+            ? [fn.name]
+            : [];
+        });
+        if (
+          names.toSorted().join(',') !==
+          ['ReadPromptArtifact', 'UpdateGoal'].toSorted().join(',')
+        ) {
+          throw new Error(
+            `Unexpected direct-schema tool declarations: ${names.join(',')}`
+          );
+        }
+      }
       const target = new URL(model.baseURL!);
       const incoming = new URL(request.url ?? '/', 'http://127.0.0.1');
       const incomingPath =
@@ -194,7 +235,7 @@ async function createFixture(model: TestModelConfig, settlementState: Settlement
       const upstream = await fetch(target, {
         method: request.method,
         headers,
-        body: Buffer.concat(chunks),
+        body,
         signal: AbortSignal.any([abort.signal, AbortSignal.timeout(120_000)]),
       });
       if (!upstream.ok) throw new Error(`Real Provider returned ${upstream.status}`);
@@ -203,8 +244,10 @@ async function createFixture(model: TestModelConfig, settlementState: Settlement
       summary.append(Buffer.from(text));
       const observed = summary.finish();
       const evidence = responseEvidence(text);
+      responseContents.push(evidence.content);
       tokens += evidence.tokens;
       const discoveryResponse =
+        !directSchemas &&
         settlementState === 'blocked' &&
         !discovered &&
         !blockingToolSeen &&
@@ -224,7 +267,7 @@ async function createFixture(model: TestModelConfig, settlementState: Settlement
             evidence.content !== marker)
       ) {
         throw new Error(
-          `Unexpected real Provider response: ${JSON.stringify({ observed, tokens, toolNames: evidence.toolNames })}`
+          `Unexpected real Provider response: ${JSON.stringify({ observed, tokens, toolNames: evidence.toolNames, content: evidence.content.slice(0, 256) })}`
         );
       }
       if (blockingResponse || discoveryResponse) {
@@ -271,8 +314,12 @@ async function createFixture(model: TestModelConfig, settlementState: Settlement
     },
   }));
   config.permissionMode = PermissionMode.YOLO;
-  config.allowedTools =
-    settlementState === 'blocked' ? ['ToolSearch', 'UpdateGoal'] : ['Read'];
+  config.allowedTools = directSchemas
+    ? ['UpdateGoal']
+    : settlementState === 'blocked'
+      ? ['ToolSearch', 'UpdateGoal']
+      : ['Read'];
+  if (directSchemas) config.disallowedTools = ['ToolSearch'];
   config.maxTurns = settlementState === 'blocked' ? 2 : 1;
   config.hooks = { enabled: false };
   config.disableAllHooks = true;
@@ -315,7 +362,8 @@ async function createFixture(model: TestModelConfig, settlementState: Settlement
             ? `This Goal cannot proceed because required credentials are unavailable and only the user can provide them.\n` +
               `Step 1: You MUST call UpdateGoal with {"status":"blocked","reason":"${blocker}"}. ` +
               `If its schema is deferred, first load it with ToolSearch. Never answer before the UpdateGoal tool succeeds.\n` +
-              `Step 2 (only after successful UpdateGoal): output PART_A immediately followed by PART_B, with no extra text or whitespace.\n` +
+              `Step 2 (only after successful UpdateGoal): concatenate only the values after '=' in PART_A and PART_B. ` +
+              `Output exactly 23 ASCII characters. Do not output the labels PART_A, PART_B, equals signs, or whitespace.\n` +
               `PART_A=GOAL_PAUSED_\nPART_B=USAGE_READY\n` +
               `Do not perform other work. The blocking tool call is mandatory; the final response cannot replace it.`
             : createSplitPtyMarkerInstruction(marker),
@@ -339,6 +387,7 @@ async function createFixture(model: TestModelConfig, settlementState: Settlement
   };
   return {
     settlementState,
+    directSchemas,
     workspace,
     home,
     storageRoot,
@@ -348,6 +397,7 @@ async function createFixture(model: TestModelConfig, settlementState: Settlement
     env,
     store: new GoalStore(workspace, sessionId),
     tokens: () => tokens,
+    responseContents: () => [...responseContents],
     requests: () => requests,
     discoveryRequests: () => Number(discovered),
     turnLimitReached: () => discovered && blockingToolSeen,
@@ -438,7 +488,17 @@ async function runWeb(test: Fixture, development: boolean, secret: string) {
   const origin = `http://127.0.0.1:${port}`;
   const host = startChild(
     process.execPath,
-    [cliEntry, 'serve', '--hostname', '127.0.0.1', '--port', String(port)],
+    [
+      cliEntry,
+      'serve',
+      '--hostname',
+      '127.0.0.1',
+      '--port',
+      String(port),
+      ...(test.directSchemas
+        ? ['--allowed-tools', 'UpdateGoal', '--disallowed-tools', 'ToolSearch']
+        : []),
+    ],
     test.workspace,
     test.env
   );
@@ -617,7 +677,12 @@ async function runHeadless(test: Fixture, secret: string) {
       '--resume',
       test.sessionId,
       '--allowed-tools',
-      test.settlementState === 'blocked' ? 'ToolSearch,UpdateGoal' : 'Read',
+      test.directSchemas
+        ? 'UpdateGoal'
+        : test.settlementState === 'blocked'
+          ? 'ToolSearch,UpdateGoal'
+          : 'Read',
+      ...(test.directSchemas ? ['--disallowed-tools', 'ToolSearch'] : []),
       '--no-verification-agent',
     ],
     test.workspace,
@@ -653,18 +718,23 @@ async function runHeadless(test: Fixture, secret: string) {
         current_turn_id: expect.any(String),
       })
     );
-    const content = events
-      .flatMap((event) =>
-        event &&
-        typeof event === 'object' &&
-        'type' in event &&
+    const responseContents: string[] = [];
+    let content = '';
+    for (const event of events) {
+      if (!event || typeof event !== 'object' || !('type' in event)) continue;
+      if (
         event.type === 'content_delta' &&
         'delta' in event &&
         typeof event.delta === 'string'
-          ? [event.delta]
-          : []
-      )
-      .join('');
+      ) {
+        content += event.delta;
+      } else if (event.type === 'stream_end') {
+        responseContents.push(content);
+        content = '';
+      }
+    }
+    expect(content).toBe('');
+    expect(responseContents).toEqual(test.responseContents());
     if (test.turnLimitReached()) {
       expect(events).toContainEqual(
         expect.objectContaining({
@@ -673,7 +743,7 @@ async function runHeadless(test: Fixture, secret: string) {
         })
       );
     } else {
-      expect(content).toBe(marker);
+      expect(responseContents.at(-1)).toBe(marker);
     }
     const reported = events.flatMap((event) =>
       event &&
@@ -854,17 +924,14 @@ suite('Stopped Goal usage surface matrix (real API)', () => {
         if (previousConfig) getState().config.actions.setConfig(previousConfig);
       }
     }, 180_000);
-    for (const { surface, settlementState } of surfaces.flatMap((surface) =>
-      settlementStates.map((settlementState) => ({
-        surface,
-        settlementState,
-      }))
+    for (const { surface, settlementState, directSchemas } of surfaces.flatMap(
+      (surface) => settlementCases.map((scenario) => ({ surface, ...scenario }))
     )) {
-      it(`${model.model} settles ${settlementState} usage through ${surface} without resuming over budget`, async (context: TestContext) => {
+      it(`${model.model} settles ${settlementState} usage through ${surface} without resuming over budget${directSchemas ? ' with direct schemas' : ''}`, async (context: TestContext) => {
         const retry = context.task.retry;
         expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
         await access(cliEntry);
-        const test = await createFixture(model, settlementState);
+        const test = await createFixture(model, settlementState, directSchemas);
         try {
           if (surface === 'headless') await runHeadless(test, model.apiKey);
           else if (surface === 'acp') await runAcp(test, model.apiKey);
@@ -891,6 +958,7 @@ suite('Stopped Goal usage surface matrix (real API)', () => {
                     releaseFile: test.releaseFile,
                     secret: model.apiKey,
                     settlementState,
+                    directSchemas,
                   })
                 ).toString('base64'),
               }
@@ -927,6 +995,7 @@ suite('Stopped Goal usage surface matrix (real API)', () => {
               model: model.model,
               surface,
               settlementState,
+              directSchemas,
               tokens: test.tokens(),
               requests: test.requests(),
               discoveryRequests: test.discoveryRequests(),

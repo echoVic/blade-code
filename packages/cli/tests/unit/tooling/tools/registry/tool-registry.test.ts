@@ -1,5 +1,6 @@
 import { getEventListeners } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PermissionMode } from '../../../../../src/config/types.js';
 import { ToolRegistry } from '../../../../../src/tools/registry/ToolRegistry.js';
 import type { ExecutionContext } from '../../../../../src/tools/types/ExecutionTypes.js';
 import { type Tool, ToolKind } from '../../../../../src/tools/types/ToolTypes.js';
@@ -170,6 +171,68 @@ describe('ToolRegistry', () => {
     }
   });
 
+  it.each([PermissionMode.DEFAULT, PermissionMode.YOLO])(
+    'exposes admitted deferred schemas without a loader in %s mode',
+    (mode) => {
+      const goal = createMockTool('UpdateGoal');
+      registry.register(goal);
+      expect(registry.getFunctionDeclarationsByMode(mode)).toEqual([
+        goal.getFunctionDeclaration(),
+      ]);
+      expect(registry.getDeferredToolsListing()).toBe('');
+      expect(registry.get('ToolSearch')).toBeUndefined();
+      expect(registry.get('Write')).toBeUndefined();
+    }
+  );
+
+  it('keeps Plan schemas read-only when ToolSearch is absent', () => {
+    const read = createMockTool('WebFetch');
+    registry.register(read);
+    registry.register(createMockTool('NotebookEdit', { kind: ToolKind.Write }));
+    expect(registry.getFunctionDeclarationsByMode(PermissionMode.PLAN)).toEqual([
+      read.getFunctionDeclaration(),
+    ]);
+  });
+
+  it('makes deferred schemas available when their loader is removed', () => {
+    const deferred = createMockTool('UpdateGoal');
+    registry.register(createMockTool('ToolSearch'));
+    registry.register(deferred);
+    expect(registry.getFunctionDeclarationsByMode().map((tool) => tool.name)).toEqual([
+      'ToolSearch',
+    ]);
+    registry.unregister('ToolSearch');
+    expect(registry.getFunctionDeclarationsByMode()).toEqual([
+      deferred.getFunctionDeclaration(),
+    ]);
+    expect(registry.getDeferredToolsListing()).toBe('');
+  });
+
+  it('exposes fresh MCP schemas after catalog replacement without a loader', () => {
+    const first = createMockTool('mcp__server__first');
+    registry.replaceMcpTools([first]);
+    expect(registry.getFunctionDeclarationsByMode()).toEqual([
+      first.getFunctionDeclaration(),
+    ]);
+    const second = createMockTool('mcp__server__second');
+    registry.replaceMcpTools([second]);
+    expect(registry.getFunctionDeclarationsByMode()).toEqual([
+      second.getFunctionDeclaration(),
+    ]);
+    expect(registry.getDeferredToolsListing()).toBe('');
+    expect(registry.get(first.name)).toBeUndefined();
+  });
+
+  it('preserves lazy loading when ToolSearch becomes available again', () => {
+    registry.register(createMockTool('UpdateGoal'));
+    registry.getFunctionDeclarationsByMode();
+    registry.register(createMockTool('ToolSearch'));
+    expect(registry.getFunctionDeclarationsByMode().map((tool) => tool.name)).toEqual([
+      'ToolSearch',
+    ]);
+    expect(registry.getDeferredToolsListing()).toContain('UpdateGoal');
+  });
+
   it('注册内置工具后应可查询、分类和打标签', () => {
     const tool = createMockTool('alpha', {
       category: 'filesystem',
@@ -249,6 +312,7 @@ describe('ToolRegistry', () => {
   });
 
   it('原子替换 MCP catalog 并保留未删除工具的 deferred 状态', () => {
+    registry.register(createMockTool('ToolSearch'));
     const stable = createMockTool('mcp__server__stable');
     const removed = createMockTool('mcp__server__removed');
     registry.replaceMcpTools([stable, removed]);
@@ -268,6 +332,7 @@ describe('ToolRegistry', () => {
     });
 
     expect(registry.getAll().map((tool) => tool.name)).toEqual([
+      'ToolSearch',
       stable.name,
       added.name,
     ]);
@@ -398,6 +463,7 @@ describe('ToolRegistry', () => {
   });
 
   it('始终暴露 worktree 生命周期工具并延迟普通扩展工具', () => {
+    registry.register(createMockTool('ToolSearch'));
     registry.register(createMockTool('EnterWorktree'));
     registry.register(createMockTool('ExitWorktree'));
     registry.register(createMockTool('OptionalExtension'));

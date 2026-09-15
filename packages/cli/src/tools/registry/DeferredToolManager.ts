@@ -104,8 +104,9 @@ export class DeferredToolManager {
    * - deferred 工具：不返回（通过系统提示单独列出名称）
    */
   filterDeclarations(allTools: Tool[], _mode?: PermissionMode): FunctionDeclaration[] {
+    const canLoadDeferred = allTools.some((tool) => tool.name === 'ToolSearch');
     return allTools
-      .filter((tool) => this.isLoaded(tool.name))
+      .filter((tool) => !canLoadDeferred || this.isLoaded(tool.name))
       .map((tool) => tool.getFunctionDeclaration());
   }
 

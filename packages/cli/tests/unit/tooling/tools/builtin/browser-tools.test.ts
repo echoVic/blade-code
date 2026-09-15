@@ -74,6 +74,7 @@ describe('native Browser tools', () => {
     expect(tools.every((tool) => tool.parallelism === 'exclusive')).toBe(true);
 
     const registry = new ToolRegistry();
+    registry.register(toolSearchTool);
     registry.registerAll(tools);
     expect(
       registry

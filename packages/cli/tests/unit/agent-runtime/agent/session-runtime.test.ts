@@ -5527,6 +5527,43 @@ describe('SessionRuntime', () => {
     expect(runtime.getTurnActivityProjection().snapshot).toBeNull();
   });
 
+  it('exposes explicitly admitted deferred schemas without widening execution filters', async () => {
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    const admitted = createNamedTestTool('UpdateGoal', ToolKind.ReadOnly);
+    vi.mocked(getBuiltinTools).mockResolvedValueOnce([
+      admitted,
+      createNamedTestTool('ToolSearch', ToolKind.ReadOnly),
+      createNamedTestTool('Write', ToolKind.Write),
+    ]);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'filtered-deferred-schema',
+      workspaceRoot: storageRoot,
+    });
+    const executor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.YOLO,
+      toolWhitelist: ['UpdateGoal', 'Write'],
+      toolBlacklist: ['ToolSearch', 'Write'],
+    });
+    try {
+      const registry = executor.getRegistry();
+      expect(registry.getFunctionDeclarationsByMode(PermissionMode.YOLO)).toEqual([
+        admitted.getFunctionDeclaration(),
+      ]);
+      expect(registry.getDeferredToolsListing()).toBe('');
+      expect(registry.get('ToolSearch')).toBeUndefined();
+      expect(registry.get('Write')).toBeUndefined();
+      await expect(executor.execute('Write', {}, {})).resolves.toMatchObject({
+        success: false,
+      });
+      await expect(executor.execute('ToolSearch', {}, {})).resolves.toMatchObject({
+        success: false,
+      });
+    } finally {
+      executor.dispose();
+      await runtime.dispose();
+    }
+  });
+
   it('keeps prompt artifact reads available through explicit tool filters', async () => {
     const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
     const { createReadPromptArtifactTool } = await import(

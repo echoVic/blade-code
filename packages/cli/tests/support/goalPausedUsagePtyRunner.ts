@@ -20,6 +20,7 @@ interface RunnerInput {
   releaseFile: string;
   secret: string;
   settlementState: 'paused' | 'blocked';
+  directSchemas: boolean;
 }
 
 async function waitFor(
@@ -60,7 +61,12 @@ async function main(): Promise<void> {
       '--resume',
       input.sessionId,
       '--allowed-tools',
-      input.settlementState === 'blocked' ? 'ToolSearch,UpdateGoal' : 'Read',
+      input.directSchemas
+        ? 'UpdateGoal'
+        : input.settlementState === 'blocked'
+          ? 'ToolSearch,UpdateGoal'
+          : 'Read',
+      ...(input.directSchemas ? ['--disallowed-tools', 'ToolSearch'] : []),
       '--no-verification-agent',
     ],
     { cwd: input.workspace, cols: 160, rows: 48, env: handshake.env }
