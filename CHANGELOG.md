@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.200] - 2026-09-15
+
+### Fixed
+- Enter coordinated shutdown on the first SIGINT when stdin or stdout is redirected, avoiding interactive double-press notices in ACP and service output. Preserve double-press exit for a fully interactive TTY and the independent Headless signal lifecycle.
+
+### Tests
+- Cover all stdin/stdout TTY combinations and real Flash/Pro SIGTERM/SIGINT shutdown and recovery across Headless, ACP, raw PTY, and Web, including TUI first-signal survival and clean ACP JSON output.
+
 ## [0.10.199] - 2026-09-15
 
 ### Fixed

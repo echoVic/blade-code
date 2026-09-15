@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.200] - 2026-09-15
+
+### 修复
+- stdin 或 stdout 重定向时，首次 SIGINT 直接协调关闭，不向 ACP 和服务输出写入交互式双击提示；完整 TTY 保留双击退出，Headless 继续使用独立信号生命周期。
+
+### 测试
+- 覆盖 stdin/stdout 的全部 TTY 组合，以及真实 Flash/Pro 在 Headless、ACP、raw PTY、Web 下的 SIGTERM/SIGINT 退出与恢复，验证 TUI 首次信号不退出和 ACP 原始 JSON 流完整性。
+
 ## [0.10.199] - 2026-09-15
 
 ### 修复
