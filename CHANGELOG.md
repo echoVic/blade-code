@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.198] - 2026-09-15
+
+### Fixed
+- Settle reported usage from the matching in-flight Goal turn after an explicit pause, preserving the paused state, reason, and recovery evidence. Reject unbound or stale settlements after edits and Goal replacement.
+- Include the host turn identity when a Goal is created during that same turn. Resuming a paused Goal whose settled usage exhausted its budget now stops at `budget_limited` without another model request.
+
+### Tests
+- Cover paused active/verifying turns, identity rejection, restart persistence, and budget boundary transitions with real stores.
+- Exercise real DeepSeek Flash/Pro through Headless, ACP, raw PTY, and production/development Chromium, plus creation-and-pause inside the initiating turn.
+
 ## [0.10.197] - 2026-09-15
 
 ### Fixed
