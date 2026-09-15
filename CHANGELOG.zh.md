@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.199] - 2026-09-15
+
+### 修复
+- 协调关闭时仅向 TTY stdout 输出终端复位序列，避免 ANSI 控制码污染重定向输出和 ACP JSON 流；保留 stdin raw mode 恢复、清理顺序与关闭预算。
+
+### 测试
+- 覆盖重定向输出下的 SIGTERM 与正常关闭、交互终端复位，以及真实 Flash/Pro 在 Headless、ACP、raw PTY、Web 的退出与恢复。
+- 对 SIGTERM 期间原始 ACP stdout 校验 JSON 格式，不再仅检查已解析通知。
+
 ## [0.10.198] - 2026-09-15
 
 ### 修复

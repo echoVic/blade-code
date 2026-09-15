@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.199] - 2026-09-15
+
+### Fixed
+- Write terminal reset sequences during coordinated shutdown only when stdout is a TTY, keeping redirected output and ACP JSON streams free of ANSI control bytes. Preserve stdin raw-mode restoration, cleanup ordering, and shutdown budgets.
+
+### Tests
+- Cover redirected SIGTERM and normal shutdown, interactive terminal restoration, and real Flash/Pro shutdown/recovery across Headless, ACP, raw PTY, and Web.
+- Validate raw ACP stdout as JSON through SIGTERM rather than checking only parsed notifications.
+
 ## [0.10.198] - 2026-09-15
 
 ### Fixed
