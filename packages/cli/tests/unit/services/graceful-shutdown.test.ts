@@ -60,6 +60,79 @@ describe('GracefulShutdown', () => {
     getGracefulShutdown().reset();
   });
 
+  it.each([
+    { stdinTTY: false, stdoutTTY: false },
+    { stdinTTY: false, stdoutTTY: true },
+    { stdinTTY: true, stdoutTTY: false },
+    { stdinTTY: true, stdoutTTY: true },
+  ])(
+    'routes SIGINT according to terminal ownership: %j',
+    async ({ stdinTTY, stdoutTTY }) => {
+      const { getGracefulShutdown } = await import(
+        '../../../src/services/GracefulShutdown.js'
+      );
+      const manager = getGracefulShutdown();
+      const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+      const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+      Object.defineProperty(process.stdin, 'isTTY', {
+        value: stdinTTY,
+        configurable: true,
+      });
+      Object.defineProperty(process.stdout, 'isTTY', {
+        value: stdoutTTY,
+        configurable: true,
+      });
+      const events = ['SIGINT', 'SIGTERM'] as const;
+      const listeners = new Map(
+        events.map((event) => [event, process.listeners(event)])
+      );
+      const exceptionListeners = process.listeners('uncaughtException');
+      const rejectionListeners = process.listeners('unhandledRejection');
+      const shutdown = vi.spyOn(manager, 'shutdown').mockResolvedValue(undefined);
+      const notice = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      vi.setSystemTime(
+        new Date(`2026-09-15T0${Number(stdinTTY) * 2 + Number(stdoutTTY)}:00:00Z`)
+      );
+      try {
+        manager.initialize();
+        const handler = process
+          .listeners('SIGINT')
+          .find((listener) => !listeners.get('SIGINT')?.includes(listener));
+        if (!handler) throw new Error('SIGINT handler was not registered');
+        handler('SIGINT');
+        if (stdinTTY && stdoutTTY) {
+          expect(shutdown).not.toHaveBeenCalled();
+          expect(notice).toHaveBeenCalled();
+          handler('SIGINT');
+        } else {
+          expect(notice).not.toHaveBeenCalled();
+        }
+        expect(shutdown).toHaveBeenCalledExactlyOnceWith('SIGINT', 0);
+      } finally {
+        for (const event of events) {
+          for (const listener of process.listeners(event)) {
+            if (!listeners.get(event)?.includes(listener))
+              process.removeListener(event, listener);
+          }
+        }
+        for (const listener of process.listeners('uncaughtException')) {
+          if (!exceptionListeners.includes(listener))
+            process.removeListener('uncaughtException', listener);
+        }
+        for (const listener of process.listeners('unhandledRejection')) {
+          if (!rejectionListeners.includes(listener))
+            process.removeListener('unhandledRejection', listener);
+        }
+        if (stdinDescriptor)
+          Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
+        else Reflect.deleteProperty(process.stdin, 'isTTY');
+        if (stdoutDescriptor)
+          Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
+        else Reflect.deleteProperty(process.stdout, 'isTTY');
+      }
+    }
+  );
+
   it.each(['SIGTERM', 'normal'] as const)(
     'keeps redirected stdout free of terminal sequences on %s',
     async (reason) => {

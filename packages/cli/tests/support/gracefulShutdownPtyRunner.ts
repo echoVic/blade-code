@@ -12,6 +12,7 @@ interface RunnerInput {
   prompt: string;
   rootPidFile: string;
   secret: string;
+  signal: 'SIGINT' | 'SIGTERM';
 }
 
 function loadInput(): RunnerInput {
@@ -152,11 +153,23 @@ async function main(): Promise<void> {
     terminal.write('\r');
     rootPid = await waitForRootPid(input.rootPidFile);
     const commandStartedAt = Date.now();
-    process.kill(terminal.pid, 'SIGTERM');
+    process.kill(terminal.pid, input.signal);
+    if (input.signal === 'SIGINT') {
+      await waitFor(
+        () => output.includes('再按一次 Ctrl+C 退出'),
+        'TUI did not preserve the first SIGINT notice',
+        2_000
+      );
+      if (exited) throw new Error('TUI exited on the first SIGINT');
+      process.kill(terminal.pid, 'SIGINT');
+    }
     await Promise.race([
       exitPromise,
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('TUI did not exit after SIGTERM')), 15_000)
+        setTimeout(
+          () => reject(new Error('TUI did not exit after shutdown signal')),
+          15_000
+        )
       ),
     ]);
     if (exitCode !== 0) throw new Error(`TUI graceful exit code was ${exitCode}`);

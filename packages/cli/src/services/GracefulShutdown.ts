@@ -128,6 +128,10 @@ class GracefulShutdownManager {
     // 处理 SIGINT（Ctrl+C 或 kill -2）
     // 在交互模式下实现双击退出逻辑，与键盘 Ctrl+C 行为一致
     process.on('SIGINT', () => {
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        void this.shutdown('SIGINT', 0);
+        return;
+      }
       const now = Date.now();
       const isDoubleClick = now - this.lastSigintTime < this.SIGINT_DOUBLE_CLICK_WINDOW;
 

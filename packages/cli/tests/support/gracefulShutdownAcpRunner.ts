@@ -12,6 +12,7 @@ interface RunnerInput {
   prompt: string;
   rootPidFile: string;
   secret: string;
+  signal: 'SIGINT' | 'SIGTERM';
 }
 
 interface RunnerEvidence {
@@ -66,7 +67,7 @@ function waitForChildExit(
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error('ACP child did not exit after SIGTERM'));
+      reject(new Error('ACP child did not exit after shutdown signal'));
     }, timeoutMs);
     const cleanup = () => {
       clearTimeout(timer);
@@ -167,7 +168,7 @@ async function run(input: RunnerInput): Promise<RunnerEvidence> {
       ),
     ]);
     const commandStartedAt = Date.now();
-    child.kill('SIGTERM');
+    child.kill(input.signal);
     const exit = await waitForChildExit(child);
     await prompt.catch(() => undefined);
     await connection.closed.catch(() => undefined);

@@ -51,6 +51,10 @@ TUI 的进程级 shutdown 会先同步调用 active command 的 abort controller
 React/Agent cleanup。这样即使终端宿主在信号后开始卸载 UI，Agent generator 仍能先提交
 terminal turn record。
 
+全局 SIGINT 处理仅在 stdin 与 stdout 都属于 TTY 时保留双击退出。任一端重定向时，
+首次 SIGINT 直接进入协调关闭，不输出交互提示；ACP 管道因此不必等待第二次信号。
+Headless 仍使用下述独立的 invocation-local signal owner。
+
 主任务运行中提问 `/btw` 时，第一次 `Esc` 只取消侧边提问；侧边面板关闭后，下一次
 `Esc` 可以停止主任务。重复取消按当前目标去重，不再把侧边请求和主轮次当成同一个
 忙碌阶段；替换侧边请求也会重新允许取消。此交互由真实 DeepSeek Flash/Pro raw PTY
@@ -126,8 +130,8 @@ ACP prompt/user-shell settle、Web closing `503`、run completion 与 Runtime di
 顺序、cleanup failure isolation、logger 顺序和 timer 清理。
 
 主运行 shutdown 真实 API 轨迹使用 DeepSeek Flash/Pro，在真实前台 Bash 活跃后发送
-生产 `SIGTERM`，验证 durable abort、恢复 turn、资源回收、延迟副作用和凭据不泄露。
-当前 release matrix 运行 Headless、真实 ACP stdio 和 production Chromium 六格；
+生产 `SIGTERM` 或 `SIGINT`，验证 durable abort、恢复 turn、资源回收、延迟副作用和凭据不泄露。
+当前 release matrix 运行两种信号 × Headless、真实 ACP stdio 和 production Chromium 十二格；
 raw PTY TUI 不计入该门禁，需另行验证，且不等同于原生桌面 Computer Use。
 
 侧边对话另有 DeepSeek Flash/Pro × 关闭面板、服务器 `SIGTERM` 四格 Chromium 验证。

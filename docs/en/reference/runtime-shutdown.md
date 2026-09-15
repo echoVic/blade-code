@@ -36,6 +36,8 @@ Side context and system-prompt preparation run concurrently. If either fails, th
 
 TUI process-level shutdown first synchronously calls the active command's abort controller, then performs React/Agent cleanup. This way, even if the terminal host begins UI unload after the signal, the Agent generator can still first submit the terminal turn record.
 
+The global SIGINT handler preserves double-press exit only when both stdin and stdout are TTYs. If either stream is redirected, the first SIGINT enters coordinated shutdown without an interactive notice, so piped ACP does not wait for a second signal. Headless retains its separate invocation-local signal owner described below.
+
 When `/btw` runs alongside a main task, the first `Esc` cancels only the side question. After the panel closes, the next `Esc` can stop the main task. Duplicate cancellation is scoped to the current target rather than the entire busy period, and replacing a side request also re-arms cancellation. Real DeepSeek Flash/Pro raw-PTY tests verify the main abort record, tool-process cleanup, and subsequent side questions; raw PTY is not desktop Computer Use.
 
 Headless continues to be controlled by the invocation-local signal owner: after receiving `SIGINT` or `SIGTERM`, it cancels the current turn, waits for output drain and Runtime disposal, then returns with interrupted status. Headless does not depend on process-level UI cleanup.
@@ -90,7 +92,7 @@ The Runtime cleanup phase uses an independent 4-second budget; after success, ha
 
 Deterministic tests cover operation admission, abort reason, idle barrier, concurrent destroy, ACP prompt/user-shell settlement, Web closing `503`, run completion and Runtime dispose order, cleanup failure isolation, logger order, and timer cleanup.
 
-The main-run shutdown trajectory uses real DeepSeek Flash/Pro, sends production `SIGTERM` while a real foreground Bash is active, and verifies durable abort, turn recovery, resource reclamation, delayed side effects, and credential absence. The current release matrix runs six cells across Headless, real ACP stdio, and production Chromium. Raw PTY TUI is excluded from that gate and requires separate verification; it is not native desktop Computer Use.
+The main-run shutdown trajectory uses real DeepSeek Flash/Pro, sends production `SIGTERM` or `SIGINT` while a real foreground Bash is active, and verifies durable abort, turn recovery, resource reclamation, delayed side effects, and credential absence. The current release matrix runs twelve cells across both signals and Headless, real ACP stdio, and production Chromium. Raw PTY TUI is excluded from that gate and requires separate verification; it is not native desktop Computer Use.
 
 Side conversations have a separate four-cell Chromium matrix: DeepSeek Flash/Pro × panel dismissal and server `SIGTERM`. Tests receive real Provider content before pausing delivery, then require cancellation within three seconds. Server shutdown must emit the normal stopped log; exit code zero alone is insufficient. A subsequent question must return the exact expected answer, with unchanged main JSONL bytes and no framework or model retries. The separate main-run activity trajectory checks continued execution after browser reload.
 

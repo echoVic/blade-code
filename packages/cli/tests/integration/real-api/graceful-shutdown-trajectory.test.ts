@@ -36,12 +36,13 @@ const surfaces = releaseBlockingSurfaces(['headless', 'acp', 'pty', 'web'] as co
 const models = isRealApiTestEnabled()
   ? resolveRequiredDeepSeekQualificationModels()
   : [];
+const signals = ['SIGTERM', 'SIGINT'] as const;
 const matrix = models.flatMap((model) =>
-  surfaces.map((surface) => ({ model, surface }))
+  surfaces.flatMap((surface) => signals.map((signal) => ({ model, surface, signal })))
 );
-if (isRealApiTestEnabled() && matrix.length !== (isReleaseMatrix() ? 6 : 8)) {
+if (isRealApiTestEnabled() && matrix.length !== (isReleaseMatrix() ? 12 : 16)) {
   throw new Error(
-    `Graceful shutdown matrix must contain ${isReleaseMatrix() ? 6 : 8} cells, got ${matrix.length}`
+    `Graceful shutdown matrix must contain ${isReleaseMatrix() ? 12 : 16} cells, got ${matrix.length}`
   );
 }
 
@@ -279,6 +280,7 @@ async function runHeadlessSurface(input: {
   modelId: string;
   fixture: ShutdownFixture;
   secret: string;
+  signal: 'SIGINT' | 'SIGTERM';
 }): Promise<SurfaceEvidence> {
   const child = spawnChild(
     process.execPath,
@@ -322,7 +324,7 @@ async function runHeadlessSurface(input: {
       }),
     ]);
     const commandStartedAt = Date.now();
-    child.kill('SIGTERM');
+    child.kill(input.signal);
     let exit: Awaited<ReturnType<typeof waitForChildExit>>;
     try {
       exit = await waitForChildExit(child);
@@ -355,6 +357,7 @@ async function runPtySurface(input: {
   sessionId: string;
   fixture: ShutdownFixture;
   secret: string;
+  signal: 'SIGINT' | 'SIGTERM';
 }): Promise<SurfaceEvidence> {
   const runner = path.resolve(
     import.meta.dirname,
@@ -370,6 +373,7 @@ async function runPtySurface(input: {
       prompt: input.fixture.prompt,
       rootPidFile: input.fixture.rootPidFile,
       secret: input.secret,
+      signal: input.signal,
     }),
     'utf8'
   ).toString('base64');
@@ -435,6 +439,7 @@ async function runAcpSurface(input: {
   storageRoot: string;
   fixture: ShutdownFixture;
   secret: string;
+  signal: 'SIGINT' | 'SIGTERM';
 }): Promise<SurfaceEvidence> {
   const runner = path.resolve(
     import.meta.dirname,
@@ -449,6 +454,7 @@ async function runAcpSurface(input: {
       prompt: input.fixture.prompt,
       rootPidFile: input.fixture.rootPidFile,
       secret: input.secret,
+      signal: input.signal,
     }),
     'utf8'
   ).toString('base64');
@@ -495,6 +501,7 @@ async function runWebSurface(input: {
   storageRoot: string;
   fixture: ShutdownFixture;
   secret: string;
+  signal: 'SIGINT' | 'SIGTERM';
 }): Promise<SurfaceEvidence> {
   const port = await reservePort();
   const child = spawnChild(
@@ -568,7 +575,7 @@ async function runWebSurface(input: {
     const rootPid = await waitForRootPid(input.fixture);
     const commandStartedAt = Date.now();
 
-    child.kill('SIGTERM');
+    child.kill(input.signal);
     const exit = await waitForChildExit(child);
     if (exit.signal || exit.code !== 0) {
       throw new Error(
@@ -647,8 +654,8 @@ describe
   .skipIf(!isRealApiTestEnabled() || process.platform === 'win32')
   .sequential('bounded coordinated graceful shutdown matrix', () => {
     it.each(matrix)(
-      '$model.model × $surface',
-      async ({ model, surface }) => {
+      '$model.model × $surface × $signal',
+      async ({ model, surface, signal }) => {
         if (!model.baseURL) {
           throw new Error(`Missing Provider base URL for ${model.model}`);
         }
@@ -695,6 +702,7 @@ describe
                   modelId: runtimeConfig.currentModelId,
                   fixture,
                   secret: model.apiKey,
+                  signal,
                 })
               : surface === 'pty'
                 ? await runPtySurface({
@@ -704,6 +712,7 @@ describe
                     sessionId,
                     fixture,
                     secret: model.apiKey,
+                    signal,
                   })
                 : surface === 'acp'
                   ? await runAcpSurface({
@@ -712,6 +721,7 @@ describe
                       storageRoot,
                       fixture,
                       secret: model.apiKey,
+                      signal,
                     })
                   : await runWebSurface({
                       workspace,
@@ -719,6 +729,7 @@ describe
                       storageRoot,
                       fixture,
                       secret: model.apiKey,
+                      signal,
                     });
           rootPid = evidence.rootPid;
 
