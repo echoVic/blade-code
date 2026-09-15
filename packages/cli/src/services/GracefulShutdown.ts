@@ -29,6 +29,8 @@ function restoreTerminal(): void {
     }
   }
 
+  if (!process.stdout.isTTY) return;
+
   // 复位常见的终端输入/键盘协议，避免 Ghostty 等终端在退出后残留增强键盘模式
   process.stdout.write('\x1B[<u');
   process.stdout.write('\x1B[>4;0m');

@@ -95,6 +95,9 @@ Web 侧边对话（`/btw`）随请求存活：关闭侧边面板或断开请求�
 同一 Session 或 BladeAgent 的并发 destroy 调用共享一个 Promise。stdio ACP connection
 自然关闭、宿主信号和进程 cleanup 最终都进入同一个 BladeAgent owner。
 
+退出时仅向真实 TTY stdout 写入键盘、光标与样式复位序列；管道或文件输出不写 ANSI
+控制码，避免污染 ACP JSON 流。stdin 的 raw mode 恢复独立保留，cleanup 顺序与预算不变。
+
 ACP `session/cancel` 也会取消等待 MCP 目录的侧边提问，返回 `stopReason="cancelled"`。
 独立 stdio 测试验证 Flash/Pro 取消后仍可继续 `/btw`，完整展示文本和主 JSONL 均按契约校验。
 

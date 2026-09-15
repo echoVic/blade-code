@@ -113,6 +113,10 @@ async function run(input: RunnerInput): Promise<RunnerEvidence> {
     child.kill('SIGKILL');
     throw new Error('ACP child stdio was unavailable');
   }
+  let stdout = '';
+  child.stdout.on('data', (chunk: Buffer | string) => {
+    stdout = `${stdout}${chunk.toString()}`.slice(-256_000);
+  });
   let stderr = '';
   child.stderr?.on('data', (chunk: Buffer | string) => {
     stderr = `${stderr}${chunk.toString()}`.slice(-16_000);
@@ -175,8 +179,14 @@ async function run(input: RunnerInput): Promise<RunnerEvidence> {
         )}`
       );
     }
+    if (stdout.includes('\u001b')) {
+      throw new Error('ACP shutdown stdout contained terminal control sequences');
+    }
+    for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
+      JSON.parse(line);
+    }
     const serializedUpdates = JSON.stringify(client.sessionUpdates);
-    if (serializedUpdates.includes(input.secret)) {
+    if ((stdout + serializedUpdates + stderr).includes(input.secret)) {
       throw new Error('ACP shutdown traffic contained provider credentials');
     }
     return {

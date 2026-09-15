@@ -67,6 +67,8 @@ Web side conversations (`/btw`) are request-owned: dismissing the panel or disco
 
 Concurrent destroy calls on the same Session or BladeAgent share a single Promise. Natural stdio ACP connection close, host signals, and process cleanup all ultimately enter the same BladeAgent owner.
 
+Shutdown writes keyboard, cursor, and style reset sequences only when stdout is a TTY. Pipes and files receive no ANSI reset bytes, preserving ACP JSON framing. Stdin raw-mode restoration remains independent, with unchanged cleanup ordering and budgets.
+
 ACP `session/cancel` also cancels a side question waiting for the MCP catalog and returns `stopReason="cancelled"`. Separate stdio tests verify that Flash/Pro can answer a subsequent `/btw`, with exact display text and unchanged main JSONL.
 
 ## Bounded Failure

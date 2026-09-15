@@ -60,6 +60,54 @@ describe('GracefulShutdown', () => {
     getGracefulShutdown().reset();
   });
 
+  it.each(['SIGTERM', 'normal'] as const)(
+    'keeps redirected stdout free of terminal sequences on %s',
+    async (reason) => {
+      const { getGracefulShutdown } = await import(
+        '../../../src/services/GracefulShutdown.js'
+      );
+      const tty = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+      Object.defineProperty(process.stdout, 'isTTY', {
+        value: false,
+        configurable: true,
+      });
+      const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+      try {
+        await getGracefulShutdown().shutdown(reason, 0);
+        expect(stdout).not.toHaveBeenCalled();
+      } finally {
+        vi.clearAllTimers();
+        if (tty) Object.defineProperty(process.stdout, 'isTTY', tty);
+        else Reflect.deleteProperty(process.stdout, 'isTTY');
+      }
+    }
+  );
+
+  it('still restores terminal protocols for interactive stdout', async () => {
+    const { getGracefulShutdown } = await import(
+      '../../../src/services/GracefulShutdown.js'
+    );
+    const tty = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+    try {
+      await getGracefulShutdown().shutdown('SIGTERM', 0);
+      expect(stdout.mock.calls.map(([chunk]) => chunk)).toEqual([
+        '\u001b[<u',
+        '\u001b[>4;0m',
+        '\u001b[?2004l',
+        '\u001b[?1004l',
+        '\u001b[?1l\u001b>',
+        '\u001b[?25h',
+        '\u001b[0m',
+      ]);
+    } finally {
+      vi.clearAllTimers();
+      if (tty) Object.defineProperty(process.stdout, 'isTTY', tty);
+      else Reflect.deleteProperty(process.stdout, 'isTTY');
+    }
+  });
+
   it('settles runtime cleanup before logger shutdown and clears the cleanup timer', async () => {
     const { getGracefulShutdown, registerCleanup } = await import(
       '../../../src/services/GracefulShutdown.js'
