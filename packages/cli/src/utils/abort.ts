@@ -22,39 +22,6 @@ export function isAbortError(error: unknown): boolean {
 }
 
 /**
- * 创建一个子 AbortController，当父 signal abort 时子也 abort（单向传播）。
- * - 父已 aborted → 子立即 abort（快速路径）
- * - 子 abort 时自动从父移除 listener，防止内存泄漏
- * - 传播 abort reason
- */
-export function createChildAbortController(parentSignal: AbortSignal): AbortController {
-  const child = new AbortController();
-
-  // 快速路径：父已 aborted
-  if (parentSignal.aborted) {
-    child.abort(parentSignal.reason);
-    return child;
-  }
-
-  const onParentAbort = () => {
-    child.abort(parentSignal.reason);
-  };
-
-  parentSignal.addEventListener('abort', onParentAbort, { once: true });
-
-  // 子 abort 时清理父上的 listener
-  child.signal.addEventListener(
-    'abort',
-    () => {
-      parentSignal.removeEventListener('abort', onParentAbort);
-    },
-    { once: true }
-  );
-
-  return child;
-}
-
-/**
  * 合并多个 AbortSignal — 任一触发则合并后的 signal 也触发。
  * 修复了旧实现中 fallback 分支丢失 reason 的问题。
  *
