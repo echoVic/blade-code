@@ -194,16 +194,16 @@ describe('Task durable subagent resume protocol', () => {
       projectRoot: workspaceA,
       servers: { typescript: { command: 'server' } },
     } as never;
-    const tool = createTaskTool(
-      subagentRegistry,
+    const tool = createTaskTool({
+      registry: subagentRegistry,
       agentResources,
       modelResources,
       lspResources,
-      () => 'high',
-      () => 'fast',
-      () => 'high',
-      () => 'explanatory'
-    );
+      getReasoningEffort: () => 'high',
+      getServiceTier: () => 'fast',
+      getResponseVerbosity: () => 'high',
+      getCommunicationStyle: () => 'explanatory',
+    });
 
     await tool
       .build({

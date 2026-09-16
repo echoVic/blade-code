@@ -41,6 +41,7 @@ import { enterPlanModeTool, exitPlanModeTool } from './plan/index.js';
 import { globTool, grepTool } from './search/index.js';
 // Shell 命令工具
 import { bashTool, killShellTool, writeStdinTool } from './shell/index.js';
+import type { SubagentDelegationDeps } from './subagentDelegationDeps.js';
 // System 工具
 import {
   askUserQuestionTool,
@@ -99,6 +100,18 @@ export async function getBuiltinTools(opts?: {
     opts?.commandRegistry ??
     CustomCommandRegistry.getInstance(resourceRoot);
 
+  // 委派给子 Agent 的 session 级依赖，Task 与 Team 工具共享同一份声明。
+  const delegationDeps: SubagentDelegationDeps = {
+    registry: subagentRegistry,
+    agentResources: opts?.agentResources,
+    modelResources: opts?.modelResources,
+    lspResources: opts?.lspResources,
+    getReasoningEffort: opts?.getReasoningEffort,
+    getServiceTier: opts?.getServiceTier,
+    getResponseVerbosity: opts?.getResponseVerbosity,
+    getCommunicationStyle: opts?.getCommunicationStyle,
+  };
+
   const builtinTools = [
     // 文件操作工具: Read, Edit, Write, ApplyPatch, NotebookEdit
     readTool,
@@ -122,16 +135,7 @@ export async function getBuiltinTools(opts?: {
     ...(opts?.browserRuntime ? createBrowserTools(opts.browserRuntime) : []),
 
     // 子代理任务: Task, TaskOutput
-    createTaskTool(
-      subagentRegistry,
-      opts?.agentResources,
-      opts?.modelResources,
-      opts?.lspResources,
-      opts?.getReasoningEffort,
-      opts?.getServiceTier,
-      opts?.getResponseVerbosity,
-      opts?.getCommunicationStyle
-    ),
+    createTaskTool(delegationDeps),
     taskOutputTool,
 
     // 会话任务列表: TaskCreate, TaskGet, TaskUpdate, TaskList
@@ -151,18 +155,7 @@ export async function getBuiltinTools(opts?: {
 
     // Agent Teams are a formal capability gated by explicit configuration.
     ...(opts?.agentTeamsEnabled
-      ? createTeamTools({
-          sessionId,
-          configDir,
-          subagentRegistry,
-          agentResources: opts?.agentResources,
-          modelResources: opts?.modelResources,
-          lspResources: opts?.lspResources,
-          getReasoningEffort: opts?.getReasoningEffort,
-          getServiceTier: opts?.getServiceTier,
-          getResponseVerbosity: opts?.getResponseVerbosity,
-          getCommunicationStyle: opts?.getCommunicationStyle,
-        })
+      ? createTeamTools({ sessionId, configDir, ...delegationDeps })
       : []),
 
     // Worktree isolation: EnterWorktree, ExitWorktree

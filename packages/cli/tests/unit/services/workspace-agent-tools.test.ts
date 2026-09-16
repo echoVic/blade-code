@@ -27,8 +27,12 @@ describe('workspace-bound agent tools', () => {
     first.register({ name: 'agent-a', description: 'Agent A only' });
     second.register({ name: 'agent-b', description: 'Agent B only' });
 
-    const firstDescription = String(createTaskTool(first).description.long);
-    const secondDescription = String(createTaskTool(second).description.long);
+    const firstDescription = String(
+      createTaskTool({ registry: first }).description.long
+    );
+    const secondDescription = String(
+      createTaskTool({ registry: second }).description.long
+    );
 
     expect(firstDescription).toContain('agent-a');
     expect(firstDescription).not.toContain('agent-b');

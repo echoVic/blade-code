@@ -1,27 +1,16 @@
-import type { SessionAgentResources } from '../../../agent/resources/WorkspaceAgentResources.js';
-import type { SessionModelResources } from '../../../agent/resources/WorkspaceModelResources.js';
-import {
-  getSubagentRegistry,
-  type SubagentRegistry,
-} from '../../../agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../agent/subagents/SubagentRegistry.js';
 import {
   MAX_TEAM_MEMBERS,
   MAX_TEAM_TASKS,
   TeamRuntime,
 } from '../../../agent/teams/TeamRuntime.js';
-import type {
-  CommunicationStyleSelection,
-  ReasoningEffortSelection,
-  ResponseVerbositySelection,
-  ServiceTierSelection,
-} from '../../../config/types.js';
 import { getBladeStorageRoot } from '../../../context/storage/pathUtils.js';
-import type { SessionLspResources } from '../../../lsp/WorkspaceLspResources.js';
 import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
+import type { SubagentDelegationDeps } from '../subagentDelegationDeps.js';
 
 const memberSchema = Type.Object({
   name: Type.String({
@@ -67,17 +56,9 @@ const taskSchema = Type.Object({
   ),
 });
 
-interface TeamToolOptions {
+interface TeamToolOptions extends SubagentDelegationDeps {
   sessionId?: string;
   configDir?: string;
-  subagentRegistry?: SubagentRegistry;
-  agentResources?: SessionAgentResources;
-  modelResources?: SessionModelResources;
-  lspResources?: SessionLspResources;
-  getReasoningEffort?: () => ReasoningEffortSelection;
-  getServiceTier?: () => ServiceTierSelection;
-  getResponseVerbosity?: () => ResponseVerbositySelection;
-  getCommunicationStyle?: () => CommunicationStyleSelection;
 }
 
 export function createTeamTools(options: TeamToolOptions = {}) {
@@ -85,7 +66,7 @@ export function createTeamTools(options: TeamToolOptions = {}) {
   const configDir = options.configDir || getBladeStorageRoot();
   const runtime = new TeamRuntime({
     configDir,
-    subagentRegistry: options.subagentRegistry ?? getSubagentRegistry(),
+    subagentRegistry: options.registry ?? getSubagentRegistry(),
     agentResources: options.agentResources,
     modelResources: options.modelResources,
     lspResources: options.lspResources,

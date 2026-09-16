@@ -465,7 +465,7 @@ describe('agent team tools', () => {
       servers: { typescript: { command: 'server' } },
     } as never;
     const teamCreateTool = getTool(configDir, 'TeamCreate', {
-      subagentRegistry,
+      registry: subagentRegistry,
       agentResources,
       modelResources,
       lspResources,

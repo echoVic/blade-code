@@ -60,6 +60,7 @@ import { createSessionId } from '../../../utils/sessionId.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
+import type { SubagentDelegationDeps } from '../subagentDelegationDeps.js';
 
 /**
  * 从错误中提取用户友好的错误信息
@@ -160,16 +161,17 @@ Usage notes:
  * - 模型从 subagent 描述中选择合适的类型
  * - 每个 subagent 有独立的系统提示和工具配置
  */
-export function createTaskTool(
-  registry: SubagentRegistry = getSubagentRegistry(),
-  agentResources?: SessionAgentResources,
-  modelResources?: SessionModelResources,
-  lspResources?: SessionLspResources,
-  getReasoningEffort?: () => ReasoningEffortSelection,
-  getServiceTier?: () => ServiceTierSelection,
-  getResponseVerbosity?: () => ResponseVerbositySelection,
-  getCommunicationStyle?: () => CommunicationStyleSelection
-) {
+export function createTaskTool(deps: SubagentDelegationDeps = {}) {
+  const {
+    registry = getSubagentRegistry(),
+    agentResources,
+    modelResources,
+    lspResources,
+    getReasoningEffort,
+    getServiceTier,
+    getResponseVerbosity,
+    getCommunicationStyle,
+  } = deps;
   return createTool({
     name: 'Task',
     displayName: 'Subagent Scheduler',
@@ -450,8 +452,8 @@ export function createTaskTool(
   });
 }
 
-/** @deprecated Use createTaskTool(registry). */
-export const taskTool = createTaskTool(subagentRegistry);
+/** @deprecated Use createTaskTool({ registry }). */
+export const taskTool = createTaskTool({ registry: subagentRegistry });
 
 interface SubagentEventBridge {
   onStarted: () => void;
