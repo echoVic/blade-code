@@ -841,11 +841,11 @@ describe('real API coding-task harness', () => {
 
   it('keeps real API product trajectories on the production retry default', () => {
     const relativeFiles = [
-      'tests/integration/real-api/acp-session-load.test.ts',
-      'tests/integration/real-api/acp-model-switch.test.ts',
+      'tests/integration/real-api/acp-session-fork-trajectory.test.ts',
+      'tests/integration/real-api/release-coding-trajectory.test.ts',
       'tests/integration/real-api/codingTaskHarness.ts',
       'tests/integration/real-api/testConfig.ts',
-      'tests/integration/real-api/tui-runtime-lifecycle.test.tsx',
+      'tests/integration/real-api/structured-output-trajectory.test.ts',
     ];
 
     for (const relativeFile of relativeFiles) {
