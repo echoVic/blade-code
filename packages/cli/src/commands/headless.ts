@@ -71,6 +71,7 @@ import {
   readCliInput,
   readOptionalCliInput,
 } from './shared/commandInput.js';
+import { resolveInputlessResumeState } from './shared/inputlessResume.js';
 import { resolveCliOutputSchema } from './shared/outputSchema.js';
 import { resolveNonInteractiveSession } from './shared/sessionContext.js';
 
@@ -1750,20 +1751,15 @@ export async function runHeadless(
           }
         : {}),
     });
-    const pendingInputOnly = inputlessResume && runtime.getPendingSteeringCount() > 0;
-    const resumedGoal =
-      inputlessResume && !pendingInputOnly ? await runtime.getGoal() : null;
-    const goalContinuationOnly =
-      resumedGoal?.status === 'active' || resumedGoal?.status === 'verifying';
-    const startupRecoveryAssessment = runtime.getTurnRecoveryAssessment?.() ?? {
-      state: 'none' as const,
-    };
-    if (
-      inputlessResume &&
-      !pendingInputOnly &&
-      !goalContinuationOnly &&
-      startupRecoveryAssessment.state === 'requires_attention'
-    ) {
+    const {
+      pendingInputOnly,
+      resumedGoal,
+      goalContinuationOnly,
+      finalRecovery,
+      recoveryAssessment: startupRecoveryAssessment,
+      recoveredFinalResponse,
+    } = await resolveInputlessResumeState(runtime, inputlessResume);
+    if (finalRecovery && startupRecoveryAssessment.state === 'requires_attention') {
       eventWriter.turnRecovery({
         kind: 'turn_recovery',
         assessment: startupRecoveryAssessment,
@@ -1773,11 +1769,7 @@ export async function runHeadless(
       );
       return await finish(2);
     }
-    const recoveredFinalResponse =
-      inputlessResume && !pendingInputOnly && !goalContinuationOnly
-        ? await runtime.getRecoveredFinalResponse()
-        : undefined;
-    if (inputlessResume && !pendingInputOnly && !goalContinuationOnly) {
+    if (finalRecovery) {
       if (!recoveredFinalResponse) {
         throw new Error('No unfinished turn or active goal to resume');
       }

@@ -12,7 +12,6 @@ import {
   CompactionService,
 } from '../../context/CompactionService.js';
 import {
-  type ContextTokenSource,
   ContextTokenTracker,
   createContextTokenRequestProfile,
   resolveProviderContextTokens,
@@ -159,6 +158,7 @@ import { applyToolDomainEffects } from './toolDomainPolicy.js';
 import type {
   LoopDependencies,
   LoopEvent,
+  SystemEvent,
   TokenUsageInfo,
   ToolCallRef,
 } from './types.js';
@@ -619,6 +619,55 @@ export interface LoopCompactionState {
   lastCompactionTurn?: number;
 }
 
+type CompactionEventState = Omit<
+  Extract<SystemEvent, { kind: 'compaction' }>,
+  'kind' | 'phase' | 'reason'
+>;
+
+interface CompactionMetricsSource {
+  preTokens?: number;
+  postTokens?: number;
+  sampleAttempts?: number;
+  inputReductions?: number;
+  messagesOmitted?: number;
+  filesOmitted?: number;
+  imagesOmitted?: number;
+  fallbackTargetTokens?: number;
+  fallbackMessagesOmitted?: number;
+  fallbackMessagesTruncated?: number;
+  failureReason?: CompactionFailureReason;
+}
+
+function compactionMetrics(result: CompactionMetricsSource) {
+  return {
+    postTokens: result.postTokens,
+    sampleAttempts: result.sampleAttempts,
+    inputReductions: result.inputReductions,
+    messagesOmitted: result.messagesOmitted,
+    filesOmitted: result.filesOmitted,
+    imagesOmitted: result.imagesOmitted,
+    fallbackTargetTokens: result.fallbackTargetTokens,
+    fallbackMessagesOmitted: result.fallbackMessagesOmitted,
+    fallbackMessagesTruncated: result.fallbackMessagesTruncated,
+    failureReason: result.failureReason,
+  };
+}
+
+function completedCompactionState(
+  result: CompactionMetricsSource,
+  strategy: NonNullable<CompactionEventState['strategy']>,
+  outcome: NonNullable<CompactionEventState['outcome']>,
+  context: Pick<CompactionEventState, 'preTokenSource' | 'estimatedPendingTokens'> = {}
+): CompactionEventState {
+  return {
+    outcome,
+    strategy,
+    preTokens: result.preTokens,
+    ...compactionMetrics(result),
+    ...context,
+  };
+}
+
 async function commitCompactionMemory(
   memoryPlan: MemoryConsolidationPlan | undefined,
   context: ChatContext,
@@ -811,20 +860,7 @@ export async function* checkAndCompactInLoop(
       : `[Loop] [轮次 ${currentTurn}] 触发循环内自动压缩`
   );
 
-  let outcome: 'completed' | 'fallback' | 'failed' = 'failed';
-  let strategy: 'llm' | 'fallback' | undefined;
-  let preTokens: number | undefined;
-  let postTokens: number | undefined;
-  let sampleAttempts: number | undefined;
-  let inputReductions: number | undefined;
-  let messagesOmitted: number | undefined;
-  let filesOmitted: number | undefined;
-  let imagesOmitted: number | undefined;
-  let fallbackTargetTokens: number | undefined;
-  let fallbackMessagesOmitted: number | undefined;
-  let fallbackMessagesTruncated: number | undefined;
-  let failureReason: CompactionFailureReason | undefined;
-  let memory: MemoryConsolidationProjection | undefined;
+  let compaction: CompactionEventState = { outcome: 'failed' };
   let failurePhase: 'compaction' | 'checkpoint' = 'compaction';
   yield { kind: 'compaction', phase: 'start', reason: 'threshold' };
   try {
@@ -853,18 +889,11 @@ export async function* checkAndCompactInLoop(
       };
     }
 
-    strategy = result.success ? 'llm' : 'fallback';
-    preTokens = result.preTokens;
-    postTokens = result.postTokens;
-    sampleAttempts = result.sampleAttempts;
-    inputReductions = result.inputReductions;
-    messagesOmitted = result.messagesOmitted;
-    filesOmitted = result.filesOmitted;
-    imagesOmitted = result.imagesOmitted;
-    fallbackTargetTokens = result.fallbackTargetTokens;
-    fallbackMessagesOmitted = result.fallbackMessagesOmitted;
-    fallbackMessagesTruncated = result.fallbackMessagesTruncated;
-    failureReason = result.failureReason;
+    const strategy = result.success ? 'llm' : 'fallback';
+    compaction = completedCompactionState(result, strategy, 'failed', {
+      preTokenSource: snapshot.tokenSource,
+      estimatedPendingTokens: snapshot.estimatedPendingTokens,
+    });
     if (result.success) {
       logger.debug(
         `[Loop] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} -> ${result.postTokens} tokens`
@@ -890,16 +919,7 @@ export async function* checkAndCompactInLoop(
         ...(snapshot.estimatedPendingTokens !== undefined
           ? { estimatedPendingTokens: snapshot.estimatedPendingTokens }
           : {}),
-        postTokens: result.postTokens,
-        sampleAttempts: result.sampleAttempts,
-        inputReductions: result.inputReductions,
-        messagesOmitted: result.messagesOmitted,
-        filesOmitted: result.filesOmitted,
-        imagesOmitted: result.imagesOmitted,
-        fallbackTargetTokens: result.fallbackTargetTokens,
-        fallbackMessagesOmitted: result.fallbackMessagesOmitted,
-        fallbackMessagesTruncated: result.fallbackMessagesTruncated,
-        failureReason: result.failureReason,
+        ...compactionMetrics(result),
         filesIncluded: result.filesIncluded,
         replacementMessages: result.compactedMessages,
       },
@@ -908,12 +928,16 @@ export async function* checkAndCompactInLoop(
       }
     );
 
-    memory = await commitCompactionMemory(result.memoryPlan, context, checkpointId);
+    compaction.memory = await commitCompactionMemory(
+      result.memoryPlan,
+      context,
+      checkpointId
+    );
+    compaction.outcome = result.success ? 'completed' : 'fallback';
     context.messages = result.compactedMessages;
     if (compactionState) {
       compactionState.lastCompactionTurn = currentTurn;
     }
-    outcome = result.success ? 'completed' : 'fallback';
     return { kind: 'compacted', postTokens: result.postTokens };
   } catch (error) {
     // AbortError（宽口径）: 返回 'none' 让控制流回到主循环的下一个 signal 检查点
@@ -936,24 +960,7 @@ export async function* checkAndCompactInLoop(
       kind: 'compaction',
       phase: 'end',
       reason: 'threshold',
-      outcome,
-      strategy,
-      preTokens,
-      ...(snapshot.tokenSource ? { preTokenSource: snapshot.tokenSource } : {}),
-      ...(snapshot.estimatedPendingTokens !== undefined
-        ? { estimatedPendingTokens: snapshot.estimatedPendingTokens }
-        : {}),
-      postTokens,
-      sampleAttempts,
-      inputReductions,
-      messagesOmitted,
-      filesOmitted,
-      imagesOmitted,
-      fallbackTargetTokens,
-      fallbackMessagesOmitted,
-      fallbackMessagesTruncated,
-      failureReason,
-      memory,
+      ...compaction,
     };
   }
 }
@@ -1874,22 +1881,7 @@ validates the object and may return a bounded corrective error.`;
 
             if (response?.continue) {
               state.writeback();
-              let compactionOutcome: 'completed' | 'fallback' | 'failed' = 'failed';
-              let compactionStrategy: 'llm' | 'fallback' | undefined;
-              let compactionPreTokens: number | undefined;
-              let compactionPreTokenSource: ContextTokenSource | undefined;
-              let compactionEstimatedPendingTokens: number | undefined;
-              let compactionPostTokens: number | undefined;
-              let compactionSampleAttempts: number | undefined;
-              let compactionInputReductions: number | undefined;
-              let compactionMessagesOmitted: number | undefined;
-              let compactionFilesOmitted: number | undefined;
-              let compactionImagesOmitted: number | undefined;
-              let compactionFallbackTargetTokens: number | undefined;
-              let compactionFallbackMessagesOmitted: number | undefined;
-              let compactionFallbackMessagesTruncated: number | undefined;
-              let compactionFailureReason: CompactionFailureReason | undefined;
-              let compactionMemory: MemoryConsolidationProjection | undefined;
+              let compaction: CompactionEventState = { outcome: 'failed' };
               yield {
                 kind: 'compaction',
                 phase: 'start',
@@ -1919,9 +1911,6 @@ validates the object and may return a bounded corrective error.`;
                   modelName: chatConfig.model,
                   requestProfile: turnLimitRequestProfile,
                 });
-                compactionPreTokenSource = turnLimitProjection.source;
-                compactionEstimatedPendingTokens =
-                  turnLimitProjection.estimatedPendingTokens;
                 const compactResult = await CompactionService.compact(
                   context.messages,
                   {
@@ -1966,20 +1955,16 @@ validates the object and may return a bounded corrective error.`;
                   ...compactResult.compactedMessages,
                   continueMessage,
                 ];
-                compactionStrategy = compactResult.success ? 'llm' : 'fallback';
-                compactionPreTokens = compactResult.preTokens;
-                compactionPostTokens = compactResult.postTokens;
-                compactionSampleAttempts = compactResult.sampleAttempts;
-                compactionInputReductions = compactResult.inputReductions;
-                compactionMessagesOmitted = compactResult.messagesOmitted;
-                compactionFilesOmitted = compactResult.filesOmitted;
-                compactionImagesOmitted = compactResult.imagesOmitted;
-                compactionFallbackTargetTokens = compactResult.fallbackTargetTokens;
-                compactionFallbackMessagesOmitted =
-                  compactResult.fallbackMessagesOmitted;
-                compactionFallbackMessagesTruncated =
-                  compactResult.fallbackMessagesTruncated;
-                compactionFailureReason = compactResult.failureReason;
+                const strategy = compactResult.success ? 'llm' : 'fallback';
+                compaction = completedCompactionState(
+                  compactResult,
+                  strategy,
+                  'failed',
+                  {
+                    preTokenSource: turnLimitProjection.source,
+                    estimatedPendingTokens: turnLimitProjection.estimatedPendingTokens,
+                  }
+                );
 
                 const checkpointId = await persistCompaction(
                   deps,
@@ -1988,7 +1973,7 @@ validates the object and may return a bounded corrective error.`;
                   {
                     trigger: 'auto',
                     reason: 'turn_limit',
-                    strategy: compactionStrategy,
+                    strategy,
                     preTokens: compactResult.preTokens,
                     preTokenSource: turnLimitProjection.source,
                     ...(turnLimitProjection.estimatedPendingTokens !== undefined
@@ -1997,22 +1982,13 @@ validates the object and may return a bounded corrective error.`;
                             turnLimitProjection.estimatedPendingTokens,
                         }
                       : {}),
-                    postTokens: compactResult.postTokens,
-                    sampleAttempts: compactResult.sampleAttempts,
-                    inputReductions: compactResult.inputReductions,
-                    messagesOmitted: compactResult.messagesOmitted,
-                    filesOmitted: compactResult.filesOmitted,
-                    imagesOmitted: compactResult.imagesOmitted,
-                    fallbackTargetTokens: compactResult.fallbackTargetTokens,
-                    fallbackMessagesOmitted: compactResult.fallbackMessagesOmitted,
-                    fallbackMessagesTruncated: compactResult.fallbackMessagesTruncated,
-                    failureReason: compactResult.failureReason,
+                    ...compactionMetrics(compactResult),
                     filesIncluded: compactResult.filesIncluded,
                     replacementMessages,
                   },
                   { required: deps.executionEngine !== undefined }
                 );
-                compactionMemory = await commitCompactionMemory(
+                compaction.memory = await commitCompactionMemory(
                   compactResult.memoryPlan,
                   context,
                   checkpointId
@@ -2020,7 +1996,7 @@ validates the object and may return a bounded corrective error.`;
                 context.messages = replacementMessages;
                 state.replaceHistory(context.messages);
                 contextTokenTracker.reset();
-                compactionOutcome = compactResult.success ? 'completed' : 'fallback';
+                compaction.outcome = compactResult.success ? 'completed' : 'fallback';
               } catch (compactError) {
                 if (compactError instanceof CompactionAbortedError) {
                   recordUsage(compactError.usage);
@@ -2040,22 +2016,7 @@ validates the object and may return a bounded corrective error.`;
                   kind: 'compaction',
                   phase: 'end',
                   reason: 'turn_limit',
-                  outcome: compactionOutcome,
-                  strategy: compactionStrategy,
-                  preTokens: compactionPreTokens,
-                  preTokenSource: compactionPreTokenSource,
-                  estimatedPendingTokens: compactionEstimatedPendingTokens,
-                  postTokens: compactionPostTokens,
-                  sampleAttempts: compactionSampleAttempts,
-                  inputReductions: compactionInputReductions,
-                  messagesOmitted: compactionMessagesOmitted,
-                  filesOmitted: compactionFilesOmitted,
-                  imagesOmitted: compactionImagesOmitted,
-                  fallbackTargetTokens: compactionFallbackTargetTokens,
-                  fallbackMessagesOmitted: compactionFallbackMessagesOmitted,
-                  fallbackMessagesTruncated: compactionFallbackMessagesTruncated,
-                  failureReason: compactionFailureReason,
-                  memory: compactionMemory,
+                  ...compaction,
                 };
               }
 
@@ -2621,20 +2582,7 @@ validates the object and may return a bounded corrective error.`;
             logger.warn('[Loop] 检测到 prompt_too_long 错误，尝试反应式压缩');
             const chatConfig = deps.chatService.getConfig();
             let recovered = false;
-            let outcome: 'completed' | 'fallback' | 'failed' = 'failed';
-            let strategy: 'llm' | 'fallback' | 'snip' | undefined;
-            let preTokens: number | undefined;
-            let postTokens: number | undefined;
-            let sampleAttempts: number | undefined;
-            let inputReductions: number | undefined;
-            let messagesOmitted: number | undefined;
-            let filesOmitted: number | undefined;
-            let imagesOmitted: number | undefined;
-            let fallbackTargetTokens: number | undefined;
-            let fallbackMessagesOmitted: number | undefined;
-            let fallbackMessagesTruncated: number | undefined;
-            let failureReason: CompactionFailureReason | undefined;
-            let memory: MemoryConsolidationProjection | undefined;
+            let compaction: CompactionEventState = { outcome: 'failed' };
             yield {
               kind: 'compaction',
               phase: 'start',
@@ -2659,18 +2607,13 @@ validates the object and may return a bounded corrective error.`;
                   sessionId: context.sessionId,
                 }
               );
-              strategy = result.strategy;
-              preTokens = result.preTokens;
-              postTokens = result.postTokens;
-              sampleAttempts = result.sampleAttempts;
-              inputReductions = result.inputReductions;
-              messagesOmitted = result.messagesOmitted;
-              filesOmitted = result.filesOmitted;
-              imagesOmitted = result.imagesOmitted;
-              fallbackTargetTokens = result.fallbackTargetTokens;
-              fallbackMessagesOmitted = result.fallbackMessagesOmitted;
-              fallbackMessagesTruncated = result.fallbackMessagesTruncated;
-              failureReason = result.failureReason;
+              if (result.strategy) {
+                compaction = completedCompactionState(
+                  result,
+                  result.strategy,
+                  'failed'
+                );
+              }
               if (result.usage) {
                 recordUsage(result.usage);
                 yield {
@@ -2697,22 +2640,13 @@ validates the object and may return a bounded corrective error.`;
                     reason: 'context_limit',
                     strategy: result.strategy,
                     preTokens: result.preTokens,
-                    postTokens: result.postTokens,
-                    sampleAttempts: result.sampleAttempts,
-                    inputReductions: result.inputReductions,
-                    messagesOmitted: result.messagesOmitted,
-                    filesOmitted: result.filesOmitted,
-                    imagesOmitted: result.imagesOmitted,
-                    fallbackTargetTokens: result.fallbackTargetTokens,
-                    fallbackMessagesOmitted: result.fallbackMessagesOmitted,
-                    fallbackMessagesTruncated: result.fallbackMessagesTruncated,
-                    failureReason: result.failureReason,
+                    ...compactionMetrics(result),
                     filesIncluded: result.filesIncluded,
                     replacementMessages: result.messages,
                   },
                   { required: deps.executionEngine !== undefined }
                 );
-                memory = await commitCompactionMemory(
+                compaction.memory = await commitCompactionMemory(
                   result.memoryPlan,
                   context,
                   checkpointId
@@ -2722,7 +2656,8 @@ validates the object and may return a bounded corrective error.`;
                 state.replaceHistory(context.messages);
                 contextTokenTracker.reset();
                 requiredToolName = replayRequiredToolName;
-                outcome = result.strategy === 'llm' ? 'completed' : 'fallback';
+                compaction.outcome =
+                  result.strategy === 'llm' ? 'completed' : 'fallback';
                 recovered = true;
                 logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
               }
@@ -2748,20 +2683,7 @@ validates the object and may return a bounded corrective error.`;
                 kind: 'compaction',
                 phase: 'end',
                 reason: 'context_limit',
-                outcome,
-                strategy,
-                preTokens,
-                postTokens,
-                sampleAttempts,
-                inputReductions,
-                messagesOmitted,
-                filesOmitted,
-                imagesOmitted,
-                fallbackTargetTokens,
-                fallbackMessagesOmitted,
-                fallbackMessagesTruncated,
-                failureReason,
-                memory,
+                ...compaction,
               };
             }
             if (recovered) {
