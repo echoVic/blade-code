@@ -2792,7 +2792,7 @@ describe('ACP remote Write/Edit builtin tools', () => {
     ]);
   });
 
-  it.each([
+  const remoteMutationOutcomeCases = [
     {
       label: 'acknowledged success',
       configure: (_client: ControlledFileClient) => {
@@ -2929,43 +2929,48 @@ describe('ACP remote Write/Edit builtin tools', () => {
         sideEffectsUncertain: true,
       },
     },
-  ])('remote Write outcome matrix: $label', async ({ configure, expected }) => {
-    const root = await createTempRoot('blade-acp-remote-write-matrix-');
-    const filePath = path.join(root, 'matrix.txt');
-    const client = new ControlledFileClient();
-    const sessionId = `remote-write-matrix-${Math.random().toString(16).slice(2)}`;
-    initializeRemoteSession(client, sessionId, root, {
-      readTextFile: true,
-      writeTextFile: true,
-    });
+  ] as const;
 
-    await expectRemoteReadSuccess(client, filePath, sessionId, 'alpha\n');
-    configure(client);
+  it.each(remoteMutationOutcomeCases)(
+    'remote Write outcome matrix: $label',
+    async ({ configure, expected }) => {
+      const root = await createTempRoot('blade-acp-remote-write-matrix-');
+      const filePath = path.join(root, 'matrix.txt');
+      const client = new ControlledFileClient();
+      const sessionId = `remote-write-matrix-${Math.random().toString(16).slice(2)}`;
+      initializeRemoteSession(client, sessionId, root, {
+        readTextFile: true,
+        writeTextFile: true,
+      });
 
-    const result = await executeWrite(filePath, 'beta\n', sessionId);
+      await expectRemoteReadSuccess(client, filePath, sessionId, 'alpha\n');
+      configure(client);
 
-    expect(result.success).toBe(expected.success);
-    expect(result.metadata?.write_acknowledged).toBe(expected.write_acknowledged);
-    expect(result.metadata?.write_verified).toBe(expected.write_verified);
-    expect(result.metadata?.sideEffectsUncertain).toBe(expected.sideEffectsUncertain);
-    expect(client.requests.map((request) => request.kind)).toEqual([
-      'read',
-      'read',
-      'write',
-      'read',
-    ]);
-    const service = getAcpFileSystemService(sessionId);
-    if (!(service instanceof AcpFileSystemService)) {
-      throw new Error('expected ACP remote filesystem service');
+      const result = await executeWrite(filePath, 'beta\n', sessionId);
+
+      expect(result.success).toBe(expected.success);
+      expect(result.metadata?.write_acknowledged).toBe(expected.write_acknowledged);
+      expect(result.metadata?.write_verified).toBe(expected.write_verified);
+      expect(result.metadata?.sideEffectsUncertain).toBe(expected.sideEffectsUncertain);
+      expect(client.requests.map((request) => request.kind)).toEqual([
+        'read',
+        'read',
+        'write',
+        'read',
+      ]);
+      const service = getAcpFileSystemService(sessionId);
+      if (!(service instanceof AcpFileSystemService)) {
+        throw new Error('expected ACP remote filesystem service');
+      }
+      if (expected.success) {
+        expect(service.getRemoteAccessRecord(filePath)?.lastOperation).toBe('write');
+        expect(service.checkRemoteAccess(filePath, 'beta\n')).toBe('current');
+      } else {
+        expect(service.checkRemoteAccess(filePath, 'alpha\n')).toBe('current');
+        expect(service.checkRemoteAccess(filePath, 'beta\n')).not.toBe('current');
+      }
     }
-    if (expected.success) {
-      expect(service.getRemoteAccessRecord(filePath)?.lastOperation).toBe('write');
-      expect(service.checkRemoteAccess(filePath, 'beta\n')).toBe('current');
-    } else {
-      expect(service.checkRemoteAccess(filePath, 'alpha\n')).toBe('current');
-      expect(service.checkRemoteAccess(filePath, 'beta\n')).not.toBe('current');
-    }
-  });
+  );
 
   it('remote Write classifies new file still missing after a thrown write as definite failure', async () => {
     const root = await createTempRoot('blade-acp-remote-write-new-not-found-');
@@ -3065,178 +3070,46 @@ describe('ACP remote Write/Edit builtin tools', () => {
     }
   });
 
-  it.each([
-    {
-      label: 'acknowledged success',
-      configure: (_client: ControlledFileClient) => {
-        // no-op
-      },
-      expected: {
-        success: true,
-        write_acknowledged: true,
-        write_verified: true,
-        sideEffectsUncertain: false,
-      },
-    },
-    {
-      label: 'ack lost but readback intended',
-      configure: (client: ControlledFileClient) => {
-        client.enqueueWriteBehavior({
-          kind: 'apply-and-throw',
-          error: new Error('ack lost'),
-        });
-      },
-      expected: {
-        success: true,
-        write_acknowledged: false,
-        write_verified: true,
-        sideEffectsUncertain: false,
-      },
-    },
-    {
-      label: 'acknowledged old content readback',
-      configure: (client: ControlledFileClient) => {
-        client.enqueueWriteBehavior({ kind: 'ack-without-apply' });
-      },
-      expected: {
-        success: false,
-        write_acknowledged: true,
-        write_verified: false,
-        sideEffectsUncertain: false,
-      },
-    },
-    {
-      label: 'acknowledged third content readback',
-      configure: (client: ControlledFileClient) => {
-        client.enqueueWriteBehavior({
-          kind: 'ack-with-replacement',
-          content: 'alpha third\n',
-        });
-      },
-      expected: {
-        success: false,
-        write_acknowledged: true,
-        write_verified: false,
-        sideEffectsUncertain: true,
-      },
-    },
-    {
-      label: 'old content after thrown write',
-      configure: (client: ControlledFileClient) => {
-        client.enqueueWriteBehavior({
-          kind: 'leave-old-and-throw',
-          error: new Error('write rejected'),
-        });
-      },
-      expected: {
-        success: false,
-        write_acknowledged: false,
-        write_verified: false,
-        sideEffectsUncertain: false,
-      },
-    },
-    {
-      label: 'third content after thrown write',
-      configure: (client: ControlledFileClient) => {
-        client.enqueueWriteBehavior({
-          kind: 'replace-and-throw',
-          content: 'alpha third\n',
-          error: new Error('write ambiguous'),
-        });
-      },
-      expected: {
-        success: false,
-        write_acknowledged: false,
-        write_verified: false,
-        sideEffectsUncertain: true,
-      },
-    },
-    {
-      label: 'readback disconnect error',
-      configure: (client: ControlledFileClient) => {
-        client.enqueueReadErrorAfter(
-          1,
-          new RequestError(-32022, 'Network disconnected')
+  it.each(remoteMutationOutcomeCases)(
+    'remote Edit outcome matrix: $label',
+    async ({ configure, expected }) => {
+      const root = await createTempRoot('blade-acp-remote-edit-matrix-');
+      const filePath = path.join(root, 'matrix.txt');
+      const client = new ControlledFileClient();
+      const sessionId = `remote-edit-matrix-${Math.random().toString(16).slice(2)}`;
+      initializeRemoteSession(client, sessionId, root, {
+        readTextFile: true,
+        writeTextFile: true,
+      });
+
+      await expectRemoteReadSuccess(client, filePath, sessionId, 'alpha beta\n');
+      configure(client);
+
+      const result = await executeEdit(filePath, 'beta', 'gamma', sessionId);
+
+      expect(result.success).toBe(expected.success);
+      expect(result.metadata?.write_acknowledged).toBe(expected.write_acknowledged);
+      expect(result.metadata?.write_verified).toBe(expected.write_verified);
+      expect(result.metadata?.sideEffectsUncertain).toBe(expected.sideEffectsUncertain);
+      expect(client.requests.map((request) => request.kind)).toEqual([
+        'read',
+        'read',
+        'write',
+        'read',
+      ]);
+      const service = getAcpFileSystemService(sessionId);
+      if (!(service instanceof AcpFileSystemService)) {
+        throw new Error('expected ACP remote filesystem service');
+      }
+      if (expected.success) {
+        expect(service.getRemoteAccessRecord(filePath)?.lastOperation).toBe('edit');
+        expect(service.checkRemoteAccess(filePath, 'alpha gamma\n')).toBe('current');
+      } else {
+        expect(service.checkRemoteAccess(filePath, 'alpha beta\n')).toBe('current');
+        expect(service.checkRemoteAccess(filePath, 'alpha gamma\n')).not.toBe(
+          'current'
         );
-      },
-      expected: {
-        success: false,
-        write_acknowledged: true,
-        write_verified: false,
-        sideEffectsUncertain: true,
-      },
-    },
-    {
-      label: 'readback permission error',
-      configure: (client: ControlledFileClient) => {
-        client.enqueueReadErrorAfter(1, new RequestError(-32020, 'Permission denied'));
-      },
-      expected: {
-        success: false,
-        write_acknowledged: true,
-        write_verified: false,
-        sideEffectsUncertain: true,
-      },
-    },
-    {
-      label: 'readback timeout error',
-      configure: (client: ControlledFileClient) => {
-        client.enqueueReadErrorAfter(1, new RequestError(-32021, 'Request timed out'));
-      },
-      expected: {
-        success: false,
-        write_acknowledged: true,
-        write_verified: false,
-        sideEffectsUncertain: true,
-      },
-    },
-    {
-      label: 'readback unknown error',
-      configure: (client: ControlledFileClient) => {
-        client.enqueueReadErrorAfter(1, new Error('Unexpected decode failure'));
-      },
-      expected: {
-        success: false,
-        write_acknowledged: true,
-        write_verified: false,
-        sideEffectsUncertain: true,
-      },
-    },
-  ])('remote Edit outcome matrix: $label', async ({ configure, expected }) => {
-    const root = await createTempRoot('blade-acp-remote-edit-matrix-');
-    const filePath = path.join(root, 'matrix.txt');
-    const client = new ControlledFileClient();
-    const sessionId = `remote-edit-matrix-${Math.random().toString(16).slice(2)}`;
-    initializeRemoteSession(client, sessionId, root, {
-      readTextFile: true,
-      writeTextFile: true,
-    });
-
-    await expectRemoteReadSuccess(client, filePath, sessionId, 'alpha beta\n');
-    configure(client);
-
-    const result = await executeEdit(filePath, 'beta', 'gamma', sessionId);
-
-    expect(result.success).toBe(expected.success);
-    expect(result.metadata?.write_acknowledged).toBe(expected.write_acknowledged);
-    expect(result.metadata?.write_verified).toBe(expected.write_verified);
-    expect(result.metadata?.sideEffectsUncertain).toBe(expected.sideEffectsUncertain);
-    expect(client.requests.map((request) => request.kind)).toEqual([
-      'read',
-      'read',
-      'write',
-      'read',
-    ]);
-    const service = getAcpFileSystemService(sessionId);
-    if (!(service instanceof AcpFileSystemService)) {
-      throw new Error('expected ACP remote filesystem service');
+      }
     }
-    if (expected.success) {
-      expect(service.getRemoteAccessRecord(filePath)?.lastOperation).toBe('edit');
-      expect(service.checkRemoteAccess(filePath, 'alpha gamma\n')).toBe('current');
-    } else {
-      expect(service.checkRemoteAccess(filePath, 'alpha beta\n')).toBe('current');
-      expect(service.checkRemoteAccess(filePath, 'alpha gamma\n')).not.toBe('current');
-    }
-  });
+  );
 });
