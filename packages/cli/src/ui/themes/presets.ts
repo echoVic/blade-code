@@ -3,6 +3,48 @@
  */
 import type { Theme } from './types.js';
 
+const spacing: Theme['spacing'] = {
+  xs: 0.25,
+  sm: 0.5,
+  md: 1,
+  lg: 1.5,
+  xl: 2,
+};
+
+const typography: Theme['typography'] = {
+  fontSize: {
+    xs: 0.75,
+    sm: 0.875,
+    base: 1,
+    lg: 1.125,
+    xl: 1.25,
+    '2xl': 1.5,
+    '3xl': 1.875,
+  },
+  fontWeight: {
+    light: 300,
+    normal: 400,
+    medium: 500,
+    semibold: 600,
+    bold: 700,
+  },
+};
+
+const borderRadius: Theme['borderRadius'] = {
+  sm: 0.125,
+  base: 0.25,
+  lg: 0.5,
+  xl: 0.75,
+};
+
+function shadows(rgb: string): Theme['boxShadow'] {
+  return {
+    sm: `0 1px 2px 0 rgba(${rgb}, 0.2)`,
+    base: `0 1px 3px 0 rgba(${rgb}, 0.3), 0 1px 2px 0 rgba(${rgb}, 0.2)`,
+    lg: `0 10px 15px -3px rgba(${rgb}, 0.3), 0 4px 6px -2px rgba(${rgb}, 0.2)`,
+  };
+}
+
 // Ayu Dark 主题
 const ayuDark: Theme = {
   name: 'ayu-dark',
@@ -47,42 +89,10 @@ const ayuDark: Theme = {
       default: '#e6e1cf',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(0, 0, 0, 0.2)',
-    base: '0 1px 3px 0 rgba(0, 0, 0, 0.3), 0 1px 2px 0 rgba(0, 0, 0, 0.2)',
-    lg: '0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('0, 0, 0'),
 };
 
 // Dracula 主题
@@ -129,42 +139,10 @@ const dracula: Theme = {
       default: '#f8f8f2',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(40, 42, 54, 0.2)',
-    base: '0 1px 3px 0 rgba(40, 42, 54, 0.3), 0 1px 2px 0 rgba(40, 42, 54, 0.2)',
-    lg: '0 10px 15px -3px rgba(40, 42, 54, 0.3), 0 4px 6px -2px rgba(40, 42, 54, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('40, 42, 54'),
 };
 
 // Monokai 主题
@@ -211,42 +189,10 @@ const monokai: Theme = {
       default: '#f8f8f2',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(39, 40, 34, 0.2)',
-    base: '0 1px 3px 0 rgba(39, 40, 34, 0.3), 0 1px 2px 0 rgba(39, 40, 34, 0.2)',
-    lg: '0 10px 15px -3px rgba(39, 40, 34, 0.3), 0 4px 6px -2px rgba(39, 40, 34, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('39, 40, 34'),
 };
 
 // Nord 主题
@@ -293,42 +239,10 @@ const nord: Theme = {
       default: '#eceff4',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(46, 52, 64, 0.2)',
-    base: '0 1px 3px 0 rgba(46, 52, 64, 0.3), 0 1px 2px 0 rgba(46, 52, 64, 0.2)',
-    lg: '0 10px 15px -3px rgba(46, 52, 64, 0.3), 0 4px 6px -2px rgba(46, 52, 64, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('46, 52, 64'),
 };
 
 const solarizedLight: Theme = {
@@ -374,42 +288,10 @@ const solarizedLight: Theme = {
       default: '#657b83',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(253, 246, 227, 0.2)',
-    base: '0 1px 3px 0 rgba(253, 246, 227, 0.3), 0 1px 2px 0 rgba(253, 246, 227, 0.2)',
-    lg: '0 10px 15px -3px rgba(253, 246, 227, 0.3), 0 4px 6px -2px rgba(253, 246, 227, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('253, 246, 227'),
 };
 
 const solarizedDark: Theme = {
@@ -455,42 +337,10 @@ const solarizedDark: Theme = {
       default: '#839496',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(0, 43, 54, 0.2)',
-    base: '0 1px 3px 0 rgba(0, 43, 54, 0.3), 0 1px 2px 0 rgba(0, 43, 54, 0.2)',
-    lg: '0 10px 15px -3px rgba(0, 43, 54, 0.3), 0 4px 6px -2px rgba(0, 43, 54, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('0, 43, 54'),
 };
 
 // Tokyo Night 主题
@@ -537,42 +387,10 @@ const tokyoNight: Theme = {
       default: '#a9b1d6',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(26, 27, 38, 0.2)',
-    base: '0 1px 3px 0 rgba(26, 27, 38, 0.3), 0 1px 2px 0 rgba(26, 27, 38, 0.2)',
-    lg: '0 10px 15px -3px rgba(26, 27, 38, 0.3), 0 4px 6px -2px rgba(26, 27, 38, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('26, 27, 38'),
 };
 
 // GitHub 主题
@@ -619,42 +437,10 @@ const github: Theme = {
       default: '#24292f',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(255, 255, 255, 0.2)',
-    base: '0 1px 3px 0 rgba(255, 255, 255, 0.3), 0 1px 2px 0 rgba(255, 255, 255, 0.2)',
-    lg: '0 10px 15px -3px rgba(255, 255, 255, 0.3), 0 4px 6px -2px rgba(255, 255, 255, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('255, 255, 255'),
 };
 
 // Gruvbox 主题
@@ -701,42 +487,10 @@ const gruvbox: Theme = {
       default: '#ebdbb2',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(40, 40, 40, 0.2)',
-    base: '0 1px 3px 0 rgba(40, 40, 40, 0.3), 0 1px 2px 0 rgba(40, 40, 40, 0.2)',
-    lg: '0 10px 15px -3px rgba(40, 40, 40, 0.3), 0 4px 6px -2px rgba(40, 40, 40, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('40, 40, 40'),
 };
 
 const oneDark: Theme = {
@@ -782,42 +536,10 @@ const oneDark: Theme = {
       default: '#abb2bf',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(40, 44, 52, 0.2)',
-    base: '0 1px 3px 0 rgba(40, 44, 52, 0.3), 0 1px 2px 0 rgba(40, 44, 52, 0.2)',
-    lg: '0 10px 15px -3px rgba(40, 44, 52, 0.3), 0 4px 6px -2px rgba(40, 44, 52, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('40, 44, 52'),
 };
 
 const catppuccin: Theme = {
@@ -863,42 +585,10 @@ const catppuccin: Theme = {
       default: '#cdd6f4',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(30, 30, 46, 0.2)',
-    base: '0 1px 3px 0 rgba(30, 30, 46, 0.3), 0 1px 2px 0 rgba(30, 30, 46, 0.2)',
-    lg: '0 10px 15px -3px rgba(30, 30, 46, 0.3), 0 4px 6px -2px rgba(30, 30, 46, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('30, 30, 46'),
 };
 
 // Rose Pine 主题
@@ -945,42 +635,10 @@ const rosePine: Theme = {
       default: '#e0def4',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(25, 23, 36, 0.2)',
-    base: '0 1px 3px 0 rgba(25, 23, 36, 0.3), 0 1px 2px 0 rgba(25, 23, 36, 0.2)',
-    lg: '0 10px 15px -3px rgba(25, 23, 36, 0.3), 0 4px 6px -2px rgba(25, 23, 36, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('25, 23, 36'),
 };
 
 const kanagawa: Theme = {
@@ -1026,42 +684,10 @@ const kanagawa: Theme = {
       default: '#dcd7ba',
     },
   },
-  spacing: {
-    xs: 0.25,
-    sm: 0.5,
-    md: 1,
-    lg: 1.5,
-    xl: 2,
-  },
-  typography: {
-    fontSize: {
-      xs: 0.75,
-      sm: 0.875,
-      base: 1,
-      lg: 1.125,
-      xl: 1.25,
-      '2xl': 1.5,
-      '3xl': 1.875,
-    },
-    fontWeight: {
-      light: 300,
-      normal: 400,
-      medium: 500,
-      semibold: 600,
-      bold: 700,
-    },
-  },
-  borderRadius: {
-    sm: 0.125,
-    base: 0.25,
-    lg: 0.5,
-    xl: 0.75,
-  },
-  boxShadow: {
-    sm: '0 1px 2px 0 rgba(31, 31, 40, 0.2)',
-    base: '0 1px 3px 0 rgba(31, 31, 40, 0.3), 0 1px 2px 0 rgba(31, 31, 40, 0.2)',
-    lg: '0 10px 15px -3px rgba(31, 31, 40, 0.3), 0 4px 6px -2px rgba(31, 31, 40, 0.2)',
-  },
+  spacing,
+  typography,
+  borderRadius,
+  boxShadow: shadows('31, 31, 40'),
 };
 
 interface ThemeItem {
