@@ -3,93 +3,93 @@
  * 负责加载和恢复历史会话
  */
 
+import { nanoid } from 'nanoid';
 import type { BigIntStats } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
-import { nanoid } from 'nanoid';
 import {
-  type AcpRemoteStateScope,
-  assertAcpRemoteSessionTranscriptIdentity,
-  assertAcpRemoteStateFile,
-  assertAcpRemoteStateFileHandle,
-  deriveAcpRemoteHostStateRoot,
-  ensureAcpRemoteHostStateRoot,
-  listValidatedAcpRemoteStateScopes,
-  parseAcpRemoteWorkspaceDescriptor,
-  withValidatedAcpRemoteStateScope,
+    type AcpRemoteStateScope,
+    assertAcpRemoteSessionTranscriptIdentity,
+    assertAcpRemoteStateFile,
+    assertAcpRemoteStateFileHandle,
+    deriveAcpRemoteHostStateRoot,
+    ensureAcpRemoteHostStateRoot,
+    listValidatedAcpRemoteStateScopes,
+    parseAcpRemoteWorkspaceDescriptor,
+    withValidatedAcpRemoteStateScope,
 } from '../acp/AcpRemoteWorkspace.js';
 import { getOrCreateAcpRemoteWorkspaceReferenceInScope } from '../acp/AcpRemoteWorkspaceReference.js';
 import { SessionInUseError, SessionLease } from '../agent/runtime/SessionLease.js';
 import {
-  collectUserPromptArtifactIds,
-  UserPromptArtifactStore,
+    collectUserPromptArtifactIds,
+    UserPromptArtifactStore,
 } from '../agent/runtime/UserPromptArtifactStore.js';
 import {
-  MAX_INLINE_ATTACHMENT_BYTES,
-  MAX_INLINE_ATTACHMENT_COUNT,
+    MAX_INLINE_ATTACHMENT_BYTES,
+    MAX_INLINE_ATTACHMENT_COUNT,
 } from '../api/attachmentLimits.js';
 import { removeBrowserSessionArtifacts } from '../browser/BrowserArtifactStore.js';
 import type {
-  CommunicationStyleSelection,
-  ReasoningEffortSelection,
-  ResponseVerbositySelection,
-  ServiceTierSelection,
+    CommunicationStyleSelection,
+    ReasoningEffortSelection,
+    ResponseVerbositySelection,
+    ServiceTierSelection,
 } from '../config/types.js';
 import { parseCompactionReplacementMessages } from '../context/compactionCheckpoint.js';
 import {
-  findPendingSessionInteraction,
-  toPendingInteraction,
+    findPendingSessionInteraction,
+    toPendingInteraction,
 } from '../context/interactions.js';
 import {
-  codeReviewMessageMetadata,
-  projectSessionReviews,
-  renderCodeReview,
-  renderReviewStatus,
+    codeReviewMessageMetadata,
+    projectSessionReviews,
+    renderCodeReview,
+    renderReviewStatus,
 } from '../context/reviews.js';
 import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
-  assertValidSessionId,
-  detectGitBranch,
-  getAcpRemoteSessionFilePath,
-  getBladeStorageRoot,
-  getProjectStoragePath,
-  getSessionFilePath,
-  getSessionGoalFilePath,
-  isValidSessionId,
-  normalizeLocalWorkspacePath,
-  unescapeProjectPath,
+    assertValidSessionId,
+    detectGitBranch,
+    getAcpRemoteSessionFilePath,
+    getBladeStorageRoot,
+    getProjectStoragePath,
+    getSessionFilePath,
+    getSessionGoalFilePath,
+    isValidSessionId,
+    normalizeLocalWorkspacePath,
+    unescapeProjectPath,
 } from '../context/storage/pathUtils.js';
 import {
-  getProjectionDb,
-  type MetadataDeriver,
-  projectSessionSurfaceSummaryFields,
-  removeSessionFromProjection,
-  syncAcpRemoteScope,
-  syncAll,
-  syncAllAcpRemoteScopes,
+    getProjectionDb,
+    type MetadataDeriver,
+    projectSessionSurfaceSummaryFields,
+    removeSessionFromProjection,
+    syncAcpRemoteScope,
+    syncAll,
+    syncAllAcpRemoteScopes,
 } from '../context/storage/sqlite/projection.js';
-import {
-  findCurrentTokenBudgetHandoff,
-  projectTokenBudgetHandoffEvent,
-} from '../context/TokenBudgetHandoff.js';
 import { isSessionTaskFailure, toTaskFailure } from '../context/taskFailure.js';
+import {
+    findCurrentTokenBudgetHandoff,
+    projectTokenBudgetHandoffEvent,
+} from '../context/TokenBudgetHandoff.js';
 import type {
-  AcpRemoteWorkspaceDescriptorV1,
-  SessionEvent,
-  SessionPendingInteraction,
-  SessionPermissionMode,
-  SessionReviewTargetInfo,
-  SessionRewindMode,
-  SessionTaskDelivery,
-  SessionTaskDiffStat,
-  SessionTaskDispatch,
-  SessionTaskFailure,
-  SessionTaskIsolation,
-  SessionTaskKind,
-  SessionTaskPriority,
-  SessionTaskRetryRef,
-  SessionTaskStatus,
-  SessionTaskWorktree,
+    AcpRemoteWorkspaceDescriptorV1,
+    SessionEvent,
+    SessionPendingInteraction,
+    SessionPermissionMode,
+    SessionReviewTargetInfo,
+    SessionRewindMode,
+    SessionTaskDelivery,
+    SessionTaskDiffStat,
+    SessionTaskDispatch,
+    SessionTaskFailure,
+    SessionTaskIsolation,
+    SessionTaskKind,
+    SessionTaskPriority,
+    SessionTaskRetryRef,
+    SessionTaskStatus,
+    SessionTaskWorktree,
 } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonObject, JsonValue, SessionMessage } from '../store/types.js';
@@ -104,40 +104,40 @@ import { isReasoningEffortSelection } from './pi/reasoningEffort.js';
 import { isResponseVerbositySelection } from './pi/responseVerbosity.js';
 import { isServiceTierSelection } from './pi/serviceTier.js';
 import {
-  renderSessionMarkdown,
-  type SessionMarkdownExport,
-  type SessionMarkdownExportOptions,
-} from './SessionMarkdownExporter.js';
-import { createStructuredOutputContract } from './StructuredOutputService.js';
-import {
-  compareRemoteSessionCatalogItems,
-  compareSessionCatalogItems,
-  type NormalizedRemoteSessionListOptions,
-  type NormalizedSessionListOptions,
-  type NormalizedSessionTaskFilters,
-  normalizeRemoteSessionListOptions,
-  normalizeSessionListOptions,
-  normalizeSessionTaskFilters,
-  paginateRemoteSessionCatalog,
-  paginateSessionCatalog,
-  type RemoteSessionCatalogItem,
-  type RemoteSessionListOptions,
-  type RemoteSessionScanOptions,
-  resolveRemoteSessionCursorBoundary,
-  resolveSessionCursorBoundary,
-  type SessionListOptions,
-  type SessionScanOptions,
-  sessionCatalogSortKey,
+    compareRemoteSessionCatalogItems,
+    compareSessionCatalogItems,
+    type NormalizedRemoteSessionListOptions,
+    type NormalizedSessionListOptions,
+    type NormalizedSessionTaskFilters,
+    normalizeRemoteSessionListOptions,
+    normalizeSessionListOptions,
+    normalizeSessionTaskFilters,
+    paginateRemoteSessionCatalog,
+    paginateSessionCatalog,
+    type RemoteSessionCatalogItem,
+    type RemoteSessionListOptions,
+    type RemoteSessionScanOptions,
+    resolveRemoteSessionCursorBoundary,
+    resolveSessionCursorBoundary,
+    sessionCatalogSortKey,
+    type SessionListOptions,
+    type SessionScanOptions,
 } from './sessionCatalog.js';
 import {
-  listSessionRewindCheckpoints as listProjectedRewindCheckpoints,
-  materializeSessionEvents,
-  type SessionRewindCheckpoint as ProjectedRewindCheckpoint,
-  planSessionRewind,
-} from './sessionRewind.js';
+    renderSessionMarkdown,
+    type SessionMarkdownExport,
+    type SessionMarkdownExportOptions,
+} from './SessionMarkdownExporter.js';
 import {
-  renderUserShellCommandForDisplay,
-  userShellCommandRecordFromMetadata,
+    listSessionRewindCheckpoints as listProjectedRewindCheckpoints,
+    materializeSessionEvents,
+    planSessionRewind,
+    type SessionRewindCheckpoint as ProjectedRewindCheckpoint,
+} from './sessionRewind.js';
+import { createStructuredOutputContract } from './StructuredOutputService.js';
+import {
+    renderUserShellCommandForDisplay,
+    userShellCommandRecordFromMetadata,
 } from './UserShellCommandService.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -620,6 +620,69 @@ export type RemoteSessionMetadataUpdate = Pick<
   | 'communicationStyleDigest'
   | 'projectInstructionsDigest'
 >;
+
+type SessionUpdatedData = Extract<SessionEvent, { type: 'session_updated' }>['data'];
+
+const SHARED_METADATA_UPDATE_KEYS = [
+  'title',
+  'taskStatus',
+  'taskStatusReason',
+  'taskFailure',
+  'taskStartedAt',
+  'taskCompletedAt',
+  'taskOwnerPid',
+  'taskPromptSummary',
+  'taskPriority',
+  'taskKind',
+  'taskDueAt',
+  'taskModelId',
+  'taskQueuePosition',
+  'taskQueueDepth',
+  'taskConcurrencyLimit',
+  'selectedModelId',
+  'permissionMode',
+  'reasoningEffort',
+  'serviceTier',
+  'responseVerbosity',
+  'communicationStyle',
+  'communicationStyleDigest',
+  'projectInstructionsDigest',
+] as const satisfies readonly (keyof SessionMetadataUpdate)[];
+
+const LOCAL_METADATA_UPDATE_KEYS = [
+  'taskDispatch',
+  'taskRetriedFrom',
+  'taskDelivery',
+  'taskIsolation',
+  'taskSourceProjectPath',
+  'taskWorktree',
+  'taskDiffStat',
+] as const satisfies readonly (keyof SessionMetadataUpdate)[];
+
+function buildSessionUpdatedData(
+  sessionId: string,
+  update: SessionMetadataUpdate,
+  updatedAt: string,
+  includeLocalFields: boolean
+): SessionUpdatedData {
+  const data: SessionUpdatedData = { sessionId, updatedAt };
+  const keys: readonly (keyof SessionMetadataUpdate)[] = includeLocalFields
+    ? [...SHARED_METADATA_UPDATE_KEYS, ...LOCAL_METADATA_UPDATE_KEYS]
+    : SHARED_METADATA_UPDATE_KEYS;
+  for (const key of keys) {
+    const value = update[key];
+    if (value !== undefined) {
+      Reflect.set(
+        data,
+        key,
+        key === 'taskDueAt' && value !== null
+          ? new Date(String(value)).toISOString()
+          : value
+      );
+    }
+  }
+  return data;
+}
 
 export interface SessionPage {
   sessions: SessionMetadata[];
@@ -3305,101 +3368,7 @@ export class SessionService {
           cwd: resolvedProjectPath,
           gitBranch: detectGitBranch(resolvedProjectPath),
           version: getVersion(),
-          data: {
-            sessionId,
-            ...(update.title !== undefined ? { title: update.title } : {}),
-            ...(update.taskStatus !== undefined
-              ? { taskStatus: update.taskStatus }
-              : {}),
-            ...(update.taskStatusReason !== undefined
-              ? { taskStatusReason: update.taskStatusReason }
-              : {}),
-            ...(update.taskFailure !== undefined
-              ? { taskFailure: update.taskFailure }
-              : {}),
-            ...(update.taskStartedAt !== undefined
-              ? { taskStartedAt: update.taskStartedAt }
-              : {}),
-            ...(update.taskCompletedAt !== undefined
-              ? { taskCompletedAt: update.taskCompletedAt }
-              : {}),
-            ...(update.taskOwnerPid !== undefined
-              ? { taskOwnerPid: update.taskOwnerPid }
-              : {}),
-            ...(update.taskPromptSummary !== undefined
-              ? { taskPromptSummary: update.taskPromptSummary }
-              : {}),
-            ...(update.taskPriority !== undefined
-              ? { taskPriority: update.taskPriority }
-              : {}),
-            ...(update.taskKind !== undefined ? { taskKind: update.taskKind } : {}),
-            ...(update.taskDueAt !== undefined
-              ? {
-                  taskDueAt:
-                    update.taskDueAt === null
-                      ? null
-                      : new Date(update.taskDueAt).toISOString(),
-                }
-              : {}),
-            ...(update.taskDispatch !== undefined
-              ? { taskDispatch: update.taskDispatch }
-              : {}),
-            ...(update.taskModelId !== undefined
-              ? { taskModelId: update.taskModelId }
-              : {}),
-            ...(update.taskRetriedFrom !== undefined
-              ? { taskRetriedFrom: update.taskRetriedFrom }
-              : {}),
-            ...(update.taskDelivery !== undefined
-              ? { taskDelivery: update.taskDelivery }
-              : {}),
-            ...(update.taskIsolation !== undefined
-              ? { taskIsolation: update.taskIsolation }
-              : {}),
-            ...(update.taskSourceProjectPath !== undefined
-              ? { taskSourceProjectPath: update.taskSourceProjectPath }
-              : {}),
-            ...(update.taskWorktree !== undefined
-              ? { taskWorktree: update.taskWorktree }
-              : {}),
-            ...(update.taskDiffStat !== undefined
-              ? { taskDiffStat: update.taskDiffStat }
-              : {}),
-            ...(update.taskQueuePosition !== undefined
-              ? { taskQueuePosition: update.taskQueuePosition }
-              : {}),
-            ...(update.taskQueueDepth !== undefined
-              ? { taskQueueDepth: update.taskQueueDepth }
-              : {}),
-            ...(update.taskConcurrencyLimit !== undefined
-              ? { taskConcurrencyLimit: update.taskConcurrencyLimit }
-              : {}),
-            ...(update.selectedModelId !== undefined
-              ? { selectedModelId: update.selectedModelId }
-              : {}),
-            ...(update.permissionMode !== undefined
-              ? { permissionMode: update.permissionMode }
-              : {}),
-            ...(update.reasoningEffort !== undefined
-              ? { reasoningEffort: update.reasoningEffort }
-              : {}),
-            ...(update.serviceTier !== undefined
-              ? { serviceTier: update.serviceTier }
-              : {}),
-            ...(update.responseVerbosity !== undefined
-              ? { responseVerbosity: update.responseVerbosity }
-              : {}),
-            ...(update.communicationStyle !== undefined
-              ? { communicationStyle: update.communicationStyle }
-              : {}),
-            ...(update.communicationStyleDigest !== undefined
-              ? { communicationStyleDigest: update.communicationStyleDigest }
-              : {}),
-            ...(update.projectInstructionsDigest !== undefined
-              ? { projectInstructionsDigest: update.projectInstructionsDigest }
-              : {}),
-            updatedAt: now,
-          },
+          data: buildSessionUpdatedData(sessionId, update, now, true),
         };
         persistedEntries = [...entries, next];
         return next;
@@ -3491,80 +3460,7 @@ export class SessionService {
               type: 'session_updated',
               cwd: hostStateRoot,
               version: getVersion(),
-              data: {
-                sessionId,
-                ...(update.title !== undefined ? { title: update.title } : {}),
-                ...(update.taskStatus !== undefined
-                  ? { taskStatus: update.taskStatus }
-                  : {}),
-                ...(update.taskStatusReason !== undefined
-                  ? { taskStatusReason: update.taskStatusReason }
-                  : {}),
-                ...(update.taskFailure !== undefined
-                  ? { taskFailure: update.taskFailure }
-                  : {}),
-                ...(update.taskStartedAt !== undefined
-                  ? { taskStartedAt: update.taskStartedAt }
-                  : {}),
-                ...(update.taskCompletedAt !== undefined
-                  ? { taskCompletedAt: update.taskCompletedAt }
-                  : {}),
-                ...(update.taskOwnerPid !== undefined
-                  ? { taskOwnerPid: update.taskOwnerPid }
-                  : {}),
-                ...(update.taskPromptSummary !== undefined
-                  ? { taskPromptSummary: update.taskPromptSummary }
-                  : {}),
-                ...(update.taskPriority !== undefined
-                  ? { taskPriority: update.taskPriority }
-                  : {}),
-                ...(update.taskKind !== undefined ? { taskKind: update.taskKind } : {}),
-                ...(update.taskDueAt !== undefined
-                  ? {
-                      taskDueAt:
-                        update.taskDueAt === null
-                          ? null
-                          : new Date(update.taskDueAt).toISOString(),
-                    }
-                  : {}),
-                ...(update.taskModelId !== undefined
-                  ? { taskModelId: update.taskModelId }
-                  : {}),
-                ...(update.taskQueuePosition !== undefined
-                  ? { taskQueuePosition: update.taskQueuePosition }
-                  : {}),
-                ...(update.taskQueueDepth !== undefined
-                  ? { taskQueueDepth: update.taskQueueDepth }
-                  : {}),
-                ...(update.taskConcurrencyLimit !== undefined
-                  ? { taskConcurrencyLimit: update.taskConcurrencyLimit }
-                  : {}),
-                ...(update.selectedModelId !== undefined
-                  ? { selectedModelId: update.selectedModelId }
-                  : {}),
-                ...(update.permissionMode !== undefined
-                  ? { permissionMode: update.permissionMode }
-                  : {}),
-                ...(update.reasoningEffort !== undefined
-                  ? { reasoningEffort: update.reasoningEffort }
-                  : {}),
-                ...(update.serviceTier !== undefined
-                  ? { serviceTier: update.serviceTier }
-                  : {}),
-                ...(update.responseVerbosity !== undefined
-                  ? { responseVerbosity: update.responseVerbosity }
-                  : {}),
-                ...(update.communicationStyle !== undefined
-                  ? { communicationStyle: update.communicationStyle }
-                  : {}),
-                ...(update.communicationStyleDigest !== undefined
-                  ? { communicationStyleDigest: update.communicationStyleDigest }
-                  : {}),
-                ...(update.projectInstructionsDigest !== undefined
-                  ? { projectInstructionsDigest: update.projectInstructionsDigest }
-                  : {}),
-                updatedAt: now,
-              },
+              data: buildSessionUpdatedData(sessionId, update, now, false),
             };
             persistedEntries = [...entries, next];
             return next;
