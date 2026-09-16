@@ -1,4 +1,5 @@
 import { spawn } from 'bun-pty';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   latchForegroundBoundedPtyMarkers,
@@ -11,27 +12,6 @@ const required = (name: string): string => {
   if (!value) throw new Error(`Missing required bounded PTY setting: ${name}`);
   return value;
 };
-
-function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    const timer = setInterval(() => {
-      if (predicate()) {
-        clearInterval(timer);
-        resolve();
-        return;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        clearInterval(timer);
-        reject(new Error(message));
-      }
-    }, 50);
-  });
-}
 
 async function main(): Promise<void> {
   const cliEntry = required('BLADE_BOUNDED_PTY_CLI_ENTRY');

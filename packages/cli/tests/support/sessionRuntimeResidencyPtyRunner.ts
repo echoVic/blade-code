@@ -6,6 +6,7 @@ import {
   processIdentityMatches,
 } from '../../src/utils/process/ProcessIdentity.js';
 import { findSessionTranscript } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 
 interface RunnerInput {
@@ -35,19 +36,6 @@ function loadInput(): RunnerInput {
     throw new Error('Missing BLADE_SESSION_RESIDENCY_PTY_INPUT');
   }
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 function signalTerminalTree(terminal: PtyProcess, signal: NodeJS.Signals): void {

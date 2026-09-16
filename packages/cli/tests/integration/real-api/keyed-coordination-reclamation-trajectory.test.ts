@@ -18,6 +18,7 @@ import { sessionInteractionCoordinationStatsForTests } from '../../../src/servic
 import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { waitForCondition as waitFor } from '../../support/asyncTestUtils.js';
 import { findSessionTranscript } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
@@ -117,24 +118,6 @@ async function initializeIsolatedExtensions(
   subagentRegistry.loadBuiltinAgents();
 }
 
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 120_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      if (await predicate()) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message, { cause: lastError });
-}
-
 function endpoint(server: TestServer, pathname: string): URL {
   return new URL(pathname.replace(/^\//, ''), server.url);
 }
@@ -177,19 +160,23 @@ async function waitForWebSessionTerminal(
   workspace: string,
   sessionId: string
 ): Promise<void> {
-  await waitFor(async () => {
-    const url = endpoint(server, `/sessions/${sessionId}/status`);
-    url.searchParams.set('projectPath', workspace);
-    const response = await fetch(url);
-    if (!response.ok) return false;
-    const status = (await response.json()) as { status?: unknown };
-    return (
-      status.status === 'idle' ||
-      status.status === 'completed' ||
-      status.status === 'failed' ||
-      status.status === 'cancelled'
-    );
-  }, `Web Session ${sessionId} did not settle`);
+  await waitFor(
+    async () => {
+      const url = endpoint(server, `/sessions/${sessionId}/status`);
+      url.searchParams.set('projectPath', workspace);
+      const response = await fetch(url);
+      if (!response.ok) return false;
+      const status = (await response.json()) as { status?: unknown };
+      return (
+        status.status === 'idle' ||
+        status.status === 'completed' ||
+        status.status === 'failed' ||
+        status.status === 'cancelled'
+      );
+    },
+    `Web Session ${sessionId} did not settle`,
+    120_000
+  );
 }
 
 async function openWebSession(
@@ -263,15 +250,19 @@ function expectSharedCoordinationIdle(): void {
 }
 
 async function waitForWebCoordinationIdle(): Promise<void> {
-  await waitFor(() => {
-    const stats = BladeServer.getSessionCoordinationStatsForTests();
-    return (
-      stats?.messageSubmissions.keys === 0 &&
-      stats.messageSubmissions.operations === 0 &&
-      stats.taskDeliveries.keys === 0 &&
-      stats.taskDeliveries.operations === 0
-    );
-  }, 'Web keyed coordination did not return to zero');
+  await waitFor(
+    () => {
+      const stats = BladeServer.getSessionCoordinationStatsForTests();
+      return (
+        stats?.messageSubmissions.keys === 0 &&
+        stats.messageSubmissions.operations === 0 &&
+        stats.taskDeliveries.keys === 0 &&
+        stats.taskDeliveries.operations === 0
+      );
+    },
+    'Web keyed coordination did not return to zero',
+    120_000
+  );
   expect(BladeServer.getSessionCoordinationStatsForTests()).toEqual({
     messageSubmissions: { keys: 0, operations: 0 },
     taskDeliveries: { keys: 0, operations: 0 },

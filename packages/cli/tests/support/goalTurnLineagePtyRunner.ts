@@ -1,5 +1,6 @@
 import { spawn } from 'bun-pty';
 import { GoalStore } from '../../src/goals/GoalStore.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   latchPtyMarker,
@@ -22,19 +23,6 @@ function loadInput(): RunnerInput {
   if (!encoded) throw new Error('Missing BLADE_GOAL_TURN_LINEAGE_PTY_INPUT');
   delete process.env.BLADE_GOAL_TURN_LINEAGE_PTY_INPUT;
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 220_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 function signalTree(pid: number, signal: NodeJS.Signals, fallback: () => void): void {
@@ -105,15 +93,21 @@ async function main(): Promise<void> {
   try {
     await waitFor(
       () => output.includes(handshake.marker),
-      'Goal turn lineage TUI composer did not become ready'
+      'Goal turn lineage TUI composer did not become ready',
+      220_000
     );
-    await waitFor(() => blocked, 'Goal turn lineage TUI did not reach blocked state');
+    await waitFor(
+      () => blocked,
+      'Goal turn lineage TUI did not reach blocked state',
+      220_000
+    );
     const goal = await new GoalStore(input.workspace, input.sessionId).get();
     if (!goal?.turnLineage) throw new Error('Goal turn lineage did not persist');
     await writeBracketedPaste(terminal, '/goal status');
     await waitFor(
       () => output.includes('/goal status'),
-      'Goal status command did not reach the TUI composer'
+      'Goal status command did not reach the TUI composer',
+      220_000
     );
     terminal.write('\r');
     const expected = [
@@ -121,11 +115,15 @@ async function main(): Promise<void> {
       `Current turn: ${goal.turnLineage.currentTurnId}`,
       `Parent turn: ${goal.turnLineage.parentTurnId ?? '?'}`,
     ];
-    await waitFor(() => {
-      const visible = projectForegroundBoundedPtyOutput(output);
-      fullLineage = expected.every((marker) => visible.includes(marker));
-      return fullLineage;
-    }, 'Goal turn lineage TUI did not render full status ancestry');
+    await waitFor(
+      () => {
+        const visible = projectForegroundBoundedPtyOutput(output);
+        fullLineage = expected.every((marker) => visible.includes(marker));
+        return fullLineage;
+      },
+      'Goal turn lineage TUI did not render full status ancestry',
+      220_000
+    );
     if (output.includes(input.secret)) {
       throw new Error('Goal turn lineage TUI leaked a credential');
     }

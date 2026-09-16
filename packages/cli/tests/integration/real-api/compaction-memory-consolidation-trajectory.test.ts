@@ -31,7 +31,10 @@ import { resolveModelConfig } from '../../../src/services/pi/resolveModelConfig.
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
-import { reserveLoopbackPort as reservePort } from '../../support/asyncTestUtils.js';
+import {
+  reserveLoopbackPort as reservePort,
+  waitForCondition as waitFor,
+} from '../../support/asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
   stopForegroundGuiLauncher,
@@ -968,19 +971,6 @@ async function runRunner(
   return evidence;
 }
 
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 180_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(message);
-}
-
 async function openEventProbe(
   origin: string,
   sessionId: string,
@@ -1197,7 +1187,8 @@ async function runAutoCompactionWeb(
     }
     await waitFor(
       () => probe?.events.some((event) => event.type === 'session.completed') === true,
-      'Warmup did not complete'
+      'Warmup did not complete',
+      180_000
     );
     const meter = page.locator('[data-chat-status-bar] > div').first();
     await waitFor(
@@ -1215,7 +1206,8 @@ async function runAutoCompactionWeb(
           () => true,
           () => false
         ),
-      'Auto summary retry did not begin'
+      'Auto summary retry did not begin',
+      180_000
     );
     const stopStarted = Date.now();
     const cancelRequests: Array<{ method: string; path: string; elapsedMs: number }> =
@@ -1413,7 +1405,8 @@ async function runWeb(test: Fixture): Promise<unknown> {
                 topics: ['conventions'],
               })
         ) === true,
-      'Memory Web did not complete consolidation'
+      'Memory Web did not complete consolidation',
+      180_000
     );
     await page.waitForFunction(
       () =>
@@ -1427,7 +1420,8 @@ async function runWeb(test: Fixture): Promise<unknown> {
     await waitFor(
       () =>
         primary?.events.some((event) => event.type === 'session.completed') === true,
-      'Memory Web primary Session did not complete'
+      'Memory Web primary Session did not complete',
+      180_000
     );
     const events = readSessionEvents(
       findSessionTranscript(test.storageRoot, test.sessionId)
@@ -1462,7 +1456,8 @@ async function runWeb(test: Fixture): Promise<unknown> {
     await waitFor(
       () =>
         discovery?.events.some((event) => event.type === 'session.completed') === true,
-      'Memory Web discovery Session did not complete'
+      'Memory Web discovery Session did not complete',
+      180_000
     );
     expect(JSON.stringify(discovery.events)).toContain(test.discoveryMarker);
     assertNoSecrets(

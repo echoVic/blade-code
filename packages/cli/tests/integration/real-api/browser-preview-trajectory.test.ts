@@ -10,6 +10,7 @@ import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import {
   reserveLoopbackPort as reservePort,
+  waitForCondition as waitFor,
   waitForChildExit,
 } from '../../support/asyncTestUtils.js';
 import { isExpectedBrowserRequestFailure } from '../../support/foregroundBoundedOutputWebDriver.js';
@@ -32,24 +33,6 @@ function browserCacheRoot(): string {
     current = path.dirname(current);
   }
   throw new Error('Unable to locate the qualified Playwright browser cache');
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 30_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let cause: unknown;
-  while (Date.now() < deadline) {
-    try {
-      if (await predicate()) return;
-    } catch (error) {
-      cause = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message, { cause });
 }
 
 async function closeServer(server: Server): Promise<void> {
@@ -194,13 +177,17 @@ describe
         });
 
         const origin = `http://127.0.0.1:${appPort}`;
-        await waitFor(async () => {
-          try {
-            return (await fetch(`${origin}/health`)).ok;
-          } catch {
-            return false;
-          }
-        }, 'Embedded-browser Blade server did not become ready');
+        await waitFor(
+          async () => {
+            try {
+              return (await fetch(`${origin}/health`)).ok;
+            } catch {
+              return false;
+            }
+          },
+          'Embedded-browser Blade server did not become ready',
+          30_000
+        );
 
         const create = await fetch(`${origin}/sessions`, {
           method: 'POST',
@@ -358,7 +345,8 @@ describe
         await page.getByRole('button', { name: 'Reload page' }).click();
         await waitFor(
           () => (fixtureRequests.get('/two') ?? 0) > requestsBeforeReload,
-          'Embedded-browser reload did not request the current page'
+          'Embedded-browser reload did not request the current page',
+          30_000
         );
 
         const popupPromise = page.waitForEvent('popup');
@@ -399,7 +387,8 @@ describe
           async () =>
             (await testPanel.getAttribute('data-browser-snapshot-id')) !==
             initialSnapshotId,
-          'Browser Panel did not publish the post-fill snapshot'
+          'Browser Panel did not publish the post-fill snapshot',
+          30_000
         );
         await testPanel
           .locator('[data-browser-ref]')
@@ -415,7 +404,8 @@ describe
         await waitFor(
           async () =>
             (await testPanel.textContent())?.includes('browser-panel-applied') === true,
-          'Browser Panel console diagnostics did not include the fixture marker'
+          'Browser Panel console diagnostics did not include the fixture marker',
+          30_000
         );
 
         await page.setViewportSize({ width: 390, height: 844 });

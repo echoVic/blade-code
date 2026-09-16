@@ -5,7 +5,7 @@ import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { findSessionTranscript } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
-import { waitForChildExit } from './asyncTestUtils.js';
+import { waitForCondition as waitFor, waitForChildExit } from './asyncTestUtils.js';
 import {
   driveToolAdmissionFixture,
   TOOL_ADMISSION_CALL_IDS,
@@ -38,19 +38,6 @@ function childEnvironment(input: RunnerInput): NodeJS.ProcessEnv {
     BLADE_TELEMETRY_DISABLED: '1',
     TERM: 'xterm-256color',
   };
-}
-
-async function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs = 90_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 async function releaseAll(stateDir: string): Promise<void> {
@@ -113,7 +100,8 @@ async function run(input: RunnerInput) {
             ).length -
               1 >=
             2,
-          'ACP did not project two queued tool calls'
+          'ACP did not project two queued tool calls',
+          90_000
         ),
     });
     await Promise.race([

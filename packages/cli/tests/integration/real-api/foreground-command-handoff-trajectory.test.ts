@@ -13,6 +13,7 @@ import {
 } from '../../../src/utils/process/ProcessIdentity.js';
 import {
   reserveLoopbackPort as reservePort,
+  waitForCondition as waitFor,
   waitForChildExit,
 } from '../../support/asyncTestUtils.js';
 import { isCompleteRawPtyMarkerEvidence } from '../../support/foregroundBoundedOutputPtyDriver.js';
@@ -106,24 +107,6 @@ function headlessContent(output: string): string {
       }
     })
     .join('');
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 120_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      if (await predicate()) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message, { cause: lastError });
 }
 
 async function initializeWorkspace(workspace: string): Promise<string> {
@@ -244,7 +227,8 @@ async function runHeadless(input: {
           await waitFor(
             () =>
               output.includes(shellId) && output.includes('"auto_backgrounded":true'),
-            'Headless JSONL did not project foreground handoff metadata'
+            'Headless JSONL did not project foreground handoff metadata',
+            120_000
           );
         },
       });
@@ -514,7 +498,8 @@ async function runWeb(input: {
                 (event.properties.metadata as Record<string, unknown>).shell_id ===
                   shellId
             ) === true,
-          'Web SSE did not project foreground handoff metadata'
+          'Web SSE did not project foreground handoff metadata',
+          120_000
         );
         await expandToolGroups(page);
         const card = page

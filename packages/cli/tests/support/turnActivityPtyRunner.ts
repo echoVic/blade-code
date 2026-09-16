@@ -2,6 +2,12 @@ import { writeFile } from 'node:fs/promises';
 import { stripVTControlCharacters } from 'node:util';
 import { spawn } from 'bun-pty';
 import {
+  findSessionTranscript,
+  inspectFinalAssistantText,
+  readSessionEvents,
+} from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
+import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
   createSplitPtyMarkerInstruction,
@@ -9,11 +15,6 @@ import {
   waitForPtyExit,
   waitForPtyFinalization,
 } from './foregroundBoundedOutputPtyDriver.js';
-import {
-  findSessionTranscript,
-  inspectFinalAssistantText,
-  readSessionEvents,
-} from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 import { createTuiTaskAttentionRunnerEnvironment } from './tuiTaskAttentionPtyDriver.js';
 
@@ -40,19 +41,6 @@ function loadInput(): RunnerInput {
   if (!encoded) throw new Error('Missing BLADE_TURN_ACTIVITY_PTY_INPUT');
   delete process.env.BLADE_TURN_ACTIVITY_PTY_INPUT;
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-async function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs = 30_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 function signalTerminalTree(
@@ -170,7 +158,11 @@ async function main(): Promise<void> {
       markerLatch.arm();
       terminal.write('\r');
     } else {
-      await waitFor(() => sawThinking, 'Turn activity TUI did not render thinking');
+      await waitFor(
+        () => sawThinking,
+        'Turn activity TUI did not render thinking',
+        30_000
+      );
       await waitFor(
         () => sawTool,
         'Turn activity TUI did not render active Bash',

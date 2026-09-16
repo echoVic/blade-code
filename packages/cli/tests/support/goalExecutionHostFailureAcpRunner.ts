@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
-import { waitForCondition as waitFor } from './asyncTestUtils.js';
+import { waitForCondition as waitFor, waitForChildExit } from './asyncTestUtils.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -18,36 +18,6 @@ function loadInput(): RunnerInput {
   if (!encoded) throw new Error('Missing BLADE_GOAL_HOST_FAILURE_ACP_INPUT');
   delete process.env.BLADE_GOAL_HOST_FAILURE_ACP_INPUT;
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 10_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Goal host failure ACP child did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
 }
 
 function goalMetadata(client: ChildBackedRecordingAcpClient) {
@@ -116,7 +86,7 @@ async function main(): Promise<void> {
     }
 
     child.kill('SIGTERM');
-    const exit = await waitForChildExit(child);
+    const exit = await waitForChildExit(child, 10_000);
     await connection.closed.catch(() => undefined);
     if (exit.signal || exit.code !== 0) {
       throw new Error(

@@ -1,4 +1,5 @@
 import { spawn } from 'bun-pty';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
@@ -25,19 +26,6 @@ function loadInput(): RunnerInput {
   const encoded = process.env.BLADE_FOREGROUND_HANDOFF_PTY_INPUT;
   if (!encoded) throw new Error('Missing BLADE_FOREGROUND_HANDOFF_PTY_INPUT');
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-async function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs = 90_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 async function main(): Promise<void> {
@@ -116,13 +104,15 @@ async function main(): Promise<void> {
       waitForSurfaceHandoff: async (shellId) => {
         await waitFor(
           () => output.includes(shellId) && output.toLowerCase().includes('background'),
-          'Raw PTY did not render foreground handoff result'
+          'Raw PTY did not render foreground handoff result',
+          90_000
         );
       },
     });
     await waitFor(
       () => finalMarkerLatch.seen,
-      'Raw PTY did not render foreground handoff marker'
+      'Raw PTY did not render foreground handoff marker',
+      90_000
     );
     if (secretLatch.seen) {
       throw new Error('Raw PTY handoff capture contained provider credentials');

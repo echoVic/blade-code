@@ -5,6 +5,7 @@ import {
   findSessionTranscript,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 
 export const TOOL_ADMISSION_CALL_IDS = [
   'call-1',
@@ -20,24 +21,6 @@ async function directoryEntries(directory: string): Promise<string[]> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
   }
-}
-
-async function waitFor(
-  predicate: () => Promise<boolean>,
-  message: string,
-  timeoutMs = 90_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      if (await predicate()) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message, { cause: lastError });
 }
 
 function equalEntries(actual: readonly string[], expected: readonly string[]): boolean {
@@ -116,13 +99,15 @@ export async function driveToolAdmissionFixture(input: {
 }): Promise<void> {
   await waitFor(
     async () => countCanonicalBashCalls(input.storageRoot, input.sessionId) === 4,
-    'The Provider did not commit four canonical Bash calls'
+    'The Provider did not commit four canonical Bash calls',
+    90_000
   );
   await input.waitForQueuedEvidence();
   await waitFor(
     async () =>
       (await directoryEntries(path.join(input.stateDir, 'started'))).length >= 2,
-    'The first two admitted Bash calls did not start'
+    'The first two admitted Bash calls did not start',
+    90_000
   );
   const firstWave = await directoryEntries(path.join(input.stateDir, 'started'));
   if (firstWave.length !== 2) {
@@ -134,7 +119,8 @@ export async function driveToolAdmissionFixture(input: {
   await waitFor(
     async () =>
       (await directoryEntries(path.join(input.stateDir, 'started'))).length >= 3,
-    'Releasing the first call did not admit exactly one successor'
+    'Releasing the first call did not admit exactly one successor',
+    90_000
   );
   const thirdWave = await directoryEntries(path.join(input.stateDir, 'started'));
   const thirdCall = thirdWave.find((callId) => !firstWave.includes(callId));
@@ -149,7 +135,8 @@ export async function driveToolAdmissionFixture(input: {
   await waitFor(
     async () =>
       (await directoryEntries(path.join(input.stateDir, 'started'))).length >= 4,
-    'Releasing the second call did not admit exactly one successor'
+    'Releasing the second call did not admit exactly one successor',
+    90_000
   );
   const fourthWave = await directoryEntries(path.join(input.stateDir, 'started'));
   const remainingCalls = fourthWave.filter((callId) => !firstWave.includes(callId));
@@ -159,7 +146,8 @@ export async function driveToolAdmissionFixture(input: {
   await waitFor(
     async () =>
       (await directoryEntries(path.join(input.stateDir, 'completed'))).length === 4,
-    'The admitted Bash calls did not all complete'
+    'The admitted Bash calls did not all complete',
+    90_000
   );
   await assertState(
     input.stateDir,
@@ -174,21 +162,25 @@ export async function waitForToolAdmissionSessionCompletion(
   sessionId: string,
   finalMarker: string
 ): Promise<void> {
-  await waitFor(async () => {
-    const events = readSessionEvents(findSessionTranscript(storageRoot, sessionId));
-    const results = events.filter(
-      (event) =>
-        event.type === 'part_created' &&
-        event.data.partType === 'tool_result' &&
-        event.data.payload !== null &&
-        typeof event.data.payload === 'object' &&
-        !Array.isArray(event.data.payload) &&
-        event.data.payload.toolName === 'Bash'
-    );
-    return (
-      results.length === 4 &&
-      events.filter((event) => event.type === 'turn_completed').length === 1 &&
-      finalAssistantText(events) === finalMarker
-    );
-  }, 'Tool admission Session did not persist four results, one completed turn, and the final marker');
+  await waitFor(
+    async () => {
+      const events = readSessionEvents(findSessionTranscript(storageRoot, sessionId));
+      const results = events.filter(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'tool_result' &&
+          event.data.payload !== null &&
+          typeof event.data.payload === 'object' &&
+          !Array.isArray(event.data.payload) &&
+          event.data.payload.toolName === 'Bash'
+      );
+      return (
+        results.length === 4 &&
+        events.filter((event) => event.type === 'turn_completed').length === 1 &&
+        finalAssistantText(events) === finalMarker
+      );
+    },
+    'Tool admission Session did not persist four results, one completed turn, and the final marker',
+    90_000
+  );
 }

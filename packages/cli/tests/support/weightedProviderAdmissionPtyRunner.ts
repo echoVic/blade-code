@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'bun-pty';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   latchPtyEvidence,
@@ -14,27 +15,6 @@ function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing weighted admission PTY setting: ${name}`);
   return value;
-}
-
-function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    const timer = setInterval(() => {
-      if (predicate()) {
-        clearInterval(timer);
-        resolve();
-        return;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        clearInterval(timer);
-        reject(new Error(message));
-      }
-    }, 50);
-  });
 }
 
 async function waitForPendingByteSidecar(

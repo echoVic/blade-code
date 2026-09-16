@@ -14,6 +14,7 @@ import {
 } from '../../../src/utils/process/ProcessIdentity.js';
 import {
   reserveLoopbackPort as reservePort,
+  waitForCondition as waitFor,
   waitForChildExit,
 } from '../../support/asyncTestUtils.js';
 import {
@@ -194,24 +195,6 @@ function frameworkRetryBudget(context: TestContext): number {
 
 function appendTail(current: string, chunk: Buffer | string): string {
   return `${current}${chunk.toString()}`.slice(-MAX_CAPTURE_CHARS);
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 120_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      if (await predicate()) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message, { cause: lastError });
 }
 
 function upstreamUrl(baseUrl: string, requestUrl: string | undefined): URL {

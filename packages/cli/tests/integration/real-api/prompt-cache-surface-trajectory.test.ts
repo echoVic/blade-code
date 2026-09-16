@@ -8,6 +8,7 @@ import { chromium, type Page } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import {
   reserveLoopbackPort as reservePort,
+  waitForCondition as waitFor,
   waitForChildExit,
 } from '../../support/asyncTestUtils.js';
 import {
@@ -25,24 +26,6 @@ const ptyRunner = path.resolve(
   import.meta.dirname,
   '../../support/promptCacheStatusPtyRunner.ts'
 );
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 30_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      if (await predicate()) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message, { cause: lastError });
-}
 
 async function createFixture(prefix: string) {
   const root = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -145,13 +128,17 @@ describe.skipIf(!enabled).sequential('Prompt cache surfaces (production)', () =>
 
     try {
       const origin = `http://127.0.0.1:${port}`;
-      await waitFor(async () => {
-        try {
-          return (await fetch(`${origin}/health`)).ok;
-        } catch {
-          return false;
-        }
-      }, 'Prompt cache Web server did not become ready');
+      await waitFor(
+        async () => {
+          try {
+            return (await fetch(`${origin}/health`)).ok;
+          } catch {
+            return false;
+          }
+        },
+        'Prompt cache Web server did not become ready',
+        30_000
+      );
       const sessionId = await createSession(origin, fixture.workspace);
       const navigation = new URL(origin);
       navigation.searchParams.set('session', sessionId);

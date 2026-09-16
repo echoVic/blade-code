@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'bun-pty';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
@@ -33,19 +34,6 @@ function loadInput(): RunnerInput {
 
 function countOccurrences(value: string, needle: string): number {
   return value.split(needle).length - 1;
-}
-
-async function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs = 90_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 async function releaseAll(stateDir: string): Promise<void> {
@@ -132,7 +120,8 @@ async function main(): Promise<void> {
       waitForQueuedEvidence: () =>
         waitFor(
           () => countOccurrences(output, 'Waiting for tool execution capacity') >= 2,
-          'Raw PTY did not project two queued tool calls'
+          'Raw PTY did not project two queued tool calls',
+          90_000
         ),
     });
     await waitForToolAdmissionSessionCompletion(
@@ -142,7 +131,8 @@ async function main(): Promise<void> {
     );
     await waitFor(
       () => finalMarkerLatch.seen,
-      'Raw PTY did not render the final admission marker'
+      'Raw PTY did not render the final admission marker',
+      90_000
     );
     if (secretLatch.seen) {
       throw new Error('Raw PTY admission capture contained provider credentials');

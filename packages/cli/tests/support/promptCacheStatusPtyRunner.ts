@@ -1,5 +1,6 @@
 import { stripVTControlCharacters } from 'node:util';
 import { spawn } from 'bun-pty';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import { latchPtyMarker } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyEnvironment } from './ptyInput.js';
 
@@ -8,27 +9,6 @@ const required = (name: string): string => {
   if (!value) throw new Error(`Missing required prompt cache PTY setting: ${name}`);
   return value;
 };
-
-function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    const timer = setInterval(() => {
-      if (predicate()) {
-        clearInterval(timer);
-        resolve();
-        return;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        clearInterval(timer);
-        reject(new Error(message));
-      }
-    }, 50);
-  });
-}
 
 async function main(): Promise<void> {
   const cliEntry = required('BLADE_CACHE_PTY_CLI_ENTRY');

@@ -16,6 +16,7 @@ import {
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { ChildProcessRecordingAcpClient } from './acp/ChildProcessRecordingAcpClient.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   latestCompleteStandardPtyFrame,
   waitForPtyExit,
@@ -52,19 +53,6 @@ const Input = Type.Object({
 });
 
 type Input = Static<typeof Input>;
-
-async function waitFor(
-  check: () => boolean | Promise<boolean>,
-  label: string,
-  timeoutMs = 30_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(label);
-}
 
 function environment(input: Input) {
   return {
@@ -138,7 +126,11 @@ async function runPty(input: Input) {
     const expectedPaste = projectedPaste
       ? `${text.length} chars, ${text.split('\n').length} lines:`
       : text.split('\n')[0]!.slice(0, 40);
-    await waitFor(() => plain.includes(expectedPaste), 'PTY paste was not rendered');
+    await waitFor(
+      () => plain.includes(expectedPaste),
+      'PTY paste was not rendered',
+      30_000
+    );
     terminal.write('\r');
   };
   try {
@@ -157,7 +149,8 @@ async function runPty(input: Input) {
     await writeFile(input.holdFile, 'hold');
     await waitFor(
       async () => (await readFile(input.traceFile, 'utf8')).includes('catalog_held'),
-      'MCP refresh did not hold'
+      'MCP refresh did not hold',
+      30_000
     );
     const before = await readFile(transcript);
     plain = '';
@@ -168,7 +161,8 @@ async function runPty(input: Input) {
     );
     await waitFor(
       () => plain.includes('Answering...'),
-      'TUI side question did not start'
+      'TUI side question did not start',
+      30_000
     );
     if (input.dismissWhileMainRunning) {
       await writeFile(input.releaseFile, 'release');
@@ -184,7 +178,8 @@ async function runPty(input: Input) {
       await writeBracketedPaste(terminal, 'ACTIVE_MAIN_DRAFT');
       await waitFor(
         () => stripVTControlCharacters(output).includes('ACTIVE_MAIN_DRAFT'),
-        'Active main draft did not render'
+        'Active main draft did not render',
+        30_000
       );
     }
     plain = '';
@@ -253,20 +248,23 @@ async function runPty(input: Input) {
       terminal.write('\u0015');
       await waitFor(
         () => stripVTControlCharacters(output).includes('输入命令...'),
-        'Active draft did not clear after main cancellation'
+        'Active draft did not clear after main cancellation',
+        30_000
       );
     }
     await writeFile(input.releaseFile, 'release');
     await waitFor(
       async () =>
         (await readFile(input.traceFile, 'utf8')).includes('catalog_released'),
-      'Shared MCP refresh did not resume'
+      'Shared MCP refresh did not resume',
+      30_000
     );
     const contextPercent = () =>
       [...stripVTControlCharacters(output).matchAll(/(\d+)%\s*·\s*Cache/g)].at(-1)?.[1];
     await waitFor(
       () => contextPercent() !== undefined,
-      'TUI context meter was not rendered'
+      'TUI context meter was not rendered',
+      30_000
     );
     const mainContextPercent = contextPercent();
     plain = '';
@@ -295,15 +293,19 @@ async function runPty(input: Input) {
       return start === undefined ? undefined : rendered.slice(start).trim();
     };
     const assertSideLayout = async (rows: number, marker = input.marker) => {
-      await waitFor(() => {
-        const frame = visibleSideFrame();
-        return Boolean(
-          frame?.includes(marker) &&
-            frame.includes('输入命令...') &&
-            /\d+%\s*·\s*Cache/.test(frame) &&
-            !frame.includes('Answering...')
-        );
-      }, 'Long side question displaced the answer or main context meter');
+      await waitFor(
+        () => {
+          const frame = visibleSideFrame();
+          return Boolean(
+            frame?.includes(marker) &&
+              frame.includes('输入命令...') &&
+              /\d+%\s*·\s*Cache/.test(frame) &&
+              !frame.includes('Answering...')
+          );
+        },
+        'Long side question displaced the answer or main context meter',
+        30_000
+      );
       const frame = visibleSideFrame();
       if (!frame || frame.split('\n').length > rows) {
         throw new Error('Long side question exceeded the terminal height');
@@ -335,13 +337,14 @@ async function runPty(input: Input) {
       let viewportRows = 48;
       const draft = 'MAIN_DRAFT_PRESERVED';
       await writeBracketedPaste(terminal, draft);
-      await waitFor(() => plain.includes(draft), 'Main draft did not render');
+      await waitFor(() => plain.includes(draft), 'Main draft did not render', 30_000);
       const page = async (key: string) => {
         output = '';
         terminal.write(key);
         await waitFor(
           () => Boolean(visibleSideFrame()?.includes('PgUp/PgDn')),
-          'Side page did not render'
+          'Side page did not render',
+          30_000
         );
         const frame = visibleSideFrame();
         if (!frame?.includes(draft)) throw new Error('Paging changed the main draft');
@@ -364,7 +367,8 @@ async function runPty(input: Input) {
       terminal.resize(100, 36);
       await waitFor(
         () => Boolean(visibleSideFrame()?.includes('PgUp/PgDn')),
-        'Resized side page did not render'
+        'Resized side page did not render',
+        30_000
       );
       for (
         let index = 0;
@@ -397,7 +401,8 @@ async function runPty(input: Input) {
       terminal.write('\u0015');
       await waitFor(
         () => Boolean(visibleSideFrame()?.includes('输入命令...')),
-        'Main draft did not clear'
+        'Main draft did not clear',
+        30_000
       );
       await assertSideLayout(36);
     } else {
@@ -410,22 +415,27 @@ async function runPty(input: Input) {
     await writeBracketedPaste(terminal, dismissalDraft);
     await waitFor(
       () => stripVTControlCharacters(output).includes(dismissalDraft),
-      'Dismissal draft did not render'
+      'Dismissal draft did not render',
+      30_000
     );
     output = '';
     terminal.write('\u001b');
-    await waitFor(() => {
-      const rendered = latestCompleteStandardPtyFrame(
-        output,
-        /\n[^\r\n]*\d+%\s*·\s*Cache[^\r\n]*\r?\n$/
-      );
-      return Boolean(
-        rendered?.includes(dismissalDraft) &&
-          /\d+%\s*·\s*Cache/.test(rendered) &&
-          !rendered.includes('BTW') &&
-          !rendered.includes('PgUp/PgDn')
-      );
-    }, 'Escape did not dismiss the completed side panel while preserving the draft');
+    await waitFor(
+      () => {
+        const rendered = latestCompleteStandardPtyFrame(
+          output,
+          /\n[^\r\n]*\d+%\s*·\s*Cache[^\r\n]*\r?\n$/
+        );
+        return Boolean(
+          rendered?.includes(dismissalDraft) &&
+            /\d+%\s*·\s*Cache/.test(rendered) &&
+            !rendered.includes('BTW') &&
+            !rendered.includes('PgUp/PgDn')
+        );
+      },
+      'Escape did not dismiss the completed side panel while preserving the draft',
+      30_000
+    );
     if (contextPercent() !== mainContextPercent) {
       throw new Error(
         `Side usage replaced main context: ${mainContextPercent}% -> ${contextPercent()}%`
@@ -582,7 +592,8 @@ async function runAcp(input: Input) {
     await writeFile(input.holdFile, 'hold');
     await waitFor(
       async () => (await readFile(input.traceFile, 'utf8')).includes('catalog_held'),
-      'ACP MCP refresh did not hold'
+      'ACP MCP refresh did not hold',
+      30_000
     );
     client.sessionUpdates.length = 0;
     output = '';
@@ -604,7 +615,8 @@ async function runAcp(input: Input) {
       );
     await waitFor(
       () => output.includes(`Executing slash command: ${question}`),
-      'ACP did not accept side question'
+      'ACP did not accept side question',
+      30_000
     );
     const stoppedAt = Date.now();
     await connection.cancel({ sessionId: session.sessionId });
@@ -626,7 +638,8 @@ async function runAcp(input: Input) {
     await waitFor(
       async () =>
         (await readFile(input.traceFile, 'utf8')).includes('catalog_released'),
-      'ACP catalog did not resume'
+      'ACP catalog did not resume',
+      30_000
     );
     client.sessionUpdates.length = 0;
     const followupQuestion = input.followupQuestion;

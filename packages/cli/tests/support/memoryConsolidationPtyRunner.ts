@@ -7,11 +7,12 @@ import {
   findSessionTranscript,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
-  projectForegroundBoundedPtyOutput,
   latestCompleteStandardPtyFrame,
+  projectForegroundBoundedPtyOutput,
   waitForPtyExit,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
@@ -40,19 +41,6 @@ function loadInput(): RunnerInput {
   if (!encoded) throw new Error('Missing BLADE_MEMORY_CONSOLIDATION_PTY_INPUT');
   delete process.env.BLADE_MEMORY_CONSOLIDATION_PTY_INPUT;
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 90_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 function signalTerminalTree(
@@ -160,7 +148,8 @@ async function main(): Promise<void> {
       await submit(`Reply with exactly ${warmupMarker}. Do not use tools.`);
       await waitFor(
         () => finalAssistantText(readSessionEvents(transcript)) === warmupMarker,
-        'Warmup response was not committed'
+        'Warmup response was not committed',
+        90_000
       );
       const contextValue = () =>
         latestCompleteStandardPtyFrame(output, /Cache[^\r\n]*\r?\n?$/)?.match(
@@ -168,7 +157,8 @@ async function main(): Promise<void> {
         )?.[1];
       await waitFor(
         () => contextValue() !== undefined && contextValue() !== '100',
-        'Warmup did not report nonzero context'
+        'Warmup did not report nonzero context',
+        90_000
       );
       const before = contextValue();
       await submit(input.prompt);
@@ -178,7 +168,8 @@ async function main(): Promise<void> {
             () => true,
             () => false
           ),
-        'Automatic summary did not reach cancellation barrier'
+        'Automatic summary did not reach cancellation barrier',
+        90_000
       );
       terminal.write('\u001b');
       await waitFor(
@@ -257,7 +248,8 @@ async function main(): Promise<void> {
             () => true,
             () => false
           ),
-        'Manual compaction Provider did not start'
+        'Manual compaction Provider did not start',
+        90_000
       );
       const started = Date.now();
       terminal.write('\u001b');
@@ -317,7 +309,8 @@ async function main(): Promise<void> {
         finalMarker.seen &&
         memoryNoticeSeen &&
         plainOutput.lastIndexOf('yolo mode on') > plainOutput.lastIndexOf(input.marker),
-      'Memory consolidation TUI did not complete with its memory notice'
+      'Memory consolidation TUI did not complete with its memory notice',
+      90_000
     );
     await waitFor(
       () =>
@@ -414,7 +407,8 @@ async function main(): Promise<void> {
             stripVTControlCharacters(discoveryOutput).lastIndexOf(
               input.discoveryMarker
             ),
-        'Memory consolidation TUI did not discover the new memory index'
+        'Memory consolidation TUI did not discover the new memory index',
+        90_000
       );
       await waitFor(
         () => {

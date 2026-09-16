@@ -10,6 +10,7 @@ import {
   type ProcessIdentity,
   processIdentityMatches,
 } from '../../../src/utils/process/ProcessIdentity.js';
+import { waitForChildExit } from '../../support/asyncTestUtils.js';
 import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
 import { findSessionTranscript } from './sessionForkTrajectoryHarness.js';
 import {
@@ -58,36 +59,6 @@ function childEnvironment(home: string, storageRoot: string): NodeJS.ProcessEnv 
     BLADE_TELEMETRY_DISABLED: '1',
     TERM: 'xterm-256color',
   };
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs: number
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Session residency Headless process did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
 }
 
 async function runHeadless(input: {

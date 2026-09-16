@@ -1,4 +1,5 @@
 import { spawn } from 'bun-pty';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   latchPtyMarker,
@@ -16,27 +17,6 @@ const workspace = required('BLADE_TUI_TEST_WORKSPACE');
 const prompt = required('BLADE_TUI_TEST_PROMPT');
 const expected = required('BLADE_TUI_TEST_EXPECTED');
 const sessionId = required('BLADE_TUI_TEST_SESSION_ID');
-
-function waitFor(
-  predicate: () => boolean,
-  description: string,
-  timeoutMs: number
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    const timer = setInterval(() => {
-      if (predicate()) {
-        clearInterval(timer);
-        resolve();
-        return;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        clearInterval(timer);
-        reject(new Error(`Timed out waiting for TUI marker: ${description}`));
-      }
-    }, 50);
-  });
-}
 
 const handshake = createTuiPtyComposerReadyHandshake();
 const terminal = spawn(

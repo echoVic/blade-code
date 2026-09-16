@@ -3,6 +3,7 @@ import { access, writeFile } from 'node:fs/promises';
 import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import { createTuiTaskAttentionSecretScanner } from './tuiTaskAttentionPtyDriver.js';
 
 const CREDENTIAL_ENV_NAME =
@@ -44,19 +45,6 @@ function loadInput(): RunnerInput {
   if (!encoded) throw new Error('Missing follow-up ACP runner input');
   delete process.env.BLADE_FOLLOW_UP_ACP_INPUT;
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 function queueMetadata(

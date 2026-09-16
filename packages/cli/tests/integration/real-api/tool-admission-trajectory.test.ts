@@ -18,7 +18,11 @@ import { describe, expect, it } from 'vitest';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
-import { reserveLoopbackPort as reservePort } from '../../support/asyncTestUtils.js';
+import {
+  reserveLoopbackPort as reservePort,
+  waitForCondition as waitFor,
+  waitForChildExit,
+} from '../../support/asyncTestUtils.js';
 import {
   assertSplitPtyMarkerInstructionAtEnd,
   createSplitPtyMarkerInstruction,
@@ -238,54 +242,6 @@ function childEnvironment(home: string, storageRoot: string): NodeJS.ProcessEnv 
   };
 }
 
-async function waitFor(
-  predicate: () => Promise<boolean> | boolean,
-  message: string,
-  timeoutMs = 120_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      if (await predicate()) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message, { cause: lastError });
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 180_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Blade child did not exit after tool admission completed'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
-}
-
 async function releaseCalls(
   stateDir: string,
   callIds: readonly string[]
@@ -483,7 +439,8 @@ async function waitForQueuedToolCards(
           event.type === 'tool.progress' &&
           event.properties.message === 'Waiting for tool execution capacity'
       ).length >= expected,
-    `Web SSE did not publish ${expected} queued tool call(s)`
+    `Web SSE did not publish ${expected} queued tool call(s)`,
+    120_000
   );
   const toolGroup = page.locator('[data-agent-tool-group]').last();
   try {
@@ -510,7 +467,8 @@ async function waitForQueuedToolCards(
       (await details
         .getByText('Waiting for tool execution capacity', { exact: true })
         .count()) >= expected,
-    `Web GUI did not render ${expected} queued tool card(s)`
+    `Web GUI did not render ${expected} queued tool card(s)`,
+    120_000
   );
 }
 
@@ -552,7 +510,8 @@ async function waitForBashPartCount(
 ): Promise<void> {
   await waitFor(
     () => bashPartCount(storageRoot, sessionId, partType) === expected,
-    `Session ${sessionId} did not persist ${expected} Bash ${partType} part(s)`
+    `Session ${sessionId} did not persist ${expected} Bash ${partType} part(s)`,
+    120_000
   );
 }
 
@@ -561,13 +520,17 @@ async function waitForBashSessionCompletion(
   sessionId: string,
   expectedResults: number
 ): Promise<void> {
-  await waitFor(() => {
-    const events = readSessionEvents(findSessionTranscript(storageRoot, sessionId));
-    return (
-      bashPartCount(storageRoot, sessionId, 'tool_result') === expectedResults &&
-      events.filter((event) => event.type === 'turn_completed').length === 1
-    );
-  }, `Session ${sessionId} did not complete with ${expectedResults} Bash result(s)`);
+  await waitFor(
+    () => {
+      const events = readSessionEvents(findSessionTranscript(storageRoot, sessionId));
+      return (
+        bashPartCount(storageRoot, sessionId, 'tool_result') === expectedResults &&
+        events.filter((event) => event.type === 'turn_completed').length === 1
+      );
+    },
+    `Session ${sessionId} did not complete with ${expectedResults} Bash result(s)`,
+    120_000
+  );
 }
 
 async function reloadAndAssertMarker(page: Page, marker: string): Promise<void> {
@@ -637,7 +600,8 @@ async function runWebFairnessSurface(input: {
         (await directoryEntries(path.join(stateDir, 'started'))).filter((callId) =>
           callId.startsWith('session-a-')
         ).length === 2,
-      'Session A did not occupy exactly two execute slots'
+      'Session A did not occupy exactly two execute slots',
+      120_000
     );
     const firstWaveA = (await directoryEntries(path.join(stateDir, 'started'))).filter(
       (callId) => callId.startsWith('session-a-')
@@ -654,7 +618,8 @@ async function runWebFairnessSurface(input: {
         (await directoryEntries(path.join(stateDir, 'started'))).includes(
           FAIRNESS_B_CALL_IDS[0]
         ),
-      'Session B did not use the remaining global execute slot'
+      'Session B did not use the remaining global execute slot',
+      120_000
     );
     expect(await directoryEntries(path.join(stateDir, 'started'))).toEqual(
       [...firstWaveA, FAIRNESS_B_CALL_IDS[0]].sort()
@@ -689,7 +654,8 @@ async function runWebFairnessSurface(input: {
         (await directoryEntries(path.join(stateDir, 'started'))).filter((callId) =>
           callId.startsWith('session-a-')
         ).length === 3,
-      'Session A did not admit one successor after one permit was released'
+      'Session A did not admit one successor after one permit was released',
+      120_000
     );
     const activeA = (await directoryEntries(path.join(stateDir, 'active'))).filter(
       (callId) => callId.startsWith('session-a-')
@@ -814,10 +780,11 @@ async function runHeadlessSurface(input: {
       waitForQueuedEvidence: () =>
         waitFor(
           () => countOccurrences(output, 'Waiting for tool execution capacity') >= 2,
-          'Headless did not project two queued tool calls'
+          'Headless did not project two queued tool calls',
+          120_000
         ),
     });
-    const exit = await waitForChildExit(child);
+    const exit = await waitForChildExit(child, 180_000);
     if (exit.signal || exit.code !== 0) {
       throw new Error(
         `Headless admission exit was ${exit.code ?? exit.signal}: ${output

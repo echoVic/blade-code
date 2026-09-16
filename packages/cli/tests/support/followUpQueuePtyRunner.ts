@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { stripVTControlCharacters } from 'node:util';
 import { spawn } from 'bun-pty';
 import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   projectForegroundBoundedPtyOutput,
@@ -28,19 +29,6 @@ function loadInput(): RunnerInput {
   if (!encoded) throw new Error('Missing follow-up PTY runner input');
   delete process.env.BLADE_FOLLOW_UP_PTY_INPUT;
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(message);
 }
 
 function inboxText(content: unknown): string {

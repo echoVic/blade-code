@@ -1,5 +1,6 @@
 import { spawn } from 'bun-pty';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   latchPtyMarker,
@@ -11,27 +12,6 @@ function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing Browser Tool PTY setting: ${name}`);
   return value;
-}
-
-function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    const timer = setInterval(() => {
-      if (predicate()) {
-        clearInterval(timer);
-        resolve();
-        return;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        clearInterval(timer);
-        reject(new Error(message));
-      }
-    }, 50);
-  });
 }
 
 async function waitForDurableCompletion(

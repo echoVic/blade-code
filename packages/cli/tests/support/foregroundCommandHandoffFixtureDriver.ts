@@ -7,6 +7,7 @@ import {
   findSessionTranscript,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   assertSplitPtyMarkerInstructionAtEnd,
   createSplitPtyMarkerInstruction,
@@ -44,24 +45,6 @@ async function exists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 90_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      if (await predicate()) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message, { cause: lastError });
 }
 
 function processAlive(pid: number): boolean {
@@ -172,30 +155,34 @@ export async function driveForegroundCommandHandoffFixture(input: {
   }
 
   let shellId = '';
-  await waitFor(() => {
-    const results = completedToolParts(
-      readEvents(input.storageRoot, input.sessionId),
-      'Bash'
-    );
-    if (results.length !== 1) return false;
-    const result = results[0];
-    const output = result.output;
-    const metadata = result.metadata;
-    if (!isRecord(output) || !isRecord(metadata)) return false;
-    if (
-      output.auto_backgrounded !== true ||
-      output.background_reason !== 'foreground_budget' ||
-      metadata.auto_backgrounded !== true ||
-      metadata.background_reason !== 'foreground_budget' ||
-      metadata.foreground_budget_ms !== 1_000 ||
-      typeof output.shell_id !== 'string' ||
-      output.shell_id !== metadata.shell_id
-    ) {
-      return false;
-    }
-    shellId = output.shell_id;
-    return true;
-  }, 'Durable Bash result did not publish foreground handoff metadata');
+  await waitFor(
+    () => {
+      const results = completedToolParts(
+        readEvents(input.storageRoot, input.sessionId),
+        'Bash'
+      );
+      if (results.length !== 1) return false;
+      const result = results[0];
+      const output = result.output;
+      const metadata = result.metadata;
+      if (!isRecord(output) || !isRecord(metadata)) return false;
+      if (
+        output.auto_backgrounded !== true ||
+        output.background_reason !== 'foreground_budget' ||
+        metadata.auto_backgrounded !== true ||
+        metadata.background_reason !== 'foreground_budget' ||
+        metadata.foreground_budget_ms !== 1_000 ||
+        typeof output.shell_id !== 'string' ||
+        output.shell_id !== metadata.shell_id
+      ) {
+        return false;
+      }
+      shellId = output.shell_id;
+      return true;
+    },
+    'Durable Bash result did not publish foreground handoff metadata',
+    90_000
+  );
 
   if (
     !(await exists(activeFile)) ||
@@ -215,13 +202,17 @@ export async function driveForegroundCommandHandoffFixture(input: {
   }
   await input.waitForSurfaceHandoff(shellId);
 
-  await waitFor(() => {
-    const reads = completedToolParts(
-      readEvents(input.storageRoot, input.sessionId),
-      'Read'
-    );
-    return reads.length === 1;
-  }, 'The Agent did not complete independent Read while the shell was running');
+  await waitFor(
+    () => {
+      const reads = completedToolParts(
+        readEvents(input.storageRoot, input.sessionId),
+        'Read'
+      );
+      return reads.length === 1;
+    },
+    'The Agent did not complete independent Read while the shell was running',
+    90_000
+  );
   if (
     !(await exists(activeFile)) ||
     (await exists(completedFile)) ||
@@ -233,18 +224,26 @@ export async function driveForegroundCommandHandoffFixture(input: {
   await writeFile(releaseFile, 'release');
   await waitFor(
     async () => (await exists(completedFile)) && !(await exists(activeFile)),
-    'Foreground handoff child did not complete after host release'
+    'Foreground handoff child did not complete after host release',
+    90_000
   );
   await waitFor(
     () => !processAlive(pid),
-    'Foreground handoff child remained after terminal completion'
+    'Foreground handoff child remained after terminal completion',
+    90_000
   );
 
-  await waitFor(() => {
-    const events = readEvents(input.storageRoot, input.sessionId);
-    const outputs = completedToolParts(events, 'TaskOutput');
-    return outputs.length === 1 && finalAssistantText(events) === input.fixture.marker;
-  }, 'Foreground handoff Session did not persist its exact final authority');
+  await waitFor(
+    () => {
+      const events = readEvents(input.storageRoot, input.sessionId);
+      const outputs = completedToolParts(events, 'TaskOutput');
+      return (
+        outputs.length === 1 && finalAssistantText(events) === input.fixture.marker
+      );
+    },
+    'Foreground handoff Session did not persist its exact final authority',
+    90_000
+  );
 
   const events = readEvents(input.storageRoot, input.sessionId);
   const trace = extractDurableToolTrace(events);

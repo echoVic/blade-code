@@ -10,6 +10,7 @@ import {
   type PairedAcpFixtureSessionRef,
   type PairedAcpProductionFixture,
 } from './acp/remoteFilesystemQualification.js';
+import { waitForChildExit } from './asyncTestUtils.js';
 
 const CLI_ENTRY = path.resolve(import.meta.dirname, '../../dist/blade.js');
 const OUTPUT_TAIL_LIMIT = 16_384;
@@ -75,36 +76,6 @@ export async function waitForSessionSurfaceCondition(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(message, { cause });
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs: number
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Session surface GUI server did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
 }
 
 async function stopChild(child: ChildProcess): Promise<void> {

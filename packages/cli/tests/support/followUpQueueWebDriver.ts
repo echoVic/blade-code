@@ -5,7 +5,10 @@ import path from 'node:path';
 import { chromium, type Page } from 'playwright';
 import { SessionSchema } from '../../src/api/schemas.js';
 import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
-import { reserveLoopbackPort as reservePort } from './asyncTestUtils.js';
+import {
+  reserveLoopbackPort as reservePort,
+  waitForCondition as waitFor,
+} from './asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
   isExpectedBrowserRequestFailure,
@@ -43,19 +46,6 @@ async function waitForHttp(origin: string, timeoutMs: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error('Follow-up queue Web server did not become ready');
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 async function submit(page: Page, text: string): Promise<void> {

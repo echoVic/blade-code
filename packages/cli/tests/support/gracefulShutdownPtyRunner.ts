@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { spawn } from 'bun-pty';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import { appendBoundedPtyEvidence } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
 
@@ -19,25 +20,6 @@ function loadInput(): RunnerInput {
   const encoded = process.env.BLADE_GRACEFUL_PTY_INPUT;
   if (!encoded) throw new Error('Missing BLADE_GRACEFUL_PTY_INPUT');
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const deadline = Date.now() + timeoutMs;
-    const timer = setInterval(() => {
-      if (predicate()) {
-        clearInterval(timer);
-        resolve();
-      } else if (Date.now() >= deadline) {
-        clearInterval(timer);
-        reject(new Error(message));
-      }
-    }, 50);
-  });
 }
 
 function signalTerminalTree(

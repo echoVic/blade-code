@@ -21,6 +21,7 @@ import type { SessionEvent } from '../../../src/context/types.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import {
   reserveLoopbackPort as reservePort,
+  waitForCondition as waitFor,
   waitForChildExit,
 } from '../../support/asyncTestUtils.js';
 import {
@@ -104,24 +105,6 @@ function childEnvironment(
     }),
     BLADE_API_KEY: secret,
   };
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 120_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      if (await predicate()) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message, { cause: lastError });
 }
 
 async function openEventProbe(
@@ -2080,7 +2063,8 @@ describeTrajectory('empty final without tools (real API)', () => {
               readSessionEvents(transcript).some(
                 (event) => event.type === 'turn_completed'
               ),
-            'Empty final follow-up did not commit'
+            'Empty final follow-up did not commit',
+            120_000
           );
           const events = readSessionEvents(transcript);
           expect(toolCallNames(events)).toEqual([]);
