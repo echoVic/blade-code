@@ -274,37 +274,6 @@ export class JSONLStore {
   }
 
   /**
-   * 获取文件统计信息
-   * @returns 统计信息
-   */
-  async getStats(): Promise<{
-    exists: boolean;
-    size: number; // 字节
-    lineCount: number;
-  }> {
-    try {
-      if (!fsSync.existsSync(this.filePath)) {
-        return { exists: false, size: 0, lineCount: 0 };
-      }
-
-      const stats = await fs.stat(this.filePath);
-      const content = await fs.readFile(this.filePath, 'utf-8');
-      const lineCount = content
-        .split('\n')
-        .filter((line) => line.trim().length > 0).length;
-
-      return {
-        exists: true,
-        size: stats.size,
-        lineCount,
-      };
-    } catch (error) {
-      console.error(`[JSONLStore] 获取统计信息失败: ${this.filePath}`, error);
-      return { exists: false, size: 0, lineCount: 0 };
-    }
-  }
-
-  /**
    * 删除 JSONL 文件
    */
   async delete(): Promise<boolean> {

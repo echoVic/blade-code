@@ -130,29 +130,4 @@ export class CustomCommandParser {
 
     return { name, namespace };
   }
-
-  /**
-   * 验证命令配置
-   */
-  validateConfig(config: CustomCommandConfig): string[] {
-    const errors: string[] = [];
-
-    // 目前没有强制必填字段
-    // description 是可选的，但 SlashCommand 工具需要它
-
-    // 验证 model 格式（如果提供）
-    if (config.model && !this.isValidModelId(config.model)) {
-      errors.push(`Invalid model ID: ${config.model}`);
-    }
-
-    return errors;
-  }
-
-  /**
-   * 简单的模型 ID 验证
-   */
-  private isValidModelId(model: string): boolean {
-    // 基本格式验证：非空字符串
-    return model.length > 0 && model.length < 200;
-  }
 }

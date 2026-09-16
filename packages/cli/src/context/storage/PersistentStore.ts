@@ -47,7 +47,6 @@ import { JSONLStore } from './JSONLStore.js';
 import {
   detectGitBranch,
   getBladeStorageRoot,
-  getProjectStoragePath,
   getSessionFilePath,
   getSessionInboxFilePath,
 } from './pathUtils.js';
@@ -658,7 +657,6 @@ export class PersistentStore {
 
   constructor(
     projectPath: string = getCwd(),
-    _maxSessions: number = 100,
     version: string = getVersion(),
     stateStorage: SessionStateStorage = createSessionStateStorage(projectPath)
   ) {
@@ -2125,66 +2123,6 @@ export class PersistentStore {
     try {
       const entries = await this.log(sessionId).readAll();
       return entries.length > 0 ? materializeSessionEvents(entries) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * 获取所有会话列表
-   */
-  async listSessions(): Promise<string[]> {
-    if (this.stateStorage.kind === 'acp-remote') {
-      throw new Error('Remote session enumeration requires SessionService');
-    }
-    try {
-      const storagePath = getProjectStoragePath(this.projectPath);
-      const files = await fs.readdir(storagePath);
-      return files
-        .filter((file) => file.endsWith('.jsonl'))
-        .map((file) => file.replace('.jsonl', ''))
-        .sort();
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * 获取会话摘要信息
-   */
-  async getSessionSummary(sessionId: string): Promise<{
-    sessionId: string;
-    lastActivity: number;
-    messageCount: number;
-    topics: string[];
-  } | null> {
-    if (this.stateStorage.kind === 'acp-remote') {
-      throw new Error('Remote session summaries require SessionService');
-    }
-    try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
-      const store = new JSONLStore(filePath);
-
-      const stats = await store.getStats();
-      if (!stats.exists) return null;
-
-      const rawEntries = await store.readAll();
-      if (rawEntries.length === 0) return null;
-      const entries = materializeSessionEvents(rawEntries);
-
-      const lastEntry = rawEntries[rawEntries.length - 1];
-      const messageCount = entries.filter(
-        (entry) =>
-          entry.type === 'message_created' &&
-          ['user', 'assistant'].includes(entry.data.role)
-      ).length;
-
-      return {
-        sessionId,
-        lastActivity: new Date(lastEntry.timestamp).getTime(),
-        messageCount,
-        topics: [],
-      };
     } catch {
       return null;
     }

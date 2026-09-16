@@ -902,10 +902,10 @@ describe('SessionService strict session catalog', () => {
   });
 
   it('loads and deletes hidden subagents even when public listing hides them', async () => {
-    const parentStore = new PersistentStore(workspaceA, 100, 'test');
+    const parentStore = new PersistentStore(workspaceA, 'test');
     await parentStore.saveMessage('visible-parent', 'user', 'parent');
 
-    const subagentStore = new PersistentStore(workspaceA, 100, 'test');
+    const subagentStore = new PersistentStore(workspaceA, 'test');
     await subagentStore.saveMessage(
       'hidden-subagent',
       'user',

@@ -920,7 +920,6 @@ describe('SessionRuntime', () => {
   it('isolates session-provided MCP servers and releases them on dispose', async () => {
     const isolatedRegistry = {
       registerServer: vi.fn().mockResolvedValue(undefined),
-      getAvailableTools: vi.fn().mockResolvedValue([]),
       getCatalogSnapshot: vi.fn(() => ({ revision: 0, tools: [] })),
       getInstructionsSnapshot: vi.fn(() => ({
         revision: 0,
@@ -986,7 +985,6 @@ describe('SessionRuntime', () => {
     mcpResolverMocks.resolve.mockResolvedValueOnce(resolvedServers);
     const isolatedRegistry = {
       registerServer: vi.fn().mockResolvedValue(undefined),
-      getAvailableTools: vi.fn().mockResolvedValue([]),
       getCatalogSnapshot: vi.fn(() => ({ revision: 0, tools: [] })),
       getInstructionsSnapshot: vi.fn(() => ({
         revision: 0,
@@ -4879,7 +4877,6 @@ describe('SessionRuntime', () => {
       .spyOn(McpRegistry.prototype, 'disconnectAll')
       .mockResolvedValue(undefined);
     vi.spyOn(McpRegistry.prototype, 'registerServer').mockResolvedValue(undefined);
-    vi.spyOn(McpRegistry.prototype, 'getAvailableTools').mockResolvedValue([]);
     vi.spyOn(PersistentStore.prototype, 'initSession').mockRejectedValueOnce(
       initializationError
     );
@@ -4920,7 +4917,6 @@ describe('SessionRuntime', () => {
       .spyOn(McpRegistry.prototype, 'disconnectAll')
       .mockResolvedValue(undefined);
     vi.spyOn(McpRegistry.prototype, 'registerServer').mockResolvedValue(undefined);
-    vi.spyOn(McpRegistry.prototype, 'getAvailableTools').mockResolvedValue([]);
     vi.spyOn(PersistentStore.prototype, 'initSession').mockRejectedValueOnce(
       initializationError
     );

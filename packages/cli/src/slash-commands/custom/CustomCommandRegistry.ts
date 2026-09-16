@@ -108,16 +108,6 @@ export class CustomCommandRegistry {
   }
 
   /**
-   * 刷新命令列表
-   */
-  async refresh(): Promise<CustomCommandDiscoveryResult> {
-    if (!this.workspaceRoot) {
-      throw new Error('Registry not initialized. Call initialize() first.');
-    }
-    return this.initialize(this.workspaceRoot);
-  }
-
-  /**
    * 检查是否已初始化
    */
   isInitialized(): boolean {
@@ -210,27 +200,6 @@ export class CustomCommandRegistry {
   }
 
   /**
-   * 获取命令的完整显示名称
-   *
-   * 格式: /name [argument-hint] - description (label)
-   */
-  getCommandDisplayName(cmd: CustomCommand): string {
-    const parts: string[] = [`/${cmd.name}`];
-
-    if (cmd.config.argumentHint) {
-      parts.push(cmd.config.argumentHint);
-    }
-
-    if (cmd.config.description) {
-      parts.push('-', cmd.config.description);
-    }
-
-    parts.push(this.getCommandLabel(cmd));
-
-    return parts.join(' ');
-  }
-
-  /**
    * 按来源分组获取命令
    */
   getCommandsBySource(): {
@@ -256,21 +225,6 @@ export class CustomCommandRegistry {
    */
   getLastDiscoveryResult(): CustomCommandDiscoveryResult | null {
     return this.lastDiscoveryResult;
-  }
-
-  /**
-   * 获取命令目录信息
-   */
-  getCommandDirs(): {
-    projectBlade: string;
-    projectClaude: string;
-    userBlade: string;
-    userClaude: string;
-  } | null {
-    if (!this.workspaceRoot) {
-      return null;
-    }
-    return this.loader.getCommandDirs(this.workspaceRoot);
   }
 
   /**
@@ -426,13 +380,6 @@ export class CustomCommandRegistry {
   }
 
   /**
-   * 检查插件命令是否存在
-   */
-  hasPluginCommand(name: string): boolean {
-    return this.findPluginCommand(name) !== undefined;
-  }
-
-  /**
    * 获取所有插件命令
    */
   getAllPluginCommands(): PluginCommand[] {
@@ -479,32 +426,5 @@ export class CustomCommandRegistry {
    */
   getPluginCommandCount(): number {
     return this.pluginCommands.size;
-  }
-
-  /**
-   * 检查命令名是否有多个插件提供（冲突）
-   */
-  hasPluginCommandConflict(shortName: string): boolean {
-    let count = 0;
-    for (const cmd of this.pluginCommands.values()) {
-      if (cmd.originalName === shortName) {
-        count++;
-        if (count > 1) return true;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * 获取提供指定命令的所有插件名称
-   */
-  getPluginCommandProviders(shortName: string): string[] {
-    const providers: string[] = [];
-    for (const cmd of this.pluginCommands.values()) {
-      if (cmd.originalName === shortName) {
-        providers.push(cmd.pluginName);
-      }
-    }
-    return providers;
   }
 }

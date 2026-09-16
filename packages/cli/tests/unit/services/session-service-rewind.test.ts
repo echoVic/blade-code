@@ -36,7 +36,7 @@ describe('SessionService durable rewind', () => {
   });
 
   async function createTwoTurnSession() {
-    const persistent = new PersistentStore(workspace, 100, 'test');
+    const persistent = new PersistentStore(workspace, 'test');
     const targetFile = path.join(workspace, 'target.txt');
     await writeFile(targetFile, 'baseline', 'utf8');
 
@@ -151,7 +151,7 @@ describe('SessionService durable rewind', () => {
     'invalidates a handoff recorded after the target during %s rewind',
     async (mode) => {
       const { secondUser } = await createTwoTurnSession();
-      const persistent = new PersistentStore(workspace, 100, 'test');
+      const persistent = new PersistentStore(workspace, 'test');
       await persistent.recordTokenBudgetHandoff(sessionId, {
         version: 1,
         observedPromptTokens: 75_000,
@@ -176,7 +176,7 @@ describe('SessionService durable rewind', () => {
 
   it('preserves a handoff during code-only rewind', async () => {
     const { secondUser } = await createTwoTurnSession();
-    const persistent = new PersistentStore(workspace, 100, 'test');
+    const persistent = new PersistentStore(workspace, 'test');
     await persistent.recordTokenBudgetHandoff(sessionId, {
       version: 1,
       observedPromptTokens: 75_000,
@@ -200,7 +200,7 @@ describe('SessionService durable rewind', () => {
 
   it('removes review lifecycle created after the rewind checkpoint', async () => {
     const { secondUser } = await createTwoTurnSession();
-    const persistent = new PersistentStore(workspace, 100, 'test');
+    const persistent = new PersistentStore(workspace, 'test');
     await persistent.saveReviewStart(sessionId, {
       reviewId: 'rewound-review',
       reviewerSessionId: 'rewound-review-child',
@@ -254,7 +254,7 @@ describe('SessionService durable rewind', () => {
       path.join(os.tmpdir(), 'blade-rewind-workspace-b-')
     );
     const createWorkspaceTurn = async (projectPath: string, label: string) => {
-      const persistent = new PersistentStore(projectPath, 100, 'test');
+      const persistent = new PersistentStore(projectPath, 'test');
       const targetFile = path.join(projectPath, 'target.txt');
       await writeFile(targetFile, `baseline-${label}`, 'utf8');
       const userMessage = await persistent.saveMessage(

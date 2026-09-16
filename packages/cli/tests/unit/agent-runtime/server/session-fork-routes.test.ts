@@ -57,7 +57,7 @@ describe('BladeServer session fork route', () => {
     vi.resetModules();
     vi.doUnmock('http');
     const { BladeServer } = await import('../../../../src/server/server.js');
-    const store = new PersistentStore(workspace, 100, 'test');
+    const store = new PersistentStore(workspace, 'test');
     await store.saveMessage('parent-session', 'user', 'Remember FORK_VALUE');
     await store.saveMessage('parent-session', 'assistant', 'READY');
     const parentPath = getSessionFilePath(workspace, 'parent-session');
@@ -169,7 +169,7 @@ describe('BladeServer session fork route', () => {
     vi.resetModules();
     vi.doUnmock('http');
     const { BladeServer } = await import('../../../../src/server/server.js');
-    const store = new PersistentStore(otherWorkspace, 100, 'test');
+    const store = new PersistentStore(otherWorkspace, 'test');
     await store.saveMessage('parent-session', 'user', 'other workspace only');
     const server = await BladeServer.listenAsync({ port: 0, hostname: '127.0.0.1' });
 
@@ -237,7 +237,7 @@ describe('BladeServer session fork route', () => {
     const { SessionService: CurrentSessionService } = await import(
       '../../../../src/services/SessionService.js'
     );
-    const store = new PersistentStore(workspace, 100, 'test');
+    const store = new PersistentStore(workspace, 'test');
     await store.saveMessage('parent-session', 'user', 'history');
     vi.spyOn(CurrentSessionService, 'forkSession').mockRejectedValueOnce(
       Object.assign(
@@ -276,7 +276,7 @@ describe('BladeServer session fork route', () => {
     vi.resetModules();
     vi.doUnmock('http');
     const { BladeServer } = await import('../../../../src/server/server.js');
-    const sourceStore = new PersistentStore(workspace, 100, 'test');
+    const sourceStore = new PersistentStore(workspace, 'test');
     await sourceStore.saveMessage('parent-session', 'user', 'source history');
     const parentPath = getSessionFilePath(workspace, 'parent-session');
     const parentBeforeFork = await readFile(parentPath, 'utf-8');

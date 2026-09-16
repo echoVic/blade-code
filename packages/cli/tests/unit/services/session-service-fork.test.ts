@@ -201,7 +201,7 @@ describe('SessionService.forkSession', () => {
   });
 
   it('copies committed history into an independent child and leaves the parent immutable', async () => {
-    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    const persistentStore = new PersistentStore(projectPath, 'test');
     await persistentStore.saveMessage('parent-session', 'user', 'Remember FORK_VALUE');
     await persistentStore.saveMessage('parent-session', 'assistant', 'READY');
     await persistentStore.acknowledgeInboxMessages('parent-session', [
@@ -1038,7 +1038,7 @@ describe('SessionService.forkSession', () => {
   });
 
   it('copies effective messages and compaction checkpoints without inheriting handoff authority', async () => {
-    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    const persistentStore = new PersistentStore(projectPath, 'test');
     await persistentStore.saveMessage('handoff-parent', 'user', 'parent request');
     await persistentStore.recordTokenBudgetHandoff('handoff-parent', {
       version: 1,
@@ -1132,7 +1132,7 @@ describe('SessionService.forkSession', () => {
     });
     const materialized = await sourceArtifacts.materialize(fullPrompt);
     const reference = getUserPromptArtifactReference(materialized.metadata)!;
-    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    const persistentStore = new PersistentStore(projectPath, 'test');
     await persistentStore.saveMessage(
       sourceSessionId,
       'user',
@@ -1197,7 +1197,7 @@ describe('SessionService.forkSession', () => {
   });
 
   it('fails closed when the requested child ID already exists', async () => {
-    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    const persistentStore = new PersistentStore(projectPath, 'test');
     await persistentStore.saveMessage('parent-session', 'user', 'parent');
     await persistentStore.saveMessage('child-session', 'user', 'existing child');
     const childPath = getSessionFilePath(projectPath, 'child-session');
@@ -1215,7 +1215,7 @@ describe('SessionService.forkSession', () => {
   });
 
   it('rejects child IDs that can escape the project session directory', async () => {
-    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    const persistentStore = new PersistentStore(projectPath, 'test');
     await persistentStore.saveMessage('parent-session', 'user', 'parent');
 
     await expect(
@@ -1228,7 +1228,7 @@ describe('SessionService.forkSession', () => {
   });
 
   it('preserves the root across fork chains and ignores an uncommitted crash tail', async () => {
-    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    const persistentStore = new PersistentStore(projectPath, 'test');
     await persistentStore.saveMessage('root-session', 'user', 'committed history');
     await SessionService.forkSession('root-session', {
       newSessionId: 'child-session',
@@ -1546,7 +1546,7 @@ describe('SessionService.forkSession', () => {
   });
 
   it('creates unique auto-generated child IDs for concurrent forks without mutating the parent', async () => {
-    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    const persistentStore = new PersistentStore(projectPath, 'test');
     await persistentStore.saveMessage('parent-session', 'user', 'parent');
     await persistentStore.saveMessage('parent-session', 'assistant', 'baseline');
     const parentPath = getSessionFilePath(projectPath, 'parent-session');
@@ -1615,7 +1615,7 @@ describe('SessionService.forkSession', () => {
   });
 
   it('deletes the durable inbox together with the session transcript', async () => {
-    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    const persistentStore = new PersistentStore(projectPath, 'test');
     await persistentStore.saveMessage('delete-session', 'user', 'committed');
     const transcriptPath = getSessionFilePath(projectPath, 'delete-session');
     const inboxPath = getSessionInboxFilePath(projectPath, 'delete-session');

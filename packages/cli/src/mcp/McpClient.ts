@@ -418,22 +418,10 @@ export class McpClient extends EventEmitter {
     return { ...this.taskPolicy };
   }
 
-  get server(): { name: string; version: string } | null {
-    return this.serverInfo;
-  }
-
   get instructions(): McpServerInstruction | undefined {
     return this.serverInstructions
       ? structuredClone(this.serverInstructions)
       : undefined;
-  }
-
-  get healthCheck(): HealthMonitor | null {
-    return this.healthMonitor;
-  }
-
-  get recovery(): McpClientConnectionLifecycleChange | undefined {
-    return this.recoveryState ? structuredClone(this.recoveryState) : undefined;
   }
 
   get logging(): McpLoggingPolicy {
@@ -1632,12 +1620,6 @@ export class McpClient extends EventEmitter {
     return promise;
   }
 
-  async waitForToolRefresh(): Promise<void> {
-    while (this.toolRefreshPromise) {
-      await this.toolRefreshPromise;
-    }
-  }
-
   private async runToolRefresh(
     initialReason: McpClientToolCatalogChange['reason']
   ): Promise<void> {
@@ -2185,41 +2167,5 @@ export class McpClient extends EventEmitter {
     if (oldStatus === status) return;
     this.status = status;
     this.emit('statusChanged', status, oldStatus);
-  }
-
-  // ========================================
-  // 兼容性方法（保持与 Registry 的接口一致）
-  // ========================================
-
-  async initialize(): Promise<void> {
-    return this.connect();
-  }
-
-  async destroy(): Promise<void> {
-    return this.disconnect();
-  }
-
-  async connectToServer(serverId?: string): Promise<void> {
-    return this.connect();
-  }
-
-  async disconnectFromServer(serverId?: string): Promise<void> {
-    return this.disconnect();
-  }
-
-  async listResources(_serverId?: string): Promise<McpResourceDefinition[]> {
-    return structuredClone(this.resources);
-  }
-
-  async listResourceTemplates(): Promise<McpResourceTemplateDefinition[]> {
-    return structuredClone(this.resourceTemplates);
-  }
-
-  async listPrompts(): Promise<McpPromptDefinition[]> {
-    return structuredClone(this.prompts);
-  }
-
-  async listTools(serverId?: string): Promise<McpToolDefinition[]> {
-    return this.availableTools;
   }
 }

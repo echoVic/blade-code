@@ -127,43 +127,4 @@ export class CustomCommandLoader {
     await scan(dirPath);
     return results;
   }
-
-  /**
-   * 检查指定目录是否存在命令文件
-   */
-  async hasCommands(workspaceRoot: string): Promise<boolean> {
-    const searchDirs = this.getSearchDirs(workspaceRoot);
-
-    for (const dir of searchDirs) {
-      if (!fs.existsSync(dir.path)) {
-        continue;
-      }
-
-      const files = await this.scanDirectory(dir.path);
-      if (files.length > 0) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * 获取命令目录路径
-   */
-  getCommandDirs(workspaceRoot: string): {
-    projectBlade: string;
-    projectClaude: string;
-    userBlade: string;
-    userClaude: string;
-  } {
-    const homeDir = os.homedir();
-
-    return {
-      projectBlade: path.join(workspaceRoot, '.blade', 'commands'),
-      projectClaude: path.join(workspaceRoot, '.claude', 'commands'),
-      userBlade: path.join(homeDir, '.blade', 'commands'),
-      userClaude: path.join(homeDir, '.claude', 'commands'),
-    };
-  }
 }

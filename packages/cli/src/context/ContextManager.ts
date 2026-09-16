@@ -35,7 +35,6 @@ export class ContextManager {
   constructor(options: Partial<ContextManagerOptions> = {}) {
     this.persistent = new PersistentStore(
       options.projectPath ?? getCwd(),
-      100,
       undefined,
       options.stateStorage
     );

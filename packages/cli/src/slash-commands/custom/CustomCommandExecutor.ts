@@ -187,19 +187,4 @@ export class CustomCommandExecutor {
 
     return result;
   }
-
-  /**
-   * 验证命令内容是否包含动态元素
-   */
-  hasDynamicContent(content: string): {
-    hasArgs: boolean;
-    hasBashEmbeds: boolean;
-    hasFileRefs: boolean;
-  } {
-    return {
-      hasArgs: /\$ARGUMENTS|\$\d/.test(content),
-      hasBashEmbeds: /!`[^`]+`/.test(content),
-      hasFileRefs: /@[\w./-]+(?:\/[\w./-]+|\.[\w]+)/.test(content),
-    };
-  }
 }

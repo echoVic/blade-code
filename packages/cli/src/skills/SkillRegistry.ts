@@ -402,44 +402,6 @@ export class SkillRegistry {
   }
 
   /**
-   * 查找插件技能
-   *
-   * Supports both:
-   * - Full namespaced name: "plugin:skill"
-   * - Short name if unique: "skill"
-   *
-   * @param name - Skill name to find
-   * @returns Plugin skill or undefined
-   */
-  findPluginSkill(name: string): PluginSkill | undefined {
-    // Try exact namespaced match first
-    const exact = this.pluginSkills.get(name);
-    if (exact) return exact;
-
-    // Try short name match (if unique)
-    const matches: PluginSkill[] = [];
-    for (const skill of this.pluginSkills.values()) {
-      if (skill.originalName === name) {
-        matches.push(skill);
-      }
-    }
-
-    // Only return if exactly one match
-    if (matches.length === 1) {
-      return matches[0];
-    }
-
-    return undefined;
-  }
-
-  /**
-   * 获取所有插件技能
-   */
-  getAllPluginSkills(): PluginSkill[] {
-    return Array.from(this.pluginSkills.values());
-  }
-
-  /**
    * 清除所有插件技能
    * Called when refreshing plugins
    */
@@ -449,13 +411,6 @@ export class SkillRegistry {
       this.skills.delete(skill.namespacedName);
     }
     this.pluginSkills.clear();
-  }
-
-  /**
-   * 获取插件技能数量
-   */
-  getPluginSkillCount(): number {
-    return this.pluginSkills.size;
   }
 }
 

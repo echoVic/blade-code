@@ -815,7 +815,6 @@ export class SessionRuntime {
   ): Promise<boolean> {
     return new PersistentStore(
       workspaceRoot,
-      100,
       undefined,
       stateStorage
     ).hasRecoverableTurn(sessionId);

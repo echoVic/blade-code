@@ -52,7 +52,6 @@ const deterministicSeed: PairedAcpFixtureSeed = async (context) => {
   });
   const persistent = new PersistentStore(
     projectPath,
-    100,
     undefined,
     createRemoteSessionStateStorage(projectPath, descriptor)
   );
