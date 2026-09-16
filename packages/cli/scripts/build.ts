@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createWebBuildEnvironment } from "./buildEnvironment.js";
 
@@ -17,6 +17,20 @@ const externals = [
 
 console.log("Building backend...");
 
+const rawTextPlugin: Bun.BunPlugin = {
+  name: "raw-text",
+  setup(build) {
+    build.onResolve({ filter: /\.(?:md|sql)\?raw$/ }, args => ({
+      path: resolve(dirname(args.importer), args.path.slice(0, -4)),
+      namespace: "raw-text",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "raw-text" }, async args => ({
+      contents: await Bun.file(args.path).text(),
+      loader: "text",
+    }));
+  },
+};
+
 const result = await Bun.build({
   entrypoints: ["src/blade.tsx"],
   outdir: "dist",
@@ -24,7 +38,8 @@ const result = await Bun.build({
   format: "esm",
   splitting: true,
   minify: true,
-  external: externals
+  external: externals,
+  plugins: [rawTextPlugin],
 });
 
 if (!result.success) {

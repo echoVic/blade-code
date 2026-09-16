@@ -1,19 +1,12 @@
 /**
- * useLoadingIndicator Hook
- * 整合短语循环器和计时器功能
- *
- * 功能：
- * - 管理加载短语的显示
- * - 计算已等待时间
- * - 根据 isProcessing 状态控制激活/停用
+ * useLoadingIndicator Hook 整合短语循环器和计时器功能 <p> 功能： - 管理加载短语的显示 - 计算已等待时间 - 根据
+ * isProcessing 状态控制激活/停用
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { usePhraseCycler } from './usePhraseCycler.js';
 
-/**
- * useLoadingIndicator Hook 返回值
- */
+/** useLoadingIndicator Hook 返回值 */
 export interface LoadingIndicatorState {
   /** 当前显示的短语 */
   currentPhrase: string;
@@ -40,8 +33,7 @@ export function useLoadingIndicator(
   // 使用短语循环器（传递 paused 参数）
   const currentPhrase = usePhraseCycler(isProcessing, isWaiting, paused);
 
-  // 计时器逻辑
-  // 当 paused=true 时暂停计时器更新，但保持 startTime 不变（恢复后继续计时）
+  // 计时器逻辑 当 paused=true 时暂停计时器更新，但保持 startTime 不变（恢复后继续计时）
   useEffect(() => {
     if (!isProcessing) {
       // 停止处理时重置计时器

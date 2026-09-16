@@ -1,6 +1,4 @@
-/**
- * /skills 命令 - 查看所有可用的 Skills
- */
+/** /skills 命令 - 查看所有可用的 Skills */
 
 import { withWorkspaceAgentResources } from '../agent/resources/WorkspaceAgentResources.js';
 import { clearAllPluginResources, integrateAllPlugins } from '../plugins/index.js';

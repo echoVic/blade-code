@@ -1,15 +1,8 @@
-/**
- * Hook Configuration
- *
- * 默认配置和配置加载逻辑
- */
+/** Hook Configuration 默认配置和配置加载逻辑 */
 
 import { type HookConfig, HookType } from './types/HookTypes.js';
 
-/**
- * 默认 Hook 配置
- * 与 Claude Code 对齐的完整配置
- */
+/** 默认 Hook 配置 与 Claude Code 对齐的完整配置 */
 export const DEFAULT_HOOK_CONFIG: Required<HookConfig> = {
   enabled: false, // 默认禁用,需要显式启用
   defaultTimeout: 60, // 60 秒
@@ -55,9 +48,7 @@ export const DEFAULT_HOOK_CONFIG: Required<HookConfig> = {
   Compaction: [],
 };
 
-/**
- * 合并配置
- */
+/** 合并配置 */
 export function mergeHookConfig(
   base: HookConfig,
   override: Partial<HookConfig>
@@ -85,9 +76,7 @@ export function mergeHookConfig(
   };
 }
 
-/**
- * 从环境变量解析配置
- */
+/** 从环境变量解析配置 */
 export function parseEnvConfig(): Partial<HookConfig> {
   const config: Partial<HookConfig> = {};
 

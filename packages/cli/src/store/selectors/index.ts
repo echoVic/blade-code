@@ -1,11 +1,6 @@
 /**
- * Blade Store 选择器
- *
- * 遵循强选择器约束准则：
- * - 每个选择器只订阅需要的状态片段
- * - 避免订阅整个 store
- * - 提供派生选择器减少重复计算
- * - 使用 useShallow 优化返回对象/数组的选择器
+ * Blade Store 选择器 <p> 遵循强选择器约束准则： - 每个选择器只订阅需要的状态片段 - 避免订阅整个 store - 提供派生选择器减少重复计算 - 使用
+ * useShallow 优化返回对象/数组的选择器
  */
 
 import { useShallow } from 'zustand/react/shallow';
@@ -21,27 +16,19 @@ const EMPTY_MODELS: ModelConfig[] = [];
 
 // ==================== Session 选择器 ====================
 
-/**
- * 获取 Session ID
- */
+/** 获取 Session ID */
 export const useSessionId = () => useBladeStore((state) => state.session.sessionId);
 
 export const useWorkspaceRoot = () =>
   useBladeStore((state) => state.session.workspaceRoot);
 
-/**
- * 获取消息列表
- */
+/** 获取消息列表 */
 export const useMessages = () => useBladeStore((state) => state.session.messages);
 
-/**
- * 获取清屏计数器（用于强制 Static 组件重新挂载）
- */
+/** 获取清屏计数器（用于强制 Static 组件重新挂载） */
 export const useClearCount = () => useBladeStore((state) => state.session.clearCount);
 
-/**
- * 获取压缩状态
- */
+/** 获取压缩状态 */
 export const useIsCompacting = () =>
   useBladeStore((state) => state.session.isCompacting);
 
@@ -68,14 +55,10 @@ export const useTurnActivity = () =>
 export const useActionStationarity = () =>
   useBladeStore((state) => state.session.actionStationarity);
 
-/**
- * 获取 Session Actions
- */
+/** 获取 Session Actions */
 export const useSessionActions = () => useBladeStore((state) => state.session.actions);
 
-/**
- * 派生选择器：Context 剩余百分比
- */
+/** 派生选择器：Context 剩余百分比 */
 export const useContextRemaining = () =>
   useBladeStore((state) => {
     const { totalTokens, maxContextTokens } = state.session.tokenUsage;
@@ -86,37 +69,25 @@ export const useContextRemaining = () =>
 
 // ==================== App 选择器 ====================
 
-/**
- * 获取初始化状态
- */
+/** 获取初始化状态 */
 export const useInitializationStatus = () =>
   useBladeStore((state) => state.app.initializationStatus);
 
-/**
- * 获取初始化错误
- */
+/** 获取初始化错误 */
 export const useInitializationError = () =>
   useBladeStore((state) => state.app.initializationError);
 
-/**
- * 获取活动模态框
- */
+/** 获取活动模态框 */
 export const useActiveModal = () => useBladeStore((state) => state.app.activeModal);
 
-/**
- * 获取 Tasks
- */
+/** 获取 Tasks */
 export const useTaskList = () => useBladeStore((state) => state.app.tasks);
 
-/**
- * 获取模型编辑目标
- */
+/** 获取模型编辑目标 */
 export const useModelEditorTarget = () =>
   useBladeStore((state) => state.app.modelEditorTarget);
 
-/**
- * 获取会话选择器状态
- */
+/** 获取会话选择器状态 */
 export const useSessionSelectorState = () =>
   useBladeStore((state) => state.app.sessionSelectorData);
 
@@ -129,15 +100,11 @@ export const useTaskAttentionStatus = () =>
 export const useTaskAttentionUnreadKeys = () =>
   useBladeStore((state) => state.app.taskAttentionUnreadKeys);
 
-/**
- * 获取是否等待第二次 Ctrl+C
- */
+/** 获取是否等待第二次 Ctrl+C */
 export const useAwaitingSecondCtrlC = () =>
   useBladeStore((state) => state.app.awaitingSecondCtrlC);
 
-/**
- * 获取 App Actions
- */
+/** 获取 App Actions */
 export const useAppActions = () => useBladeStore((state) => state.app.actions);
 
 export const useSideConversation = () =>
@@ -145,38 +112,27 @@ export const useSideConversation = () =>
 
 export const useTeams = () => useBladeStore((state) => state.app.teams);
 
-/**
- * 派生选择器：是否准备就绪
- */
+/** 派生选择器：是否准备就绪 */
 export const useIsReady = () =>
   useBladeStore((state) => state.app.initializationStatus === 'ready');
 
-/**
- * 派生选择器：是否显示 Task 面板
- */
+/** 派生选择器：是否显示 Task 面板 */
 export const useShowTaskPanel = () =>
   useBladeStore((state) => state.app.tasks.length > 0);
 
 // ==================== Config 选择器 ====================
 
-/**
- * 派生选择器：权限模式
- */
+/** 派生选择器：权限模式 */
 export const usePermissionMode = () =>
   useBladeStore(
     (state) => state.config.config?.permissionMode || PermissionMode.DEFAULT
   );
 
-/**
- * 派生选择器：所有模型配置
- * 使用常量空数组避免不必要的重渲染
- */
+/** 派生选择器：所有模型配置 使用常量空数组避免不必要的重渲染 */
 export const useAllModels = () =>
   useBladeStore((state) => state.config.config?.models ?? EMPTY_MODELS);
 
-/**
- * 派生选择器：当前模型配置
- */
+/** 派生选择器：当前模型配置 */
 export const useCurrentModel = () =>
   useBladeStore((state) => {
     const config = state.config.config;
@@ -187,9 +143,7 @@ export const useCurrentModel = () =>
     return model ?? config.models[0];
   });
 
-/**
- * 派生选择器：当前模型 ID
- */
+/** 派生选择器：当前模型 ID */
 export const useCurrentModelId = () =>
   useBladeStore((state) => state.config.config?.currentModelId);
 
@@ -209,36 +163,25 @@ export const useTheme = () =>
     return themeManager.getTheme();
   });
 
-/**
- * 获取当前 Store 中配置的主题名称
- * 用于 useThemeSync hook 对比和同步
- */
+/** 获取当前 Store 中配置的主题名称 用于 useThemeSync hook 对比和同步 */
 export const useThemeName = () =>
   useBladeStore((state) => state.config.config?.codeTheme ?? 'default');
 
 // ==================== Focus 选择器 ====================
 
-/**
- * 获取当前焦点
- */
+/** 获取当前焦点 */
 export const useCurrentFocus = () => useBladeStore((state) => state.focus.currentFocus);
 
-/**
- * 获取 Focus Actions
- */
+/** 获取 Focus Actions */
 export const useFocusActions = () => useBladeStore((state) => state.focus.actions);
 
 // ==================== Command 选择器 ====================
 
-/**
- * 获取处理状态
- */
+/** 获取处理状态 */
 export const useIsProcessing = () =>
   useBladeStore((state) => state.command.isProcessing);
 
-/**
- * 获取 Command Actions
- */
+/** 获取 Command Actions */
 export const useCommandActions = () => useBladeStore((state) => state.command.actions);
 
 /** 获取 authoritative follow-up queue。 */
@@ -252,9 +195,7 @@ export const useRecoveredSteeringCount = () =>
 
 // ==================== Thinking 模式选择器 ====================
 
-/**
- * 获取 Thinking 模式是否启用
- */
+/** 获取 Thinking 模式是否启用 */
 export const useThinkingModeEnabled = () =>
   useBladeStore((state) => state.app.reasoningEffort !== 'off');
 
@@ -269,29 +210,21 @@ export const useResponseVerbosity = () =>
 export const useCommunicationStyle = () =>
   useBladeStore((state) => state.app.communicationStyle);
 
-/**
- * 获取当前 Thinking 内容（流式接收中）
- */
+/** 获取当前 Thinking 内容（流式接收中） */
 export const useCurrentThinkingContent = () =>
   useBladeStore((state) => state.session.currentThinkingContent);
 
-/**
- * 获取 Thinking 内容是否展开
- */
+/** 获取 Thinking 内容是否展开 */
 export const useThinkingExpanded = () =>
   useBladeStore((state) => state.session.thinkingExpanded);
 
 // ==================== 流式消息选择器 ====================
 
-/**
- * 获取当前流式消息 ID
- */
+/** 获取当前流式消息 ID */
 export const useCurrentStreamingMessageId = () =>
   useBladeStore((state) => state.session.currentStreamingMessageId);
 
-/**
- * NEW: 获取当前流式消息缓冲（行/尾部/总行数/版本）
- */
+/** NEW: 获取当前流式消息缓冲（行/尾部/总行数/版本） */
 export const useCurrentStreamingBuffer = (): {
   lines: string[];
   tail: string;
@@ -307,22 +240,16 @@ export const useCurrentStreamingBuffer = (): {
     }))
   );
 
-/**
- * 获取正在从流式切换到最终渲染的消息 ID
- */
+/** 获取正在从流式切换到最终渲染的消息 ID */
 export const useFinalizingStreamingMessageId = () =>
   useBladeStore((state) => state.session.finalizingStreamingMessageId);
 
 // ==================== 历史消息折叠选择器 ====================
 
-/**
- * 获取历史消息是否全部展开
- */
+/** 获取历史消息是否全部展开 */
 export const useHistoryExpanded = () =>
   useBladeStore((state) => state.session.historyExpanded);
 
-/**
- * 获取保持展开的最近消息数量
- */
+/** 获取保持展开的最近消息数量 */
 export const useExpandedMessageCount = () =>
   useBladeStore((state) => state.session.expandedMessageCount);

@@ -59,35 +59,8 @@ const DEFAULT_SURFACE_HISTORY_BYTE_LIMIT = 512 * 1024;
 const MAX_PROJECTION_SNAPSHOT_ATTEMPTS = 3;
 const NEVER_ABORTED_SIGNAL = new AbortController().signal;
 const SURFACE_WORKSPACE_REFERENCE_PATTERN = /^acp-remote-workspace:[A-Za-z0-9_-]{43}$/;
-const SURFACE_ARCHIVE_CTE = `WITH RECURSIVE archive_members(
-  source_kind, project_path, public_workspace_ref, session_id, archive_root_id,
-  effective_archived_at, depth
-) AS (
-  SELECT source_kind, project_path, public_workspace_ref, session_id, session_id,
-         archived_at, 0
-  FROM sessions
-  WHERE archived_at IS NOT NULL
-  UNION ALL
-  SELECT child.source_kind, child.project_path, child.public_workspace_ref,
-         child.session_id, parent.archive_root_id, parent.effective_archived_at,
-         parent.depth + 1
-  FROM sessions child
-  JOIN archive_members parent
-    ON child.source_kind = parent.source_kind
-   AND child.project_path = parent.project_path
-   AND child.public_workspace_ref IS parent.public_workspace_ref
-   AND child.parent_id = parent.session_id
-  WHERE parent.depth < 128
-),
-ranked_archive AS (
-  SELECT source_kind, project_path, public_workspace_ref, session_id,
-         archive_root_id, effective_archived_at,
-         ROW_NUMBER() OVER (
-           PARTITION BY source_kind, project_path, public_workspace_ref, session_id
-           ORDER BY depth ASC, archive_root_id ASC
-         ) AS rank
-  FROM archive_members
-)`;
+
+import SURFACE_ARCHIVE_CTE from './archive-cte.sql?raw';
 
 interface ProjectionIO {
   readSession(
@@ -258,9 +231,7 @@ function extractSearchText(payload: unknown): string | null {
   return null;
 }
 
-/**
- * 用一条会话的规范化事件重建 parts / parts_fts 行并写入。调用方保证在事务内。
- */
+/** 用一条会话的规范化事件重建 parts / parts_fts 行并写入。调用方保证在事务内。 */
 function writeParts(
   db: SqliteDb,
   sourceKind: ProjectionSourceKind,
@@ -1084,9 +1055,7 @@ async function syncSessionValidated(
   return true;
 }
 
-/**
- * 全量同步：枚举所有项目/会话文件逐个 syncSession，并 GC 掉 JSONL 已不存在的行。
- */
+/** 全量同步：枚举所有项目/会话文件逐个 syncSession，并 GC 掉 JSONL 已不存在的行。 */
 const syncAllState = new WeakMap<
   SqliteDb,
   { inFlight?: Promise<void>; lastCompletedAt?: number }

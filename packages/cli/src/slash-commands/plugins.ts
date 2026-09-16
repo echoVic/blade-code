@@ -1,8 +1,4 @@
-/**
- * /plugins 斜杠命令
- *
- * 管理 Blade Code 插件系统
- */
+/** /plugins 斜杠命令 管理 Blade Code 插件系统 */
 
 import { resolveWorkspaceAgentResources } from '../agent/resources/WorkspaceAgentResources.js';
 import {
@@ -140,9 +136,7 @@ function parseScope(args: string[]): PluginSettingsScope {
   throw new Error(`Invalid plugin scope: ${raw}`);
 }
 
-/**
- * 列出所有插件
- */
+/** 列出所有插件 */
 function listPlugins(
   registry: ReturnType<typeof getPluginRegistry>
 ): SlashCommandResult {
@@ -195,9 +189,7 @@ function listPlugins(
   return { success: true, message: 'Plugins listed' };
 }
 
-/**
- * 显示插件详细信息
- */
+/** 显示插件详细信息 */
 function showPluginInfo(
   registry: ReturnType<typeof getPluginRegistry>,
   name: string | undefined
@@ -288,9 +280,7 @@ function showPluginInfo(
   return { success: true, message: 'Plugin info displayed' };
 }
 
-/**
- * 启用插件
- */
+/** 启用插件 */
 async function enablePlugin(
   registry: ReturnType<typeof getPluginRegistry>,
   name: string | undefined,
@@ -326,9 +316,7 @@ async function enablePlugin(
   }
 }
 
-/**
- * 禁用插件
- */
+/** 禁用插件 */
 async function disablePlugin(
   registry: ReturnType<typeof getPluginRegistry>,
   name: string | undefined,
@@ -364,19 +352,14 @@ async function disablePlugin(
   }
 }
 
-/**
- * 内部刷新函数（不显示消息）
- * 用于 /plugins 在显示 UI 前自动刷新
- */
+/** 内部刷新函数（不显示消息） 用于 /plugins 在显示 UI 前自动刷新 */
 async function refreshPluginsInternal(
   registry: ReturnType<typeof getPluginRegistry>
 ): Promise<void> {
   await refreshWorkspacePlugins(registry.getWorkspaceRoot());
 }
 
-/**
- * 刷新插件列表（带消息输出）
- */
+/** 刷新插件列表（带消息输出） */
 async function refreshPlugins(
   registry: ReturnType<typeof getPluginRegistry>
 ): Promise<SlashCommandResult> {
@@ -411,9 +394,7 @@ async function refreshPlugins(
   }
 }
 
-/**
- * 显示插件统计信息
- */
+/** 显示插件统计信息 */
 function showStats(registry: ReturnType<typeof getPluginRegistry>): SlashCommandResult {
   const stats = registry.getStats();
 
@@ -434,9 +415,7 @@ function showStats(registry: ReturnType<typeof getPluginRegistry>): SlashCommand
   return { success: true, message: 'Stats displayed' };
 }
 
-/**
- * 获取来源标签
- */
+/** 获取来源标签 */
 function getSourceLabel(source: string): string {
   switch (source) {
     case 'cli':
@@ -450,9 +429,7 @@ function getSourceLabel(source: string): string {
   }
 }
 
-/**
- * 安装插件
- */
+/** 安装插件 */
 function parsePackageArguments(args: string[]): {
   positional: string[];
   trust: boolean;
@@ -538,9 +515,7 @@ async function installPlugin(
   return { success: false, error: result.error };
 }
 
-/**
- * 卸载插件
- */
+/** 卸载插件 */
 async function uninstallPlugin(
   registry: ReturnType<typeof getPluginRegistry>,
   args: string[]
@@ -573,9 +548,7 @@ async function uninstallPlugin(
   return { success: false, error: result.error };
 }
 
-/**
- * 更新插件
- */
+/** 更新插件 */
 async function updatePlugin(
   registry: ReturnType<typeof getPluginRegistry>,
   args: string[]

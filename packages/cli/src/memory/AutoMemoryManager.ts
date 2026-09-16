@@ -127,18 +127,14 @@ export class AutoMemoryManager {
     this.config = { ...DEFAULT_AUTO_MEMORY_CONFIG, ...config };
   }
 
-  /**
-   * 确保 memory 目录存在
-   */
+  /** 确保 memory 目录存在 */
   async initialize(): Promise<void> {
     if (this.initialized) return;
     await fs.mkdir(this.memoryDir, { recursive: true });
     this.initialized = true;
   }
 
-  /**
-   * 加载 MEMORY.md 前 N 行，用于注入 system prompt
-   */
+  /** 加载 MEMORY.md 前 N 行，用于注入 system prompt */
   async loadIndex(): Promise<string | null> {
     if (!this.config.enabled) return null;
 
@@ -172,9 +168,7 @@ export class AutoMemoryManager {
     }
   }
 
-  /**
-   * 读取主题文件
-   */
+  /** 读取主题文件 */
   async readTopic(topic: string): Promise<string | null> {
     await this.initialize();
     const filePath = this.resolveTopicPath(topic);
@@ -193,9 +187,7 @@ export class AutoMemoryManager {
     }
   }
 
-  /**
-   * 写入主题文件
-   */
+  /** 写入主题文件 */
   async writeTopic(
     topic: string,
     content: string,
@@ -218,9 +210,7 @@ export class AutoMemoryManager {
     }
   }
 
-  /**
-   * 更新 MEMORY.md 索引
-   */
+  /** 更新 MEMORY.md 索引 */
   async updateIndex(
     content: string,
     mode: 'overwrite' | 'append' = 'overwrite'
@@ -307,9 +297,7 @@ export class AutoMemoryManager {
     });
   }
 
-  /**
-   * 列出所有主题文件
-   */
+  /** 列出所有主题文件 */
   async listTopics(): Promise<MemoryTopicInfo[]> {
     await this.initialize();
 
@@ -336,9 +324,7 @@ export class AutoMemoryManager {
     }
   }
 
-  /**
-   * 删除主题文件
-   */
+  /** 删除主题文件 */
   async deleteTopic(topic: string): Promise<boolean> {
     const filePath = this.resolveTopicPath(topic);
     try {
@@ -349,9 +335,7 @@ export class AutoMemoryManager {
     }
   }
 
-  /**
-   * 清空所有记忆
-   */
+  /** 清空所有记忆 */
   async clearAll(): Promise<number> {
     const topics = await this.listTopics();
     let count = 0;
@@ -367,16 +351,12 @@ export class AutoMemoryManager {
     return count;
   }
 
-  /**
-   * 获取 memory 目录路径
-   */
+  /** 获取 memory 目录路径 */
   getMemoryDir(): string {
     return this.memoryDir;
   }
 
-  /**
-   * 解析主题文件路径，防止路径穿越
-   */
+  /** 解析主题文件路径，防止路径穿越 */
   private resolveTopicPath(topic: string): string {
     // 安全：只允许简单文件名，不允许路径分隔符
     const safeName = topic.replace(/[/\\:*?"<>|]/g, '-');

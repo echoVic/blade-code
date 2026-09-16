@@ -12,11 +12,22 @@
  */
 
 import { useSyncExternalStore } from 'react';
-import { type Dict, en, type TranslationKey } from './en';
-import { zh } from './zh';
+import en from './en.json';
+import zh from './zh.json';
 
 export type Locale = 'en' | 'zh';
 export const SUPPORTED_LOCALES: Locale[] = ['en', 'zh'];
+
+export type TranslationKey = keyof typeof en;
+type Dict = Record<TranslationKey, string>;
+type LocaleKeysMatch =
+  Exclude<keyof typeof en, keyof typeof zh> extends never
+    ? Exclude<keyof typeof zh, keyof typeof en> extends never
+      ? true
+      : false
+    : false;
+const localeKeysMatch: LocaleKeysMatch = true;
+void localeKeysMatch;
 
 const DICTIONARIES: Record<Locale, Dict> = { en, zh };
 
@@ -136,5 +147,3 @@ export function useLocale(): {
 if (isBrowser && document?.documentElement) {
   document.documentElement.lang = currentLocale === 'zh' ? 'zh-CN' : 'en';
 }
-
-export type { TranslationKey };

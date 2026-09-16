@@ -1,7 +1,4 @@
-/**
- * 文件分析服务
- * 用于从对话中提取重点文件并读取内容
- */
+/** 文件分析服务 用于从对话中提取重点文件并读取内容 */
 
 import { readFile } from 'node:fs/promises';
 import { basename, isAbsolute, resolve } from 'node:path';
@@ -11,9 +8,7 @@ import type {
 } from '../services/ChatServiceInterface.js';
 import { PathSecurity } from '../utils/pathSecurity.js';
 
-/**
- * 文件引用信息
- */
+/** 文件引用信息 */
 export interface FileReference {
   /** 文件路径 */
   path: string;
@@ -25,9 +20,7 @@ export interface FileReference {
   wasModified: boolean;
 }
 
-/**
- * 文件内容
- */
+/** 文件内容 */
 export interface FileContent {
   /** 文件路径 */
   path: string;
@@ -41,9 +34,7 @@ export interface FileContent {
   includedLines: number;
 }
 
-/**
- * File Analyzer - 分析对话中的文件引用
- */
+/** File Analyzer - 分析对话中的文件引用 */
 export class FileAnalyzer {
   /** 最多包含的文件数量 */
   private static readonly MAX_FILES = 5;
@@ -61,8 +52,7 @@ export class FileAnalyzer {
     const fileMap = new Map<string, FileReference>();
 
     messages.forEach((msg, index) => {
-      // 从消息内容中提取文件路径
-      // 处理多模态消息：提取纯文本内容
+      // 从消息内容中提取文件路径 处理多模态消息：提取纯文本内容
       const textContent =
         typeof msg.content === 'string'
           ? msg.content

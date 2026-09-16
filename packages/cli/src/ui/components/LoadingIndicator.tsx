@@ -1,9 +1,6 @@
 /**
- * LoadingIndicator 组件
- * 显示加载状态、幽默短语、计时器和循环进度
- *
- * 状态管理：
- * - 使用 Zustand selectors 内部获取状态，消除 Props Drilling
+ * LoadingIndicator 组件 显示加载状态、幽默短语、计时器和循环进度 <p> 状态管理： - 使用 Zustand selectors 内部获取状态，消除
+ * Props Drilling
  */
 
 import { Box, Text } from 'ink';
@@ -27,15 +24,10 @@ interface LoadingIndicatorProps {
   paused?: boolean;
 }
 
-/**
- * 加载动画帧
- * 使用 Braille 点字符创建平滑的旋转动画
- */
+/** 加载动画帧 使用 Braille 点字符创建平滑的旋转动画 */
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-/**
- * 响应式断点（列）
- */
+/** 响应式断点（列） */
 const RESPONSIVE_BREAKPOINT = 80;
 
 /**
@@ -53,10 +45,7 @@ function formatElapsedTime(seconds: number): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
-/**
- * 加载指示器组件
- * 独立的加载动画，显示幽默短语、计时器和循环进度
- */
+/** 加载指示器组件 独立的加载动画，显示幽默短语、计时器和循环进度 */
 export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
   ({ message, paused = false }) => {
     // 使用 Zustand selectors 获取状态
@@ -75,16 +64,14 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     const terminalWidth = useTerminalWidth();
     const isWideScreen = terminalWidth >= RESPONSIVE_BREAKPOINT;
 
-    // 使用新的 hook 获取短语和计时器
-    // 当 paused=true 时，hook 内部的定时器也会暂停
+    // 使用新的 hook 获取短语和计时器 当 paused=true 时，hook 内部的定时器也会暂停
     const { currentPhrase, elapsedTime } = useLoadingIndicator(
       visible,
       false, // isWaiting - 目前不需要等待确认状态
       paused
     );
 
-    // 动画效果：每 150ms 切换一帧（降低频率减少 React 重渲染）
-    // 当 paused=true 时暂停动画，避免被遮挡时仍触发重渲染
+    // 动画效果：每 150ms 切换一帧（降低频率减少 React 重渲染） 当 paused=true 时暂停动画，避免被遮挡时仍触发重渲染
     useEffect(() => {
       if (!visible || paused) {
         setSpinnerFrame(0);

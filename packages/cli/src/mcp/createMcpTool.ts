@@ -12,9 +12,7 @@ import {
 } from './McpToolResult.js';
 import type { McpToolDefinition } from './types.js';
 
-/**
- * 将 MCP 工具定义转换为 Blade Tool 实例
- */
+/** 将 MCP 工具定义转换为 Blade Tool 实例 */
 export function createMcpTool(
   mcpClient: McpClient,
   serverName: string,

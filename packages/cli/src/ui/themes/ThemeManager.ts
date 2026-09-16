@@ -1,6 +1,4 @@
-/**
- * 核心主题管理器
- */
+/** 核心主题管理器 */
 
 import { themes } from './presets.js';
 import type { BaseColors, Theme } from './types.js';

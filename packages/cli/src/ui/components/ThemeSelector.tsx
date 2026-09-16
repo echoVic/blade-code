@@ -1,6 +1,4 @@
-/**
- * ThemeSelector - 交互式主题选择器组件
- */
+/** ThemeSelector - 交互式主题选择器组件 */
 
 import { useMemoizedFn } from 'ahooks';
 import { Box, Text } from 'ink';
@@ -21,9 +19,7 @@ const themeSelectItems = themes.map((item) => ({
   value: item.id, // 使用 id 作为值，如 "tokyo-night"
 }));
 
-/**
- * 代码预览组件
- */
+/** 代码预览组件 */
 const CodePreview: React.FC<{ theme: Theme }> = ({ theme }) => {
   const { colors } = theme;
 
@@ -98,9 +94,7 @@ const CodePreview: React.FC<{ theme: Theme }> = ({ theme }) => {
   );
 };
 
-/**
- * 颜色信息组件
- */
+/** 颜色信息组件 */
 const ColorInfo: React.FC<{ theme: Theme }> = ({ theme }) => {
   const { colors } = theme;
 
@@ -135,9 +129,7 @@ const ColorInfo: React.FC<{ theme: Theme }> = ({ theme }) => {
   );
 };
 
-/**
- * 主题选择器组件
- */
+/** 主题选择器组件 */
 export const ThemeSelector: React.FC = () => {
   const appActions = useAppActions();
   const currentThemeName = themeManager.getCurrentThemeName();

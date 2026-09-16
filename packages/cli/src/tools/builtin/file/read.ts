@@ -29,10 +29,7 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/toolSchemas.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 
-/**
- * ReadTool - File read tool
- * Uses the TypeBox validation design
- */
+/** ReadTool - File read tool Uses the TypeBox validation design */
 export const readTool = createTool({
   name: 'Read',
   displayName: 'File Read',
@@ -403,14 +400,10 @@ export const readTool = createTool({
   category: '文件操作',
   tags: ['file', 'io', 'read'],
 
-  /**
-   * 提取签名内容：返回文件路径
-   */
+  /** 提取签名内容：返回文件路径 */
   extractSignatureContent: (params) => params.file_path,
 
-  /**
-   * 抽象权限规则：返回扩展名通配符格式
-   */
+  /** 抽象权限规则：返回扩展名通配符格式 */
   abstractPermissionRule: (params) => {
     const ext = extname(params.file_path);
     return ext ? `**/*${ext}` : '**/*';
@@ -444,9 +437,7 @@ function mapRemoteReadBoundaryMessage(error: AcpRemoteFileBoundaryError): string
   }
 }
 
-/**
- * 检查是否是文本文件
- */
+/** 检查是否是文本文件 */
 function checkIsTextFile(ext: string): boolean {
   const textExtensions = [
     '.txt',
@@ -531,9 +522,7 @@ function sliceTextContent(
   };
 }
 
-/**
- * 检查是否是二进制文件
- */
+/** 检查是否是二进制文件 */
 function checkIsBinaryFile(ext: string): boolean {
   const binaryExtensions = [
     '.jpg',

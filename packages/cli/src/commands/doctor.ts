@@ -1,6 +1,4 @@
-/**
- * Doctor 命令 - Yargs 版本
- */
+/** Doctor 命令 - Yargs 版本 */
 
 import type { CommandModule } from 'yargs';
 import type { DoctorOptions } from '../cli/types.js';

@@ -1,8 +1,4 @@
-/**
- * PluginsManager - 插件管理器
- *
- * 显示所有已加载的插件及其详细信息
- */
+/** PluginsManager - 插件管理器 显示所有已加载的插件及其详细信息 */
 
 import { Box, Text } from 'ink';
 import { useEffect, useState } from 'react';
@@ -33,9 +29,7 @@ export interface PluginsManagerProps {
 
 const PLUGIN_SCOPES: PersistedPluginSettingsScope[] = ['local', 'project', 'global'];
 
-/**
- * 插件管理器主组件
- */
+/** 插件管理器主组件 */
 export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps) {
   const isFocused = useCurrentFocus() === FocusId.PLUGINS_MANAGER;
   const registry = getPluginRegistry(workspaceRoot);

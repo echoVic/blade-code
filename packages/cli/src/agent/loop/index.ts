@@ -1,8 +1,4 @@
-/**
- * Agent Loop 模块
- *
- * 提供 AsyncGenerator 驱动的 Agent 循环实现
- */
+/** Agent Loop 模块 提供 AsyncGenerator 驱动的 Agent 循环实现 */
 
 export { ConversationState, isRootSystemPrompt } from './ConversationState.js';
 export {

@@ -1,8 +1,4 @@
-/**
- * SkillsManager - Skills 查看器
- *
- * 显示所有可用的 Skills 及其详细信息
- */
+/** SkillsManager - Skills 查看器 显示所有可用的 Skills 及其详细信息 */
 
 import { Box, Text } from 'ink';
 import { getSkillRegistry } from '../../skills/index.js';
@@ -18,9 +14,7 @@ export interface SkillsManagerProps {
   onCancel?: () => void;
 }
 
-/**
- * Skills 查看器主组件
- */
+/** Skills 查看器主组件 */
 export function SkillsManager({ onCancel }: SkillsManagerProps) {
   const workspaceRoot = useWorkspaceRoot();
   const isFocused = useCurrentFocus() === FocusId.SKILLS_MANAGER;

@@ -1,6 +1,4 @@
-/**
- * /memory 斜杠命令 - 管理项目 Auto Memory
- */
+/** /memory 斜杠命令 - 管理项目 Auto Memory */
 
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';
@@ -13,9 +11,7 @@ import {
   type SlashCommandResult,
 } from './types.js';
 
-/**
- * 用 $EDITOR 打开文件编辑，阻塞直到编辑器关闭
- */
+/** 用 $EDITOR 打开文件编辑，阻塞直到编辑器关闭 */
 function openInEditor(filePath: string): Promise<boolean> {
   return new Promise((resolve) => {
     const editor = process.env.EDITOR || process.env.VISUAL || 'vi';

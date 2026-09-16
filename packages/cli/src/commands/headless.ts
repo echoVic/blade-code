@@ -405,9 +405,7 @@ function createConfirmationHandler() {
   };
 }
 
-/**
- * 从 API 错误中提取用户友好的错误信息
- */
+/** 从 API 错误中提取用户友好的错误信息 */
 function extractHeadlessErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) return 'Unknown error';
 

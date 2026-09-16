@@ -1,12 +1,8 @@
 /**
- * completionPolicy — 完成策略检查
- *
- * 从 executeLoopGenerator 中提取的三个完成检查逻辑：
- * 1. checkOutputRecovery — finishReason === 'length' 时的恢复/截断判断
- * 2. checkIncompleteIntent — 检测 LLM "说了要做但没做"的模式
- * 3. checkStopHook — 执行 stop hook 并加超时保护
- *
- * 所有函数返回 action descriptors，不执行副作用。
+ * completionPolicy — 完成策略检查 <p> 从 executeLoopGenerator 中提取的三个完成检查逻辑： 1.
+ * checkOutputRecovery — finishReason === 'length' 时的恢复/截断判断 2. checkIncompleteIntent —
+ * 检测 LLM "说了要做但没做"的模式 3. checkStopHook — 执行 stop hook 并加超时保护 <p> 所有函数返回 action
+ * descriptors，不执行副作用。
  */
 
 import type { PermissionMode } from '../../config/index.js';
@@ -85,12 +81,11 @@ export type IncompleteIntentAction =
   | { action: 'none' };
 
 /**
- * 检测 LLM 是否表达了意图但未执行工具。
- *
- * Bug fixes:
- * 1. 用显式 retryCount 替代滑动窗口，避免远距离重触发
- * 2. 只检测尾部 200 字符，避免全文误匹配
- * 3. 排除 markdown code block 内的匹配
+
+ * 检测 LLM 是否表达了意图但未执行工具。 <p> Bug fixes: 1. 用显式 retryCount 替代滑动窗口，避免远距离重触发 2. 只检测尾部 200
+
+ * 字符，避免全文误匹配 3. 排除 markdown code block 内的匹配
+
  */
 export function checkIncompleteIntent(
   content: string | undefined,

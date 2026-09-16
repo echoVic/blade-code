@@ -3,10 +3,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
 
-/**
- * EnterPlanMode tool
- * Requests user permission to enter Plan mode for complex tasks
- */
+/** EnterPlanMode tool Requests user permission to enter Plan mode for complex tasks */
 export const enterPlanModeTool = createTool({
   name: 'EnterPlanMode',
   displayName: 'Enter Plan Mode',

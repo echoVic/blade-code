@@ -1,8 +1,4 @@
-/**
- * Hooks 管理器 UI 组件
- *
- * 提供交互式界面来添加、查看和管理 hooks 配置
- */
+/** Hooks 管理器 UI 组件 提供交互式界面来添加、查看和管理 hooks 配置 */
 
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';

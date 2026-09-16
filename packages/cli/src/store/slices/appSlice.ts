@@ -1,13 +1,4 @@
-/**
- * App Slice - 应用状态管理
- *
- * 职责：
- * - 初始化状态
- * - 模态框管理
- * - Task 列表管理
- *
- * 注意：配置管理已迁移到独立的 Config Slice
- */
+/** App Slice - 应用状态管理 职责： - 初始化状态 - 模态框管理 - Task 列表管理 注意：配置管理已迁移到独立的 Config Slice */
 
 import type { StateCreator } from 'zustand';
 import type { SessionSurfaceSummary } from '../../api/sessionSurfaceSchemas.js';
@@ -24,9 +15,7 @@ import type {
 
 const MAX_SUBAGENT_TERMINAL_SUMMARY_CHARS = 200;
 
-/**
- * 初始应用状态
- */
+/** 初始应用状态 */
 const initialAppState: AppState = {
   initializationStatus: 'idle',
   initializationError: null,
@@ -51,43 +40,33 @@ const initialAppState: AppState = {
   teams: [],
 };
 
-/**
- * 创建 App Slice
- */
+/** 创建 App Slice */
 export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) => ({
   ...initialAppState,
 
   actions: {
-    /**
-     * 设置初始化状态
-     */
+    /** 设置初始化状态 */
     setInitializationStatus: (status: InitializationStatus) => {
       set((state) => ({
         app: { ...state.app, initializationStatus: status },
       }));
     },
 
-    /**
-     * 设置初始化错误
-     */
+    /** 设置初始化错误 */
     setInitializationError: (error: string | null) => {
       set((state) => ({
         app: { ...state.app, initializationError: error },
       }));
     },
 
-    /**
-     * 设置活动模态框
-     */
+    /** 设置活动模态框 */
     setActiveModal: (modal: ActiveModal) => {
       set((state) => ({
         app: { ...state.app, activeModal: modal },
       }));
     },
 
-    /**
-     * 显示会话选择器
-     */
+    /** 显示会话选择器 */
     showSessionSelector: (
       sessions: SessionSurfaceSummary[],
       intent: SessionSelectionIntent = 'resume'
@@ -119,9 +98,7 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
       }));
     },
 
-    /**
-     * 显示模型编辑向导
-     */
+    /** 显示模型编辑向导 */
     showModelEditWizard: (model: ModelConfig) => {
       set((state) => ({
         app: {
@@ -132,9 +109,7 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
       }));
     },
 
-    /**
-     * 关闭模态框
-     */
+    /** 关闭模态框 */
     closeModal: () => {
       set((state) => ({
         app: {
@@ -147,18 +122,14 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
       }));
     },
 
-    /**
-     * 设置 Task 列表
-     */
+    /** 设置 Task 列表 */
     setTasks: (tasks: TaskListItem[]) => {
       set((state) => ({
         app: { ...state.app, tasks },
       }));
     },
 
-    /**
-     * 更新单个 Task
-     */
+    /** 更新单个 Task */
     updateTask: (task: TaskListItem) => {
       set((state) => ({
         app: {
@@ -168,9 +139,7 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
       }));
     },
 
-    /**
-     * 设置是否等待第二次 Ctrl+C 退出
-     */
+    /** 设置是否等待第二次 Ctrl+C 退出 */
     setAwaitingSecondCtrlC: (awaiting: boolean) => {
       set((state) => ({
         app: { ...state.app, awaitingSecondCtrlC: awaiting },
@@ -338,9 +307,7 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
       }));
     },
 
-    /**
-     * 设置 Thinking 模式开关状态
-     */
+    /** 设置 Thinking 模式开关状态 */
     setThinkingModeEnabled: (enabled: boolean) => {
       set((state) => ({
         app: {
@@ -361,9 +328,7 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
 
     // ==================== Subagent 进度相关 actions ====================
 
-    /**
-     * 开始 subagent 执行进度
-     */
+    /** 开始 subagent 执行进度 */
     startSubagentProgress: (id: string, type: string, description: string) => {
       set((state) => ({
         app: {
@@ -389,9 +354,7 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
       }));
     },
 
-    /**
-     * 更新当前执行的工具名称
-     */
+    /** 更新当前执行的工具名称 */
     updateSubagentTool: (id: string, toolName: string) => {
       set((state) => {
         const progress = state.app.subagentProgresses[id];
@@ -416,9 +379,7 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
       });
     },
 
-    /**
-     * 完成 subagent 执行
-     */
+    /** 完成 subagent 执行 */
     completeSubagentProgress: (
       id: string,
       success: boolean,

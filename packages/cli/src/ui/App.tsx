@@ -30,10 +30,7 @@ import { themeManager } from './themes/ThemeManager.js';
 import { formatErrorMessage } from './utils/security.js';
 import { initializeLocalSessionIdentity } from './utils/sessionStartup.js';
 
-/**
- * UI 入口层的 props 类型
- * 继承所有 CLI 选项，并添加 UI 特有字段
- */
+/** UI 入口层的 props 类型 继承所有 CLI 选项，并添加 UI 特有字段 */
 export interface AppProps extends GlobalOptions {
   // UI 特有字段
   initialMessage?: string; // 初始消息
@@ -41,10 +38,7 @@ export interface AppProps extends GlobalOptions {
   versionCheckPromise?: Promise<VersionCheckResult | null>; // 版本检查 Promise（由 blade.tsx 提前启动）
 }
 
-/**
- * 初始化 Zustand store 状态
- * 检查配置并设置初始化状态
- */
+/** 初始化 Zustand store 状态 检查配置并设置初始化状态 */
 function initializeStoreState(config: RuntimeConfig): void {
   // 设置配置（使用 config slice）
   getState().config.actions.setConfig(config);
@@ -56,18 +50,13 @@ function initializeStoreState(config: RuntimeConfig): void {
 }
 
 /**
- * App 包装器组件
- *
- * 负责 UI 特有的初始化：
- * 1. 合并 CLI 参数到配置
- * 2. 加载主题
- * 3. 预加载 subagents
- * 4. 初始化 Hooks 系统
- * 5. 等待版本检查结果（Promise 已在 blade.tsx 启动，与所有初始化并行）
- *
- * 注意：
- * - ConfigManager 和 Store 已由 CLI 中间件初始化
- * - 版本检查在 blade.tsx main() 开头启动，与 yargs/middleware/UI初始化 并行
+
+ * App 包装器组件 <p> 负责 UI 特有的初始化： 1. 合并 CLI 参数到配置 2. 加载主题 3. 预加载 subagents 4. 初始化 Hooks 系统
+
+ * 5. 等待版本检查结果（Promise 已在 blade.tsx 启动，与所有初始化并行） <p> 注意： - ConfigManager 和 Store 已由 CLI
+
+ * 中间件初始化 - 版本检查在 blade.tsx main() 开头启动，与 yargs/middleware/UI初始化 并行
+
  */
 const AppContent: React.FC<AppProps> = (props) => {
   useTerminalInputModes();

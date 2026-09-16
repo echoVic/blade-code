@@ -1,16 +1,9 @@
 /**
- * StreamingToolExecutor — 流式工具执行器
- *
- * 在 LLM 流式输出过程中即开始执行工具，节省 RTT。
- *
- * 设计：
- * - STREAMING_PRELAUNCH_ALLOWLIST 中的工具 -> 立即启动（流式预启动）
- * - 不在 allowlist 中的工具 -> 排队到流提交后交给 ToolExecutor 公平调度
- * - parallelism=shared 的工具共享执行，exclusive 工具形成 FIFO 屏障
- * - discard() 用于流式降级到非流式时清理，递增 epoch 阻止旧世代结果
- *
- * 流式预启动要求 allowlist 和 isConcurrencySafe 同时成立。allowlist 防止在
- * provider 流提交前启动不可回放的副作用；批内语义由 parallelism 负责。
+ * StreamingToolExecutor — 流式工具执行器 <p> 在 LLM 流式输出过程中即开始执行工具，节省 RTT。 <p> 设计： -
+ * STREAMING_PRELAUNCH_ALLOWLIST 中的工具 -> 立即启动（流式预启动） - 不在 allowlist 中的工具 -> 排队到流提交后交给
+ * ToolExecutor 公平调度 - parallelism=shared 的工具共享执行，exclusive 工具形成 FIFO 屏障 - discard()
+ * 用于流式降级到非流式时清理，递增 epoch 阻止旧世代结果 <p> 流式预启动要求 allowlist 和 isConcurrencySafe
+ * 同时成立。allowlist 防止在 provider 流提交前启动不可回放的副作用；批内语义由 parallelism 负责。
  */
 
 import type { ContextManager } from '../../context/ContextManager.js';
@@ -50,11 +43,7 @@ export type ToolDispatchStatus = 'prelaunched' | 'queued' | 'rejected';
 
 const logger = createLogger(LogCategory.AGENT);
 
-/**
- * 允许在流式阶段提前执行的工具白名单。
- * 仅纯读、无副作用的工具才应出现在此列表中。
- * 此列表与 isConcurrencySafe（文件锁语义）完全独立。
- */
+/** 允许在流式阶段提前执行的工具白名单。 仅纯读、无副作用的工具才应出现在此列表中。 此列表与 isConcurrencySafe（文件锁语义）完全独立。 */
 export const STREAMING_PRELAUNCH_ALLOWLIST: ReadonlySet<string> = new Set([
   'Read',
   'Glob',
@@ -127,9 +116,7 @@ export class StreamingToolExecutor {
     this.rollbackAdmission = rollbackAdmission;
   }
 
-  /**
-   * 流式中调用：在 allowlist 中的工具立即执行，否则排队
-   */
+  /** 流式中调用：在 allowlist 中的工具立即执行，否则排队 */
   addTool(
     toolCall: FunctionToolCall,
     params: Record<string, unknown>
@@ -196,9 +183,7 @@ export class StreamingToolExecutor {
     return this.queued.map((queued) => queued.toolCall);
   }
 
-  /**
-   * 流结束后调用：按添加顺序 yield 所有结果
-   */
+  /** 流结束后调用：按添加顺序 yield 所有结果 */
   async *getRemainingResults(): AsyncGenerator<ToolExecResult> {
     this.dispatchQueuedTools();
 
@@ -223,9 +208,7 @@ export class StreamingToolExecutor {
     }
   }
 
-  /**
-   * 非阻塞获取已完成的结果
-   */
+  /** 非阻塞获取已完成的结果 */
   getCompletedResults(): ToolExecResult[] {
     const results = Array.from(this.completed.values());
     this.completed.clear();
@@ -267,16 +250,12 @@ export class StreamingToolExecutor {
     );
   }
 
-  /**
-   * 是否有工具被添加
-   */
+  /** 是否有工具被添加 */
   hasTools(): boolean {
     return this.order.length > 0;
   }
 
-  /**
-   * 获取当前 epoch（仅供测试使用）
-   */
+  /** 获取当前 epoch（仅供测试使用） */
   getEpoch(): number {
     return this.epoch;
   }

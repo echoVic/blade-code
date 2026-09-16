@@ -1,16 +1,11 @@
 /**
- * Task Tool - Subagent 调度工具
- *
- * 1. Markdown + YAML frontmatter 配置 subagent
- * 2. 模型决策 - 让模型自己决定用哪个 subagent_type
- * 3. subagent_type 参数必需 - 明确指定要使用的 subagent
- * 4. 工具隔离 - 每个 subagent 配置自己的工具白名单
- * 5. 后台执行 - 支持 run_in_background 参数
- * 6. 会话恢复 - 支持 resume 参数
+ * Task Tool - Subagent 调度工具 <p> 1. Markdown + YAML frontmatter 配置 subagent 2. 模型决策 -
+ * 让模型自己决定用哪个 subagent_type 3. subagent_type 参数必需 - 明确指定要使用的 subagent 4. 工具隔离 - 每个
+ * subagent 配置自己的工具白名单 5. 后台执行 - 支持 run_in_background 参数 6. 会话恢复 - 支持 resume 参数
  */
 
-import { nanoid } from 'nanoid';
 import path from 'node:path';
+import { nanoid } from 'nanoid';
 import type { LoopEvent } from '../../../agent/loop/types.js';
 import type { SessionAgentResources } from '../../../agent/resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../../../agent/resources/WorkspaceModelResources.js';
@@ -61,9 +56,7 @@ import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import type { SubagentDelegationDeps } from '../subagentDelegationDeps.js';
 
-/**
- * 从错误中提取用户友好的错误信息
- */
+/** 从错误中提取用户友好的错误信息 */
 function extractUserFriendlyError(error: Error): string {
   const message = error.message || 'Unknown error';
 
@@ -98,10 +91,7 @@ function extractUserFriendlyError(error: Error): string {
   return message.split('\n')[0];
 }
 
-/**
- * 验证 subagent 类型是否有效（运行时验证）
- * 不能使用静态 enum，因为 registry 在模块加载时尚未初始化
- */
+/** 验证 subagent 类型是否有效（运行时验证） 不能使用静态 enum，因为 registry 在模块加载时尚未初始化 */
 function isValidSubagentType(registry: SubagentRegistry, type: string): boolean {
   const types = registry.getAllNames();
   return types.includes(type);
@@ -112,10 +102,7 @@ function getAvailableSubagentTypesMessage(registry: SubagentRegistry): string {
   return types.length > 0 ? types.join(', ') : 'none (registry not initialized)';
 }
 
-/**
- * 动态生成 Task 工具的完整描述
- * 必须是函数形式，因为 subagentRegistry 在模块加载时可能还未初始化
- */
+/** 动态生成 Task 工具的完整描述 必须是函数形式，因为 subagentRegistry 在模块加载时可能还未初始化 */
 function getTaskDescription(registry: SubagentRegistry): string {
   return `
 ## Task
@@ -153,12 +140,11 @@ Usage notes:
 }
 
 /**
- * TaskTool - Subagent 调度器
- *
- * 核心设计：
- * - subagent_type 参数（必需）- 明确指定使用哪个 subagent
- * - 模型从 subagent 描述中选择合适的类型
- * - 每个 subagent 有独立的系统提示和工具配置
+
+ * TaskTool - Subagent 调度器 <p> 核心设计： - subagent_type 参数（必需）- 明确指定使用哪个 subagent - 模型从
+
+ * subagent 描述中选择合适的类型 - 每个 subagent 有独立的系统提示和工具配置
+
  */
 export function createTaskTool(deps: SubagentDelegationDeps = {}) {
   const {

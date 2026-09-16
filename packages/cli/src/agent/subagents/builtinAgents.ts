@@ -1,8 +1,6 @@
 /**
- * 内置 Subagent 配置
- *
- * 这些 agent 是 Blade 默认提供的，与 Claude Code 保持一致。
- * 用户可以通过 ~/.blade/agents/ 或 .blade/agents/ 扩展更多 agent。
+ * 内置 Subagent 配置 <p> 这些 agent 是 Blade 默认提供的，与 Claude Code 保持一致。 用户可以通过 ~/.blade/agents/
+ * 或 .blade/agents/ 扩展更多 agent。
  */
 
 import { goalVerificationAgentConfig } from './builtinGoalVerificationAgent.js';
@@ -10,10 +8,7 @@ import { reviewAgentConfig } from './builtinReviewAgent.js';
 import { verificationAgentConfig } from './builtinVerificationAgent.js';
 import type { SubagentConfig } from './types.js';
 
-/**
- * 内置 Subagent 列表（4 个核心 agent）
- *
- */
+/** 内置 Subagent 列表（4 个核心 agent） */
 export const builtinAgents: SubagentConfig[] = [
   {
     name: 'general-purpose',

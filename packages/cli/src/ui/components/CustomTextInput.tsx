@@ -1,13 +1,6 @@
 /**
- * 自定义 TextInput 组件
- * 基于 ink-text-input v6.0.0 并扩展功能
- *
- * 扩展功能：
- * - 程序化光标控制
- * - 文本粘贴检测
- * - 图片粘贴支持
- * - Ctrl 快捷键（Emacs 风格）
- * - Delete 正向删除
+ * 自定义 TextInput 组件 基于 ink-text-input v6.0.0 并扩展功能 <p> 扩展功能： - 程序化光标控制 - 文本粘贴检测 - 图片粘贴支持
+ * - Ctrl 快捷键（Emacs 风格） - Delete 正向删除
  */
 
 import { useMemoizedFn } from 'ahooks';
@@ -16,11 +9,11 @@ import { type Key, Text } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import { PASTE_CONFIG } from '../constants.js';
 import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
-import { emitTuiComposerReadyMarker } from '../input/tuiComposerReady.js';
 import {
   createTerminalInputParserState,
   parseTerminalInput,
 } from '../input/terminalInput.js';
+import { emitTuiComposerReadyMarker } from '../input/tuiComposerReady.js';
 import {
   getImageFromClipboard,
   getTextFromClipboard,
@@ -38,16 +31,12 @@ function normalizeInputText(text: string): string {
   return text.replace(CRLF_REGEX, '\n').replace(CR_REGEX, '\n');
 }
 
-/**
- * 禁用的按键类型（Key 对象的布尔属性）
- */
+/** 禁用的按键类型（Key 对象的布尔属性） */
 type DisabledKey = keyof {
   [K in keyof Key as Key[K] extends boolean ? K : never]: true;
 };
 
-/**
- * 组件属性
- */
+/** 组件属性 */
 export interface CustomTextInputProps {
   /** 输入值 */
   value: string;
@@ -73,9 +62,7 @@ export interface CustomTextInputProps {
   disabledKeys?: DisabledKey[];
 }
 
-/**
- * 在光标位置插入文本
- */
+/** 在光标位置插入文本 */
 function insertTextAtCursor(
   text: string,
   originalValue: string,
@@ -90,10 +77,7 @@ function insertTextAtCursor(
   };
 }
 
-/**
- * 自定义 TextInput 组件
- * 基于 ink-text-input 并扩展功能
- */
+/** 自定义 TextInput 组件 基于 ink-text-input 并扩展功能 */
 export function CustomTextInput({
   value: originalValue,
   placeholder = '',
@@ -210,10 +194,7 @@ export function CustomTextInput({
     });
   });
 
-  /**
-   * 键盘输入处理
-   * 基于 ink-text-input 并扩展功能
-   */
+  /** 键盘输入处理 基于 ink-text-input 并扩展功能 */
   useInput(
     (rawInput, key) => {
       enqueueInputMutation(() => {

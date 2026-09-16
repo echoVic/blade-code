@@ -1,8 +1,6 @@
 /**
- * Model Alias Resolution
- *
- * Maps short/convenient names to full model IDs.
- * Used by config loading, /model command, and BLADE_MODEL env var.
+ * Model Alias Resolution <p> Maps short/convenient names to full model IDs. Used by
+ * config loading, /model command, and BLADE_MODEL env var.
  */
 
 const MODEL_ALIASES: Record<string, string> = {

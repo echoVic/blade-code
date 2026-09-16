@@ -28,15 +28,7 @@ import {
 } from './builtinVerificationAgent.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
-/**
- * Subagent 执行器
- *
- * 职责：
- * - 创建子 Agent 实例
- * - 配置工具白名单
- * - 执行任务并返回结果
- * - 将子代理对话流写入独立 JSONL 文件
- */
+/** Subagent 执行器 职责： - 创建子 Agent 实例 - 配置工具白名单 - 执行任务并返回结果 - 将子代理对话流写入独立 JSONL 文件 */
 export class SubagentExecutor {
   constructor(
     private config: SubagentConfig,
@@ -130,9 +122,7 @@ export class SubagentExecutor {
         signal: context.signal,
       };
 
-      /**
-       * Phase 4: 统一通过 onEvent 转发所有 LoopEvent
-       */
+      /** Phase 4: 统一通过 onEvent 转发所有 LoopEvent */
       const onEvent = async (event: LoopEvent) => {
         if (event.kind === 'tool_result' && 'function' in event.toolCall) {
           recordModifiedFiles(

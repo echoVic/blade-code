@@ -1,16 +1,7 @@
 /**
- * AgentCreationWizard - Agent 创建向导
- *
- * 交互式多步骤表单，用于创建自定义 subagent 配置
- *
- * 步骤流程：
- * Step 1: 输入 Agent 名称（kebab-case）
- * Step 2: 输入描述信息
- * Step 3: 选择工具列表（多选）
- * Step 4: 选择背景颜色
- * Step 5: 选择配置位置（项目/用户）
- * Step 6: 输入系统提示词
- * Step 7: 确认并保存
+ * AgentCreationWizard - Agent 创建向导 <p> 交互式多步骤表单，用于创建自定义 subagent 配置 <p> 步骤流程： Step 1:
+ * 输入 Agent 名称（kebab-case） Step 2: 输入描述信息 Step 3: 选择工具列表（多选） Step 4: 选择背景颜色 Step 5:
+ * 选择配置位置（项目/用户） Step 6: 输入系统提示词 Step 7: 确认并保存
  */
 
 import fs from 'node:fs';
@@ -84,9 +75,7 @@ const AVAILABLE_COLORS: Array<{ label: string; value: SubagentColor | 'none' }> 
   { label: '不设置颜色', value: 'none' },
 ];
 
-/**
- * 验证 agent 名称（kebab-case）
- */
+/** 验证 agent 名称（kebab-case） */
 function validateAgentName(name: string): string | null {
   if (!name || name.trim() === '') {
     return '名称不能为空';
@@ -100,9 +89,7 @@ function validateAgentName(name: string): string | null {
   return null;
 }
 
-/**
- * Agent 创建向导主组件
- */
+/** Agent 创建向导主组件 */
 export function AgentCreationWizard({
   onComplete,
   onCancel,
@@ -359,9 +346,7 @@ export function AgentCreationWizard({
   // 使用智能 Ctrl+C 处理（向导没有执行中状态，直接退出）
   const handleCtrlC = useCtrlCHandler(false, onCancel);
 
-  // ESC 键处理：返回上一步
-  // Ctrl+C 处理：智能退出
-  // 注意：tools 步骤由 ToolsSelectionStep 自己处理 ESC
+  // ESC 键处理：返回上一步 Ctrl+C 处理：智能退出 注意：tools 步骤由 ToolsSelectionStep 自己处理 ESC
   useInput(
     (input, key) => {
       if (key.escape) {
@@ -753,9 +738,7 @@ export function AgentCreationWizard({
   return null;
 }
 
-/**
- * 工具选择步骤组件（多选）
- */
+/** 工具选择步骤组件（多选） */
 interface ToolsSelectionStepProps {
   config: AgentConfig;
   setConfig: (config: AgentConfig) => void;

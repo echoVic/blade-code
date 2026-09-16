@@ -1,8 +1,4 @@
-/**
- * /search — 历史会话搜索
- *
- * 在过去的 session 历史中搜索关键词，帮助用户回忆过去做过的事情。
- */
+/** /search — 历史会话搜索 在过去的 session 历史中搜索关键词，帮助用户回忆过去做过的事情。 */
 
 import {
   formatSearchResults,

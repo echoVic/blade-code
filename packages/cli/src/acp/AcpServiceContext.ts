@@ -1,9 +1,4 @@
-/**
- * ACP 服务上下文管理器
- *
- * 管理 ACP 模式下的各种服务（文件系统、终端等），
- * 使工具可以透明地使用 IDE 提供的能力或回退到本地实现。
- */
+/** ACP 服务上下文管理器 管理 ACP 模式下的各种服务（文件系统、终端等）， 使工具可以透明地使用 IDE 提供的能力或回退到本地实现。 */
 
 import type {
   AgentSideConnection,
@@ -41,9 +36,7 @@ import { parseAcpRemoteWorkspaceDescriptor } from './AcpRemoteWorkspace.js';
 const logger = createLogger(LogCategory.AGENT);
 const ACP_TERMINAL_OUTPUT_READ_TIMEOUT_MS = 5_000;
 
-/**
- * 终端服务接口
- */
+/** 终端服务接口 */
 export interface TerminalService {
   /**
    * 执行命令
@@ -56,9 +49,7 @@ export interface TerminalService {
     options?: TerminalExecuteOptions
   ): Promise<TerminalExecuteResult>;
 
-  /**
-   * 检查是否支持终端操作
-   */
+  /** 检查是否支持终端操作 */
   isAvailable(): boolean;
 }
 
@@ -100,9 +91,7 @@ export interface TerminalExecuteResult {
   };
 }
 
-/**
- * 本地终端服务（使用 child_process）
- */
+/** 本地终端服务（使用 child_process） */
 class LocalTerminalService implements TerminalService {
   constructor(private readonly defaultCwd?: string) {}
 
@@ -325,10 +314,7 @@ class UnavailableFileSystemService implements FileSystemService {
   }
 }
 
-/**
- * ACP 终端服务
- * 通过 ACP 协议在 IDE 中执行命令
- */
+/** ACP 终端服务 通过 ACP 协议在 IDE 中执行命令 */
 class AcpTerminalService implements TerminalService {
   constructor(
     private readonly connection: AgentSideConnection,
@@ -716,9 +702,7 @@ class AcpTerminalService implements TerminalService {
   }
 }
 
-/**
- * 单个会话的服务上下文
- */
+/** 单个会话的服务上下文 */
 interface SessionServices {
   fileSystemService: FileSystemService;
   terminalService: TerminalService;
@@ -761,12 +745,7 @@ function remoteSurfaceOwnerKey(
   return JSON.stringify([sessionId, exactIdentity]);
 }
 
-/**
- * ACP 服务上下文管理器
- *
- * 按 sessionId 管理服务，支持多会话并发。
- * 每个会话有独立的服务实例，互不影响。
- */
+/** ACP 服务上下文管理器 按 sessionId 管理服务，支持多会话并发。 每个会话有独立的服务实例，互不影响。 */
 export class AcpServiceContext {
   private static sessions: Map<string, SessionServices> = new Map();
   private static remoteSurfaceOwners: Map<string, RemoteSurfaceOwnerBinding> =
@@ -877,11 +856,7 @@ export class AcpServiceContext {
     return registration;
   }
 
-  /**
-   * 销毁会话服务
-   *
-   * 只清理指定会话，不影响其他会话。
-   */
+  /** 销毁会话服务 只清理指定会话，不影响其他会话。 */
   static destroySession(sessionId: string): void {
     const ownerKey = AcpServiceContext.remoteSurfaceOwnerKeysBySessionId.get(sessionId);
     if (ownerKey) {
@@ -912,25 +887,19 @@ export class AcpServiceContext {
     AcpServiceContext.destroySession(registration.sessionId);
   }
 
-  /**
-   * 获取指定会话的服务
-   */
+  /** 获取指定会话的服务 */
   static getSessionServices(sessionId: string): SessionServices | null {
     return AcpServiceContext.sessions.get(sessionId) || null;
   }
 
-  /**
-   * 设置当前活跃会话
-   */
+  /** 设置当前活跃会话 */
   static setCurrentSession(sessionId: string): void {
     if (AcpServiceContext.sessions.has(sessionId)) {
       AcpServiceContext.currentSessionId = sessionId;
     }
   }
 
-  /**
-   * 获取当前活跃会话 ID
-   */
+  /** 获取当前活跃会话 ID */
   static getCurrentSessionId(): string | null {
     return AcpServiceContext.currentSessionId;
   }
@@ -999,9 +968,7 @@ export class AcpServiceContext {
   }
 }
 
-/**
- * 便捷函数：获取终端服务
- */
+/** 便捷函数：获取终端服务 */
 export function getAcpFileSystemService(sessionId?: string): FileSystemService {
   return AcpServiceContext.getFileSystemService(sessionId);
 }
@@ -1010,9 +977,7 @@ export function getTerminalService(sessionId?: string): TerminalService {
   return AcpServiceContext.getTerminalService(sessionId);
 }
 
-/**
- * 便捷函数：检查是否在 ACP 模式
- */
+/** 便捷函数：检查是否在 ACP 模式 */
 export function isAcpMode(sessionId?: string): boolean {
   return sessionId
     ? AcpServiceContext.getSessionServices(sessionId) !== null

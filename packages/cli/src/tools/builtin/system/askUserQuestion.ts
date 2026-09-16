@@ -3,9 +3,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
 
-/**
- * Option schema - 选项定义
- */
+/** Option schema - 选项定义 */
 const optionSchema = Type.Object({
   label: Type.String({
     maxLength: 80,
@@ -18,9 +16,7 @@ const optionSchema = Type.Object({
   }),
 });
 
-/**
- * Question schema - 问题定义
- */
+/** Question schema - 问题定义 */
 const questionSchema = Type.Object({
   question: Type.String({
     maxLength: 2_000,
@@ -42,9 +38,7 @@ const questionSchema = Type.Object({
   }),
 });
 
-/**
- * AskUserQuestion tool schema
- */
+/** AskUserQuestion tool schema */
 const askUserQuestionSchema = Type.Object({
   questions: Type.Array(questionSchema, {
     minItems: 1,
@@ -53,10 +47,7 @@ const askUserQuestionSchema = Type.Object({
   }),
 });
 
-/**
- * AskUserQuestion tool
- * 允许 Claude 在执行过程中向用户提问
- */
+/** AskUserQuestion tool 允许 Claude 在执行过程中向用户提问 */
 export const askUserQuestionTool = createTool({
   name: 'AskUserQuestion',
   displayName: 'Ask User Question',

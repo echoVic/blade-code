@@ -2,9 +2,7 @@
  * @ 文件提及的类型定义
  */
 
-/**
- * 行号范围
- */
+/** 行号范围 */
 export interface LineRange {
   start: number;
   end?: number;
@@ -28,14 +26,10 @@ export interface AtMention {
   isGlob?: boolean;
 }
 
-/**
- * 附件类型
- */
+/** 附件类型 */
 export type AttachmentType = 'file' | 'directory' | 'error';
 
-/**
- * 附件元数据
- */
+/** 附件元数据 */
 export interface AttachmentMetadata {
   /** 文件大小（字节） */
   size?: number;
@@ -47,9 +41,7 @@ export interface AttachmentMetadata {
   lineRange?: LineRange;
 }
 
-/**
- * 附件对象
- */
+/** 附件对象 */
 export interface Attachment {
   /** 附件类型 */
   type: AttachmentType;
@@ -63,9 +55,7 @@ export interface Attachment {
   error?: string;
 }
 
-/**
- * 附件收集器选项
- */
+/** 附件收集器选项 */
 export interface CollectorOptions {
   /** 工作目录 */
   cwd: string;

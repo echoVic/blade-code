@@ -1,8 +1,6 @@
 import type { ExecutionContext, ToolInvocation, ToolResult } from '../types/index.js';
 
-/**
- * 统一的工具调用实现
- */
+/** 统一的工具调用实现 */
 export class UnifiedToolInvocation<TParams = unknown>
   implements ToolInvocation<TParams>
 {
@@ -18,9 +16,7 @@ export class UnifiedToolInvocation<TParams = unknown>
     public readonly isRetrySafe = false
   ) {}
 
-  /**
-   * 获取操作描述
-   */
+  /** 获取操作描述 */
   getDescription(): string {
     if (this.descriptionFn) {
       return this.descriptionFn(this.params);
@@ -28,9 +24,7 @@ export class UnifiedToolInvocation<TParams = unknown>
     return `执行工具: ${this.toolName}`;
   }
 
-  /**
-   * 获取受影响的文件路径
-   */
+  /** 获取受影响的文件路径 */
   getAffectedPaths(): string[] {
     if (this.affectedPathsFn) {
       return this.affectedPathsFn(this.params);

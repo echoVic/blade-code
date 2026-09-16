@@ -1,12 +1,6 @@
 /**
- * ThinkingBlock 组件
- * 显示 Thinking 模型（如 DeepSeek R1）的推理过程内容
- *
- * 特性：
- * - 可折叠显示（默认折叠）
- * - 流式接收时显示 "Thinking..." 加载状态
- * - 折叠状态显示摘要（首行前60字符）
- * - Ctrl+T 快捷键控制展开/折叠（在父组件处理）
+ * ThinkingBlock 组件 显示 Thinking 模型（如 DeepSeek R1）的推理过程内容 <p> 特性： - 可折叠显示（默认折叠） - 流式接收时显示
+ * "Thinking..." 加载状态 - 折叠状态显示摘要（首行前60字符） - Ctrl+T 快捷键控制展开/折叠（在父组件处理）
  */
 
 import { Box, Text } from 'ink';
@@ -42,17 +36,13 @@ function generateSummary(content: string, maxLength = 60): string {
   return `${firstLine.slice(0, maxLength)}...`;
 }
 
-/**
- * 计算行数
- */
+/** 计算行数 */
 function countLines(content: string): number {
   if (!content) return 0;
   return content.split('\n').length;
 }
 
-/**
- * ThinkingBlock 组件
- */
+/** ThinkingBlock 组件 */
 export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(
   ({ content, isStreaming = false, isExpanded }) => {
     const theme = useTheme();

@@ -1,9 +1,7 @@
 /**
- * Memory consolidation for reusable project knowledge.
- *
- * Planning is pure and bounded. Persistence is explicit, workspace-scoped, and
- * best-effort so a memory failure never turns a completed compaction into a task
- * failure.
+ * Memory consolidation for reusable project knowledge. <p> Planning is pure and
+ * bounded. Persistence is explicit, workspace-scoped, and best-effort so a memory
+ * failure never turns a completed compaction into a task failure.
  */
 
 import type {

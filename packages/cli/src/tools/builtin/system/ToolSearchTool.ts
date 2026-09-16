@@ -1,9 +1,4 @@
-/**
- * ToolSearchTool — 工具搜索与延迟加载
- *
- * 用于按需加载 deferred 工具的完整 schema。
- * AI 通过此工具搜索并获取工具的完整参数定义。
- */
+/** ToolSearchTool — 工具搜索与延迟加载 用于按需加载 deferred 工具的完整 schema。 AI 通过此工具搜索并获取工具的完整参数定义。 */
 
 import { Default, Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';

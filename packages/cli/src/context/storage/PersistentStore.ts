@@ -804,9 +804,7 @@ export class PersistentStore {
     return result;
   }
 
-  /**
-   * 初始化存储目录
-   */
+  /** 初始化存储目录 */
   async initialize(): Promise<void> {
     try {
       await withSessionStateRoot(this.stateStorage, async (storagePath) => {
@@ -819,9 +817,7 @@ export class PersistentStore {
     }
   }
 
-  /**
-   * 保存消息到 JSONL 文件（追加模式）
-   */
+  /** 保存消息到 JSONL 文件（追加模式） */
   async saveMessage(
     sessionId: string,
     messageRole: MessageRole,
@@ -1814,9 +1810,7 @@ export class PersistentStore {
     });
   }
 
-  /**
-   * 保存工具调用到 JSONL 文件
-   */
+  /** 保存工具调用到 JSONL 文件 */
   async saveToolUse(
     sessionId: string,
     toolName: string,
@@ -1895,9 +1889,7 @@ export class PersistentStore {
     }
   }
 
-  /**
-   * 保存工具结果到 JSONL 文件
-   */
+  /** 保存工具结果到 JSONL 文件 */
   async saveToolResult(
     sessionId: string,
     toolId: string,
@@ -2105,10 +2097,7 @@ export class PersistentStore {
     return { outcome: 'created', event: event.event };
   }
 
-  /**
-   * 保存会话初始化事件到 JSONL
-   * 仅创建 session_created 事件，不写入空消息
-   */
+  /** 保存会话初始化事件到 JSONL 仅创建 session_created 事件，不写入空消息 */
   async initSession(
     sessionId: string,
     subagentInfo?: SubagentInfoForContext
@@ -2116,9 +2105,7 @@ export class PersistentStore {
     await this.ensureSessionCreated(sessionId, subagentInfo);
   }
 
-  /**
-   * 加载会话的原始 JSONL 事件流
-   */
+  /** 加载会话的原始 JSONL 事件流 */
   async loadEvents(sessionId: string): Promise<SessionEvent[] | null> {
     try {
       const entries = await this.log(sessionId).readAll();
@@ -2128,9 +2115,7 @@ export class PersistentStore {
     }
   }
 
-  /**
-   * 删除会话数据
-   */
+  /** 删除会话数据 */
   async deleteSession(sessionId: string): Promise<void> {
     if (this.stateStorage.kind === 'acp-remote') {
       throw new Error('Remote session deletion requires SessionService');

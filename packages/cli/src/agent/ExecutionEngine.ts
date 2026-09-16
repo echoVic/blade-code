@@ -1,11 +1,6 @@
 /**
- * ExecutionEngine - 执行引擎
- *
- * 职责：
- * - 管理上下文（ContextManager）
- * - 执行简单任务
- *
- * 注：并行执行由 LLM 自主决定（在一个回复中发起多个 Task 工具调用）
+ * ExecutionEngine - 执行引擎 <p> 职责： - 管理上下文（ContextManager） - 执行简单任务 <p> 注：并行执行由 LLM
+ * 自主决定（在一个回复中发起多个 Task 工具调用）
  */
 
 import { ContextManager } from '../context/ContextManager.js';
@@ -33,16 +28,12 @@ export class ExecutionEngine {
       });
   }
 
-  /**
-   * 获取上下文管理器（返回真实的 ContextManager）
-   */
+  /** 获取上下文管理器（返回真实的 ContextManager） */
   public getContextManager(): ContextManager {
     return this.contextManager;
   }
 
-  /**
-   * 执行任务
-   */
+  /** 执行任务 */
   async executeTask(task: AgentTask): Promise<AgentResponse> {
     const messages: Message[] = [{ role: 'user', content: task.prompt }];
     const response = await this.chatService.chat(messages);

@@ -1,13 +1,7 @@
 /**
- * ConfigService - 配置持久化路由层
- *
- * 职责：
- * 1. 字段路由（config.json vs settings.json）
- * 2. scope 路由（local/project/global）
- * 3. 临时字段过滤
- * 4. 防抖（300ms）+ 立即持久化
- * 5. 并发写入安全（Per-file Mutex + Read-Modify-Write）
- * 6. 向前兼容（保留未知字段）
+ * ConfigService - 配置持久化路由层 <p> 职责： 1. 字段路由（config.json vs settings.json） 2. scope
+ * 路由（local/project/global） 3. 临时字段过滤 4. 防抖（300ms）+ 立即持久化 5. 并发写入安全（Per-file Mutex +
+ * Read-Modify-Write） 6. 向前兼容（保留未知字段）
  */
 
 import { promises as fs } from 'node:fs';
@@ -50,423 +44,132 @@ interface FieldRouting {
 // FIELD_ROUTING_TABLE - 单一真相源
 // ============================================
 
-/**
- * 字段路由表：定义每个配置字段的持久化行为
- *
- * 所有其他常量（PERSISTABLE_FIELDS、NON_PERSISTABLE_FIELDS 等）从此表自动派生
- */
+/** 字段路由表：定义每个配置字段的持久化行为 所有其他常量（PERSISTABLE_FIELDS、NON_PERSISTABLE_FIELDS 等）从此表自动派生 */
+const routeFields = (
+  fields: readonly string[],
+  routing: FieldRouting
+): Record<string, FieldRouting> =>
+  Object.fromEntries(fields.map((field) => [field, routing]));
+
 const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
-  // ===== config.json 字段（基础配置）=====
-  models: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace', // 完全替换数组
-    persistable: true,
-  },
-  modelProviders: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  currentModelId: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  temperature: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  maxOutputTokens: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  timeout: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  bashForegroundHandoffMs: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  providerForegroundRecoveryMs: {
+  ...routeFields(
+    [
+      'models',
+      'modelProviders',
+      'currentModelId',
+      'temperature',
+      'maxOutputTokens',
+      'timeout',
+      'bashForegroundHandoffMs',
+      'providerForegroundRecoveryMs',
+      'providerCircuitBreakerOpenMs',
+      'providerRequestConcurrency',
+      'providerGlobalConcurrency',
+      'providerOwnerConcurrency',
+      'providerRequestAdmissionMs',
+      'providerRequestPendingBytes',
+      'agentTeamsEnabled',
+      'codeTheme',
+      'uiTheme',
+      'language',
+      'debug',
+      'fontSize',
+      'autoSaveSessions',
+      'notifyBuild',
+      'notifyErrors',
+      'notifySounds',
+      'privacyTelemetry',
+      'privacyCrash',
+      'communicationStyle',
+      'mcpServers',
+      'lspServers',
+    ],
+    {
+      target: 'config',
+      defaultScope: 'global',
+      mergeStrategy: 'replace',
+      persistable: true,
+    }
+  ),
+  ...routeFields(['stream', 'topP', 'topK', 'mcpEnabled'], {
     target: 'config',
     defaultScope: 'global',
     mergeStrategy: 'replace',
-    persistable: true,
-  },
-  providerCircuitBreakerOpenMs: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  providerRequestConcurrency: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  providerGlobalConcurrency: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  providerOwnerConcurrency: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  providerRequestAdmissionMs: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  providerRequestPendingBytes: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  agentTeamsEnabled: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  codeTheme: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  uiTheme: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  language: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  debug: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  fontSize: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  autoSaveSessions: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  notifyBuild: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  notifyErrors: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  notifySounds: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  privacyTelemetry: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  privacyCrash: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  communicationStyle: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-
-  // ===== settings.json 字段（行为配置）=====
-  permissionMode: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false, // 运行时状态，不持久化
-  },
-  permissions: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace', // 完全替换（允许删除规则）
-    persistable: true,
-  },
-  hooks: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'deep-merge', // 深度合并对象
-    persistable: true,
-  },
-  enabledPlugins: {
+    persistable: false,
+  }),
+  ...routeFields(
+    [
+      'permissions',
+      'disableAllHooks',
+      'maxTurns',
+      'maxConcurrentTasks',
+      'maxQueuedTasks',
+      'maxQueuedTaskBytes',
+    ],
+    {
+      target: 'settings',
+      defaultScope: 'local',
+      mergeStrategy: 'replace',
+      persistable: true,
+    }
+  ),
+  ...routeFields(['hooks', 'enabledPlugins', 'env'], {
     target: 'settings',
     defaultScope: 'local',
     mergeStrategy: 'deep-merge',
     persistable: true,
-  },
-  pluginSourcePolicy: {
-    target: 'settings',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  env: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'deep-merge',
-    persistable: true,
-  },
-  disableAllHooks: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  maxTurns: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  maxConcurrentTasks: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  maxQueuedTasks: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  maxQueuedTaskBytes: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  maxResidentSessionRuntimes: {
-    target: 'settings',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  sessionRuntimeIdleMs: {
-    target: 'settings',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  maxResidentSessionProjections: {
+  }),
+  ...routeFields(
+    ['pluginSourcePolicy', 'maxResidentSessionRuntimes', 'sessionRuntimeIdleMs'],
+    {
+      target: 'settings',
+      defaultScope: 'global',
+      mergeStrategy: 'replace',
+      persistable: true,
+    }
+  ),
+  ...routeFields(['maxResidentSessionProjections', 'sessionProjectionIdleMs'], {
     target: 'settings',
     defaultScope: 'global',
     mergeStrategy: 'replace',
     persistable: true,
     allowedScopes: ['global'],
-  },
-  sessionProjectionIdleMs: {
-    target: 'settings',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-    allowedScopes: ['global'],
-  },
-  mcpServers: {
-    target: 'config',
-    defaultScope: 'global', // MCP 服务器配置存储在用户全局配置中
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-  lspServers: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: true,
-  },
-
-  // ===== 非持久化字段（在 BladeConfig 中但不保存到磁盘）=====
-  // 这些字段在 BladeConfig 中定义，但默认不持久化
-  stream: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  topP: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  topK: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  mcpEnabled: {
-    target: 'config',
-    defaultScope: 'global',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-
-  // ===== CLI 临时字段（绝不持久化）=====
-  systemPrompt: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  appendSystemPrompt: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  initialMessage: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  resumeSessionId: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  forkSession: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  allowedTools: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  disallowedTools: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  mcpConfigPaths: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  strictMcpConfig: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-
-  addDirs: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  outputFormat: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  inputFormat: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  print: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  includePartialMessages: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  replayUserMessages: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  agentsConfig: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
-  settingSources: {
-    target: 'settings',
-    defaultScope: 'local',
-    mergeStrategy: 'replace',
-    persistable: false,
-  },
+  }),
+  ...routeFields(
+    [
+      'permissionMode',
+      'systemPrompt',
+      'appendSystemPrompt',
+      'initialMessage',
+      'resumeSessionId',
+      'forkSession',
+      'allowedTools',
+      'disallowedTools',
+      'mcpConfigPaths',
+      'strictMcpConfig',
+      'addDirs',
+      'outputFormat',
+      'inputFormat',
+      'print',
+      'includePartialMessages',
+      'replayUserMessages',
+      'agentsConfig',
+      'settingSources',
+    ],
+    {
+      target: 'settings',
+      defaultScope: 'local',
+      mergeStrategy: 'replace',
+      persistable: false,
+    }
+  ),
 };
 
 // ============================================
 // 派生常量（从 FIELD_ROUTING_TABLE 自动生成）
 // ============================================
 
-/**
- * 可持久化的字段集合
- * 从 FIELD_ROUTING_TABLE 中提取 persistable: true 的字段
- */
+/** 可持久化的字段集合 从 FIELD_ROUTING_TABLE 中提取 persistable: true 的字段 */
 const _PERSISTABLE_FIELDS = new Set(
   Object.entries(FIELD_ROUTING_TABLE)
     .filter(([_, routing]) => routing.persistable)
@@ -474,15 +177,13 @@ const _PERSISTABLE_FIELDS = new Set(
 );
 
 /**
- * 不可持久化的字段集合（包含两类）
- *
- * 1. **BladeConfig 永久字段但选择不持久化**:
- *    - stream, topP, topK, fontSize, mcpEnabled
- *    - 在类型定义中，但不写入文件（用户不希望或不需要持久化）
- *
- * 2. **CLI 运行时临时参数**:
- *    - systemPrompt, initialMessage, resumeSessionId, forkSession 等
- *    - 仅存在于 CLI 启动期间，从不持久化
+
+ * 不可持久化的字段集合（包含两类） <p> 1. **BladeConfig 永久字段但选择不持久化**: - stream, topP, topK, fontSize,
+
+ * mcpEnabled - 在类型定义中，但不写入文件（用户不希望或不需要持久化） <p> 2. **CLI 运行时临时参数**: - systemPrompt,
+
+ * initialMessage, resumeSessionId, forkSession 等 - 仅存在于 CLI 启动期间，从不持久化
+
  */
 const _NON_PERSISTABLE_FIELDS = new Set(
   Object.entries(FIELD_ROUTING_TABLE)
@@ -536,9 +237,7 @@ export class ConfigService {
 
   private constructor() {}
 
-  /**
-   * 获取单例实例
-   */
+  /** 获取单例实例 */
   public static getInstance(): ConfigService {
     if (!ConfigService.instance) {
       ConfigService.instance = new ConfigService();
@@ -546,9 +245,7 @@ export class ConfigService {
     return ConfigService.instance;
   }
 
-  /**
-   * 重置实例（仅用于测试）
-   */
+  /** 重置实例（仅用于测试） */
   public static resetInstance(): void {
     if (ConfigService.instance) {
       // 清理所有定时器
@@ -602,9 +299,7 @@ export class ConfigService {
     }
   }
 
-  /**
-   * 立即刷新所有待持久化变更
-   */
+  /** 立即刷新所有待持久化变更 */
   async flush(): Promise<void> {
     // 取消所有待处理的定时器
     for (const timer of this.timers.values()) {
@@ -631,9 +326,7 @@ export class ConfigService {
     await this.appendPermissionRuleForDecision(rule, 'allow', options);
   }
 
-  /**
-   * 追加权限拒绝规则（手动实现 append-dedupe 策略）
-   */
+  /** 追加权限拒绝规则（手动实现 append-dedupe 策略） */
   async appendPermissionDenyRule(
     rule: string,
     options: SaveOptions = {}
@@ -678,9 +371,7 @@ export class ConfigService {
     });
   }
 
-  /**
-   * 追加本地权限规则（强制 local scope）
-   */
+  /** 追加本地权限规则（强制 local scope） */
   async appendLocalPermissionRule(
     rule: string,
     options: Omit<SaveOptions, 'scope'> = {}
@@ -688,9 +379,7 @@ export class ConfigService {
     await this.appendPermissionRule(rule, { ...options, scope: 'local' });
   }
 
-  /**
-   * 追加本地权限拒绝规则（强制 local scope）
-   */
+  /** 追加本地权限拒绝规则（强制 local scope） */
   async appendLocalPermissionDenyRule(
     rule: string,
     options: Omit<SaveOptions, 'scope'> = {}
@@ -721,9 +410,7 @@ export class ConfigService {
   // 私有方法
   // ============================================
 
-  /**
-   * 验证字段是否可持久化
-   */
+  /** 验证字段是否可持久化 */
   private validatePersistableFields(updates: Partial<BladeConfig>): void {
     for (const key of Object.keys(updates)) {
       const routing = FIELD_ROUTING_TABLE[key];
@@ -790,9 +477,7 @@ export class ConfigService {
     }
   }
 
-  /**
-   * 按 target 和 scope 分组更新
-   */
+  /** 按 target 和 scope 分组更新 */
   private groupUpdatesByTarget(
     updates: Partial<BladeConfig>,
     scopeOverride?: ConfigScope,
@@ -816,9 +501,7 @@ export class ConfigService {
     return grouped;
   }
 
-  /**
-   * 解析文件路径
-   */
+  /** 解析文件路径 */
   private resolveFilePath(
     target: ConfigTarget,
     scope: ConfigScope,
@@ -844,9 +527,7 @@ export class ConfigService {
     }
   }
 
-  /**
-   * 调度防抖保存
-   */
+  /** 调度防抖保存 */
   private scheduleSave(filePath: string, updates: Record<string, unknown>): void {
     // 获取现有的待处理更新
     const existing = this.pendingUpdates.get(filePath) ?? {};
@@ -885,11 +566,7 @@ export class ConfigService {
     this.timers.set(filePath, timer);
   }
 
-  /**
-   * 合并待处理更新（按字段合并策略）
-   *
-   * 用于防抖场景：300ms 内多次 save 调用需要正确合并，避免深层字段被覆盖
-   */
+  /** 合并待处理更新（按字段合并策略） 用于防抖场景：300ms 内多次 save 调用需要正确合并，避免深层字段被覆盖 */
   private mergePendingUpdates(
     existing: Record<string, unknown>,
     updates: Record<string, unknown>
@@ -920,9 +597,7 @@ export class ConfigService {
     return result;
   }
 
-  /**
-   * 刷新目标文件（带 Per-file Mutex）
-   */
+  /** 刷新目标文件（带 Per-file Mutex） */
   private async flushTarget(
     filePath: string,
     updates: Record<string, unknown>
@@ -965,9 +640,7 @@ export class ConfigService {
     });
   }
 
-  /**
-   * 执行写入操作（Read-Modify-Write）
-   */
+  /** 执行写入操作（Read-Modify-Write） */
   private async performWrite(
     filePath: string,
     updates: Record<string, unknown>
@@ -1022,9 +695,7 @@ export class ConfigService {
     await this.atomicWrite(filePath, mergedConfig);
   }
 
-  /**
-   * 应用 append-dedupe 合并策略
-   */
+  /** 应用 append-dedupe 合并策略 */
   private applyAppendDedupe(
     config: Record<string, unknown>,
     key: string,
@@ -1061,9 +732,7 @@ export class ConfigService {
     }
   }
 
-  /**
-   * 应用 deep-merge 合并策略（使用 lodash-es merge）
-   */
+  /** 应用 deep-merge 合并策略（使用 lodash-es merge） */
   private applyDeepMerge(
     config: Record<string, unknown>,
     key: string,
@@ -1079,16 +748,12 @@ export class ConfigService {
     }
   }
 
-  /**
-   * 数组去重
-   */
+  /** 数组去重 */
   private dedupeArray<T>(arr: T[]): T[] {
     return Array.from(new Set(arr));
   }
 
-  /**
-   * 原子写入（使用 write-file-atomic）
-   */
+  /** 原子写入（使用 write-file-atomic） */
   private async atomicWrite(
     filePath: string,
     data: Record<string, unknown>

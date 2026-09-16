@@ -24,10 +24,7 @@ import type { InputBuffer, ResolvedInput } from './useInputBuffer.js';
 // 创建 UI Hook 专用 Logger
 const logger = createLogger(LogCategory.UI);
 
-/**
- * 主输入框处理 Hook
- * 负责主界面输入框的键盘事件、命令建议和历史记录
- */
+/** 主输入框处理 Hook 负责主界面输入框的键盘事件、命令建议和历史记录 */
 export const useMainInput = (
   buffer: InputBuffer,
   onSubmit: (resolved: ResolvedInput) => void,
@@ -139,8 +136,7 @@ export const useMainInput = (
     if (disabled) return;
     logger.debug('[DIAG] handleSubmit called:', { input, showSuggestions });
 
-    // 直接使用用户输入的内容，不使用建议
-    // 如果用户想使用建议，应该先按 Tab 键选择，然后再按 Enter 提交
+    // 直接使用用户输入的内容，不使用建议 如果用户想使用建议，应该先按 Tab 键选择，然后再按 Enter 提交
     const displayText = input.trim();
 
     if (displayText) {
@@ -161,8 +157,7 @@ export const useMainInput = (
       const currentMappings: PasteMappings =
         buffer.pasteMap.size > 0 ? new Map(buffer.pasteMap) : new Map();
 
-      // 历史记录保存显示文本和粘贴映射
-      // 回放时恢复映射，提交时通过 resolveInput 展开
+      // 历史记录保存显示文本和粘贴映射 回放时恢复映射，提交时通过 resolveInput 展开
       onAddToHistory(displayText, currentMappings);
       buffer.clear(); // 使用 buffer.clear() 清空输入（同时清除粘贴映射）
       onSubmit(resolved); // 发送解析后的内容（文本 + 图片）
@@ -177,8 +172,7 @@ export const useMainInput = (
   // useMainInput 处理全局快捷键 (Ctrl+C/L, Esc) 和建议 (Tab, 上下箭头)
   useInput(
     (inputKey, key) => {
-      // ? - 切换快捷键帮助（仅当输入框为空时）
-      // 必须在 shouldSkip 之前检查，否则会被当作普通字符处理
+      // ? - 切换快捷键帮助（仅当输入框为空时） 必须在 shouldSkip 之前检查，否则会被当作普通字符处理
       if (inputKey === '?' && !input) {
         onToggleShortcuts?.();
         // 防止 ? 被添加到输入框（通过延迟清空）
@@ -186,8 +180,7 @@ export const useMainInput = (
         return true;
       }
 
-      // 跳过基本编辑键和普通字符输入，交给 CustomTextInput 处理
-      // 但是 ? 键（当输入框为空时）要保留，用于切换快捷键帮助
+      // 跳过基本编辑键和普通字符输入，交给 CustomTextInput 处理 但是 ? 键（当输入框为空时）要保留，用于切换快捷键帮助
       const shouldSkip =
         key.backspace ||
         key.delete ||
@@ -195,8 +188,7 @@ export const useMainInput = (
         key.rightArrow ||
         key.pageUp ||
         key.pageDown ||
-        // 跳过普通字符输入（没有任何修饰键，且不是特殊键）
-        // 但是排除空输入框时的 ? 键
+        // 跳过普通字符输入（没有任何修饰键，且不是特殊键） 但是排除空输入框时的 ? 键
         (!key.ctrl &&
           !key.meta &&
           !key.escape &&

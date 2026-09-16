@@ -1,7 +1,4 @@
-/**
- * 差异生成工具函数
- * 提供 Edit 和 Write 工具共享的 diff 生成能力
- */
+/** 差异生成工具函数 提供 Edit 和 Write 工具共享的 diff 生成能力 */
 
 import * as Diff from 'diff';
 
@@ -39,8 +36,7 @@ export function generateDiffSnippet(
     }
   }
 
-  // 返回特殊格式，包含 patch 和行号信息
-  // 使用特殊分隔符 <<<DIFF>>>，方便 MessageRenderer 识别为 diff 内容
+  // 返回特殊格式，包含 patch 和行号信息 使用特殊分隔符 <<<DIFF>>>，方便 MessageRenderer 识别为 diff 内容
   return `\n<<<DIFF>>>\n${JSON.stringify({
     patch,
     startLine: Math.max(1, matchLine - contextLines),

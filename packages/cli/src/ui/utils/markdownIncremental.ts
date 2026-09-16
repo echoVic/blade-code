@@ -1,10 +1,4 @@
-/**
- * Markdown 增量解析缓存
- *
- * 目的：
- * - 将流式增量内容分段解析为 blocks
- * - 平摊最终渲染的解析开销
- */
+/** Markdown 增量解析缓存 目的： - 将流式增量内容分段解析为 blocks - 平摊最终渲染的解析开销 */
 
 import { MARKDOWN_PATTERNS, type ParsedBlock } from './markdownParser.js';
 

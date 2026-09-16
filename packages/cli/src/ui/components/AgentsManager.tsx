@@ -1,8 +1,4 @@
-/**
- * AgentsManager - Subagent 配置管理器
- *
- * 交互式 UI,用于创建、编辑、删除 subagent 配置
- */
+/** AgentsManager - Subagent 配置管理器 交互式 UI,用于创建、编辑、删除 subagent 配置 */
 
 import fs from 'node:fs';
 import { useMemoizedFn } from 'ahooks';
@@ -43,9 +39,7 @@ interface MenuItem {
   value: string;
 }
 
-/**
- * Subagent 配置管理器主组件
- */
+/** Subagent 配置管理器主组件 */
 export function AgentsManager({
   workspaceRoot,
   initialMode = 'menu',

@@ -1,12 +1,10 @@
 /**
- * Shared session-title derivation.
- *
- * Production coding agents (Codex, Grok Build, Claude Code) name a session
- * after its opening intent rather than a timestamp. We take the deterministic
- * route: derive a concise, human-scannable title from the first user message.
- * Deterministic derivation has zero latency, needs no LLM round-trip, and works
- * identically across CLI, Web, and ACP — the single source of truth lives here
- * so all three surfaces stay consistent.
+ * Shared session-title derivation. <p> Production coding agents (Codex, Grok Build,
+ * Claude Code) name a session after its opening intent rather than a timestamp. We take
+ * the deterministic route: derive a concise, human-scannable title from the first user
+ * message. Deterministic derivation has zero latency, needs no LLM round-trip, and
+ * works identically across CLI, Web, and ACP — the single source of truth lives here so
+ * all three surfaces stay consistent.
  */
 
 const MAX_TITLE_LENGTH = 60;
@@ -75,9 +73,7 @@ export function deriveSessionTitle(raw: string): string {
   return `${base.trimEnd()}…`;
 }
 
-/**
- * Derive a title directly from a message content value, flattening it first.
- */
+/** Derive a title directly from a message content value, flattening it first. */
 export function deriveSessionTitleFromContent(content: unknown): string {
   return deriveSessionTitle(flattenMessageText(content));
 }

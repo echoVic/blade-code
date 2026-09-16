@@ -1,7 +1,4 @@
-/**
- * 会话管理服务
- * 负责加载和恢复历史会话
- */
+/** 会话管理服务 负责加载和恢复历史会话 */
 
 import type { BigIntStats } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
@@ -993,13 +990,10 @@ function filterRemoteArchiveState(
   return projected.filter((session) => Boolean(session.archivedAt) === archived);
 }
 
-/**
- * 会话管理服务
- */
+/** 会话管理服务 */
 export class SessionService {
   /**
-   * 将加载到的会话消息转换为 UI 安全的 SessionMessage。
-   * 过滤掉 tool / system 等内部消息，仅从 ContentPart[] 中提取文本，
+   * 将加载到的会话消息转换为 UI 安全的 SessionMessage。 过滤掉 tool / system 等内部消息，仅从 ContentPart[] 中提取文本，
    * 避免把 </functions>、工具调用 JSON、summary 等内部内容泄露给用户或污染历史。
    */
   static toUISafeMessages(messages: Message[]): SessionMessage[] {
@@ -1239,10 +1233,7 @@ export class SessionService {
     }
   }
 
-  /**
-   * 列出所有可用会话
-   * 扫描 ~/.blade/projects/ 目录下的所有 JSONL 文件
-   */
+  /** 列出所有可用会话 扫描 ~/.blade/projects/ 目录下的所有 JSONL 文件 */
   static async listSessions(
     options: SessionScanOptions = {}
   ): Promise<SessionMetadata[]> {
@@ -3360,9 +3351,7 @@ export class SessionService {
     }
   }
 
-  /**
-   * 从 JSONL 文件加载并转换消息
-   */
+  /** 从 JSONL 文件加载并转换消息 */
   private static async loadSessionFromFile(
     filePath: string,
     sessionId: string,
@@ -3449,9 +3438,7 @@ export class SessionService {
     return [...replacementMessages, ...suffix];
   }
 
-  /**
-   * 将 JSONL 条目转换为 OpenAI Message 格式
-   */
+  /** 将 JSONL 条目转换为 OpenAI Message 格式 */
   static convertJSONLToMessages(
     entries: SessionEvent[],
     options: { includeTokenBudgetHandoffs?: boolean } = {}
@@ -3658,9 +3645,7 @@ export class SessionService {
     return messages;
   }
 
-  /**
-   * 元数据聚合器（注入投影层，复用 projectMetadataFromEntries 保证与 JSONL 逐条一致）。
-   */
+  /** 元数据聚合器（注入投影层，复用 projectMetadataFromEntries 保证与 JSONL 逐条一致）。 */
   private static projectionDeriver(): MetadataDeriver {
     return (entries, sessionId, projectPath, sourceKind, actualFilePath) => {
       try {
@@ -4643,9 +4628,7 @@ export class SessionService {
     return publicSession;
   }
 
-  /**
-   * 获取会话文件路径
-   */
+  /** 获取会话文件路径 */
   private static getSessionFilePath(projectPath: string, sessionId: string): string {
     return getSessionFilePath(projectPath, sessionId);
   }

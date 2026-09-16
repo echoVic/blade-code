@@ -1,6 +1,4 @@
-/**
- * Auto Memory 类型定义
- */
+/** Auto Memory 类型定义 */
 
 export interface AutoMemoryConfig {
   /** 是否启用 Auto Memory */

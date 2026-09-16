@@ -76,9 +76,7 @@ export function parseSessionJSONL(
   return entries;
 }
 
-/**
- * JSONL 存储类 - 处理 JSONL 格式的读写
- */
+/** JSONL 存储类 - 处理 JSONL 格式的读写 */
 export class JSONLStore {
   private static readonly appendQueues = new Map<string, Promise<unknown>>();
   private readonly filePath: string;
@@ -229,9 +227,7 @@ export class JSONLStore {
     return all.filter((entry) => (entry.seq ?? 0) >= fromSeq);
   }
 
-  /**
-   * 删除 JSONL 文件
-   */
+  /** 删除 JSONL 文件 */
   async delete(): Promise<boolean> {
     try {
       return await this.enqueue(async () => {
@@ -393,9 +389,7 @@ export class JSONLStore {
     }
   }
 
-  /**
-   * 获取文件路径
-   */
+  /** 获取文件路径 */
   getFilePath(): string {
     return this.filePath;
   }

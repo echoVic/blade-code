@@ -48,10 +48,7 @@ import {
 import { FileAccessTracker } from './FileAccessTracker.js';
 import { SnapshotManager, type SnapshotMetadata } from './SnapshotManager.js';
 
-/**
- * EditTool - File edit tool
- * Uses the TypeBox validation design
- */
+/** EditTool - File edit tool Uses the TypeBox validation design */
 export const editTool = createTool({
   name: 'Edit',
   displayName: 'File Edit',
@@ -482,14 +479,10 @@ export const editTool = createTool({
   category: '文件操作',
   tags: ['file', 'edit', 'replace', 'modify'],
 
-  /**
-   * 提取签名内容：返回文件路径
-   */
+  /** 提取签名内容：返回文件路径 */
   extractSignatureContent: (params) => params.file_path,
 
-  /**
-   * 抽象权限规则：返回扩展名通配符格式
-   */
+  /** 抽象权限规则：返回扩展名通配符格式 */
   abstractPermissionRule: (params) => {
     const ext = extname(params.file_path);
     return ext ? `**/*${ext}` : '**/*';
@@ -591,18 +584,14 @@ function _findMatches(content: string, searchString: string): number[] {
   return findMatchesWithActual(content, matchResult.matched);
 }
 
-/**
- * 使用已知的匹配字符串查找所有位置（避免重复 smartMatch）
- * 内部辅助函数，用于优化性能
- */
+/** 使用已知的匹配字符串查找所有位置（避免重复 smartMatch） 内部辅助函数，用于优化性能 */
 function findMatchesWithActual(content: string, actualString: string): number[] {
   // 防御性检查：空字符串会导致死循环
   if (actualString.length === 0) {
     return [];
   }
 
-  // 使用非重叠匹配：每次找到后跳过整个匹配长度
-  // 这与 split/join 和 substring 替换方式一致
+  // 使用非重叠匹配：每次找到后跳过整个匹配长度 这与 split/join 和 substring 替换方式一致
   const matches: number[] = [];
   let index = content.indexOf(actualString);
 
@@ -617,10 +606,7 @@ function findMatchesWithActual(content: string, actualString: string): number[] 
 
 // diff 生成函数已移动到 diffUtils.ts，供 Edit 和 Write 工具共享
 
-/**
- * 生成富文本错误信息
- * 当 Edit 工具匹配失败时,提供详细的上下文和恢复建议
- */
+/** 生成富文本错误信息 当 Edit 工具匹配失败时,提供详细的上下文和恢复建议 */
 function generateRichErrorMessage(
   fileContent: string,
   searchString: string,
@@ -1099,10 +1085,7 @@ function remoteBasename(filePath: string): string {
   return separatorIndex >= 0 ? filePath.slice(separatorIndex + 1) : filePath;
 }
 
-/**
- * 查找模糊匹配项
- * 使用 Levenshtein 距离计算相似度
- */
+/** 查找模糊匹配项 使用 Levenshtein 距离计算相似度 */
 function findFuzzyMatches(
   fileContent: string,
   searchString: string,
@@ -1146,10 +1129,7 @@ function findFuzzyMatches(
   return matches.sort((a, b) => b.similarity - a.similarity).slice(0, maxResults);
 }
 
-/**
- * 计算两个字符串的相似度(简化版 Levenshtein)
- * 返回 0-1 之间的值,1 表示完全相同
- */
+/** 计算两个字符串的相似度(简化版 Levenshtein) 返回 0-1 之间的值,1 表示完全相同 */
 function calculateSimilarity(str1: string, str2: string): number {
   // 标准化:移除多余空格,统一引号（包括智能引号）
   const normalize = (s: string) =>
@@ -1184,9 +1164,7 @@ function calculateSimilarity(str1: string, str2: string): number {
   return 1 - distance / maxLength;
 }
 
-/**
- * Levenshtein 距离算法
- */
+/** Levenshtein 距离算法 */
 function levenshteinDistance(str1: string, str2: string): number {
   const len1 = str1.length;
   const len2 = str2.length;

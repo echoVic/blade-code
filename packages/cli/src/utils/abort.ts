@@ -1,8 +1,6 @@
 /**
- * Abort 信号工具集
- *
- * 提供 AbortController/AbortSignal 的组合与传播工具，
- * 从 StreamingToolExecutor 中提取并增强。
+ * Abort 信号工具集 <p> 提供 AbortController/AbortSignal 的组合与传播工具， 从 StreamingToolExecutor
+ * 中提取并增强。
  */
 
 import { isAbortReason } from './abortReason.js';

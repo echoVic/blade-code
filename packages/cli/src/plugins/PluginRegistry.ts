@@ -1,8 +1,7 @@
 /**
- * Blade Code Plugins System - Plugin Registry
- *
- * This module provides a singleton registry for managing loaded plugins.
- * It handles plugin discovery, loading, and provides lookup methods.
+ * Blade Code Plugins System - Plugin Registry <p> This module provides a singleton
+ * registry for managing loaded plugins. It handles plugin discovery, loading, and
+ * provides lookup methods.
  */
 
 import path from 'node:path';
@@ -54,9 +53,7 @@ export class PluginRegistry {
     this.workspaceRoot = workspaceRoot;
   }
 
-  /**
-   * Get the singleton instance
-   */
+  /** Get the singleton instance */
   static getInstance(workspaceRoot: string = getCwd()): PluginRegistry {
     const key = path.resolve(workspaceRoot);
     let registry = PluginRegistry.instances.get(key);
@@ -67,9 +64,7 @@ export class PluginRegistry {
     return registry;
   }
 
-  /**
-   * Reset the singleton instance (mainly for testing)
-   */
+  /** Reset the singleton instance (mainly for testing) */
   static resetInstance(): void {
     PluginRegistry.instances.clear();
   }
@@ -215,9 +210,7 @@ export class PluginRegistry {
     };
   }
 
-  /**
-   * Check if the registry has been initialized
-   */
+  /** Check if the registry has been initialized */
   isInitialized(): boolean {
     return this.initialized;
   }
@@ -235,23 +228,17 @@ export class PluginRegistry {
     };
   }
 
-  /**
-   * Get all loaded plugins
-   */
+  /** Get all loaded plugins */
   getAll(): LoadedPlugin[] {
     return Array.from(this.plugins.values());
   }
 
-  /**
-   * Get all active plugins
-   */
+  /** Get all active plugins */
   getActive(): LoadedPlugin[] {
     return Array.from(this.plugins.values()).filter((p) => p.status === 'active');
   }
 
-  /**
-   * Get a plugin by name
-   */
+  /** Get a plugin by name */
   get(name: string): LoadedPlugin | undefined {
     return this.plugins.get(name);
   }
@@ -310,9 +297,7 @@ export class PluginRegistry {
     );
   }
 
-  /**
-   * Get plugins grouped by source
-   */
+  /** Get plugins grouped by source */
   getBySource(): Record<PluginSource, LoadedPlugin[]> {
     const result: Record<PluginSource, LoadedPlugin[]> = {
       cli: [],
@@ -327,9 +312,7 @@ export class PluginRegistry {
     return result;
   }
 
-  /**
-   * Get all namespaced commands from all active plugins
-   */
+  /** Get all namespaced commands from all active plugins */
   getAllCommands(): PluginCommand[] {
     const commands: PluginCommand[] = [];
 
@@ -372,9 +355,7 @@ export class PluginRegistry {
     return this.initialize(this.workspaceRoot, this.cliPluginDirs);
   }
 
-  /**
-   * Get plugin statistics
-   */
+  /** Get plugin statistics */
   getStats(): {
     total: number;
     active: number;
@@ -411,9 +392,7 @@ export class PluginRegistry {
   }
 }
 
-/**
- * Convenience function to get the plugin registry instance
- */
+/** Convenience function to get the plugin registry instance */
 export function getPluginRegistry(workspaceRoot: string = getCwd()): PluginRegistry {
   return PluginRegistry.getInstance(workspaceRoot);
 }

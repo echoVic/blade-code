@@ -379,10 +379,7 @@ export async function runPrint(
   }
 }
 
-/**
- * 检查命令行参数是否包含 --print 选项
- * 如果包含,则以 print 模式运行
- */
+/** 检查命令行参数是否包含 --print 选项 如果包含,则以 print 模式运行 */
 export async function handlePrintMode(): Promise<boolean> {
   const argv = process.argv.slice(2);
   const printIndex = argv.findIndex((arg) => arg === '--print' || arg === '-p');

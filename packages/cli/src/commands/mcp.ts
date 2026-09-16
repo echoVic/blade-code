@@ -1,7 +1,4 @@
-/**
- * MCP 命令 - 完整实现
- * 支持: add, remove, list, get, add-json, reset-project-choices
- */
+/** MCP 命令 - 完整实现 支持: add, remove, list, get, add-json, reset-project-choices */
 
 import os from 'os';
 import path from 'path';
@@ -28,9 +25,7 @@ function asStringArray(value: unknown): string[] | undefined {
   return out;
 }
 
-/**
- * 显示 MCP 命令的帮助信息
- */
+/** 显示 MCP 命令的帮助信息 */
 function showMcpHelp(): void {
   console.log('\nblade mcp\n');
   console.log('管理 MCP 服务器\n');

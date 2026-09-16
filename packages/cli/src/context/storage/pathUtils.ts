@@ -12,9 +12,7 @@ import { getBladeStorageRoot } from './BladeStorageRoot.js';
 
 export { getBladeStorageRoot } from './BladeStorageRoot.js';
 
-/**
- * 路径转义工具 - 将项目路径转为目录名
- */
+/** 路径转义工具 - 将项目路径转为目录名 */
 
 /**
  * 转义项目路径为目录名

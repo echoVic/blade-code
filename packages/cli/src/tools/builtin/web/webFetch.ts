@@ -25,9 +25,7 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
-/**
- * Web response result shape
- */
+/** Web response result shape */
 interface WebResponse {
   status: number;
   status_text: string;
@@ -41,10 +39,7 @@ interface WebResponse {
   response_time: number;
 }
 
-/**
- * WebFetchTool - Web content fetcher
- * Uses the TypeBox validation design
- */
+/** WebFetchTool - Web content fetcher Uses the TypeBox validation design */
 export const webFetchTool = createTool({
   name: 'WebFetch',
   displayName: 'Web Fetch',
@@ -299,10 +294,7 @@ Usage notes:
   category: '网络工具',
   tags: ['web', 'http', 'fetch', 'request', 'api'],
 
-  /**
-   * 提取签名内容：返回 domain:hostname 格式
-   * 例如：domain:github.com
-   */
+  /** 提取签名内容：返回 domain:hostname 格式 例如：domain:github.com */
   extractSignatureContent: (params) => {
     try {
       const urlObj = new URL(params.url);
@@ -312,10 +304,7 @@ Usage notes:
     }
   },
 
-  /**
-   * 抽象权限规则：提取域名通配符
-   * 例如：domain:github.com
-   */
+  /** 抽象权限规则：提取域名通配符 例如：domain:github.com */
   abstractPermissionRule: (params) => {
     try {
       const urlObj = new URL(params.url);
@@ -326,9 +315,7 @@ Usage notes:
   },
 });
 
-/**
- * 执行请求
- */
+/** 执行请求 */
 async function performRequest(options: {
   url: string;
   method: string;
@@ -437,9 +424,7 @@ async function performRequest(options: {
   }
 }
 
-/**
- * 安全地提取 hostname
- */
+/** 安全地提取 hostname */
 function safeHostname(url: string): string {
   try {
     return new URL(url).hostname;
@@ -503,18 +488,14 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
 // Jina Reader Integration
 // ============================================================================
 
-/**
- * Jina Reader 响应格式
- */
+/** Jina Reader 响应格式 */
 interface JinaReaderResponse {
   title: string;
   sourceUrl: string;
   content: string;
 }
 
-/**
- * 使用 Jina Reader 提取网页内容
- */
+/** 使用 Jina Reader 提取网页内容 */
 async function fetchWithJinaReader(options: {
   url: string;
   jinaOptions?: {
@@ -589,9 +570,7 @@ async function fetchWithJinaReader(options: {
   }
 }
 
-/**
- * 解析 Jina Reader 响应
- */
+/** 解析 Jina Reader 响应 */
 function parseJinaResponse(text: string): JinaReaderResponse {
   const lines = text.split('\n');
   let title = '';
@@ -620,9 +599,7 @@ function parseJinaResponse(text: string): JinaReaderResponse {
   };
 }
 
-/**
- * 格式化 Jina 提取的内容
- */
+/** 格式化 Jina 提取的内容 */
 function formatJinaContent(parsed: JinaReaderResponse): string {
   let formatted = '';
 

@@ -1,8 +1,4 @@
-/**
- * ExecutionSummary — 生成 Agent 执行摘要
- *
- * 在 agent loop 完成后，汇总执行统计信息用于 CLI 输出、日志和可观测性。
- */
+/** ExecutionSummary — 生成 Agent 执行摘要 在 agent loop 完成后，汇总执行统计信息用于 CLI 输出、日志和可观测性。 */
 
 import { estimateCostUsd } from '../services/pricing.js';
 

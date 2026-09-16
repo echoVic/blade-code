@@ -1,7 +1,5 @@
 /**
- * ProviderSelector - Provider 选择组件
- * Step 1: 从 pi-ai Provider catalog 中选择
- * 直接输入即可搜索，类似 fzf
+ * ProviderSelector - Provider 选择组件 Step 1: 从 pi-ai Provider catalog 中选择 直接输入即可搜索，类似 fzf
  */
 
 import { Box, Text } from 'ink';

@@ -4,11 +4,7 @@ import Gradient from 'ink-gradient';
 import React from 'react';
 import { getCopyright } from '../../utils/packageInfo.js';
 
-/**
- * 应用头部组件
- * 显示 ASCII Logo、使用指南
- *
- */
+/** 应用头部组件 显示 ASCII Logo、使用指南 */
 export const Header: React.FC = React.memo(() => {
   return (
     <Box flexDirection="column" paddingX={2} paddingTop={1} paddingBottom={1}>

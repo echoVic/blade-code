@@ -1,7 +1,4 @@
-/**
- * ApiKeyInput - API Key 输入组件
- * Step 2: 输入 API Key
- */
+/** ApiKeyInput - API Key 输入组件 Step 2: 输入 API Key */
 
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';

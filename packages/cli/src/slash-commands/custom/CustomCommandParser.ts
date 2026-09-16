@@ -1,8 +1,4 @@
-/**
- * 自定义命令解析器
- *
- * 解析 .md 文件，提取 Frontmatter 配置和 Markdown 正文
- */
+/** 自定义命令解析器 解析 .md 文件，提取 Frontmatter 配置和 Markdown 正文 */
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -51,10 +47,7 @@ export class CustomCommandParser {
     }
   }
 
-  /**
-   * 标准化 Frontmatter 配置
-   * 将 kebab-case 转换为 camelCase
-   */
+  /** 标准化 Frontmatter 配置 将 kebab-case 转换为 camelCase */
   private normalizeConfig(data: Record<string, unknown>): CustomCommandConfig {
     return {
       description: this.asString(data.description),
@@ -65,9 +58,7 @@ export class CustomCommandParser {
     };
   }
 
-  /**
-   * 安全转换为字符串
-   */
+  /** 安全转换为字符串 */
   private asString(value: unknown): string | undefined {
     if (typeof value === 'string' && value.trim()) {
       return value.trim();

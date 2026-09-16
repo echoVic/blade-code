@@ -132,10 +132,7 @@ When using file tools (read, write, edit), provide absolute paths based on: \`${
   return context;
 }
 
-/**
- * 向上遍历目录树查找项目根目录
- * 优先级：.git/.blade/.claude（仓库/工作区根）> package.json（兜底）
- */
+/** 向上遍历目录树查找项目根目录 优先级：.git/.blade/.claude（仓库/工作区根）> package.json（兜底） */
 export function findProjectRoot(startDir: string): string {
   let currentDir = startDir;
   let packageJsonCandidate: string | null = null;
@@ -159,9 +156,7 @@ export function findProjectRoot(startDir: string): string {
   return packageJsonCandidate ?? startDir;
 }
 
-/**
- * 设置全局 cwd 状态（解析符号链接）
- */
+/** 设置全局 cwd 状态（解析符号链接） */
 export function setCwd(newPath: string, relativeTo?: string): void {
   const resolved = isAbsolute(newPath)
     ? newPath

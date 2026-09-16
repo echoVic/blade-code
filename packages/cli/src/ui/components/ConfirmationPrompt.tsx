@@ -16,10 +16,7 @@ const ConfirmationItem = React.memo(({ label, isSelected }: SelectItemProps) => 
   <Text color={isSelected ? 'yellow' : undefined}>{label}</Text>
 ));
 
-/**
- * 确认详情内容组件（静态内容，memo 化避免闪烁）
- * 将不随 SelectInput 状态变化的内容隔离，防止按键时整个组件重新渲染
- */
+/** 确认详情内容组件（静态内容，memo 化避免闪烁） 将不随 SelectInput 状态变化的内容隔离，防止按键时整个组件重新渲染 */
 interface ConfirmationContentProps {
   details: ConfirmationDetails;
   headerColor: string;
@@ -117,18 +114,13 @@ function getShortcutHint(
   return `使用 ↑↓ 选择，回车确认 · ${shortcutText} 快捷键 · Esc 取消`;
 }
 
-/**
- * ConfirmationPrompt Props
- */
+/** ConfirmationPrompt Props */
 interface ConfirmationPromptProps {
   details: ConfirmationDetails;
   onResponse: (response: ConfirmationResponse) => void;
 }
 
-/**
- * ConfirmationPrompt 组件
- * 显示需要用户确认的工具调用详情,并等待用户响应
- */
+/** ConfirmationPrompt 组件 显示需要用户确认的工具调用详情,并等待用户响应 */
 export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
   ({ details, onResponse }) => {
     // 直接从 stdout 获取宽度，避免 useTerminalWidth 的 resize 监听导致不必要重渲染

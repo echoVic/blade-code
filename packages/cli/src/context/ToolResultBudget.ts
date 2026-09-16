@@ -1,9 +1,4 @@
-/**
- * ToolResultBudget — 工具结果大小控制
- *
- * 当工具结果超过阈值时，将完整内容持久化到磁盘，
- * 只保留预览 + 文件路径引用。防止上下文膨胀。
- */
+/** ToolResultBudget — 工具结果大小控制 当工具结果超过阈值时，将完整内容持久化到磁盘， 只保留预览 + 文件路径引用。防止上下文膨胀。 */
 
 import * as fs from 'fs';
 import { nanoid } from 'nanoid';
@@ -14,11 +9,7 @@ const DEFAULT_MAX_RESULT_CHARS = 100_000;
 const PREVIEW_CHARS = 2000;
 const MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200_000;
 
-/**
- * 根据模型上下文窗口动态计算工具结果预算
- *
- * 策略：小窗口模型使用更紧凑的预算，大窗口模型放宽限制
- */
+/** 根据模型上下文窗口动态计算工具结果预算 策略：小窗口模型使用更紧凑的预算，大窗口模型放宽限制 */
 export function computeAdaptiveBudget(maxContextTokens?: number): {
   maxCharsPerResult: number;
   maxCharsPerMessage: number;
@@ -41,12 +32,7 @@ export function computeAdaptiveBudget(maxContextTokens?: number): {
   };
 }
 
-/**
- * 消息级工具结果聚合预算
- *
- * 防止并行工具在同一轮中产生过多总输出。
- * 例如 5 个 Grep 各返回 50K，总计 250K 超出 200K 限制。
- */
+/** 消息级工具结果聚合预算 防止并行工具在同一轮中产生过多总输出。 例如 5 个 Grep 各返回 50K，总计 250K 超出 200K 限制。 */
 export class MessageBudgetTracker {
   private currentChars = 0;
 
@@ -138,12 +124,7 @@ export function applyToolResultBudget(
   return result;
 }
 
-/**
- * 消息级预算检查（内部辅助函数）
- *
- * 当内容在 per-tool 预算内时，进一步检查是否会超出
- * 消息级聚合预算，必要时截断并持久化到磁盘。
- */
+/** 消息级预算检查（内部辅助函数） 当内容在 per-tool 预算内时，进一步检查是否会超出 消息级聚合预算，必要时截断并持久化到磁盘。 */
 function applyMessageBudget(
   original: string | object,
   contentStr: string,
@@ -192,9 +173,7 @@ function applyMessageBudget(
   return original;
 }
 
-/**
- * 持久化完整内容到磁盘并返回截断结果（内部辅助函数）
- */
+/** 持久化完整内容到磁盘并返回截断结果（内部辅助函数） */
 function persistAndSummarize(
   fullContent: string,
   truncated: string,

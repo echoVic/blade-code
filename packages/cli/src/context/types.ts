@@ -1,6 +1,4 @@
-/**
- * 上下文管理模块的核心类型定义
- */
+/** 上下文管理模块的核心类型定义 */
 
 import type { AcpRemotePathStyle } from '../acp/AcpRemotePath.js';
 import type {
@@ -79,9 +77,7 @@ export interface ContextManagerOptions {
   stateStorage?: SessionStateStorage;
 }
 
-/**
- * JSONL 消息类型
- */
+/** JSONL 消息类型 */
 export type JSONLEventType =
   | 'session_created'
   | 'session_updated'

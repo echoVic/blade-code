@@ -11,9 +11,7 @@ import type { ExecutionContext, GrepMetadata, ToolResult } from '../../types/ind
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/toolSchemas.js';
 
-/**
- * 搜索策略枚举
- */
+/** 搜索策略枚举 */
 enum SearchStrategy {
   RIPGREP = 'ripgrep',
   GIT_GREP = 'git-grep',
@@ -21,9 +19,7 @@ enum SearchStrategy {
   FALLBACK = 'fallback',
 }
 
-/**
- * 搜索结果条目
- */
+/** 搜索结果条目 */
 interface GrepMatch {
   file_path: string;
   line_number?: number;
@@ -33,9 +29,7 @@ interface GrepMatch {
   count?: number;
 }
 
-/**
- * 获取平台特定的 ripgrep 路径
- */
+/** 获取平台特定的 ripgrep 路径 */
 function getPlatformRipgrepPath(): string | null {
   const platform = process.platform;
   const arch = process.arch;
@@ -120,9 +114,7 @@ function getRipgrepPath(): string | null {
   return null;
 }
 
-/**
- * 检查是否在 git 仓库中
- */
+/** 检查是否在 git 仓库中 */
 async function isGitRepository(path: string): Promise<boolean> {
   try {
     execSync('git rev-parse --git-dir', {
@@ -135,9 +127,7 @@ async function isGitRepository(path: string): Promise<boolean> {
   }
 }
 
-/**
- * 检查系统 grep 是否可用
- */
+/** 检查系统 grep 是否可用 */
 function isSystemGrepAvailable(): boolean {
   try {
     execSync('grep --version', {
@@ -149,9 +139,7 @@ function isSystemGrepAvailable(): boolean {
   }
 }
 
-/**
- * 执行 ripgrep 搜索
- */
+/** 执行 ripgrep 搜索 */
 async function executeRipgrep(
   args: string[],
   outputMode: string,
@@ -205,9 +193,7 @@ async function executeRipgrep(
   });
 }
 
-/**
- * 执行 git grep 搜索（降级策略 1）
- */
+/** 执行 git grep 搜索（降级策略 1） */
 async function executeGitGrep(
   pattern: string,
   path: string,
@@ -277,9 +263,7 @@ async function executeGitGrep(
   });
 }
 
-/**
- * 执行系统 grep 搜索（降级策略 2）
- */
+/** 执行系统 grep 搜索（降级策略 2） */
 async function executeSystemGrep(
   pattern: string,
   path: string,
@@ -347,9 +331,7 @@ async function executeSystemGrep(
   });
 }
 
-/**
- * 纯 JavaScript 实现的搜索（最终降级方案）
- */
+/** 纯 JavaScript 实现的搜索（最终降级方案） */
 async function executeFallbackGrep(
   pattern: string,
   path: string,
@@ -404,9 +386,7 @@ async function executeFallbackGrep(
   return { matches, totalFiles: processedFiles };
 }
 
-/**
- * 递归获取所有文件
- */
+/** 递归获取所有文件 */
 async function getAllFiles(dir: string, signal: AbortSignal): Promise<string[]> {
   const files: string[] = [];
 
@@ -439,9 +419,7 @@ async function getAllFiles(dir: string, signal: AbortSignal): Promise<string[]> 
   return files;
 }
 
-/**
- * 检查文件/目录是否应该被排除
- */
+/** 检查文件/目录是否应该被排除 */
 function shouldExcludeFile(path: string): boolean {
   for (const pattern of DEFAULT_EXCLUDE_DIRS) {
     if (path.includes(pattern)) {
@@ -451,17 +429,13 @@ function shouldExcludeFile(path: string): boolean {
   return false;
 }
 
-/**
- * 使用 picomatch 进行 glob 匹配
- */
+/** 使用 picomatch 进行 glob 匹配 */
 function matchGlob(filePath: string, pattern: string): boolean {
   const isMatch = picomatch(pattern);
   return isMatch(filePath);
 }
 
-/**
- * 构建 ripgrep 命令参数
- */
+/** 构建 ripgrep 命令参数 */
 function buildRipgrepArgs(options: {
   pattern: string;
   path: string;
@@ -545,9 +519,7 @@ function buildRipgrepArgs(options: {
   return args;
 }
 
-/**
- * 解析 ripgrep/git grep/system grep 输出
- */
+/** 解析 ripgrep/git grep/system grep 输出 */
 function parseGrepOutput(output: string, outputMode: string): GrepMatch[] {
   if (!output.trim()) {
     return [];
@@ -585,9 +557,7 @@ function parseGrepOutput(output: string, outputMode: string): GrepMatch[] {
   }
 }
 
-/**
- * 解析内容行
- */
+/** 解析内容行 */
 function parseContentLine(line: string): GrepMatch | null {
   // 匹配格式: filename:line_number:content 或 filename:content
   const colonIndex = line.indexOf(':');
@@ -933,13 +903,9 @@ export const grepTool = createTool({
   category: '搜索工具',
   tags: ['search', 'grep', 'ripgrep', 'regex', 'text', 'fallback'],
 
-  /**
-   * 提取签名内容：返回搜索模式
-   */
+  /** 提取签名内容：返回搜索模式 */
   extractSignatureContent: (params) => params.pattern,
 
-  /**
-   * 抽象权限规则：返回通配符模式
-   */
+  /** 抽象权限规则：返回通配符模式 */
   abstractPermissionRule: () => '*',
 });

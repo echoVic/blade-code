@@ -1,13 +1,8 @@
 /**
- * HTTP Hook 安全检查
- *
- * 防御要点:
- * 1. SSRF: 默认拒绝 loopback (127.0.0.1/::1/localhost) 和 RFC1918 私有 IP 段
- *    (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) 以及 link-local (169.254.0.0/16)
- * 2. TLS: 默认要求 https://
- * 3. allowedHosts: 显式允许的 hostname (精确 or *.domain.com 通配) 可以绕过上述限制
- *
- * 所有检查在请求发起前进行。
+ * HTTP Hook 安全检查 <p> 防御要点: 1. SSRF: 默认拒绝 loopback (127.0.0.1/::1/localhost) 和 RFC1918
+ * 私有 IP 段 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) 以及 link-local (169.254.0.0/16) 2.
+ * TLS: 默认要求 https:// 3. allowedHosts: 显式允许的 hostname (精确 or *.domain.com 通配) 可以绕过上述限制
+ * <p> 所有检查在请求发起前进行。
  */
 
 import type { HttpHookPolicy } from './types/HookTypes.js';
@@ -19,10 +14,7 @@ export class HttpHookSecurityError extends Error {
   }
 }
 
-/**
- * 验证 HTTP Hook URL 是否可达
- * 不通过时抛 HttpHookSecurityError
- */
+/** 验证 HTTP Hook URL 是否可达 不通过时抛 HttpHookSecurityError */
 export function validateHookUrl(url: string, policy: HttpHookPolicy = {}): void {
   let parsed: URL;
   try {

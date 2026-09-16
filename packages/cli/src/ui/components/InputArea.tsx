@@ -18,11 +18,7 @@ interface InputAreaProps {
   disabled?: boolean;
 }
 
-/**
- * 输入区域组件
- * 使用 CustomTextInput 组件处理光标、编辑、粘贴和图片
- * 注意：加载动画已移至 LoadingIndicator 组件，显示在输入框上方
- */
+/** 输入区域组件 使用 CustomTextInput 组件处理光标、编辑、粘贴和图片 注意：加载动画已移至 LoadingIndicator 组件，显示在输入框上方 */
 export const InputArea: React.FC<InputAreaProps> = React.memo(
   ({
     input,
@@ -38,8 +34,7 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
     const isFocused = currentFocus === FocusId.MAIN_INPUT && !disabled;
     const isShellMode = input.trimStart().startsWith('!');
 
-    // 文本粘贴回调 - 处理大段文本粘贴
-    // 显示摘要标记，但保存原文用于提交时替换
+    // 文本粘贴回调 - 处理大段文本粘贴 显示摘要标记，但保存原文用于提交时替换
     const handlePaste = useMemoizedFn((text: string): { prompt?: string } => {
       const lineCount = text.split('\n').length;
       const charCount = text.length;
@@ -56,8 +51,7 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
         const preview = text.slice(0, 30).replace(/\n/g, ' ');
         const summary = `${charCount} chars, ${lineCount} lines: ${preview}...`;
 
-        // 构建完整标记：␞PASTE:id:摘要内容␟
-        // 整个标记会在提交时被替换为原文
+        // 构建完整标记：␞PASTE:id:摘要内容␟ 整个标记会在提交时被替换为原文
         const displayText = `${createPasteMarkerStart(id)}${summary}${getPasteMarkerEnd()}`;
 
         return { prompt: displayText };
@@ -67,8 +61,7 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
       return {};
     });
 
-    // 图片粘贴回调 - 处理图片粘贴（路径或剪贴板）
-    // 使用粘贴标记系统存储图片数据，提交时构建多模态消息
+    // 图片粘贴回调 - 处理图片粘贴（路径或剪贴板） 使用粘贴标记系统存储图片数据，提交时构建多模态消息
     const handleImagePaste = useMemoizedFn(
       async (
         base64: string,
@@ -79,8 +72,7 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
           // 添加图片映射并获取标记 ID
           const id = onAddImagePasteMapping(base64, mediaType);
 
-          // 构建显示标记：␞PASTE:id:[Image #N]␟
-          // 提交时会识别图片类型，构建多模态消息
+          // 构建显示标记：␞PASTE:id:[Image #N]␟ 提交时会识别图片类型，构建多模态消息
           const displayText = `${createPasteMarkerStart(id)}[Image #${id}]${getPasteMarkerEnd()}`;
 
           return { prompt: displayText };

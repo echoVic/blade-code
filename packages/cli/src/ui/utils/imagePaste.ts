@@ -1,19 +1,13 @@
 /**
- * 图片粘贴工具模块
- *
- * 提供跨平台的剪贴板图片读取功能，支持：
- * - macOS: osascript
- * - Linux: xclip / wl-paste
- * - Windows: PowerShell
+ * 图片粘贴工具模块 <p> 提供跨平台的剪贴板图片读取功能，支持： - macOS: osascript - Linux: xclip / wl-paste -
+ * Windows: PowerShell
  */
 
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
 
-/**
- * 基于二进制头检测图片类型（比 base64 前缀更可靠）
- */
+/** 基于二进制头检测图片类型（比 base64 前缀更可靠） */
 function detectImageType(base64Data: string): string {
   try {
     const buffer = Buffer.from(base64Data, 'base64');
@@ -53,9 +47,7 @@ function detectImageType(base64Data: string): string {
   }
 }
 
-/**
- * 跨平台命令配置
- */
+/** 跨平台命令配置 */
 function getPlatformCommands() {
   const platform = process.platform;
   const tempPathMapping = {
@@ -100,9 +92,7 @@ function getPlatformCommands() {
   };
 }
 
-/**
- * 获取剪贴板路径（用于相对图片路径解析）
- */
+/** 获取剪贴板路径（用于相对图片路径解析） */
 function getClipboardPath(): string | null {
   const { commands } = getPlatformCommands();
   try {
@@ -113,9 +103,7 @@ function getClipboardPath(): string | null {
   }
 }
 
-/**
- * 移除路径两端的引号
- */
+/** 移除路径两端的引号 */
 function removeQuotes(text: string): string {
   if (
     (text.startsWith('"') && text.endsWith('"')) ||
@@ -126,9 +114,7 @@ function removeQuotes(text: string): string {
   return text;
 }
 
-/**
- * 处理转义字符（Unix/Linux 路径）
- */
+/** 处理转义字符（Unix/Linux 路径） */
 function processEscapeCharacters(path: string): string {
   if (process.platform === 'win32') return path;
 
@@ -139,9 +125,7 @@ function processEscapeCharacters(path: string): string {
     .replace(new RegExp(doubleBackslashPlaceholder, 'g'), '\\');
 }
 
-/**
- * 检查文本是否匹配图片路径格式
- */
+/** 检查文本是否匹配图片路径格式 */
 export function isImagePath(text: string): boolean {
   const cleanedText = removeQuotes(text.trim());
   const processedPath = processEscapeCharacters(cleanedText);
@@ -149,9 +133,7 @@ export function isImagePath(text: string): boolean {
   return imageExtensionRegex.test(processedPath);
 }
 
-/**
- * 从文本中提取并验证图片路径
- */
+/** 从文本中提取并验证图片路径 */
 function extractImagePath(text: string): string | null {
   const cleanedText = removeQuotes(text.trim());
   const processedPath = processEscapeCharacters(cleanedText);

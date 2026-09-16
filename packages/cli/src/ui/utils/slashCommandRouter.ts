@@ -41,14 +41,13 @@ export interface CommandResult {
 }
 
 /**
- * 显式编码"UI 展示"和"Agent 输入"的分离语义
- *
- * 当前实现中的分离规则：
- * - /skill, invoke_once_model: UI 显示 = Agent 输入 = 改写后的 prompt
- * - /custom, /plugin: UI 显示原始命令, Agent 输入展开后的 prompt
- *
- * 用 userDisplayMessage + agentInput 两个字段显式编码，
- * 替代原来的 resolved 复用 + displayText 隐式约定
+
+ * 显式编码"UI 展示"和"Agent 输入"的分离语义 <p> 当前实现中的分离规则： - /skill, invoke_once_model: UI 显示 =
+
+ * Agent 输入 = 改写后的 prompt - /custom, /plugin: UI 显示原始命令, Agent 输入展开后的 prompt <p> 用
+
+ * userDisplayMessage + agentInput 两个字段显式编码， 替代原来的 resolved 复用 + displayText 隐式约定
+
  */
 export interface AgentContinuation {
   /** UI 中显示给用户看的消息文本（已通过 addUserMessage 添加） */

@@ -1,8 +1,4 @@
-/**
- * IDE 安装器模块
- *
- * 检测和安装 IDE 扩展
- */
+/** IDE 安装器模块 检测和安装 IDE 扩展 */
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -17,9 +13,7 @@ export interface InstalledIde {
 }
 
 export class IdeInstaller {
-  /**
-   * 获取已安装的 IDE 列表
-   */
+  /** 获取已安装的 IDE 列表 */
   static async getInstalledIdes(): Promise<InstalledIde[]> {
     const ides: InstalledIde[] = [];
 
@@ -38,9 +32,7 @@ export class IdeInstaller {
     return ides;
   }
 
-  /**
-   * 检查指定 IDE 是否已安装
-   */
+  /** 检查指定 IDE 是否已安装 */
   static async isIdeInstalled(ideId: string): Promise<boolean> {
     switch (ideId) {
       case 'vscode':
@@ -54,9 +46,7 @@ export class IdeInstaller {
     }
   }
 
-  /**
-   * 检测 VS Code
-   */
+  /** 检测 VS Code */
   private static async checkVsCode(): Promise<InstalledIde | null> {
     try {
       const { stdout } = await execAsync('code --version');
@@ -71,9 +61,7 @@ export class IdeInstaller {
     }
   }
 
-  /**
-   * 检测 VS Code Insiders
-   */
+  /** 检测 VS Code Insiders */
   private static async checkVsCodeInsiders(): Promise<InstalledIde | null> {
     try {
       const { stdout } = await execAsync('code-insiders --version');
@@ -88,9 +76,7 @@ export class IdeInstaller {
     }
   }
 
-  /**
-   * 检测 Cursor
-   */
+  /** 检测 Cursor */
   private static async checkCursor(): Promise<InstalledIde | null> {
     try {
       const { stdout } = await execAsync('cursor --version');

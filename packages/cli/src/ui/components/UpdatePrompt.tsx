@@ -1,7 +1,4 @@
-/**
- * 交互式版本更新提示组件
- *
- */
+/** 交互式版本更新提示组件 */
 
 import { Box, Text } from 'ink';
 import React, { useState } from 'react';

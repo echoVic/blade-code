@@ -1,7 +1,4 @@
-/**
- * Blockquote 渲染器
- * 使用 ▎ (U+258E) 竖条 + italic 样式显示引用内容
- */
+/** Blockquote 渲染器 使用 ▎ (U+258E) 竖条 + italic 样式显示引用内容 */
 
 import { Box, Text } from 'ink';
 import React from 'react';

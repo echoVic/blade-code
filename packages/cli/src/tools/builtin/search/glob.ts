@@ -18,18 +18,14 @@ import type {
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/toolSchemas.js';
 
-/**
- * Create a standard AbortError
- */
+/** Create a standard AbortError */
 function createAbortError(message: string): Error {
   const error = new Error(message);
   error.name = 'AbortError';
   return error;
 }
 
-/**
- * File match result
- */
+/** File match result */
 interface FileMatch {
   path: string;
   relative_path: string;
@@ -38,10 +34,7 @@ interface FileMatch {
   modified?: string;
 }
 
-/**
- * GlobTool - File pattern matcher
- * Uses the TypeBox validation design
- */
+/** GlobTool - File pattern matcher Uses the TypeBox validation design */
 export const globTool = createTool({
   name: 'Glob',
   displayName: 'File Pattern Match',
@@ -237,20 +230,14 @@ export const globTool = createTool({
   category: '搜索工具',
   tags: ['file', 'search', 'glob', 'pattern', 'wildcard'],
 
-  /**
-   * 提取签名内容：返回 glob 模式
-   */
+  /** 提取签名内容：返回 glob 模式 */
   extractSignatureContent: (params) => params.pattern,
 
-  /**
-   * 抽象权限规则：返回通配符模式
-   */
+  /** 抽象权限规则：返回通配符模式 */
   abstractPermissionRule: () => '*',
 });
 
-/**
- * 执行 glob 搜索
- */
+/** 执行 glob 搜索 */
 async function performGlobSearch(
   searchPath: string,
   pattern: string,
@@ -262,8 +249,7 @@ async function performGlobSearch(
   },
   fileFilter: FileFilter
 ): Promise<{ matches: FileMatch[]; wasTruncated: boolean }> {
-  // 复用 FileFilter 已解析的 ignore 模式（避免重复读取 .gitignore）
-  // negates 由 FileFilter 在二次过滤时使用
+  // 复用 FileFilter 已解析的 ignore 模式（避免重复读取 .gitignore） negates 由 FileFilter 在二次过滤时使用
   const ignore = fileFilter.getIgnorePatterns();
 
   const matches: FileMatch[] = [];
@@ -398,9 +384,7 @@ async function performGlobSearch(
   );
 }
 
-/**
- * 排序匹配结果
- */
+/** 排序匹配结果 */
 function sortMatches(matches: FileMatch[]): FileMatch[] {
   return matches.sort((a, b) => {
     // 首先按类型排序：文件在前，目录在后

@@ -1,9 +1,4 @@
-/**
- * ACP 会话管理
- *
- * 封装 Blade Agent，处理 ACP 协议的 prompt 请求，
- * 将 Agent 的流式输出转发给 IDE。
- */
+/** ACP 会话管理 封装 Blade Agent，处理 ACP 协议的 prompt 请求， 将 Agent 的流式输出转发给 IDE。 */
 
 import {
   type AgentSideConnection,
@@ -133,15 +128,8 @@ const logger = createLogger(LogCategory.AGENT);
 
 type AcpPendingResumeKind = 'pending_input' | 'goal';
 
-/**
- * ACP 会话类
- *
- * 每个会话对应一个 Blade Agent 实例，
- * 处理来自 IDE 的 prompt 请求并返回流式响应。
- */
-/**
- * ACP 模式 ID（与 BladeAgent 返回的 availableModes 对应）
- */
+/** ACP 会话类 每个会话对应一个 Blade Agent 实例， 处理来自 IDE 的 prompt 请求并返回流式响应。 */
+/** ACP 模式 ID（与 BladeAgent 返回的 availableModes 对应） */
 export type AcpModeId = 'default' | 'auto-edit' | 'yolo' | 'plan';
 
 export type AcpSessionRoots =
@@ -489,10 +477,7 @@ export class AcpSession {
     });
   }
 
-  /**
-   * 初始化会话
-   * 创建 Blade Agent 实例并初始化 ACP 服务
-   */
+  /** 初始化会话 创建 Blade Agent 实例并初始化 ACP 服务 */
   async initialize(): Promise<void> {
     logger.debug(`[AcpSession ${this.id}] Initializing...`);
     await this.persistPermissionMode(
@@ -820,8 +805,7 @@ export class AcpSession {
       clearTimeout(this.availableCommandsTimer);
     }
 
-    // 延迟发送，确保在 session/new 响应之后
-    // 使用较长的延迟确保 Zed 已准备好接收
+    // 延迟发送，确保在 session/new 响应之后 使用较长的延迟确保 Zed 已准备好接收
     logger.debug(
       `[AcpSession ${this.id}] Scheduling available commands update (500ms delay)`
     );
@@ -846,9 +830,7 @@ export class AcpSession {
     await this.sendAvailableCommands();
   }
 
-  /**
-   * 处理 slash command
-   */
+  /** 处理 slash command */
   private async handleSlashCommand(
     message: string,
     signal: AbortSignal
@@ -1174,8 +1156,7 @@ export class AcpSession {
         if (persistedMessages.length > 0) this.messages = persistedMessages;
       }
 
-      // 发送结果给 IDE
-      // 优先使用 content（完整内容），否则使用 message（简短状态）
+      // 发送结果给 IDE 优先使用 content（完整内容），否则使用 message（简短状态）
       const displayContent = result.content || result.message;
       if (displayContent) {
         this.sendUpdate({
@@ -1197,8 +1178,7 @@ export class AcpSession {
       if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
         return { stopReason: 'cancelled' };
       }
-      // 注意：abortHandler 在 try 块内定义，catch 无法直接访问
-      // 但由于 signal 是 WeakRef 的，GC 会自动清理
+      // 注意：abortHandler 在 try 块内定义，catch 无法直接访问 但由于 signal 是 WeakRef 的，GC 会自动清理
       logger.error(`[AcpSession ${this.id}] Slash command error:`, error);
       this.sendUpdate({
         sessionUpdate: 'agent_message_chunk',
@@ -1472,8 +1452,7 @@ export class AcpSession {
         },
       };
 
-      // 4. 调用 Agent chatStream（Phase 4: 事件驱动消费）
-      // stream_end 不外发给 ACP 客户端（保持内部语义）
+      // 4. 调用 Agent chatStream（Phase 4: 事件驱动消费） stream_end 不外发给 ACP 客户端（保持内部语义）
       const loopResult = await drainLoop(
         this.agent.chatStream(message, context, {
           pendingInputOnly: internalOptions.pendingInputOnly,
@@ -2547,9 +2526,7 @@ export class AcpSession {
     }
   }
 
-  /**
-   * 取消当前操作
-   */
+  /** 取消当前操作 */
   cancel(): void {
     logger.info(`[AcpSession ${this.id}] Cancel requested`);
     let cancelled = this.clearPendingResumeRequest();
@@ -2574,13 +2551,11 @@ export class AcpSession {
   }
 
   /**
-   * 设置会话模式（权限模式）
-   *
-   * 可用模式：
-   * - default: 所有操作都需要确认
-   * - auto-edit: 文件编辑自动批准，命令需要确认
-   * - yolo: 所有操作自动批准
-   * - plan: 只读模式，不允许写操作
+
+   * 设置会话模式（权限模式） <p> 可用模式： - default: 所有操作都需要确认 - auto-edit: 文件编辑自动批准，命令需要确认 - yolo:
+
+   * 所有操作自动批准 - plan: 只读模式，不允许写操作
+
    */
   async setMode(mode: string): Promise<void> {
     const validModes: AcpModeId[] = ['default', 'auto-edit', 'yolo', 'plan'];
@@ -2599,9 +2574,7 @@ export class AcpSession {
     });
   }
 
-  /**
-   * 将 ACP 模式映射到 Blade 权限模式
-   */
+  /** 将 ACP 模式映射到 Blade 权限模式 */
   private mapModeToPermissionMode(): PermissionMode | undefined {
     return this.mapModeIdToPermissionMode(this.mode);
   }
@@ -2621,12 +2594,11 @@ export class AcpSession {
   }
 
   /**
-   * 检查操作是否需要确认
-   *
-   * ToolKind 枚举值：
-   * - 'readonly': 只读操作（Read, Glob, Grep 等）
-   * - 'write': 写操作（Edit, Write 等）
-   * - 'execute': 执行操作（Bash 等）
+
+   * 检查操作是否需要确认 <p> ToolKind 枚举值： - 'readonly': 只读操作（Read, Glob, Grep 等） - 'write':
+
+   * 写操作（Edit, Write 等） - 'execute': 执行操作（Bash 等）
+
    */
   private shouldAutoApprove(toolKind: string): boolean {
     switch (this.mode) {
@@ -2646,9 +2618,7 @@ export class AcpSession {
     }
   }
 
-  /**
-   * 设置会话模型
-   */
+  /** 设置会话模型 */
   async setModel(modelId: string): Promise<void> {
     logger.info(`[AcpSession ${this.id}] Model set to: ${modelId}`);
 
@@ -2864,9 +2834,7 @@ export class AcpSession {
     );
   }
 
-  /**
-   * 销毁会话
-   */
+  /** 销毁会话 */
   destroy(options: { discardPendingInput?: boolean } = {}): Promise<void> {
     if (this.destroyPromise) {
       return this.destroyFinished ? Promise.resolve() : this.destroyPromise;
@@ -3003,9 +2971,7 @@ export class AcpSession {
     };
   }
 
-  /**
-   * 发送会话更新通知
-   */
+  /** 发送会话更新通知 */
   private canSendUpdates(): boolean {
     return (
       !this.destroyed &&

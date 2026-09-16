@@ -1,10 +1,6 @@
 /**
- * Agent 会话持久化存储
- *
- * 用于支持 Task 工具的 resume 功能：
- * - 保存 agent 执行上下文到文件
- * - 支持跨会话恢复 agent
- * - 自动清理过期会话
+ * Agent 会话持久化存储 <p> 用于支持 Task 工具的 resume 功能： - 保存 agent 执行上下文到文件 - 支持跨会话恢复 agent -
+ * 自动清理过期会话
  */
 
 import fs from 'node:fs';
@@ -29,9 +25,7 @@ import type { SubagentConfig } from './types.js';
 const logger = createLogger(LogCategory.AGENT);
 export const MAX_CACHED_AGENT_SESSIONS = 256;
 
-/**
- * Agent 会话状态
- */
+/** Agent 会话状态 */
 export type AgentSessionStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 export type AgentRestartRecoveryOutcome = 'completed' | 'interrupted' | 'failed';
 
@@ -78,9 +72,7 @@ export function createAgentSessionConfigSnapshot(
   };
 }
 
-/**
- * Agent 会话数据
- */
+/** Agent 会话数据 */
 export interface AgentSession {
   /** 持久化 schema。旧 sidecar 在读取时规范化为 v2。 */
   schemaVersion: 2;
@@ -280,9 +272,7 @@ export class AgentSessionStore {
     return AgentSessionStore.instance;
   }
 
-  /**
-   * 确保存储目录存在
-   */
+  /** 确保存储目录存在 */
   private ensureDirectory(): void {
     if (!fs.existsSync(this.sessionsDir)) {
       fs.mkdirSync(this.sessionsDir, { recursive: true, mode: 0o700 });
@@ -307,17 +297,13 @@ export class AgentSessionStore {
     }
   }
 
-  /**
-   * 获取会话文件路径
-   */
+  /** 获取会话文件路径 */
   private getSessionPath(agentId: string): string {
     assertValidSessionId(agentId);
     return join(this.sessionsDir, `${agentId}.json`);
   }
 
-  /**
-   * 保存会话
-   */
+  /** 保存会话 */
   saveSession(session: AgentSession): void {
     const normalized = this.normalizeSession(session, session.id);
     this.ensureDirectory();
@@ -332,9 +318,7 @@ export class AgentSessionStore {
     logger.debug(`Session saved: ${normalized.id}`);
   }
 
-  /**
-   * 加载会话
-   */
+  /** 加载会话 */
   loadSession(agentId: string): AgentSession | undefined {
     // 先检查缓存
     const cached = this.cache.get(agentId);
@@ -471,9 +455,7 @@ export class AgentSessionStore {
     };
   }
 
-  /**
-   * 更新会话状态
-   */
+  /** 更新会话状态 */
   updateSession(
     agentId: string,
     updates: Partial<AgentSession>
@@ -493,9 +475,7 @@ export class AgentSessionStore {
     return updatedSession;
   }
 
-  /**
-   * 标记会话完成
-   */
+  /** 标记会话完成 */
   markCompleted(
     agentId: string,
     result: {
@@ -517,9 +497,7 @@ export class AgentSessionStore {
     });
   }
 
-  /**
-   * 删除会话
-   */
+  /** 删除会话 */
   deleteSession(agentId: string): boolean {
     try {
       const filePath = this.getSessionPath(agentId);
@@ -534,9 +512,7 @@ export class AgentSessionStore {
     }
   }
 
-  /**
-   * 列出所有会话
-   */
+  /** 列出所有会话 */
   listSessions(): AgentSession[] {
     try {
       const files = fs.readdirSync(this.sessionsDir);
@@ -564,9 +540,7 @@ export class AgentSessionStore {
     }
   }
 
-  /**
-   * 清空缓存
-   */
+  /** 清空缓存 */
   clearCache(): void {
     this.cache.clear();
   }

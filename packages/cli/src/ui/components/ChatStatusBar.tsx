@@ -44,13 +44,7 @@ export function formatGoalTurnLineageStatus(
   return `lineage:${lineage.rootTurnId?.slice(0, 8) ?? '?'}:${lineage.currentTurnId.slice(0, 8)}`;
 }
 
-/**
- * 聊天状态栏组件
- * 显示权限模式、快捷键提示、API状态和处理状态
- *
- * 状态管理：
- * - 使用 Zustand selectors 获取状态（SSOT）
- */
+/** 聊天状态栏组件 显示权限模式、快捷键提示、API状态和处理状态 状态管理： - 使用 Zustand selectors 获取状态（SSOT） */
 export const ChatStatusBar: React.FC = React.memo(() => {
   // 使用 Zustand selectors 获取状态
   const hasApiKey = useIsReady();

@@ -1,6 +1,4 @@
-/**
- * 内置的 slash commands
- */
+/** 内置的 slash commands */
 
 import fs from 'node:fs/promises';
 import path from 'node:path';

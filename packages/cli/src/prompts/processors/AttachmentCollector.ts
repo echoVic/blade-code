@@ -22,9 +22,7 @@ function isFileTree(value: FileTreeEntry): value is FileTree {
   return value instanceof Map;
 }
 
-/**
- * 附件收集器
- */
+/** 附件收集器 */
 export class AttachmentCollector {
   private fileCache = new Map<string, { content: string; timestamp: number }>();
   private options: Required<CollectorOptions>;
@@ -137,9 +135,7 @@ export class AttachmentCollector {
     return await this.readFile(realPath, mention.path, mention.lineRange);
   }
 
-  /**
-   * 读取文件内容
-   */
+  /** 读取文件内容 */
   private async readFile(
     absolutePath: string,
     relativePath: string,
@@ -181,9 +177,7 @@ export class AttachmentCollector {
     return this.formatFileAttachment(relativePath, content, lineRange);
   }
 
-  /**
-   * 格式化文件附件
-   */
+  /** 格式化文件附件 */
   private formatFileAttachment(
     relativePath: string,
     content: string,
@@ -243,9 +237,7 @@ export class AttachmentCollector {
     };
   }
 
-  /**
-   * 渲染目录树结构（不读取文件内容，仅展示结构）
-   */
+  /** 渲染目录树结构（不读取文件内容，仅展示结构） */
   private async renderDirectoryTree(
     absolutePath: string,
     relativePath: string
@@ -300,9 +292,7 @@ export class AttachmentCollector {
     };
   }
 
-  /**
-   * 构建文件树结构
-   */
+  /** 构建文件树结构 */
   private buildFileTree(files: string[]): FileTree {
     const tree: FileTree = new Map<string, FileTreeEntry>();
 
@@ -330,9 +320,7 @@ export class AttachmentCollector {
     return tree;
   }
 
-  /**
-   * 打印树形结构为 ASCII 格式
-   */
+  /** 打印树形结构为 ASCII 格式 */
   private printTree(
     tree: FileTree,
     rootPath: string,
@@ -370,9 +358,7 @@ export class AttachmentCollector {
     return lines.filter((l) => l).join('\n');
   }
 
-  /**
-   * 处理 Glob 模式
-   */
+  /** 处理 Glob 模式 */
   private async processGlob(pattern: string): Promise<Attachment> {
     // 使用 fast-glob 展开模式
     const files = (await fg(pattern, {

@@ -1,11 +1,4 @@
-/**
- * 文件锁管理器
- *
- * 功能：
- * 1. 防止对同一文件的并发编辑
- * 2. 不同文件可以并发编辑
- * 3. 使用 Promise 队列实现顺序执行
- */
+/** 文件锁管理器 功能： 1. 防止对同一文件的并发编辑 2. 不同文件可以并发编辑 3. 使用 Promise 队列实现顺序执行 */
 
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -24,9 +17,7 @@ export class FileLockManager {
   // 私有构造函数（单例模式）
   private constructor() {}
 
-  /**
-   * 获取全局单例实例
-   */
+  /** 获取全局单例实例 */
   static getInstance(): FileLockManager {
     if (!FileLockManager.instance) {
       FileLockManager.instance = new FileLockManager();
@@ -61,9 +52,7 @@ export class FileLockManager {
     }
   }
 
-  /**
-   * 按稳定顺序持有多个路径锁，避免多文件事务之间死锁。
-   */
+  /** 按稳定顺序持有多个路径锁，避免多文件事务之间死锁。 */
   acquireLocks<T>(
     filePaths: readonly string[],
     operation: () => Promise<T>
@@ -118,9 +107,7 @@ export class FileLockManager {
     return acquire(0);
   }
 
-  /**
-   * 执行操作并清理锁
-   */
+  /** 执行操作并清理锁 */
   private async executeWithLock<T>(
     filePath: string,
     operation: () => Promise<T>
@@ -155,30 +142,22 @@ export class FileLockManager {
     this.locks.delete(normalizeLockKey(filePath));
   }
 
-  /**
-   * 清除所有文件锁
-   */
+  /** 清除所有文件锁 */
   clearAll(): void {
     this.locks.clear();
   }
 
-  /**
-   * 获取当前锁定的文件列表
-   */
+  /** 获取当前锁定的文件列表 */
   getLockedFiles(): string[] {
     return Array.from(this.locks.keys());
   }
 
-  /**
-   * 获取锁定文件数量
-   */
+  /** 获取锁定文件数量 */
   getLockedFileCount(): number {
     return this.locks.size;
   }
 
-  /**
-   * 重置单例实例（仅用于测试）
-   */
+  /** 重置单例实例（仅用于测试） */
   static resetInstance(): void {
     FileLockManager.instance = null;
   }

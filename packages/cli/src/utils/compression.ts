@@ -55,10 +55,7 @@ export class Compression {
     this.modelLimit = modelLimit;
   }
 
-  /**
-   * 检测是否需要触发压缩
-   * 当输入 token 使用量超过上下文窗口的 triggerRatio 时触发
-   */
+  /** 检测是否需要触发压缩 当输入 token 使用量超过上下文窗口的 triggerRatio 时触发 */
   isOverflow(tokens: TokenUsage): boolean {
     if (!this.config.compaction.auto) {
       return false;
@@ -77,9 +74,7 @@ export class Compression {
     return usageRatio > this.config.compaction.triggerRatio;
   }
 
-  /**
-   * 判断是否需要修剪消息
-   */
+  /** 判断是否需要修剪消息 */
   shouldPrune(tokens: TokenUsage): boolean {
     if (!this.config.pruning.enabled) {
       return false;
@@ -92,10 +87,7 @@ export class Compression {
     return currentInputTokens > context * this.config.compaction.triggerRatio;
   }
 
-  /**
-   * 修剪消息历史
-   * 保留最近的 N 轮对话和包含受保护工具的消息
-   */
+  /** 修剪消息历史 保留最近的 N 轮对话和包含受保护工具的消息 */
   prune(messages: Message[], protectTurns?: number): PruneResult {
     const turns = protectTurns ?? this.config.pruning.protectTurns;
 
@@ -164,8 +156,7 @@ export class Compression {
     // 检查是否达到最小修剪量
     const { minimumPrune } = this.config.pruning;
     if (prunedTokens < minimumPrune && prunedCount > 0) {
-      // 如果修剪量不够，尝试修剪更多
-      // 这里简化处理，返回已修剪的结果
+      // 如果修剪量不够，尝试修剪更多 这里简化处理，返回已修剪的结果
     }
 
     return {
@@ -176,10 +167,7 @@ export class Compression {
     };
   }
 
-  /**
-   * 压缩消息历史
-   * 将旧的消息压缩为摘要，保留最近的对话
-   */
+  /** 压缩消息历史 将旧的消息压缩为摘要，保留最近的对话 */
   compress(messages: Message[], keepTurns: number): CompressResult {
     if (messages.length <= 1) {
       return {
@@ -226,9 +214,7 @@ export class Compression {
     };
   }
 
-  /**
-   * 生成消息历史摘要
-   */
+  /** 生成消息历史摘要 */
   private generateSummary(messages: Message[]): string {
     const summaryParts: string[] = [];
     let currentTopic = '';
@@ -252,12 +238,7 @@ export class Compression {
     return summaryParts.join('\n') || '之前的对话内容';
   }
 
-  /**
-   * 估算文本的 token 数量
-   * 使用简单的启发式方法：
-   * - 英文单词约 1.3 tokens
-   * - 中文字符约 2 tokens
-   */
+  /** 估算文本的 token 数量 使用简单的启发式方法： - 英文单词约 1.3 tokens - 中文字符约 2 tokens */
   calculateTokens(text: string): number {
     if (!text) {
       return 0;
@@ -276,16 +257,12 @@ export class Compression {
     return Math.ceil(chineseTokens + englishTokens + otherTokens);
   }
 
-  /**
-   * 更新压缩配置
-   */
+  /** 更新压缩配置 */
   updateConfig(config: CompressionConfig): void {
     this.config = config;
   }
 
-  /**
-   * 更新模型限制
-   */
+  /** 更新模型限制 */
   updateModelLimit(limit: ModelLimit): void {
     this.modelLimit = limit;
   }

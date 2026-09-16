@@ -1,14 +1,7 @@
 /**
- * Config Slice - 配置状态管理
- *
- * 职责：
- * - 运行时配置存储（RuntimeConfig）
- * - 配置的内存更新（Store as SSOT）
- * - 与 ConfigService 配合实现持久化
- *
- * 注意：
- * - 这个 slice 只负责内存状态管理
- * - 持久化逻辑在 vanilla.ts 的 configActions() 中
+ * Config Slice - 配置状态管理 <p> 职责： - 运行时配置存储（RuntimeConfig） - 配置的内存更新（Store as SSOT） - 与
+ * ConfigService 配合实现持久化 <p> 注意： - 这个 slice 只负责内存状态管理 - 持久化逻辑在 vanilla.ts 的
+ * configActions() 中
  */
 
 import type { StateCreator } from 'zustand';
@@ -16,16 +9,12 @@ import type { RuntimeConfig } from '../../config/types.js';
 import { getPiModelCatalog } from '../../services/pi/PiModelCatalog.js';
 import type { BladeStore, ConfigSlice, ConfigState } from '../types.js';
 
-/**
- * 初始配置状态
- */
+/** 初始配置状态 */
 const initialConfigState: ConfigState = {
   config: null,
 };
 
-/**
- * 创建 Config Slice
- */
+/** 创建 Config Slice */
 export const createConfigSlice: StateCreator<BladeStore, [], [], ConfigSlice> = (
   set,
   get
@@ -33,9 +22,7 @@ export const createConfigSlice: StateCreator<BladeStore, [], [], ConfigSlice> = 
   ...initialConfigState,
 
   actions: {
-    /**
-     * 设置完整配置
-     */
+    /** 设置完整配置 */
     setConfig: (config: RuntimeConfig) => {
       getPiModelCatalog().configureModelProviders(config.modelProviders, config.models);
       set((state) => ({

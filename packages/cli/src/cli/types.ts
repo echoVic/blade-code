@@ -1,6 +1,4 @@
-/**
- * Yargs CLI 类型定义
- */
+/** Yargs CLI 类型定义 */
 
 export interface GlobalOptions {
   debug?: string;

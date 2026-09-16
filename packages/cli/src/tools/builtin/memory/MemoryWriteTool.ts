@@ -1,6 +1,4 @@
-/**
- * MemoryWriteTool - 写入项目记忆文件
- */
+/** MemoryWriteTool - 写入项目记忆文件 */
 
 import { AutoMemoryManager } from '../../../memory/AutoMemoryManager.js';
 import { classifyMemoryContent } from '../../../memory/MemorySafety.js';

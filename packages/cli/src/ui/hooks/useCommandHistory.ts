@@ -2,15 +2,10 @@ import { useMemoizedFn } from 'ahooks';
 import { useRef, useState } from 'react';
 import type { PasteContent } from './useInputBuffer.js';
 
-/**
- * 粘贴映射条目：标记 ID -> 内容（文本或图片）
- */
+/** 粘贴映射条目：标记 ID -> 内容（文本或图片） */
 export type PasteMappings = Map<number, PasteContent>;
 
-/**
- * 历史记录条目
- * 包含显示文本和粘贴映射
- */
+/** 历史记录条目 包含显示文本和粘贴映射 */
 export interface HistoryEntry {
   /** 显示文本（输入框中显示的内容，包含粘贴标记） */
   display: string;
@@ -18,11 +13,7 @@ export interface HistoryEntry {
   pasteMappings: PasteMappings;
 }
 
-/**
- * 命令历史记录 Hook
- * 负责管理命令历史和导航
- * 支持粘贴标记的保存和恢复
- */
+/** 命令历史记录 Hook 负责管理命令历史和导航 支持粘贴标记的保存和恢复 */
 export const useCommandHistory = () => {
   const [commandHistory, setCommandHistory] = useState<HistoryEntry[]>([]);
   const historyIndexRef = useRef(-1);

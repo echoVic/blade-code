@@ -1,12 +1,7 @@
 /**
- * 统一的代理 Fetch 工具
- *
- * 支持 https_proxy/http_proxy 环境变量，让 Blade 在以下场景正常工作：
- * - 企业/公司网络（需要代理才能访问外部服务）
- * - 网络受限地区（改善连接质量）
- * - 调试/抓包（Charles/Fiddler/mitmproxy）
- *
- * 使用 undici 的 ProxyAgent 实现，与 WebSearch 工具保持一致。
+ * 统一的代理 Fetch 工具 <p> 支持 https_proxy/http_proxy 环境变量，让 Blade 在以下场景正常工作： -
+ * 企业/公司网络（需要代理才能访问外部服务） - 网络受限地区（改善连接质量） - 调试/抓包（Charles/Fiddler/mitmproxy） <p> 使用
+ * undici 的 ProxyAgent 实现，与 WebSearch 工具保持一致。
  */
 
 import { type Dispatcher, ProxyAgent, fetch as undiciFetch } from 'undici';
@@ -33,9 +28,7 @@ function getProxyAgent(): ProxyAgent | undefined {
   return undefined;
 }
 
-/**
- * ProxyFetch 选项
- */
+/** ProxyFetch 选项 */
 export interface ProxyFetchOptions extends RequestInit {
   /** 超时时间（毫秒），默认 30000 */
   timeout?: number;

@@ -1,15 +1,8 @@
-/**
- * 搜索提供商定义
- *
- * 支持多个免费搜索 API，自动故障转移
- * 当前支持：Exa (MCP)、DuckDuckGo、SearXNG（多实例）
- */
+/** 搜索提供商定义 支持多个免费搜索 API，自动故障转移 当前支持：Exa (MCP)、DuckDuckGo、SearXNG（多实例） */
 
 import type { WebSearchResult } from './webSearch.js';
 
-/**
- * 搜索提供商接口
- */
+/** 搜索提供商接口 */
 export interface SearchProvider {
   /** 提供商名称（用于日志显示） */
   name: string;
@@ -195,11 +188,7 @@ function transformSearXNGResponse(data: unknown): WebSearchResult[] {
   return results;
 }
 
-/**
- * SearXNG 公共实例列表
- * 这些实例都是开源社区维护的，可能会有变化
- * 参考：https://searx.space/
- */
+/** SearXNG 公共实例列表 这些实例都是开源社区维护的，可能会有变化 参考：https://searx.space/ */
 const SEARXNG_INSTANCES = [
   'https://searx.be',
   'https://search.ononoki.org',
@@ -270,9 +259,7 @@ interface McpSearchResponse {
   };
 }
 
-/**
- * 解析 Exa MCP 响应为标准搜索结果
- */
+/** 解析 Exa MCP 响应为标准搜索结果 */
 function parseExaMcpResponse(text: string): WebSearchResult[] {
   const results: WebSearchResult[] = [];
 
@@ -338,9 +325,7 @@ function parseExaMcpResponse(text: string): WebSearchResult[] {
   return results;
 }
 
-/**
- * 创建 Exa MCP 提供商（无需 API key）
- */
+/** 创建 Exa MCP 提供商（无需 API key） */
 function createExaProvider(): SearchProvider {
   return {
     name: 'Exa',
@@ -422,10 +407,7 @@ function createExaProvider(): SearchProvider {
 // 提供商管理
 // ============================================================================
 
-/**
- * 获取所有可用的搜索提供商
- * 按优先级排序：Exa (MCP) -> DuckDuckGo -> SearXNG 实例轮询
- */
+/** 获取所有可用的搜索提供商 按优先级排序：Exa (MCP) -> DuckDuckGo -> SearXNG 实例轮询 */
 export function getAllProviders(): SearchProvider[] {
   const providers: SearchProvider[] = [];
 
@@ -441,9 +423,7 @@ export function getAllProviders(): SearchProvider[] {
   return providers;
 }
 
-/**
- * 获取提供商总数
- */
+/** 获取提供商总数 */
 export function getProviderCount(): number {
   return 1 + 1 + SEARXNG_INSTANCES.length; // Exa + DuckDuckGo + SearXNG
 }

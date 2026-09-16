@@ -1,9 +1,4 @@
-/**
- * 自定义命令注册表
- *
- * 管理所有自定义命令的发现、注册和执行
- * 单例模式
- */
+/** 自定义命令注册表 管理所有自定义命令的发现、注册和执行 单例模式 */
 
 import path from 'node:path';
 import type { PluginCommand } from '../../plugins/types.js';
@@ -28,9 +23,7 @@ export class CustomCommandRegistry {
   private workspaceRoot = '';
   private lastDiscoveryResult: CustomCommandDiscoveryResult | null = null;
 
-  /**
-   * 获取单例实例
-   */
+  /** 获取单例实例 */
   static getInstance(workspaceRoot: string = getCwd()): CustomCommandRegistry {
     const key = path.resolve(workspaceRoot);
     let instance = CustomCommandRegistry.instances.get(key);
@@ -48,9 +41,7 @@ export class CustomCommandRegistry {
     return registry;
   }
 
-  /**
-   * 重置实例（用于测试）
-   */
+  /** 重置实例（用于测试） */
   static resetInstance(): void {
     CustomCommandRegistry.instances.clear();
   }
@@ -107,9 +98,7 @@ export class CustomCommandRegistry {
     return result;
   }
 
-  /**
-   * 检查是否已初始化
-   */
+  /** 检查是否已初始化 */
   isInitialized(): boolean {
     return this.initialized;
   }
@@ -118,30 +107,22 @@ export class CustomCommandRegistry {
     return this.workspaceRoot;
   }
 
-  /**
-   * 获取命令
-   */
+  /** 获取命令 */
   getCommand(name: string): CustomCommand | undefined {
     return this.commands.get(name);
   }
 
-  /**
-   * 检查命令是否存在
-   */
+  /** 检查命令是否存在 */
   hasCommand(name: string): boolean {
     return this.commands.has(name);
   }
 
-  /**
-   * 获取所有命令
-   */
+  /** 获取所有命令 */
   getAllCommands(): CustomCommand[] {
     return Array.from(this.commands.values());
   }
 
-  /**
-   * 获取命令数量
-   */
+  /** 获取命令数量 */
   getCommandCount(): number {
     return this.commands.size;
   }
@@ -199,9 +180,7 @@ export class CustomCommandRegistry {
     return `(${base})`;
   }
 
-  /**
-   * 按来源分组获取命令
-   */
+  /** 按来源分组获取命令 */
   getCommandsBySource(): {
     project: CustomCommand[];
     user: CustomCommand[];
@@ -220,9 +199,7 @@ export class CustomCommandRegistry {
     return { project, user };
   }
 
-  /**
-   * 获取最近一次发现结果
-   */
+  /** 获取最近一次发现结果 */
   getLastDiscoveryResult(): CustomCommandDiscoveryResult | null {
     return this.lastDiscoveryResult;
   }
@@ -379,9 +356,7 @@ export class CustomCommandRegistry {
     return undefined;
   }
 
-  /**
-   * 获取所有插件命令
-   */
+  /** 获取所有插件命令 */
   getAllPluginCommands(): PluginCommand[] {
     return Array.from(this.pluginCommands.values());
   }
@@ -413,17 +388,12 @@ export class CustomCommandRegistry {
     return this.executor.execute(customCmd, context);
   }
 
-  /**
-   * 清除所有插件命令
-   * Called when refreshing plugins
-   */
+  /** 清除所有插件命令 Called when refreshing plugins */
   clearPluginCommands(): void {
     this.pluginCommands.clear();
   }
 
-  /**
-   * 获取插件命令数量
-   */
+  /** 获取插件命令数量 */
   getPluginCommandCount(): number {
     return this.pluginCommands.size;
   }

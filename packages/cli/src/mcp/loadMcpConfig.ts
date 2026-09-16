@@ -1,11 +1,6 @@
 /**
- * MCP 配置加载器
- *
- * 职责：
- * - 从 CLI --mcp-config 参数加载 MCP 配置
- * - 支持 JSON 文件路径或 JSON 字符串
- * - 提供无副作用解析器，供 SessionRuntime 构造会话级 MCP 配置
- * - 保留 Store 注入兼容入口
+ * MCP 配置加载器 <p> 职责： - 从 CLI --mcp-config 参数加载 MCP 配置 - 支持 JSON 文件路径或 JSON 字符串 -
+ * 提供无副作用解析器，供 SessionRuntime 构造会话级 MCP 配置 - 保留 Store 注入兼容入口
  */
 
 import fs from 'fs/promises';

@@ -1,15 +1,9 @@
 /**
- * Edit Corrector - 编辑纠错工具
- *
- * 提供多种策略自动修复 LLM 在调用 Edit 工具时的常见错误：
- * - 转义字符过多（\\n -> \n）
- * - 缩进不匹配（2 空格 vs 4 空格）
- * - 引号类型差异（智能引号 vs 普通引号）
+ * Edit Corrector - 编辑纠错工具 <p> 提供多种策略自动修复 LLM 在调用 Edit 工具时的常见错误： - 转义字符过多（\\n -> \n） -
+ * 缩进不匹配（2 空格 vs 4 空格） - 引号类型差异（智能引号 vs 普通引号）
  */
 
-/**
- * 匹配策略枚举（按优先级排序）
- */
+/** 匹配策略枚举（按优先级排序） */
 export enum MatchStrategy {
   EXACT = 'exact', // 精确匹配
   LINE_TRIM = 'line_trim', // 行尾空白修剪
@@ -21,9 +15,7 @@ export enum MatchStrategy {
   FAILED = 'failed', // 所有策略都失败
 }
 
-/**
- * 匹配结果
- */
+/** 匹配结果 */
 export interface MatchResult {
   matched: string | null; // 匹配到的实际字符串（保持原文件格式）
   strategy: MatchStrategy; // 使用的匹配策略
@@ -145,10 +137,7 @@ export function flexibleMatch(content: string, searchString: string): string | n
   return null;
 }
 
-/**
- * 行级空白修剪匹配
- * 忽略每行的尾部空白差异（LLM 经常在行尾添加或遗漏空格）
- */
+/** 行级空白修剪匹配 忽略每行的尾部空白差异（LLM 经常在行尾添加或遗漏空格） */
 export function lineTrimMatch(content: string, searchString: string): string | null {
   const searchLines = searchString.split('\n');
   const contentLines = content.split('\n');
@@ -169,11 +158,7 @@ export function lineTrimMatch(content: string, searchString: string): string | n
   return null;
 }
 
-/**
- * 空白归一化匹配
- * 将连续空白字符视为单个空格（处理 tab/space 混用、多余空格等）
- * 保留换行符结构，仅归一化行内空白
- */
+/** 空白归一化匹配 将连续空白字符视为单个空格（处理 tab/space 混用、多余空格等） 保留换行符结构，仅归一化行内空白 */
 export function whitespaceNormalizeMatch(
   content: string,
   searchString: string
@@ -200,11 +185,7 @@ export function whitespaceNormalizeMatch(
   return null;
 }
 
-/**
- * 块锚点匹配
- * 使用首行和尾行作为锚点精确匹配，中间行使用相似度容错
- * 适用于 LLM 对中间行有轻微拼写或格式差异的情况
- */
+/** 块锚点匹配 使用首行和尾行作为锚点精确匹配，中间行使用相似度容错 适用于 LLM 对中间行有轻微拼写或格式差异的情况 */
 export function blockAnchorMatch(content: string, searchString: string): string | null {
   const searchLines = searchString.split('\n');
   if (searchLines.length < 3) return null;

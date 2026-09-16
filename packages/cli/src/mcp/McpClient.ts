@@ -142,9 +142,7 @@ import {
   type McpToolDefinition,
 } from './types.js';
 
-/**
- * 错误类型枚举
- */
+/** 错误类型枚举 */
 export enum ErrorType {
   NETWORK_TEMPORARY = 'network_temporary', // 临时网络错误（可重试）
   NETWORK_PERMANENT = 'network_permanent', // 永久网络错误
@@ -154,9 +152,7 @@ export enum ErrorType {
   UNKNOWN = 'unknown', // 未知错误
 }
 
-/**
- * 分类后的错误
- */
+/** 分类后的错误 */
 interface ClassifiedError {
   type: ErrorType;
   isRetryable: boolean;
@@ -202,9 +198,7 @@ export interface McpClientContentCatalogChange extends McpContentCatalogDelta {
   reason: 'initial' | 'notification' | 'manual';
 }
 
-/**
- * 错误分类函数
- */
+/** 错误分类函数 */
 function classifyError(error: unknown): ClassifiedError {
   if (
     error instanceof McpOAuthAuthorizationRequiredError ||
@@ -292,9 +286,7 @@ function classifyError(error: unknown): ClassifiedError {
   };
 }
 
-/**
- * MCP客户端
- */
+/** MCP客户端 */
 export class McpClient extends EventEmitter {
   private status: McpConnectionStatus = McpConnectionStatus.DISCONNECTED;
   private sdkClient: Client | null = null;
@@ -465,9 +457,7 @@ export class McpClient extends EventEmitter {
     await this.oauthProvider.logout();
   }
 
-  /**
-   * 连接到MCP服务器（带重试）
-   */
+  /** 连接到MCP服务器（带重试） */
   async connect(): Promise<void> {
     return this.connectWithRetry(3, 1000);
   }
@@ -920,9 +910,7 @@ export class McpClient extends EventEmitter {
     }
   }
 
-  /**
-   * 断开连接
-   */
+  /** 断开连接 */
   async disconnect(): Promise<void> {
     this.desiredConnected = false;
     this.connectionGeneration++;
@@ -950,9 +938,7 @@ export class McpClient extends EventEmitter {
     this.emit('disconnected');
   }
 
-  /**
-   * 调用MCP工具
-   */
+  /** 调用MCP工具 */
   async callTool(
     name: string,
     arguments_: Record<string, unknown> = {},
@@ -1518,9 +1504,7 @@ export class McpClient extends EventEmitter {
     return response.approved ? 'accept' : 'decline';
   }
 
-  /**
-   * 创建传输层（支持 OAuth）
-   */
+  /** 创建传输层（支持 OAuth） */
   private async createTransport(): Promise<Transport> {
     const { type, command, args, env, cwd, url, headers, oauth } = this.config;
     let authProvider: OAuthProvider | undefined;
@@ -1583,9 +1567,7 @@ export class McpClient extends EventEmitter {
     throw new Error(`不支持的传输类型: ${type}`);
   }
 
-  /**
-   * 加载工具列表
-   */
+  /** 加载工具列表 */
   async refreshTools(
     reason: McpClientToolCatalogChange['reason'] = 'manual'
   ): Promise<void> {
@@ -2159,9 +2141,7 @@ export class McpClient extends EventEmitter {
     }
   }
 
-  /**
-   * 设置连接状态
-   */
+  /** 设置连接状态 */
   private setStatus(status: McpConnectionStatus): void {
     const oldStatus = this.status;
     if (oldStatus === status) return;

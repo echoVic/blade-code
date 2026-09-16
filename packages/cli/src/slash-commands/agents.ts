@@ -1,6 +1,4 @@
-/**
- * /agents slash command - 管理 subagent 配置
- */
+/** /agents slash command - 管理 subagent 配置 */
 
 import os from 'node:os';
 import path from 'node:path';

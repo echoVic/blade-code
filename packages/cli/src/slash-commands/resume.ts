@@ -1,7 +1,4 @@
-/**
- * Resume Slash Command
- * 恢复任意已发现工作区的历史会话
- */
+/** Resume Slash Command 恢复任意已发现工作区的历史会话 */
 
 import { SessionService } from '../services/SessionService.js';
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';

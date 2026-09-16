@@ -1,7 +1,4 @@
-/**
- * /mcp slash command implementation
- * 显示 MCP 服务器状态和可用工具
- */
+/** /mcp slash command implementation 显示 MCP 服务器状态和可用工具 */
 
 import type { McpServerConfig } from '../config/types.js';
 import { isMcpLogLevel, MCP_LOG_LEVELS, type McpLogLevel } from '../mcp/McpLogging.js';
@@ -18,9 +15,7 @@ import {
   type SlashCommandUI,
 } from './types.js';
 
-/**
- * 格式化时间差（例如：2.3s ago, 5m ago）
- */
+/** 格式化时间差（例如：2.3s ago, 5m ago） */
 function formatTimeSince(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
 
@@ -42,9 +37,7 @@ function formatTimeSince(date: Date): string {
   return `${days}d ago`;
 }
 
-/**
- * 显示所有服务器概览
- */
+/** 显示所有服务器概览 */
 async function showServersOverview(ui: SlashCommandUI): Promise<void> {
   const mcpRegistry = McpRegistry.getInstance();
 
@@ -89,9 +82,7 @@ async function showServersOverview(ui: SlashCommandUI): Promise<void> {
   showServersFromRegistry(ui, mcpRegistry.getAllServers());
 }
 
-/**
- * 从 Registry 显示服务器（已连接的状态）
- */
+/** 从 Registry 显示服务器（已连接的状态） */
 function showServersFromRegistry(
   ui: SlashCommandUI,
   servers: Map<string, McpServerInfo>
@@ -155,9 +146,7 @@ function showServersFromRegistry(
   ui.sendMessage(output);
 }
 
-/**
- * 显示特定服务器详情
- */
+/** 显示特定服务器详情 */
 async function showServerDetails(
   ui: SlashCommandUI,
   serverName: string
@@ -203,9 +192,7 @@ async function showServerDetails(
   }
 }
 
-/**
- * 从 Registry 显示服务器详情
- */
+/** 从 Registry 显示服务器详情 */
 function showServerDetailsFromRegistry(
   ui: SlashCommandUI,
   serverName: string,
@@ -287,9 +274,7 @@ function showServerDetailsFromRegistry(
   ui.sendMessage(output);
 }
 
-/**
- * 从配置显示服务器详情
- */
+/** 从配置显示服务器详情 */
 function showServerDetailsFromConfig(
   ui: SlashCommandUI,
   serverName: string,
@@ -329,9 +314,7 @@ function showServerDetailsFromConfig(
   ui.sendMessage(output);
 }
 
-/**
- * 显示所有可用工具
- */
+/** 显示所有可用工具 */
 async function showAllTools(ui: SlashCommandUI): Promise<void> {
   const mcpRegistry = McpRegistry.getInstance();
 

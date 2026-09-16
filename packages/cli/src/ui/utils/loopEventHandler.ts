@@ -1,13 +1,7 @@
 /**
- * Loop 事件处理器工厂
- *
- * 将 LoopEvent 映射到对应的 Store actions 调用。
- * 每次 handleCommandSubmit 调用 createLoopEventHandler 都会绑定一个
- * TuiStreamSession，确保上一条命令的终结状态不会污染下一条命令。
- *
- * ## Finalize 协议
- *
- * handleAbort、stream_end 和 model_fallback 都通过 TuiStreamSession 完成终态转换。
+ * Loop 事件处理器工厂 <p> 将 LoopEvent 映射到对应的 Store actions 调用。 每次 handleCommandSubmit 调用
+ * createLoopEventHandler 都会绑定一个 TuiStreamSession，确保上一条命令的终结状态不会污染下一条命令。 <p> ## Finalize
+ * 协议 <p> handleAbort、stream_end 和 model_fallback 都通过 TuiStreamSession 完成终态转换。
  */
 
 import type { LoopEvent } from '../../agent/loop/types.js';
@@ -90,11 +84,7 @@ export interface LoopEventStats {
 
 // ==================== 工厂函数 ====================
 
-/**
- * 创建事件处理器
- *
- * 返回的闭包将所有 stream 终态委托给同一个 TuiStreamSession。
- */
+/** 创建事件处理器 返回的闭包将所有 stream 终态委托给同一个 TuiStreamSession。 */
 export function createLoopEventHandler(
   deps: LoopEventDeps,
   stats: LoopEventStats

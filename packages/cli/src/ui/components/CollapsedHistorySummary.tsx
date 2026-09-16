@@ -1,9 +1,4 @@
-/**
- * 折叠历史消息汇总组件
- *
- * 将多条折叠的历史消息合并为一行显示
- * 格式: > 8 条历史消息 [Ctrl+O 浏览]
- */
+/** 折叠历史消息汇总组件 将多条折叠的历史消息合并为一行显示 格式: > 8 条历史消息 [Ctrl+O 浏览] */
 
 import { Box, Text } from 'ink';
 import React from 'react';
@@ -14,11 +9,7 @@ interface CollapsedHistorySummaryProps {
   collapsedCount: number;
 }
 
-/**
- * 折叠历史汇总组件
- *
- * 只显示一行汇总信息，大幅减少终端渲染负担
- */
+/** 折叠历史汇总组件 只显示一行汇总信息，大幅减少终端渲染负担 */
 export const CollapsedHistorySummary: React.FC<CollapsedHistorySummaryProps> =
   React.memo(({ collapsedCount }) => {
     const theme = useTheme();

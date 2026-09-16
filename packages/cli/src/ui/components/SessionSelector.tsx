@@ -1,7 +1,4 @@
-/**
- * 会话选择器组件
- * 用于交互式选择历史会话
- */
+/** 会话选择器组件 用于交互式选择历史会话 */
 
 import { Box, Text } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -27,9 +24,7 @@ interface SessionSelectorProps {
   onCancel?: () => void; // 可选，用于 --resume CLI 模式，在 /resume 斜杠命令模式下由全局处理器处理
 }
 
-/**
- * 格式化时间戳为可读格式
- */
+/** 格式化时间戳为可读格式 */
 function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp);
   const now = new Date();
@@ -49,27 +44,21 @@ function formatTimestamp(timestamp: string): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-/**
- * 自定义指示器组件 - 青色高亮
- */
+/** 自定义指示器组件 - 青色高亮 */
 const Indicator = ({ isSelected }: { isSelected?: boolean }) => (
   <Box marginRight={1}>
     <Text color={isSelected ? 'cyan' : 'gray'}>{isSelected ? '>' : ' '}</Text>
   </Box>
 );
 
-/**
- * 自定义选项组件 - 选中时青色加粗
- */
+/** 自定义选项组件 - 选中时青色加粗 */
 const Item = ({ isSelected, label }: { isSelected?: boolean; label: string }) => (
   <Text color={isSelected ? 'cyan' : 'white'} bold={isSelected}>
     {label}
   </Text>
 );
 
-/**
- * 会话选择器组件
- */
+/** 会话选择器组件 */
 // 每页显示的会话数量
 const PAGE_SIZE = 20;
 

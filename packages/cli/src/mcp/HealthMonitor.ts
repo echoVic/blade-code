@@ -1,15 +1,10 @@
-/**
- * MCP 健康监控
- * 周期性检查连接状态并自动触发重连
- */
+/** MCP 健康监控 周期性检查连接状态并自动触发重连 */
 
 import { EventEmitter } from 'events';
 import type { McpClient } from './McpClient.js';
 import { McpConnectionStatus } from './types.js';
 
-/**
- * 健康检查配置
- */
+/** 健康检查配置 */
 export interface HealthCheckConfig {
   /** 检查间隔（毫秒），默认 30 秒 */
   interval?: number;
@@ -21,9 +16,7 @@ export interface HealthCheckConfig {
   failureThreshold?: number;
 }
 
-/**
- * 健康状态
- */
+/** 健康状态 */
 export enum HealthStatus {
   HEALTHY = 'healthy',
   DEGRADED = 'degraded', // 有失败但未达到阈值
@@ -31,9 +24,7 @@ export enum HealthStatus {
   CHECKING = 'checking',
 }
 
-/**
- * 健康检查结果
- */
+/** 健康检查结果 */
 export interface HealthCheckResult {
   status: HealthStatus;
   timestamp: number;
@@ -61,9 +52,7 @@ function boundedInteger(
   return value;
 }
 
-/**
- * MCP 健康监控器
- */
+/** MCP 健康监控器 */
 export class HealthMonitor extends EventEmitter {
   private client: McpClient;
   private config: Required<HealthCheckConfig>;
@@ -106,18 +95,14 @@ export class HealthMonitor extends EventEmitter {
     };
   }
 
-  /**
-   * 启动健康监控
-   */
+  /** 启动健康监控 */
   start(): void {
     if (this.running || !this.config.enabled) return;
     this.running = true;
     this.scheduleNextCheck();
   }
 
-  /**
-   * 停止健康监控
-   */
+  /** 停止健康监控 */
   stop(): void {
     this.running = false;
     if (this.checkTimer) {
@@ -126,9 +111,7 @@ export class HealthMonitor extends EventEmitter {
     }
   }
 
-  /**
-   * 调度下一次检查
-   */
+  /** 调度下一次检查 */
   private scheduleNextCheck(): void {
     if (!this.running) return;
     this.checkTimer = setTimeout(async () => {
@@ -139,9 +122,7 @@ export class HealthMonitor extends EventEmitter {
     this.checkTimer.unref();
   }
 
-  /**
-   * 执行健康检查
-   */
+  /** 执行健康检查 */
   async performHealthCheck(): Promise<HealthCheckResult> {
     if (this.isChecking) {
       return this.getLastResult();
@@ -204,9 +185,7 @@ export class HealthMonitor extends EventEmitter {
     }
   }
 
-  /**
-   * 设置状态
-   */
+  /** 设置状态 */
   private setStatus(status: HealthStatus): void {
     if (this.currentStatus !== status) {
       const oldStatus = this.currentStatus;
@@ -215,9 +194,7 @@ export class HealthMonitor extends EventEmitter {
     }
   }
 
-  /**
-   * 获取最后检查结果
-   */
+  /** 获取最后检查结果 */
   getLastResult(): HealthCheckResult {
     return {
       status: this.currentStatus,
@@ -226,16 +203,12 @@ export class HealthMonitor extends EventEmitter {
     };
   }
 
-  /**
-   * 立即执行健康检查
-   */
+  /** 立即执行健康检查 */
   async checkNow(): Promise<HealthCheckResult> {
     return this.performHealthCheck();
   }
 
-  /**
-   * 重置失败计数
-   */
+  /** 重置失败计数 */
   resetFailureCount(): void {
     this.consecutiveFailures = 0;
     if (this.currentStatus !== HealthStatus.CHECKING) {

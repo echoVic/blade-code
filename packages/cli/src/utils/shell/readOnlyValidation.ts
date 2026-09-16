@@ -1,12 +1,9 @@
 /**
- * Read-Only Command Validation
- *
- * Three-tier validation for determining if a Bash command is read-only:
- * 1. Simple regex matching (cat, head, wc, etc.)
- * 2. Custom regex matching (echo, pwd, find, ls, cd, etc.)
- * 3. Flag-level whitelist validation (git, gh, docker, rg, etc.)
- *
- * Ref: Claude Code's readOnlyCommandValidation.ts + BashTool/readOnlyValidation.ts
+ * Read-Only Command Validation <p> Three-tier validation for determining if a Bash
+ * command is read-only: 1. Simple regex matching (cat, head, wc, etc.) 2. Custom regex
+ * matching (echo, pwd, find, ls, cd, etc.) 3. Flag-level whitelist validation (git, gh,
+ * docker, rg, etc.) <p> Ref: Claude Code's readOnlyCommandValidation.ts +
+ * BashTool/readOnlyValidation.ts
  */
 
 import {
@@ -1035,9 +1032,7 @@ const READONLY_COMMAND_REGEXES: RegExp[] = [
 // Flag validation engine
 // ============================================================
 
-/**
- * Validate flag argument value against expected type.
- */
+/** Validate flag argument value against expected type. */
 function validateFlagArgument(value: string, argType: FlagArgType): boolean {
   switch (argType) {
     case 'none':
@@ -1050,16 +1045,15 @@ function validateFlagArgument(value: string, argType: FlagArgType): boolean {
 }
 
 /**
- * Validate that all flags in a token list are in the whitelist.
- *
- * Handles:
- * - --flag=value (split on =)
- * - -n 5 (flag with next-token argument)
- * - Combined short flags -rn (all must be 'none' type)
- * - Git numeric shorthand -<number>
- * - -- (end of options separator)
- *
- * Returns true if all flags are safe.
+
+ * Validate that all flags in a token list are in the whitelist. <p> Handles: -
+
+ * --flag=value (split on =) - -n 5 (flag with next-token argument) - Combined short
+
+ * flags -rn (all must be 'none' type) - Git numeric shorthand -<number> - -- (end of
+
+ * options separator) <p> Returns true if all flags are safe.
+
  */
 export function validateFlags(
   tokens: string[],
@@ -1167,8 +1161,7 @@ export function validateFlags(
       }
     }
 
-    // Combined short flags: -rn, -la, etc.
-    // All flags in the bundle must be 'none' type
+    // Combined short flags: -rn, -la, etc. All flags in the bundle must be 'none' type
     if (/^-[A-Za-z]{2,}$/.test(flag)) {
       let allNone = true;
       for (let j = 1; j < flag.length; j++) {
@@ -1258,9 +1251,7 @@ export function isCommandSafeViaFlagParsing(command: string): boolean {
   return true;
 }
 
-/**
- * Check if command matches any readonly regex pattern (Tier 1 + 2).
- */
+/** Check if command matches any readonly regex pattern (Tier 1 + 2). */
 function matchesReadonlyRegex(command: string): boolean {
   for (const regex of READONLY_COMMAND_REGEXES) {
     if (regex.test(command)) return true;

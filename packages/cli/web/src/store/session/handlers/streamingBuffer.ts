@@ -1,9 +1,4 @@
-/**
- * SSE 流式消息缓冲器
- *
- * 纯 class 实现，不依赖 React hooks。
- * 在事件分发层拦截高频 delta 事件，批量合并后再 flush 到 store。
- */
+/** SSE 流式消息缓冲器 纯 class 实现，不依赖 React hooks。 在事件分发层拦截高频 delta 事件，批量合并后再 flush 到 store。 */
 
 export interface StreamingBufferConfig {
   /** 批量刷新间隔（ms） */

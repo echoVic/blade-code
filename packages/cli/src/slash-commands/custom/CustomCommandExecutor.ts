@@ -47,23 +47,19 @@ export class CustomCommandExecutor {
   }
 
   /**
-   * 参数插值
-   *
-   * 支持的语法:
-   * - $ARGUMENTS: 替换为所有参数（空格连接）
-   * - $1, $2, ...: 替换为对应位置的参数
-   *
-   * 示例:
-   * - 输入: "Hello $1, args: $ARGUMENTS"
-   * - 参数: ["World", "foo", "bar"]
-   * - 输出: "Hello World, args: World foo bar"
+
+   * 参数插值 <p> 支持的语法: - $ARGUMENTS: 替换为所有参数（空格连接） - $1, $2, ...: 替换为对应位置的参数 <p> 示例: -
+
+   * 输入: "Hello $1, args: $ARGUMENTS" - 参数: ["World", "foo", "bar"] - 输出: "Hello World,
+
+   * args: World foo bar"
+
    */
   private interpolateArgs(content: string, args: string[]): string {
     // 替换 $ARGUMENTS（所有参数）
     content = content.replace(/\$ARGUMENTS/g, args.join(' '));
 
-    // 替换 $1, $2, ... $9（单个参数）
-    // 从大到小替换，避免 $1 匹配 $10 的一部分
+    // 替换 $1, $2, ... $9（单个参数） 从大到小替换，避免 $1 匹配 $10 的一部分
     for (let i = 9; i >= 1; i--) {
       const placeholder = `$${i}`;
       const value = args[i - 1] ?? '';

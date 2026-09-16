@@ -101,10 +101,7 @@ export interface McpTaskProjectionChange {
   error?: string;
 }
 
-/**
- * 工具注册表
- * 管理内置工具和MCP工具的注册、发现和查询
- */
+/** 工具注册表 管理内置工具和MCP工具的注册、发现和查询 */
 export class ToolRegistry extends EventEmitter {
   private tools = new Map<string, Tool>();
   private mcpTools = new Map<string, Tool>();
@@ -122,9 +119,7 @@ export class ToolRegistry extends EventEmitter {
     super();
   }
 
-  /**
-   * 获取延迟加载管理器
-   */
+  /** 获取延迟加载管理器 */
   get deferredToolManager(): DeferredToolManager {
     return this._deferredManager;
   }
@@ -159,9 +154,7 @@ export class ToolRegistry extends EventEmitter {
     });
   }
 
-  /**
-   * 注册内置工具
-   */
+  /** 注册内置工具 */
   register(tool: Tool): void {
     if (this.tools.has(tool.name)) {
       throw new Error(`工具 '${tool.name}' 已注册`);
@@ -177,9 +170,7 @@ export class ToolRegistry extends EventEmitter {
     });
   }
 
-  /**
-   * 批量注册工具
-   */
+  /** 批量注册工具 */
   registerAll(tools: Tool[]): void {
     const errors: string[] = [];
 
@@ -196,9 +187,7 @@ export class ToolRegistry extends EventEmitter {
     }
   }
 
-  /**
-   * 注销工具
-   */
+  /** 注销工具 */
   unregister(name: string): boolean {
     const tool = this.tools.get(name) ?? this.mcpTools.get(name);
     if (!tool) {
@@ -218,37 +207,27 @@ export class ToolRegistry extends EventEmitter {
     return true;
   }
 
-  /**
-   * 获取工具
-   */
+  /** 获取工具 */
   get(name: string): Tool | undefined {
     return this.tools.get(name) || this.mcpTools.get(name);
   }
 
-  /**
-   * 获取所有工具
-   */
+  /** 获取所有工具 */
   getAll(): Tool[] {
     return [...Array.from(this.tools.values()), ...Array.from(this.mcpTools.values())];
   }
 
-  /**
-   * 获取内置工具
-   */
+  /** 获取内置工具 */
   getBuiltinTools(): Tool[] {
     return Array.from(this.tools.values());
   }
 
-  /**
-   * 获取MCP工具
-   */
+  /** 获取MCP工具 */
   getMcpTools(): Tool[] {
     return Array.from(this.mcpTools.values());
   }
 
-  /**
-   * 搜索工具
-   */
+  /** 搜索工具 */
   search(query: string): Tool[] {
     const lowerQuery = query.toLowerCase();
     return this.getAll().filter((tool) => {
@@ -298,24 +277,18 @@ export class ToolRegistry extends EventEmitter {
     return this._deferredManager.filterDeclarations(this.getAll(), mode);
   }
 
-  /**
-   * 获取只读工具
-   */
+  /** 获取只读工具 */
   getReadOnlyTools(): Tool[] {
     return this.getAll().filter((tool) => isReadOnlyKind(tool.kind));
   }
 
-  /**
-   * 获取 deferred tools 的系统提示列表
-   */
+  /** 获取 deferred tools 的系统提示列表 */
   getDeferredToolsListing(): string {
     if (!this.get('ToolSearch')) return '';
     return this._deferredManager.getDeferredToolsListing();
   }
 
-  /**
-   * 注册MCP工具
-   */
+  /** 注册MCP工具 */
   registerMcpTool(tool: Tool): void {
     if (this.tools.has(tool.name)) {
       throw new Error(`MCP 工具 '${tool.name}' 与内置工具冲突`);
@@ -451,9 +424,7 @@ export class ToolRegistry extends EventEmitter {
     return changes;
   }
 
-  /**
-   * 移除MCP工具（通过名称前缀匹配）
-   */
+  /** 移除MCP工具（通过名称前缀匹配） */
   removeMcpTools(serverName: string): number {
     let removedCount = 0;
     const prefix = createMcpProviderServerPrefix(serverName);

@@ -1,8 +1,6 @@
 /**
- * AsyncGenerator 驱动的 Agent 循环
- *
- * 从 Agent.executeLoop() 提取的核心循环逻辑，
- * 转换为 AsyncGenerator 模式，yield LoopEvent 事件流。
+ * AsyncGenerator 驱动的 Agent 循环 <p> 从 Agent.executeLoop() 提取的核心循环逻辑， 转换为 AsyncGenerator
+ * 模式，yield LoopEvent 事件流。
  */
 
 import { createHash } from 'node:crypto';
@@ -516,8 +514,7 @@ async function* processStreamResponse(
         for (const tc of chunk.toolCalls) {
           accumulateToolCall(toolCallAccumulator, tc);
 
-          // pi-ai 的 toolcall_end 事件包含完整参数
-          // 立即通过 StreamingToolExecutor 启动执行
+          // pi-ai 的 toolcall_end 事件包含完整参数 立即通过 StreamingToolExecutor 启动执行
           if (executor) {
             const castTc = tc as {
               index?: number;
@@ -3697,8 +3694,7 @@ validates the object and may return a bounded corrective error.`;
         let executionResultsPromise: Promise<ExecutionResult[]>;
 
         if (streamingExecutor?.hasTools()) {
-          // 流式模式：工具已在流式中开始执行，收集结果
-          // tool_start 事件已在 processStreamResponse 中 yield
+          // 流式模式：工具已在流式中开始执行，收集结果 tool_start 事件已在 processStreamResponse 中 yield
           logger.debug(
             `[Loop] 使用 StreamingToolExecutor 收集 ${functionCalls.length} 个工具结果`
           );

@@ -1,12 +1,6 @@
 /**
- * Command Slice - 命令执行状态管理
- *
- * 职责：
- * - 命令处理状态 (isProcessing)
- * - AbortController 管理
- * - 中止操作
- *
- * 注意：这些状态都是临时的，不应该持久化
+ * Command Slice - 命令执行状态管理 <p> 职责： - 命令处理状态 (isProcessing) - AbortController 管理 - 中止操作
+ * <p> 注意：这些状态都是临时的，不应该持久化
  */
 
 import type { StateCreator } from 'zustand';
@@ -17,9 +11,7 @@ import type {
   FollowUpPresentation,
 } from '../types.js';
 
-/**
- * 初始命令状态
- */
+/** 初始命令状态 */
 const initialCommandState: CommandState = {
   isProcessing: false,
   abortController: null,
@@ -27,9 +19,7 @@ const initialCommandState: CommandState = {
   recoveredSteeringCount: 0,
 };
 
-/**
- * 创建 Command Slice
- */
+/** 创建 Command Slice */
 export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> = (
   set,
   get
@@ -37,9 +27,7 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
   ...initialCommandState,
 
   actions: {
-    /**
-     * 设置处理状态
-     */
+    /** 设置处理状态 */
     setProcessing: (isProcessing: boolean) => {
       set((state) => ({
         command: { ...state.command, isProcessing },
@@ -60,11 +48,7 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
       }));
     },
 
-    /**
-     * 创建 AbortController
-     * 如果已存在未被中止的 controller，返回现有的
-     * 如果已被中止或不存在，创建新的
-     */
+    /** 创建 AbortController 如果已存在未被中止的 controller，返回现有的 如果已被中止或不存在，创建新的 */
     createAbortController: () => {
       const existing = get().command.abortController;
       // 如果已有未被中止的 controller，先中止它（用户提交新消息时中断旧任务）
@@ -79,10 +63,7 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
       return controller;
     },
 
-    /**
-     * 获取当前的 AbortController
-     * 用于在 finally 块中检查是否应该重置状态
-     */
+    /** 获取当前的 AbortController 用于在 finally 块中检查是否应该重置状态 */
     getAbortController: () => {
       return get().command.abortController;
     },
@@ -94,8 +75,7 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
      */
     clearAbortController: (expectedController?: AbortController) => {
       const current = get().command.abortController;
-      // 如果指定了期望的 controller，只有匹配时才清除
-      // 这防止了竞态条件：旧任务的 finally 不会清除新任务的 controller
+      // 如果指定了期望的 controller，只有匹配时才清除 这防止了竞态条件：旧任务的 finally 不会清除新任务的 controller
       if (expectedController !== undefined && current !== expectedController) {
         return; // 不匹配，跳过清除
       }

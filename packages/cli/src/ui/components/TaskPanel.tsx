@@ -9,10 +9,7 @@ interface TaskPanelProps {
   compact?: boolean;
 }
 
-/**
- * Task 任务面板组件
- * 极简设计,清晰的层次感,最少的视觉干扰
- */
+/** Task 任务面板组件 极简设计,清晰的层次感,最少的视觉干扰 */
 export const TaskPanel: React.FC<TaskPanelProps> = React.memo(
   ({ tasks, visible = true, compact = false }) => {
     const { colors } = useTheme();

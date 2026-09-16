@@ -1,10 +1,7 @@
 /**
- * 全局 CWD 状态单例
- *
- * 参考 Claude Code 的 bootstrap/state.ts 设计：
- * - cwd: 当前工作目录，可被 worktree 等场景改变
- * - originalCwd: 进程启动时的原始目录
- * - projectRoot: 稳定的项目根目录，用于项目标识（history, skills, sessions），启动后不变
+ * 全局 CWD 状态单例 <p> 参考 Claude Code 的 bootstrap/state.ts 设计： - cwd: 当前工作目录，可被 worktree
+ * 等场景改变 - originalCwd: 进程启动时的原始目录 - projectRoot: 稳定的项目根目录，用于项目标识（history, skills,
+ * sessions），启动后不变
  */
 
 import { realpathSync } from 'fs';

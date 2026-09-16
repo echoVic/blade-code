@@ -402,10 +402,7 @@ Before executing commands:
   category: '命令工具',
   tags: ['bash', 'shell', 'non-interactive', 'event-driven'],
 
-  /**
-   * 提取签名内容：返回完整命令
-   * 用于显示和权限签名构建
-   */
+  /** 提取签名内容：返回完整命令 用于显示和权限签名构建 */
   extractSignatureContent: (params) => {
     return params.command.trim();
   },
@@ -456,15 +453,12 @@ Before executing commands:
       return `${parts[0]} ${parts[1]}`;
     }
 
-    // 有额外参数的命令：保留前2个词 + 通配符
-    // node script.js arg -> node script.js *
+    // 有额外参数的命令：保留前2个词 + 通配符 node script.js arg -> node script.js *
     return `${parts[0]} ${parts[1]} *`;
   },
 });
 
-/**
- * 后台执行命令
- */
+/** 后台执行命令 */
 async function executeInBackground(
   command: string,
   cwd?: string,
@@ -935,10 +929,7 @@ async function executeWithForegroundHandoff(
   return completedManagedShellResult(snapshot, startedAt);
 }
 
-/**
- * 使用 ACP 终端服务执行命令
- * 通过 IDE 的终端执行命令，支持更好的 IDE 集成体验
- */
+/** 使用 ACP 终端服务执行命令 通过 IDE 的终端执行命令，支持更好的 IDE 集成体验 */
 async function executeWithAcpTerminal(
   command: string,
   cwd: string | undefined,
@@ -1158,9 +1149,7 @@ async function executeWithAcpTerminal(
   }
 }
 
-/**
- * 带超时的命令执行 - 使用进程事件监听
- */
+/** 带超时的命令执行 - 使用进程事件监听 */
 async function executeWithTimeout(
   command: string,
   cwd: string | undefined,

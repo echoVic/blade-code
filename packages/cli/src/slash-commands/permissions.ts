@@ -1,6 +1,4 @@
-/**
- * /permissions 命令 - 交互式权限管理器
- */
+/** /permissions 命令 - 交互式权限管理器 */
 
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 

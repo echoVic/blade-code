@@ -1,6 +1,4 @@
-/**
- * 内置工具模块
- */
+/** 内置工具模块 */
 
 import type { SessionAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../../agent/resources/WorkspaceModelResources.js';
@@ -59,9 +57,7 @@ import { webFetchTool, webSearchTool } from './web/index.js';
 // Worktree 隔离工具
 import { createWorktreeTools } from './worktree/index.js';
 
-/**
- * 获取所有内置工具
- */
+/** 获取所有内置工具 */
 export async function getBuiltinTools(opts?: {
   sessionId?: string;
   configDir?: string;

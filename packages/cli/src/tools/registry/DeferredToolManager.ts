@@ -1,10 +1,6 @@
 /**
- * DeferredToolManager — 工具延迟加载管理器
- *
- * 渐进式披露（Progressive Disclosure）：
- * - 核心工具立即加载完整 schema
- * - 非核心工具仅在系统提示中列出名称
- * - AI 通过 ToolSearch 按需加载完整 schema
+ * DeferredToolManager — 工具延迟加载管理器 <p> 渐进式披露（Progressive Disclosure）： - 核心工具立即加载完整
+ * schema - 非核心工具仅在系统提示中列出名称 - AI 通过 ToolSearch 按需加载完整 schema
  */
 
 import type { PermissionMode } from '../../config/types.js';
@@ -50,10 +46,7 @@ export class DeferredToolManager {
   /** 被标记为 deferred 的工具名称 */
   private deferredTools = new Set<string>();
 
-  /**
-   * 注册一个工具的延迟加载状态
-   * 如果工具名在 ALWAYS_LOADED_TOOLS 中，自动标记为 loaded
-   */
+  /** 注册一个工具的延迟加载状态 如果工具名在 ALWAYS_LOADED_TOOLS 中，自动标记为 loaded */
   register(toolName: string): void {
     if (ALWAYS_LOADED_TOOLS.has(toolName)) {
       this.loadedTools.add(toolName);
@@ -83,26 +76,18 @@ export class DeferredToolManager {
     }
   }
 
-  /**
-   * 标记工具为已加载（ToolSearch 调用后）
-   */
+  /** 标记工具为已加载（ToolSearch 调用后） */
   markLoaded(toolName: string): void {
     this.loadedTools.add(toolName);
     this.deferredTools.delete(toolName);
   }
 
-  /**
-   * 检查工具是否已加载
-   */
+  /** 检查工具是否已加载 */
   isLoaded(toolName: string): boolean {
     return this.loadedTools.has(toolName);
   }
 
-  /**
-   * 获取用于 LLM 的函数声明
-   * - loaded 工具：返回完整 schema
-   * - deferred 工具：不返回（通过系统提示单独列出名称）
-   */
+  /** 获取用于 LLM 的函数声明 - loaded 工具：返回完整 schema - deferred 工具：不返回（通过系统提示单独列出名称） */
   filterDeclarations(allTools: Tool[], _mode?: PermissionMode): FunctionDeclaration[] {
     const canLoadDeferred = allTools.some((tool) => tool.name === 'ToolSearch');
     return allTools
@@ -110,18 +95,14 @@ export class DeferredToolManager {
       .map((tool) => tool.getFunctionDeclaration());
   }
 
-  /**
-   * 生成 deferred 工具的名称列表
-   */
+  /** 生成 deferred 工具的名称列表 */
   getDeferredToolNames(): string[] {
     return Array.from(this.deferredTools).sort((left, right) =>
       left < right ? -1 : left > right ? 1 : 0
     );
   }
 
-  /**
-   * 生成 <available-deferred-tools> 标签内容
-   */
+  /** 生成 <available-deferred-tools> 标签内容 */
   getDeferredToolsListing(): string {
     const names = this.getDeferredToolNames();
     if (names.length === 0) return '';

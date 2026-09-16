@@ -1,7 +1,4 @@
-/**
- * Token 计算服务
- * 用于计算消息的 token 数量，判断是否需要压缩
- */
+/** Token 计算服务 用于计算消息的 token 数量，判断是否需要压缩 */
 
 import { encodingForModel } from 'js-tiktoken';
 import type {
@@ -13,9 +10,7 @@ interface Encoding {
   encode: (text: string) => number[];
 }
 
-/**
- * Token Counter - 计算和管理 token 数量
- */
+/** Token Counter - 计算和管理 token 数量 */
 export class TokenCounter {
   private static encodingCache = new Map<string, Encoding>();
 

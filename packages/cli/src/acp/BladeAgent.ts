@@ -1,9 +1,4 @@
-/**
- * Blade ACP Agent 实现
- *
- * 实现 ACP 协议的 Agent 接口，使 Blade 可以被 Zed、JetBrains 等编辑器调用。
- *
- */
+/** Blade ACP Agent 实现 实现 ACP 协议的 Agent 接口，使 Blade 可以被 Zed、JetBrains 等编辑器调用。 */
 
 import path from 'node:path';
 import type * as acp from '@agentclientprotocol/sdk';
@@ -168,11 +163,7 @@ function remoteSessionCwd(metadata: SessionMetadata): string {
   return metadata.remoteWorkspace.wirePath;
 }
 
-/**
- * Blade ACP Agent
- *
- * 实现 ACP 协议的 Agent 接口，处理来自 IDE 的请求。
- */
+/** Blade ACP Agent 实现 ACP 协议的 Agent 接口，处理来自 IDE 的请求。 */
 export class BladeAgent implements AcpAgentInterface {
   private sessions: Map<string, AcpSession> = new Map();
   private sessionLoadQueues: Map<string, Promise<void>> = new Map();
@@ -221,9 +212,7 @@ export class BladeAgent implements AcpAgentInterface {
     }
   }
 
-  /**
-   * 初始化连接，协商协议版本和能力
-   */
+  /** 初始化连接，协商协议版本和能力 */
   async initialize(params: acp.InitializeRequest): Promise<acp.InitializeResponse> {
     logger.info('[BladeAgent] Initializing ACP connection');
     logger.debug(
@@ -258,9 +247,7 @@ export class BladeAgent implements AcpAgentInterface {
     };
   }
 
-  /**
-   * 认证（Blade 目前不需要认证）
-   */
+  /** 认证（Blade 目前不需要认证） */
   async authenticate(
     _params: acp.AuthenticateRequest
   ): Promise<acp.AuthenticateResponse | void> {
@@ -268,9 +255,7 @@ export class BladeAgent implements AcpAgentInterface {
     return;
   }
 
-  /**
-   * 创建新会话
-   */
+  /** 创建新会话 */
   async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
     this.assertNotDestroyed();
     const sessionId = createSessionId('acp');
@@ -513,9 +498,7 @@ export class BladeAgent implements AcpAgentInterface {
     }
   }
 
-  /**
-   * 恢复持久化会话并在响应前按协议回放历史。
-   */
+  /** 恢复持久化会话并在响应前按协议回放历史。 */
   async loadSession(params: acp.LoadSessionRequest): Promise<acp.LoadSessionResponse> {
     this.assertNotDestroyed();
     logger.info(`[BladeAgent] Loading session: ${params.sessionId}`);
@@ -904,9 +887,7 @@ export class BladeAgent implements AcpAgentInterface {
     }
   }
 
-  /**
-   * 处理提示请求
-   */
+  /** 处理提示请求 */
   async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
     const lease = this.runtimeResidency.acquire(params.sessionId);
     if (!lease) {
@@ -919,9 +900,7 @@ export class BladeAgent implements AcpAgentInterface {
     }
   }
 
-  /**
-   * 取消当前操作
-   */
+  /** 取消当前操作 */
   async cancel(params: acp.CancelNotification): Promise<void> {
     logger.info(
       `[BladeAgent] Cancel notification received for session: ${params.sessionId}`
@@ -939,9 +918,7 @@ export class BladeAgent implements AcpAgentInterface {
     }
   }
 
-  /**
-   * 设置会话模式（权限模式）
-   */
+  /** 设置会话模式（权限模式） */
   async setSessionMode(
     params: acp.SetSessionModeRequest
   ): Promise<acp.SetSessionModeResponse> {
@@ -957,9 +934,7 @@ export class BladeAgent implements AcpAgentInterface {
     return {};
   }
 
-  /**
-   * 设置会话配置选项（如模型切换）
-   */
+  /** 设置会话配置选项（如模型切换） */
   async setSessionConfigOption?(
     params: acp.SetSessionConfigOptionRequest
   ): Promise<acp.SetSessionConfigOptionResponse> {
@@ -1017,9 +992,7 @@ export class BladeAgent implements AcpAgentInterface {
     }
   }
 
-  /**
-   * 清理资源
-   */
+  /** 清理资源 */
   destroy(): Promise<void> {
     if (this.destroyPromise) return this.destroyPromise;
     this.destroyPromise = this.destroyOwnedResources();

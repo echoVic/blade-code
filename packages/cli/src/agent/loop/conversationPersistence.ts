@@ -1,8 +1,6 @@
 /**
- * conversationPersistence — 统一封装会话持久化操作
- *
- * 从 executeLoopGenerator 中提取的 JSONL 持久化逻辑，
- * 统一 contextMgr 获取与错误日志处理。
+ * conversationPersistence — 统一封装会话持久化操作 <p> 从 executeLoopGenerator 中提取的 JSONL 持久化逻辑， 统一
+ * contextMgr 获取与错误日志处理。
  */
 
 import { deriveSessionTitleFromContent } from '../../api/sessionTitle.js';
@@ -109,10 +107,7 @@ function getContextMgr(deps: LoopDependencies) {
   return deps.executionEngine?.getContextManager();
 }
 
-/**
- * 保存用户消息到 JSONL。
- * 空白纯文本消息会被跳过。
- */
+/** 保存用户消息到 JSONL。 空白纯文本消息会被跳过。 */
 export async function saveUserMessage(
   deps: LoopDependencies,
   context: ChatContext,
@@ -162,10 +157,7 @@ export async function saveUserMessage(
   return null;
 }
 
-/**
- * 保存助手消息到 JSONL。
- * 空白内容会被跳过。
- */
+/** 保存助手消息到 JSONL。 空白内容会被跳过。 */
 export async function saveAssistantMessage(
   deps: LoopDependencies,
   context: ChatContext,
@@ -264,9 +256,7 @@ export async function saveContextualProjectRulesMarker(
   return null;
 }
 
-/**
- * 保存工具调用到 JSONL。
- */
+/** 保存工具调用到 JSONL。 */
 export async function saveToolUse(
   deps: LoopDependencies,
   context: ChatContext,
@@ -301,9 +291,7 @@ export async function saveToolUse(
   return null;
 }
 
-/**
- * 保存工具结果到 JSONL。
- */
+/** 保存工具结果到 JSONL。 */
 export async function saveToolResult(
   deps: LoopDependencies,
   context: ChatContext,
@@ -345,9 +333,7 @@ export async function saveToolResult(
   return null;
 }
 
-/**
- * 保存压缩数据到 JSONL。
- */
+/** 保存压缩数据到 JSONL。 */
 export async function saveCompaction(
   deps: LoopDependencies,
   context: ChatContext,

@@ -49,9 +49,7 @@ import {
 } from './McpToolCatalog.js';
 import { McpConnectionStatus, type McpToolDefinition } from './types.js';
 
-/**
- * MCP服务器信息
- */
+/** MCP服务器信息 */
 export interface McpServerInfo {
   config: McpServerConfig;
   client: McpClient;
@@ -132,10 +130,7 @@ export type McpRegisteredResourceTemplate = McpResourceTemplateDefinition & {
 };
 export type McpRegisteredPrompt = McpPromptDefinition & { server: string };
 
-/**
- * MCP注册表
- * 管理MCP服务器连接和工具发现
- */
+/** MCP注册表 管理MCP服务器连接和工具发现 */
 export class McpRegistry extends EventEmitter {
   private static instance: McpRegistry | null = null;
   private servers: Map<string, McpServerInfo> = new Map();
@@ -151,9 +146,7 @@ export class McpRegistry extends EventEmitter {
     super();
   }
 
-  /**
-   * 获取单例实例
-   */
+  /** 获取单例实例 */
   static getInstance(): McpRegistry {
     if (!McpRegistry.instance) {
       McpRegistry.instance = new McpRegistry();
@@ -161,16 +154,12 @@ export class McpRegistry extends EventEmitter {
     return McpRegistry.instance;
   }
 
-  /**
-   * 创建由单个 runtime 独占的注册表，避免会话级 MCP 配置污染全局实例。
-   */
+  /** 创建由单个 runtime 独占的注册表，避免会话级 MCP 配置污染全局实例。 */
   static createIsolated(runtimeOptions: McpClientRuntimeOptions = {}): McpRegistry {
     return new McpRegistry(runtimeOptions);
   }
 
-  /**
-   * 注册MCP服务器
-   */
+  /** 注册MCP服务器 */
   async registerServer(
     name: string,
     config: McpServerConfig,
@@ -208,9 +197,7 @@ export class McpRegistry extends EventEmitter {
     }
   }
 
-  /**
-   * 注销MCP服务器
-   */
+  /** 注销MCP服务器 */
   async unregisterServer(name: string): Promise<void> {
     const serverInfo = this.servers.get(name);
     if (!serverInfo) {
@@ -229,9 +216,7 @@ export class McpRegistry extends EventEmitter {
     this.emit('serverUnregistered', name);
   }
 
-  /**
-   * 连接到指定服务器
-   */
+  /** 连接到指定服务器 */
   async connectServer(name: string): Promise<void> {
     const serverInfo = this.servers.get(name);
     if (!serverInfo) {
@@ -255,9 +240,7 @@ export class McpRegistry extends EventEmitter {
     }
   }
 
-  /**
-   * 断开指定服务器
-   */
+  /** 断开指定服务器 */
   async disconnectServer(name: string): Promise<void> {
     const serverInfo = this.servers.get(name);
     if (!serverInfo) {
@@ -269,10 +252,7 @@ export class McpRegistry extends EventEmitter {
     serverInfo.connectedAt = undefined;
   }
 
-  /**
-   * 重连指定服务器（用于从 ERROR 状态恢复）
-   * 这个方法可以在首次连接失败或意外断开后使用
-   */
+  /** 重连指定服务器（用于从 ERROR 状态恢复） 这个方法可以在首次连接失败或意外断开后使用 */
   async reconnectServer(name: string): Promise<void> {
     const serverInfo = this.servers.get(name);
     if (!serverInfo) {
@@ -488,23 +468,17 @@ export class McpRegistry extends EventEmitter {
     server.logging = server.client.logging;
   }
 
-  /**
-   * 根据名称查找工具
-   */
+  /** 根据名称查找工具 */
   async findTool(toolName: string): Promise<Tool | null> {
     return this.projectedTools.get(toolName) ?? null;
   }
 
-  /**
-   * 获取服务器状态
-   */
+  /** 获取服务器状态 */
   getServerStatus(name: string): McpServerInfo | null {
     return this.servers.get(name) || null;
   }
 
-  /**
-   * 获取所有服务器信息
-   */
+  /** 获取所有服务器信息 */
   getAllServers(): Map<string, McpServerInfo> {
     return new Map(this.servers);
   }
@@ -557,9 +531,7 @@ export class McpRegistry extends EventEmitter {
     this.emit('serverOAuthStatusChanged', name, 'unauthenticated');
   }
 
-  /**
-   * 设置客户端事件处理器
-   */
+  /** 设置客户端事件处理器 */
   private setupClientEventHandlers(
     client: McpClient,
     serverInfo: McpServerInfo,
@@ -909,10 +881,7 @@ export class McpRegistry extends EventEmitter {
     return server;
   }
 
-  /**
-   * 断开所有 MCP 服务器连接
-   * 在应用退出时调用
-   */
+  /** 断开所有 MCP 服务器连接 在应用退出时调用 */
   async disconnectAll(): Promise<void> {
     const disconnectPromises: Promise<void>[] = [];
 

@@ -1,9 +1,6 @@
 /**
- * 上下文管理器 - PersistentStore 的薄门面
- *
- * 历史上此类包含内存模型、压缩、过滤、搜索等功能，
- * 但这些功能已迁移到独立模块（CompactionService、ReactiveCompaction 等），
- * 仅保留 JSONL 持久化委托方法。
+ * 上下文管理器 - PersistentStore 的薄门面 <p> 历史上此类包含内存模型、压缩、过滤、搜索等功能，
+ * 但这些功能已迁移到独立模块（CompactionService、ReactiveCompaction 等）， 仅保留 JSONL 持久化委托方法。
  */
 
 import type { SubagentInfoForContext } from '../agent/types.js';
@@ -19,15 +16,11 @@ import type {
   SubagentRunRef,
 } from './types.js';
 
-/**
- * 上下文管理器 - 统一管理所有上下文相关操作
- */
+/** 上下文管理器 - 统一管理所有上下文相关操作 */
 export class ContextManager {
   private readonly persistent: PersistentStore;
 
-  /**
-   * 获取持久化存储实例（供外部直接调用 JSONL 操作）
-   */
+  /** 获取持久化存储实例（供外部直接调用 JSONL 操作） */
   get persistentStore(): PersistentStore {
     return this.persistent;
   }
@@ -40,16 +33,12 @@ export class ContextManager {
     );
   }
 
-  /**
-   * 初始化持久化存储目录
-   */
+  /** 初始化持久化存储目录 */
   async initialize(): Promise<void> {
     await this.persistent.initialize();
   }
 
-  /**
-   * 保存消息到 JSONL (直接访问 PersistentStore,不依赖 currentSessionId)
-   */
+  /** 保存消息到 JSONL (直接访问 PersistentStore,不依赖 currentSessionId) */
   async saveMessage(
     sessionId: string,
     role: 'user' | 'assistant' | 'system',
@@ -70,9 +59,7 @@ export class ContextManager {
     );
   }
 
-  /**
-   * 保存工具调用到 JSONL (直接访问 PersistentStore)
-   */
+  /** 保存工具调用到 JSONL (直接访问 PersistentStore) */
   async saveToolUse(
     sessionId: string,
     toolName: string,
@@ -91,9 +78,7 @@ export class ContextManager {
     );
   }
 
-  /**
-   * 保存工具结果到 JSONL (直接访问 PersistentStore)
-   */
+  /** 保存工具结果到 JSONL (直接访问 PersistentStore) */
   async saveToolResult(
     sessionId: string,
     toolId: string,
@@ -118,9 +103,7 @@ export class ContextManager {
     );
   }
 
-  /**
-   * 保存压缩边界和总结到 JSONL (直接访问 PersistentStore)
-   */
+  /** 保存压缩边界和总结到 JSONL (直接访问 PersistentStore) */
   async saveCompaction(
     sessionId: string,
     summary: string,

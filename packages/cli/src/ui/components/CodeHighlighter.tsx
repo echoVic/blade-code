@@ -1,11 +1,6 @@
 /**
- * 代码高亮组件 - 使用 lowlight 进行语法高亮
- *
- * 特性：
- * - 语法高亮（140+ 语言）
- * - 智能换行（超长行按字符拆分，保留样式）
- * - 行数截断（超出高度显示截断提示）
- * - Unicode 感知（正确处理 emoji、汉字等）
+ * 代码高亮组件 - 使用 lowlight 进行语法高亮 <p> 特性： - 语法高亮（140+ 语言） - 智能换行（超长行按字符拆分，保留样式） -
+ * 行数截断（超出高度显示截断提示） - Unicode 感知（正确处理 emoji、汉字等）
  */
 
 import { Box, Text } from 'ink';
@@ -117,9 +112,7 @@ function isHastRootNode(node: unknown): node is HastRootNode {
   );
 }
 
-/**
- * 将 lowlight 的 HAST 节点转换为 React 组件
- */
+/** 将 lowlight 的 HAST 节点转换为 React 组件 */
 function renderHastNode(
   node: unknown,
   syntaxColors: SyntaxColors,
@@ -174,9 +167,7 @@ function renderHastNode(
   return <Text key={key}></Text>;
 }
 
-/**
- * 高亮单行代码（不截断，由 MaxSizedBox 处理换行）
- */
+/** 高亮单行代码（不截断，由 MaxSizedBox 处理换行） */
 function highlightLine(
   line: string,
   language?: string,
@@ -220,12 +211,11 @@ function highlightLine(
 }
 
 /**
- * 代码高亮器组件
- *
- * 使用 MaxSizedBox 实现：
- * - 智能换行：超长行按字符/单词拆分到多行，保留语法高亮样式
- * - 高度截断：超出 availableHeight 时显示截断提示
- * - Unicode 感知：正确处理 emoji、汉字等宽字符
+
+ * 代码高亮器组件 <p> 使用 MaxSizedBox 实现： - 智能换行：超长行按字符/单词拆分到多行，保留语法高亮样式 - 高度截断：超出
+
+ * availableHeight 时显示截断提示 - Unicode 感知：正确处理 emoji、汉字等宽字符
+
  */
 export const CodeHighlighter: React.FC<CodeHighlighterProps> = React.memo(
   ({ content, language, showLineNumbers = true, terminalWidth, availableHeight }) => {
@@ -245,8 +235,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = React.memo(
 
     const totalLines = lines.length + hiddenLinesCount;
     const lineNumberWidth = String(totalLines).length + 1;
-    // 计算代码内容可用宽度（终端宽度 - 边框 - padding - 行号）
-    // 最小宽度 20，防止终端过窄或 terminalWidth 异常时布局崩溃
+    // 计算代码内容可用宽度（终端宽度 - 边框 - padding - 行号） 最小宽度 20，防止终端过窄或 terminalWidth 异常时布局崩溃
     const boxMaxWidth = Math.max(20, terminalWidth - 4); // 4 = 边框(2) + paddingX(2)
 
     return (

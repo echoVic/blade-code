@@ -1,9 +1,4 @@
-/**
- * OutputTruncator - 智能输出截断工具
- *
- * 用于处理命令输出，避免大量输出占用过多上下文窗口。
- * 采用分级策略：根据命令类型选择不同的截断规则。
- */
+/** OutputTruncator - 智能输出截断工具 用于处理命令输出，避免大量输出占用过多上下文窗口。 采用分级策略：根据命令类型选择不同的截断规则。 */
 
 export interface TruncationConfig {
   maxLines: number;
