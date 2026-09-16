@@ -505,6 +505,118 @@ const REMOTE_CAPABILITY_MATRIX_CASES: RemoteCapabilityMatrixCase[] = [
   },
 ];
 
+async function createPersistedBackgroundTask(
+  sessionId: string,
+  workspaceRoot: string,
+  childSessionId: string
+) {
+  const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+  const prepared = await runtime.prepareInputTurn('launch the background child');
+  if (!prepared.accepted) throw new Error('Expected direct input preparation');
+  const contextManager = runtime.getExecutionEngine().getContextManager();
+  await contextManager.saveMessage(
+    sessionId,
+    'user',
+    'launch the background child',
+    null,
+    { inboxMessageId: prepared.messageId }
+  );
+  const assistantMessageId = await contextManager.saveMessage(
+    sessionId,
+    'assistant',
+    ''
+  );
+  const toolCallId = await contextManager.saveToolUse(
+    sessionId,
+    'Task',
+    {
+      description: 'Inspect background marker',
+      prompt: 'Inspect the project and return the background marker.',
+      subagent_type: 'Explore',
+      subagent_session_id: childSessionId,
+      run_in_background: true,
+    },
+    assistantMessageId
+  );
+  await contextManager.saveToolResult(
+    sessionId,
+    toolCallId,
+    'Task',
+    { agent_id: childSessionId, status: 'running' },
+    assistantMessageId,
+    undefined,
+    undefined,
+    {
+      subagentSessionId: childSessionId,
+      subagentType: 'Explore',
+      subagentDescription: 'Inspect background marker',
+      subagentStatus: 'running',
+      subagentRootId: childSessionId,
+      subagentResumeDepth: 0,
+    },
+    { background: true, subagentSessionId: childSessionId }
+  );
+  await runtime.finishTurn(prepared.handle, {
+    outcome: {
+      status: 'completed',
+      turnsCount: 1,
+      toolCallsCount: 1,
+      durationMs: 10,
+    },
+  });
+  return {
+    runtime,
+    staleNotify: runtime.notifyBackgroundSubagentCompleted.bind(runtime),
+  };
+}
+
+function saveBackgroundSubagent(options: {
+  sessionId: string;
+  workspaceRoot: string;
+  childSessionId: string;
+  status?: 'running' | 'completed';
+  marker?: string;
+  includeStats?: boolean;
+  completedAgoMs?: number;
+}): void {
+  const {
+    sessionId,
+    workspaceRoot,
+    childSessionId,
+    status = 'completed',
+    marker,
+    includeStats = false,
+    completedAgoMs = 250,
+  } = options;
+  const session: AgentSession = {
+    schemaVersion: 2,
+    id: childSessionId,
+    subagentType: 'Explore',
+    description: 'Inspect background marker',
+    prompt: 'Inspect the project and return the background marker.',
+    messages: marker ? [{ role: 'assistant', content: marker }] : [],
+    status,
+    background: true,
+    ...(marker ? { result: { success: true, message: marker } } : {}),
+    ...(includeStats ? { stats: { tokens: 50, toolCalls: 1, duration: 100 } } : {}),
+    createdAt: Date.now() - 1_000,
+    lastActiveAt: Date.now() - 500,
+    ...(status === 'completed' ? { completedAt: Date.now() - completedAgoMs } : {}),
+    parentSessionId: sessionId,
+    parentProjectPath: workspaceRoot,
+    rootAgentId: childSessionId,
+    resumeDepth: 0,
+    workspaceRoot,
+    isolation: 'none',
+    configSnapshot: {
+      name: 'Explore',
+      description: 'Explore agent',
+      source: 'builtin',
+    },
+  };
+  AgentSessionStore.getInstance().saveSession(session);
+}
+
 describe('SessionRuntime', () => {
   let storageRoot: string;
 
@@ -3194,99 +3306,18 @@ describe('SessionRuntime', () => {
     );
     const sessionId = 'background-subagent-completion-parent';
     const childSessionId = 'agent-background-subagent-completion';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
-    const prepared = await first.prepareInputTurn('launch the background child');
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    const contextManager = first.getExecutionEngine().getContextManager();
-    await contextManager.saveMessage(
+    const { runtime: first } = await createPersistedBackgroundTask(
       sessionId,
-      'user',
-      'launch the background child',
-      null,
-      { inboxMessageId: prepared.messageId }
-    );
-    const assistantMessageId = await contextManager.saveMessage(
-      sessionId,
-      'assistant',
-      ''
-    );
-    const toolCallId = await contextManager.saveToolUse(
-      sessionId,
-      'Task',
-      {
-        description: 'Inspect background marker',
-        prompt: 'Inspect the project and return the background marker.',
-        subagent_type: 'Explore',
-        subagent_session_id: childSessionId,
-        run_in_background: true,
-      },
-      assistantMessageId
-    );
-    await contextManager.saveToolResult(
-      sessionId,
-      toolCallId,
-      'Task',
-      {
-        agent_id: childSessionId,
-        status: 'running',
-      },
-      assistantMessageId,
-      undefined,
-      undefined,
-      {
-        subagentSessionId: childSessionId,
-        subagentType: 'Explore',
-        subagentDescription: 'Inspect background marker',
-        subagentStatus: 'running',
-        subagentRootId: childSessionId,
-        subagentResumeDepth: 0,
-      },
-      {
-        background: true,
-        subagentSessionId: childSessionId,
-      }
-    );
-    await first.finishTurn(prepared.handle, {
-      outcome: {
-        status: 'completed',
-        turnsCount: 1,
-        toolCallsCount: 1,
-        durationMs: 10,
-      },
-    });
-    AgentSessionStore.getInstance().saveSession({
-      schemaVersion: 2,
-      id: childSessionId,
-      subagentType: 'Explore',
-      description: 'Inspect background marker',
-      prompt: 'Inspect the project and return the background marker.',
-      messages: [
-        {
-          role: 'assistant',
-          content: 'BACKGROUND_RUNTIME_CHILD_MARKER',
-        },
-      ],
-      status: 'completed',
-      background: true,
-      result: {
-        success: true,
-        message: 'BACKGROUND_RUNTIME_CHILD_MARKER',
-      },
-      stats: { tokens: 50, toolCalls: 1, duration: 100 },
-      createdAt: Date.now() - 1000,
-      lastActiveAt: Date.now() - 500,
-      completedAt: Date.now() - 500,
-      parentSessionId: sessionId,
-      parentProjectPath: workspaceRoot,
-      rootAgentId: childSessionId,
-      resumeDepth: 0,
       workspaceRoot,
-      isolation: 'none',
-      configSnapshot: {
-        name: 'Explore',
-        description: 'Explore agent',
-        source: 'builtin',
-      },
+      childSessionId
+    );
+    saveBackgroundSubagent({
+      sessionId,
+      workspaceRoot,
+      childSessionId,
+      marker: 'BACKGROUND_RUNTIME_CHILD_MARKER',
+      includeStats: true,
+      completedAgoMs: 500,
     });
     await first.dispose();
 
@@ -3522,89 +3553,16 @@ describe('SessionRuntime', () => {
     );
     const sessionId = 'background-subagent-dispatch-successor-parent';
     const childSessionId = 'agent-background-subagent-dispatch-successor';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
-    const prepared = await first.prepareInputTurn('launch the background child');
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    const firstContextManager = first.getExecutionEngine().getContextManager();
-    await firstContextManager.saveMessage(
+    const { runtime: first, staleNotify } = await createPersistedBackgroundTask(
       sessionId,
-      'user',
-      'launch the background child',
-      null,
-      { inboxMessageId: prepared.messageId }
-    );
-    const assistantMessageId = await firstContextManager.saveMessage(
-      sessionId,
-      'assistant',
-      ''
-    );
-    const toolCallId = await firstContextManager.saveToolUse(
-      sessionId,
-      'Task',
-      {
-        description: 'Inspect background marker',
-        prompt: 'Inspect the project and return the background marker.',
-        subagent_type: 'Explore',
-        subagent_session_id: childSessionId,
-        run_in_background: true,
-      },
-      assistantMessageId
-    );
-    await firstContextManager.saveToolResult(
-      sessionId,
-      toolCallId,
-      'Task',
-      {
-        agent_id: childSessionId,
-        status: 'running',
-      },
-      assistantMessageId,
-      undefined,
-      undefined,
-      {
-        subagentSessionId: childSessionId,
-        subagentType: 'Explore',
-        subagentDescription: 'Inspect background marker',
-        subagentStatus: 'running',
-        subagentRootId: childSessionId,
-        subagentResumeDepth: 0,
-      },
-      {
-        background: true,
-        subagentSessionId: childSessionId,
-      }
-    );
-    await first.finishTurn(prepared.handle, {
-      outcome: {
-        status: 'completed',
-        turnsCount: 1,
-        toolCallsCount: 1,
-        durationMs: 10,
-      },
-    });
-    const staleNotify = first.notifyBackgroundSubagentCompleted.bind(first);
-    AgentSessionStore.getInstance().saveSession({
-      schemaVersion: 2,
-      id: childSessionId,
-      subagentType: 'Explore',
-      description: 'Inspect background marker',
-      prompt: 'Inspect the project and return the background marker.',
-      messages: [],
-      status: 'running',
-      background: true,
-      createdAt: Date.now() - 1000,
-      lastActiveAt: Date.now() - 500,
-      parentSessionId: sessionId,
-      parentProjectPath: workspaceRoot,
-      rootAgentId: childSessionId,
-      resumeDepth: 0,
       workspaceRoot,
-      isolation: 'none',
-      configSnapshot: {
-        name: 'Explore',
-        description: 'Explore agent',
-        source: 'builtin',
-      },
+      childSessionId
+    );
+    saveBackgroundSubagent({
+      sessionId,
+      workspaceRoot,
+      childSessionId,
+      status: 'running',
     });
     await first.dispose();
 
@@ -3703,99 +3661,16 @@ describe('SessionRuntime', () => {
     );
     const sessionId = 'background-subagent-dispatch-deferred-parent';
     const childSessionId = 'agent-background-subagent-dispatch-deferred';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
-    const prepared = await first.prepareInputTurn('launch the background child');
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    const firstContextManager = first.getExecutionEngine().getContextManager();
-    await firstContextManager.saveMessage(
+    const { runtime: first, staleNotify } = await createPersistedBackgroundTask(
       sessionId,
-      'user',
-      'launch the background child',
-      null,
-      { inboxMessageId: prepared.messageId }
-    );
-    const assistantMessageId = await firstContextManager.saveMessage(
-      sessionId,
-      'assistant',
-      ''
-    );
-    const toolCallId = await firstContextManager.saveToolUse(
-      sessionId,
-      'Task',
-      {
-        description: 'Inspect background marker',
-        prompt: 'Inspect the project and return the background marker.',
-        subagent_type: 'Explore',
-        subagent_session_id: childSessionId,
-        run_in_background: true,
-      },
-      assistantMessageId
-    );
-    await firstContextManager.saveToolResult(
-      sessionId,
-      toolCallId,
-      'Task',
-      {
-        agent_id: childSessionId,
-        status: 'running',
-      },
-      assistantMessageId,
-      undefined,
-      undefined,
-      {
-        subagentSessionId: childSessionId,
-        subagentType: 'Explore',
-        subagentDescription: 'Inspect background marker',
-        subagentStatus: 'running',
-        subagentRootId: childSessionId,
-        subagentResumeDepth: 0,
-      },
-      {
-        background: true,
-        subagentSessionId: childSessionId,
-      }
-    );
-    await first.finishTurn(prepared.handle, {
-      outcome: {
-        status: 'completed',
-        turnsCount: 1,
-        toolCallsCount: 1,
-        durationMs: 10,
-      },
-    });
-    const staleNotify = first.notifyBackgroundSubagentCompleted.bind(first);
-    AgentSessionStore.getInstance().saveSession({
-      schemaVersion: 2,
-      id: childSessionId,
-      subagentType: 'Explore',
-      description: 'Inspect background marker',
-      prompt: 'Inspect the project and return the background marker.',
-      messages: [
-        {
-          role: 'assistant',
-          content: 'BACKGROUND_RUNTIME_DISPATCH_DEFERRED_MARKER',
-        },
-      ],
-      status: 'completed',
-      background: true,
-      result: {
-        success: true,
-        message: 'BACKGROUND_RUNTIME_DISPATCH_DEFERRED_MARKER',
-      },
-      createdAt: Date.now() - 1000,
-      lastActiveAt: Date.now() - 500,
-      completedAt: Date.now() - 250,
-      parentSessionId: sessionId,
-      parentProjectPath: workspaceRoot,
-      rootAgentId: childSessionId,
-      resumeDepth: 0,
       workspaceRoot,
-      isolation: 'none',
-      configSnapshot: {
-        name: 'Explore',
-        description: 'Explore agent',
-        source: 'builtin',
-      },
+      childSessionId
+    );
+    saveBackgroundSubagent({
+      sessionId,
+      workspaceRoot,
+      childSessionId,
+      marker: 'BACKGROUND_RUNTIME_DISPATCH_DEFERRED_MARKER',
     });
     await first.dispose();
 
@@ -3834,99 +3709,16 @@ describe('SessionRuntime', () => {
     );
     const sessionId = 'background-subagent-dispatch-rewind-parent';
     const childSessionId = 'agent-background-subagent-dispatch-rewind';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
-    const prepared = await first.prepareInputTurn('launch the background child');
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    const firstContextManager = first.getExecutionEngine().getContextManager();
-    await firstContextManager.saveMessage(
+    const { runtime: first, staleNotify } = await createPersistedBackgroundTask(
       sessionId,
-      'user',
-      'launch the background child',
-      null,
-      { inboxMessageId: prepared.messageId }
-    );
-    const assistantMessageId = await firstContextManager.saveMessage(
-      sessionId,
-      'assistant',
-      ''
-    );
-    const toolCallId = await firstContextManager.saveToolUse(
-      sessionId,
-      'Task',
-      {
-        description: 'Inspect background marker',
-        prompt: 'Inspect the project and return the background marker.',
-        subagent_type: 'Explore',
-        subagent_session_id: childSessionId,
-        run_in_background: true,
-      },
-      assistantMessageId
-    );
-    await firstContextManager.saveToolResult(
-      sessionId,
-      toolCallId,
-      'Task',
-      {
-        agent_id: childSessionId,
-        status: 'running',
-      },
-      assistantMessageId,
-      undefined,
-      undefined,
-      {
-        subagentSessionId: childSessionId,
-        subagentType: 'Explore',
-        subagentDescription: 'Inspect background marker',
-        subagentStatus: 'running',
-        subagentRootId: childSessionId,
-        subagentResumeDepth: 0,
-      },
-      {
-        background: true,
-        subagentSessionId: childSessionId,
-      }
-    );
-    await first.finishTurn(prepared.handle, {
-      outcome: {
-        status: 'completed',
-        turnsCount: 1,
-        toolCallsCount: 1,
-        durationMs: 10,
-      },
-    });
-    const staleNotify = first.notifyBackgroundSubagentCompleted.bind(first);
-    AgentSessionStore.getInstance().saveSession({
-      schemaVersion: 2,
-      id: childSessionId,
-      subagentType: 'Explore',
-      description: 'Inspect background marker',
-      prompt: 'Inspect the project and return the background marker.',
-      messages: [
-        {
-          role: 'assistant',
-          content: 'BACKGROUND_RUNTIME_DISPATCH_REWIND_MARKER',
-        },
-      ],
-      status: 'completed',
-      background: true,
-      result: {
-        success: true,
-        message: 'BACKGROUND_RUNTIME_DISPATCH_REWIND_MARKER',
-      },
-      createdAt: Date.now() - 1000,
-      lastActiveAt: Date.now() - 500,
-      completedAt: Date.now() - 250,
-      parentSessionId: sessionId,
-      parentProjectPath: workspaceRoot,
-      rootAgentId: childSessionId,
-      resumeDepth: 0,
       workspaceRoot,
-      isolation: 'none',
-      configSnapshot: {
-        name: 'Explore',
-        description: 'Explore agent',
-        source: 'builtin',
-      },
+      childSessionId
+    );
+    saveBackgroundSubagent({
+      sessionId,
+      workspaceRoot,
+      childSessionId,
+      marker: 'BACKGROUND_RUNTIME_DISPATCH_REWIND_MARKER',
     });
     await first.dispose();
 
