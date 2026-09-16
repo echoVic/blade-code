@@ -7,60 +7,24 @@ import { CompactionService } from '../../../../src/context/CompactionService.js'
 import { deriveTokenBudgetSnapshot } from '../../../../src/context/TokenBudgetHandoff.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
+import { createDefaultMockConfig } from '../../../support/mocks/mockConfig.js';
 
-function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
-  return {
+const createConfig = (overrides: Partial<BladeConfig> = {}): BladeConfig =>
+  createDefaultMockConfig({
     currentModelId: '',
     models: [],
     temperature: 0,
     maxContextTokens: 200000,
-    stream: true,
     topP: 0.9,
     topK: 50,
-    timeout: 30000,
     codeTheme: 'dracula',
-    uiTheme: 'system',
     language: 'zh-CN',
-    fontSize: 14,
-    autoSaveSessions: true,
     notifyBuild: false,
     notifyErrors: false,
-    notifySounds: false,
-    privacyTelemetry: false,
     privacyCrash: true,
-    debug: false,
-    mcpEnabled: false,
-    mcpServers: {},
-    permissions: {
-      allow: [],
-      ask: [],
-      deny: [],
-    },
-    permissionMode: PermissionMode.DEFAULT,
-    hooks: {} as BladeConfig['hooks'],
-    env: {},
-    disableAllHooks: false,
     maxTurns: 20,
     ...overrides,
-    lspServers: overrides.lspServers ?? {},
-    modelProviders: overrides.modelProviders ?? {},
-    enabledPlugins: overrides.enabledPlugins ?? {},
-    pluginSourcePolicy: overrides.pluginSourcePolicy ?? {
-      restrictToAllowedSources: false,
-      requireGitCommitSha: false,
-      allowedGitHosts: [],
-      allowedMarketplaces: [],
-      allowedLocalRoots: [],
-    },
-    maxConcurrentTasks: overrides.maxConcurrentTasks ?? 3,
-    maxQueuedTasks: overrides.maxQueuedTasks ?? 100,
-    maxQueuedTaskBytes: overrides.maxQueuedTaskBytes ?? 64 * 1024 * 1024,
-    maxResidentSessionRuntimes: overrides.maxResidentSessionRuntimes ?? 32,
-    sessionRuntimeIdleMs: overrides.sessionRuntimeIdleMs ?? 5 * 60 * 1000,
-    maxResidentSessionProjections: overrides.maxResidentSessionProjections ?? 256,
-    sessionProjectionIdleMs: overrides.sessionProjectionIdleMs ?? 1_800_000,
-  };
-}
+  });
 
 function createContext(): ChatContext {
   return {
