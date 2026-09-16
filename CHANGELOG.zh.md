@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.205] - 2026-09-16
+
+### 修复
+- 活动 Skill 排除 ToolSearch 时重新投影已获准工具的 schema，使允许的延迟工具仍可调用；保留 Plan 只读过滤、注册表加载状态与结构化输出保留工具。
+
+### 测试
+- 覆盖 Skill 激活、限制清除、Plan 模式及结构化输出。
+- 真实 Flash/Pro 覆盖 Headless、ACP、raw PTY、生产/开发 Chromium 的 Skill 加载与后续请求精确 schema 校验。
+
 ## [0.10.204] - 2026-09-15
 
 ### 修复

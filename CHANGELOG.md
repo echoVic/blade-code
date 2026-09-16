@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.205] - 2026-09-16
+
+### Fixed
+- Reproject admitted tool schemas when an active Skill excludes ToolSearch, so allowed deferred tools remain callable. Preserve Plan read-only filtering, registry load state, and the reserved structured-output schema.
+
+### Tests
+- Cover Skill activation, restriction removal, Plan mode, and structured output in the loop.
+- Verify real Flash/Pro Skill loading and exact follow-up schemas across Headless, ACP, raw PTY, and production/development Chromium.
+
 ## [0.10.204] - 2026-09-15
 
 ### Fixed
