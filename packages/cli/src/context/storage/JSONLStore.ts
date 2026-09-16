@@ -264,31 +264,6 @@ export class JSONLStore {
   }
 
   /**
-   * 按条件过滤读取 JSONL 记录
-   * @param predicate 过滤条件
-   * @returns 符合条件的 JSONL 条目数组
-   */
-  async filter(predicate: (entry: SessionEvent) => boolean): Promise<SessionEvent[]> {
-    const results: SessionEvent[] = [];
-    await this.readStream((entry) => {
-      if (predicate(entry)) {
-        results.push(entry);
-      }
-    });
-    return results;
-  }
-
-  /**
-   * 获取最后 N 条记录
-   * @param count 记录数量
-   * @returns JSONL 条目数组
-   */
-  async readLast(count: number): Promise<SessionEvent[]> {
-    const all = await this.readAll();
-    return all.slice(-count);
-  }
-
-  /**
    * 读取 seq >= fromSeq 的所有记录，用于 Last-Event-ID 断点续传的 JSONL 兜底补发。
    * seq 由 {@link parseSessionJSONL} 统一保证（新事件显式携带，旧事件按行号回填）。
    * @param fromSeq 起始序列号（含）
@@ -326,19 +301,6 @@ export class JSONLStore {
     } catch (error) {
       console.error(`[JSONLStore] 获取统计信息失败: ${this.filePath}`, error);
       return { exists: false, size: 0, lineCount: 0 };
-    }
-  }
-
-  /**
-   * 检查文件是否存在
-   * @returns 文件是否存在
-   */
-  async exists(): Promise<boolean> {
-    try {
-      await fs.access(this.filePath);
-      return true;
-    } catch {
-      return false;
     }
   }
 

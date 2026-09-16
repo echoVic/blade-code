@@ -73,16 +73,6 @@ export class TokenCounter {
   }
 
   /**
-   * 获取 token 限制（直接返回配置的 maxTokens）
-   *
-   * @param maxTokens - 配置的 token 限制
-   * @returns token 限制
-   */
-  static getTokenLimit(maxTokens: number): number {
-    return maxTokens;
-  }
-
-  /**
    * 检查是否需要压缩
    *
    * @param messages - 消息列表
@@ -176,27 +166,5 @@ export class TokenCounter {
     }
 
     return tokens;
-  }
-
-  /**
-   * 清理 encoding 缓存
-   * （用于释放内存）
-   */
-  static clearCache(): void {
-    this.encodingCache.clear();
-  }
-
-  /**
-   * 估算文本的 token 数量（快速粗略估算）
-   *
-   * @param text - 文本内容
-   * @returns 估算的 token 数量
-   */
-  static estimateTokens(text: string): number {
-    // 粗略估算：1 token ≈ 4 字符（英文）或 1.5 字符（中文）
-    const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
-    const otherChars = text.length - chineseChars;
-
-    return Math.ceil(chineseChars / 1.5 + otherChars / 4);
   }
 }

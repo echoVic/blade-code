@@ -1,5 +1,4 @@
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import type { BackgroundSubagentCompletion } from '../../agent/subagents/BackgroundSubagentCompletion.js';
 import type { SubagentInfoForContext } from '../../agent/types.js';
@@ -51,13 +50,11 @@ import {
   getProjectStoragePath,
   getSessionFilePath,
   getSessionInboxFilePath,
-  listProjectDirectories,
 } from './pathUtils.js';
 import {
   createSessionStateStorage,
   type SessionStateStorage,
   sessionStateStorageKey,
-  withSessionStatePaths,
   withSessionStateRoot,
 } from './SessionStateStorage.js';
 
@@ -654,7 +651,6 @@ export class PersistentStore {
   private static readonly sessionInitializationRuns = new Map<string, Promise<void>>();
 
   private readonly projectPath: string;
-  private readonly maxSessions: number;
   private readonly version: string;
   private readonly stateStorage: SessionStateStorage;
   /** Positive per-facade cache; Runtime ownership prevents active-file deletion. */
@@ -662,12 +658,11 @@ export class PersistentStore {
 
   constructor(
     projectPath: string = getCwd(),
-    maxSessions: number = 100,
+    _maxSessions: number = 100,
     version: string = getVersion(),
     stateStorage: SessionStateStorage = createSessionStateStorage(projectPath)
   ) {
     this.projectPath = projectPath;
-    this.maxSessions = maxSessions;
     this.version = version;
     this.stateStorage = stateStorage;
   }
@@ -709,7 +704,7 @@ export class PersistentStore {
 
     let initialization = PersistentStore.sessionInitializationRuns.get(filePath);
     if (!initialization) {
-      initialization = this.initializeSessionFile(sessionId, filePath, subagentInfo);
+      initialization = this.initializeSessionFile(sessionId, subagentInfo);
       PersistentStore.sessionInitializationRuns.set(filePath, initialization);
     }
 
@@ -735,7 +730,6 @@ export class PersistentStore {
 
   private async initializeSessionFile(
     sessionId: string,
-    filePath: string,
     subagentInfo?: SubagentInfoForContext
   ): Promise<void> {
     const entries = await this.log(sessionId).readAll();
@@ -2233,121 +2227,6 @@ export class PersistentStore {
     } finally {
       this.initializedSessions.delete(sessionId);
     }
-  }
-
-  /**
-   * 清理旧会话（保持最近的N个会话）
-   */
-  async cleanupOldSessions(): Promise<void> {
-    if (this.stateStorage.kind === 'acp-remote') {
-      throw new Error('Remote session cleanup requires SessionService');
-    }
-    try {
-      const sessions = await this.listSessions();
-      if (sessions.length <= this.maxSessions) {
-        return;
-      }
-
-      // 获取所有会话的摘要信息并按时间排序
-      const sessionSummaries = await Promise.all(
-        sessions.map((sessionId) => this.getSessionSummary(sessionId))
-      );
-
-      const validSummaries = sessionSummaries
-        .filter((summary): summary is NonNullable<typeof summary> => summary !== null)
-        .sort((a, b) => b.lastActivity - a.lastActivity);
-
-      // 删除最旧的会话
-      const sessionsToDelete = validSummaries
-        .slice(this.maxSessions)
-        .map((summary) => summary.sessionId);
-
-      await Promise.all(
-        sessionsToDelete.map((sessionId) => this.deleteSession(sessionId))
-      );
-
-      console.log(`[PersistentStore] 已清理 ${sessionsToDelete.length} 个旧会话`);
-    } catch (error) {
-      console.error('[PersistentStore] 清理旧会话失败:', error);
-    }
-  }
-
-  /**
-   * 获取存储统计信息
-   */
-  async getStorageStats(): Promise<{
-    totalSessions: number;
-    totalSize: number;
-    projectPath: string;
-  }> {
-    if (this.stateStorage.kind === 'acp-remote') {
-      throw new Error('Remote storage statistics require SessionService');
-    }
-    try {
-      const sessions = await this.listSessions();
-      let totalSize = 0;
-
-      for (const sessionId of sessions) {
-        const filePath = getSessionFilePath(this.projectPath, sessionId);
-        const store = new JSONLStore(filePath);
-        const stats = await store.getStats();
-        totalSize += stats.size;
-      }
-
-      return {
-        totalSessions: sessions.length,
-        totalSize,
-        projectPath: this.projectPath,
-      };
-    } catch {
-      return {
-        totalSessions: 0,
-        totalSize: 0,
-        projectPath: this.projectPath,
-      };
-    }
-  }
-
-  /**
-   * 检查存储健康状态
-   */
-  async checkStorageHealth(): Promise<{
-    isAvailable: boolean;
-    canWrite: boolean;
-    error?: string;
-  }> {
-    if (this.stateStorage.kind === 'acp-remote') {
-      throw new Error('Remote storage health checks require SessionService');
-    }
-    try {
-      const storagePath = getProjectStoragePath(this.projectPath);
-
-      // 尝试创建目录
-      await fs.mkdir(storagePath, { recursive: true, mode: 0o755 });
-
-      // 尝试写入测试文件
-      const testFile = path.join(storagePath, '.health-check');
-      await fs.writeFile(testFile, 'test', 'utf-8');
-      await fs.unlink(testFile);
-
-      return {
-        isAvailable: true,
-        canWrite: true,
-      };
-    } catch (error) {
-      return {
-        isAvailable: false,
-        canWrite: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  /**
-   * 获取所有项目列表
-   */
-  static async listAllProjects(): Promise<string[]> {
-    return listProjectDirectories();
   }
 }
 
