@@ -25,7 +25,7 @@ const models = isRealApiTestEnabled()
   : [];
 const runner = path.resolve(
   import.meta.dirname,
-  '../../support/weightedProviderAdmissionAcpRunner.ts'
+  '../../support/providerAdmissionAcpRunner.ts'
 );
 const cliEntry = path.resolve(import.meta.dirname, '../../../dist/blade.js');
 
@@ -102,6 +102,7 @@ describe
           );
           const encoded = Buffer.from(
             JSON.stringify({
+              scenario: 'pending_bytes_rejected',
               cliEntry,
               workspace,
               home,
@@ -120,7 +121,7 @@ describe
               cwd: path.resolve(import.meta.dirname, '../../..'),
               env: {
                 ...process.env,
-                BLADE_WEIGHTED_ADMISSION_ACP_INPUT: encoded,
+                BLADE_PROVIDER_ADMISSION_ACP_INPUT: encoded,
               },
               timeout: 180_000,
               maxBuffer: 1024 * 1024,

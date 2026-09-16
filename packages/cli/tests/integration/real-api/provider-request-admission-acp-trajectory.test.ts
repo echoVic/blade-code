@@ -25,7 +25,7 @@ const models = isRealApiTestEnabled()
   : [];
 const runner = path.resolve(
   import.meta.dirname,
-  '../../support/providerRequestAdmissionAcpRunner.ts'
+  '../../support/providerAdmissionAcpRunner.ts'
 );
 const cliEntry = path.resolve(import.meta.dirname, '../../../dist/blade.js');
 
@@ -95,6 +95,7 @@ describe
           );
           const encoded = Buffer.from(
             JSON.stringify({
+              scenario: 'queued',
               cliEntry,
               workspace,
               home,

@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
 import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
@@ -7,6 +7,7 @@ import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClie
 import { waitForCondition as waitFor, waitForChildExit } from './asyncTestUtils.js';
 
 interface RunnerInput {
+  scenario: keyof typeof SCENARIOS;
   cliEntry: string;
   workspace: string;
   home: string;
@@ -22,6 +23,77 @@ function loadInput(): RunnerInput {
   if (!encoded) throw new Error('Missing BLADE_PROVIDER_ADMISSION_ACP_INPUT');
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
 }
+
+type PromptOutcome =
+  | { kind: 'result'; result: acp.PromptResponse }
+  | { kind: 'error'; error: unknown };
+
+interface ScenarioContext {
+  connection: acp.ClientSideConnection;
+  input: RunnerInput;
+  primary: acp.PromptResponse;
+  secondary: PromptOutcome;
+  secondarySessionId: string;
+}
+
+const SCENARIOS = {
+  queued: {
+    label: 'ACP Provider admission',
+    secondaryPrompt: (input: RunnerInput) =>
+      `Reply with exactly ${input.secondaryMarker} and no other text.`,
+    matchesMetadata: (value: Record<string, unknown>) => value.phase === 'queued',
+    metadataMessage: 'secondary Session did not project Provider admission queue',
+    verify: async ({ primary, secondary }: ScenarioContext) => {
+      if (
+        primary.stopReason !== 'end_turn' ||
+        secondary.kind !== 'result' ||
+        secondary.result.stopReason !== 'end_turn'
+      ) {
+        const secondaryReason =
+          secondary.kind === 'result' ? secondary.result.stopReason : 'rejected';
+        throw new Error(
+          `unexpected stop reasons: ${primary.stopReason}/${secondaryReason}`
+        );
+      }
+    },
+    requiresSecondaryMarker: true,
+    secondaryRejected: false,
+  },
+  pending_bytes_rejected: {
+    label: 'Weighted ACP admission',
+    secondaryPrompt: (input: RunnerInput) =>
+      `This request must be rejected before Provider traffic. ${input.secondaryMarker}`,
+    matchesMetadata: (value: Record<string, unknown>) =>
+      value.phase === 'rejected' &&
+      value.resource === 'pending_bytes' &&
+      value.reason === 'queue_full',
+    metadataMessage: 'secondary Session did not project pending-byte rejection',
+    verify: async ({
+      connection,
+      input,
+      primary,
+      secondary,
+      secondarySessionId,
+    }: ScenarioContext) => {
+      if (primary.stopReason !== 'end_turn') {
+        throw new Error(`unexpected primary stop reason: ${primary.stopReason}`);
+      }
+      if (secondary.kind !== 'error') {
+        throw new Error(
+          `secondary unexpectedly completed: ${secondary.result.stopReason}`
+        );
+      }
+      await connection.loadSession({
+        sessionId: secondarySessionId,
+        cwd: input.workspace,
+        mcpServers: [],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    },
+    requiresSecondaryMarker: false,
+    secondaryRejected: true,
+  },
+} as const;
 
 function agentText(client: ChildBackedRecordingAcpClient, sessionId: string): string {
   return client.sessionUpdates
@@ -54,6 +126,8 @@ function admissionMetadata(
 }
 
 async function run(input: RunnerInput) {
+  const scenario = SCENARIOS[input.scenario];
+  if (!scenario) throw new Error(`Unknown admission scenario: ${input.scenario}`);
   const child = spawn(process.execPath, [input.cliEntry, '--acp'], {
     cwd: input.workspace,
     env: {
@@ -68,7 +142,7 @@ async function run(input: RunnerInput) {
   });
   if (!child.stdin || !child.stdout) {
     child.kill('SIGKILL');
-    throw new Error('ACP Provider admission stdio was unavailable');
+    throw new Error(`${scenario.label} stdio was unavailable`);
   }
   let stderr = '';
   child.stderr?.on('data', (chunk: Buffer | string) => {
@@ -115,7 +189,7 @@ async function run(input: RunnerInput) {
       } catch {
         return false;
       }
-    }, 'ACP primary request did not reach the Provider hold barrier');
+    }, `${scenario.label} primary request did not reach the Provider hold barrier`);
 
     const secondary = await connection.newSession({
       cwd: input.workspace,
@@ -126,15 +200,15 @@ async function run(input: RunnerInput) {
       sessionId: secondarySessionId,
       modeId: 'yolo',
     });
-    const secondaryPrompt = connection.prompt({
-      sessionId: secondarySessionId,
-      prompt: [
-        {
-          type: 'text',
-          text: `Reply with exactly ${input.secondaryMarker} and no other text.`,
-        },
-      ],
-    });
+    const secondaryPrompt = connection
+      .prompt({
+        sessionId: secondarySessionId,
+        prompt: [{ type: 'text', text: scenario.secondaryPrompt(input) }],
+      })
+      .then(
+        (result) => ({ kind: 'result' as const, result }),
+        (error: unknown) => ({ kind: 'error' as const, error })
+      );
 
     await waitFor(
       () =>
@@ -143,40 +217,40 @@ async function run(input: RunnerInput) {
             value !== null &&
             typeof value === 'object' &&
             !Array.isArray(value) &&
-            (value as Record<string, unknown>).phase === 'queued'
+            scenario.matchesMetadata(value as Record<string, unknown>)
         ),
-      'ACP secondary Session did not project Provider admission queue'
+      `${scenario.label} ${scenario.metadataMessage}`
     );
     const [primaryResult, secondaryResult] = await Promise.all([
       primaryPrompt,
       secondaryPrompt,
     ]);
-    if (
-      primaryResult.stopReason !== 'end_turn' ||
-      secondaryResult.stopReason !== 'end_turn'
-    ) {
-      throw new Error(
-        `Unexpected ACP Provider admission stop reasons: ${primaryResult.stopReason}/${secondaryResult.stopReason}`
-      );
-    }
+    await scenario.verify({
+      connection,
+      input,
+      primary: primaryResult,
+      secondary: secondaryResult,
+      secondarySessionId,
+    });
 
     const metadata = admissionMetadata(client, secondarySessionId);
     if (!metadata.includes(null)) {
-      throw new Error('ACP Provider admission metadata was not cleared');
+      throw new Error(`${scenario.label} metadata was not cleared`);
     }
     const primaryText = agentText(client, primarySessionId);
     const secondaryText = agentText(client, secondarySessionId);
     if (
       !primaryText.includes(input.primaryMarker) ||
-      !secondaryText.includes(input.secondaryMarker)
+      (scenario.requiresSecondaryMarker &&
+        !secondaryText.includes(input.secondaryMarker))
     ) {
-      throw new Error('ACP Provider admission Sessions did not finish independently');
+      throw new Error(`${scenario.label} Sessions did not finish independently`);
     }
     if (
       primaryText.includes('providerAdmission') ||
       secondaryText.includes('providerAdmission')
     ) {
-      throw new Error('ACP Provider admission metadata polluted assistant text');
+      throw new Error(`${scenario.label} metadata polluted assistant text`);
     }
     const [primaryTranscript, secondaryTranscript] = await Promise.all([
       readFile(findSessionTranscript(input.storageRoot, primarySessionId), 'utf8'),
@@ -191,7 +265,7 @@ async function run(input: RunnerInput) {
       serialized,
     ]) {
       if (value.includes(input.secret)) {
-        throw new Error('ACP Provider admission evidence exposed credentials');
+        throw new Error(`${scenario.label} evidence exposed credentials`);
       }
     }
 
@@ -200,7 +274,7 @@ async function run(input: RunnerInput) {
     await connection.closed.catch(() => undefined);
     if (exit.signal || exit.code !== 0) {
       throw new Error(
-        `ACP Provider admission exited ${
+        `${scenario.label} exited ${
           exit.code ?? exit.signal
         }: ${stderr.replaceAll(input.secret, '[redacted]')}`
       );
@@ -210,6 +284,7 @@ async function run(input: RunnerInput) {
       primarySessionId,
       secondarySessionId,
       metadata,
+      secondaryRejected: scenario.secondaryRejected,
       output: serialized.slice(-256_000),
       processes: client.releasedProcesses,
     };
