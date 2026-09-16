@@ -68,7 +68,7 @@ Vitest setup 为每个 test-file lifecycle 创建唯一的临时
 real-api setup 仅在 `REAL_API_TEST=1` 时加载凭据配置、模型目录与应用 store；
 未启用付费测试时仍建立并回收隔离存储，免凭据回归仍运行。本地免凭据 real-api
 文件在现有四 worker 上限内并行加载，并保留独立进程及文件隔离；付费矩阵和 CI
-仍为单 worker 串行。测试集合、重试规则及进程超时预算不变。
+仍为单 worker 串行。
 
 GitHub `Quality Gate` 在 build 前重复执行全仓 format check 与 CLI lint，并由 workflow
 source contract 固定 install → format → lint → build 顺序。root、CLI 与 Web 使用同一
@@ -107,102 +107,30 @@ recovery 的轨迹关闭 Provider retry；retry/backoff 只在专用故障注入
 Write 资格使用唯一绝对 `file_path` 与 Write-only 工具白名单，text-only 回答不能替代
 真实文件副作用。
 
-该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro Headless
-bugfix、GPT Web structured output、Claude ACP structured output、DeepSeek headless
-structured output、Web/ACP/TUI code review、durable interaction recovery、permission
-recovery、ACP model switch、ACP durable fork Write+Bash capability routing、透明 503
-retry proxy、durable 413 compaction proxy、真实 mid-stream stall proxy、assistant
-response fsync fail-stop/cold retry、turn-final receipt exactly-once recovery、
-foreground/background shell hard-crash recovery，以及 DeepSeek Flash 的
-Runtime/Web/ACP host-authoritative Goal completion verification。ACP fork 固定要求
-DeepSeek Flash/Pro，并对当前资格环境中已配置的 Claude、GPT 与国产模型执行同一 paired
-SDK trajectory；未声明 terminal capability 的 Client 必须使用 Session-bound local
-terminal，声明后 terminal 失败仍须 fail closed。
-Agent Team task-list coordination 固定运行 DeepSeek Flash/Pro；每个模型启动四个共享
-`taskListId` 的真实后台 teammate，要求每个 teammate 实际调用一次 `TaskCreate`，并
-验证最终任务 ID 连续且唯一、subject 全量保留、JSON 快照可解析、跨进程 lock 已释放、
-同进程 keyed coordination 已归零。纯文本声称创建任务、仅检查 HTTP 200、mock
-ToolExecutor 或只验证单进程 manager 均不能替代该轨迹。
-Goal completion 的 fresh PASS authority 同时绑定当前 host run、mutation revision 与
-由 Goal ID、attempt、requested-at timestamp 组成的 completion candidate identity。
-模型重复提交相同的幂等 `UpdateGoal complete` 时，必须保留已经由该 host run 记录的
-verifier Session ID、verdict、evidence digest 与 finalization snapshot；候选变化、
-workspace mutation 或进程重启才能使 receipt 失效，不能因重复候选额外消耗
-verification retry budget。
-Goal premature-stop recovery 固定运行当前资格环境中的 DeepSeek、Claude、GPT 与国产
-模型。每个模型必须先产生一次无工具的 `self_deferral`，随后在没有用户输入的情况下
-接收 host recovery continuation，完成真实文件写入、读取验证和独立 Goal verifier。
-测试使用显式 token budget 防止失败夹具形成无界循环。
-Goal verifier feedback 轨迹必须先让真实 verifier 拒绝缺失产物，再证明执行 Agent 从
-持久化、脱敏后的具体缺口中恢复并完成；相同反馈指纹的二次升级与三次自动阻断由确定性
-状态机测试覆盖。
-Goal execution-host failure 轨迹固定运行 DeepSeek Flash/Pro × Headless、真实 ACP
-stdio、raw PTY TUI 与 production Chromium Web 八格矩阵。每格由真实模型发起三次 Bash
-tool call，production Bash adapter 产生三次 typed timeout，GoalStore 在第三个 logical turn
-原子 blocked 且不发起第四次 continuation。普通非零退出不得进入该 streak；Web reload、
-ACP metadata、TUI 状态与 Headless JSONL 必须从同一 durable Goal snapshot 得到一致结果。
-详见[Goal 执行宿主故障保护资格验证证据](./goal-execution-host-failure-evidence.md)。
-Durable Goal turn lineage 轨迹固定运行 DeepSeek Flash/Pro × Headless、真实 ACP stdio、
-raw PTY TUI 与 production Chromium Web 八格矩阵。每格必须完成三个真实 upstream 模型
-工具决策和精确六次 downstream Provider 请求，形成 root/current/parent 连续链；framework
-retry 与 model retry 都为 0。Goal sidecar、durable `turn_started`、ACP metadata、Headless
-JSONL、TUI 状态与 Web reload 后的 DOM 属性必须一致，且 lineage 不得进入 Provider prompt。
-详见[Durable Goal 回合链资格验证证据](./goal-turn-lineage-evidence.md)。
-完整 `test:real-api` 另含 GPT Prompt Cache efficiency 轨迹：先等待真实 cache read，
-再替换全部稳定 prompt block，并要求 runtime 输出 `system_prompt_changed` attribution。
-该轨迹同时验证自适应 token 阈值；不得用 mock usage、固定 cache counter 或仅比较
-累计命中率替代。由于 GPT 通道延迟与可用性不稳定，它不属于 release-blocking matrix。
-Browser Panel 资格使用真实 DeepSeek Flash Session 与 production Chromium：同一 Web
-页面必须先完成真实 Provider 回合，再从右侧 Preview 打开 Browser。Preview 模式加载
-两个独立 loopback fixture，验证 iframe sandbox/no-referrer、后退、前进、刷新和系统
-浏览器打开；Test 模式必须通过独立 server Chromium 返回 PNG 与 ARIA ref，完成真实
-表单填入、点击和 console 诊断；移动端全屏模态下两种 surface 都不得越界。URL 边界
-拒绝非 HTTP(S)、嵌入凭据与 Preview 中的 Blade 自身 origin；console/page/request
-fault、Provider credential、server/browser/port 与临时目录残留必须为零。测试固定
-加入 realApiQualification，不能退化为只跑 jsdom。
-前台有界输出固定运行 DeepSeek Flash/Pro × Headless/production Chromium Web/raw PTY
-TUI/真实 ACP SDK terminal 八格；单格 Provider deadline 180 秒、测试 timeout 240 秒，
-完整 realApiQualification watchdog 为 90 分钟，发布矩阵固定 framework `retry=0`。
-每格还验证 surface egress：Headless
-等待 `write(false) -> drain`，ACP 最多一个 `sessionUpdate()` in-flight，raw PTY 暂停
-reader 后继续渲染，Web 在运行中 reload 后按 durable cursor 恢复同一 tool/final state。
-raw PTY 必须锁存已经观察到的 final marker、stdout/stderr retained tail 和 truncation
-notice，不能让 resize redraw 轮换有界终端窗口后反向抹除已成立证据；同时必须从 resize
-后的新 PTY 数据再次观察 truncation notice，不能用 resize 前的历史命中放行。
-模型的整个最终响应必须严格等于单格 marker；ACP 失败诊断只能保留有界、脱敏的最终文本
-预览，不能用放宽 marker 或 framework retry 掩盖模型偏离。
-Root-turn crash auto-resume 另固定运行
-DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web/真实 ACP
-`session/load` 八格，所有入口都不得依赖额外 wake-up prompt。最终响应 token 必须与
-恢复 prompt、marker 文件和 Read output 区分，且不能在 prompt 中完整出现，也不得用
-重复词段制造无关的 Provider 拼写歧义；Web 已观察到恢复前缀但完整 token 不匹配时必须
-立即输出有界、脱敏的 assistant 文本，不能退化为固定 180 秒 locator 超时。raw PTY
-必须按精确 inbox message ID 观察 acknowledgement，以及同一 turn 随后的
-`turn_completed`，不能以终端历史命中或固定等待窗口代替 durable terminal。ACP
-多 Provider 对照的终答窗口必须晚于 180 秒 runtime hard timeout，并为销毁连接与临时
-目录清理保留剩余测试窗口；ACP fork 的 parent Read 与 child Write/Bash 是两个顺序
-prompt stage，每段由宿主 180 秒 deadline 发送标准 `session/cancel` 并等待 prompt
-收敛；外层预算固定为 420 秒，只覆盖两个 stage deadline 和 60 秒清理余量。不得通过
-Provider 或 framework retry 延长。Edit+rewind、
-Goal finalization crash handoff 使用同一 Flash/Pro × 四入口八格矩阵，恢复阶段必须
-零 Provider 请求，随后再从同一 surface 完成真实 API follow-up。PTY follow-up 用户输入
-不得包含完整预期响应 marker；Provider request body 必须先解析 JSON `messages` 再验证
-prompt，避免输入回显伪装 assistant completion。Completed-subagent
-adoption 与 background-subagent completion wake-up 也分别固定运行 Flash/Pro ×
-Headless/raw PTY/production Chromium Web/真实 ACP 八格矩阵。
-Bounded coordinated shutdown 另固定运行同一 Flash/Pro × 四入口八格矩阵；每格在真实
-foreground Bash 进入 host-visible PID barrier 后发送 production `SIGTERM`，要求
-exactly-one cancelled abort、同 Session 恢复、延迟副作用对照和全量资源回收。
-开放式多文件迁移、compaction、进程树、
-并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
+该命令运行 9 条固定的 release-blocking 生产路径：
+
+1. 生产 Agent 编辑与验证
+2. 结构化输出
+3. durable interaction recovery
+4. 跨表面 release coding
+5. Agent Team task coordination
+6. 跨 Provider fallback
+7. Goal completion
+8. Native Browser Tool
+9. ACP remote filesystem
+
+这些路径必须通过真实 Provider 或生产宿主证明，不能用模型自述、HTTP `200`、mock
+ToolExecutor 或仅 jsdom 覆盖替代。Provider admission、重试、compaction、队列、
+Session identity、事件投影和资源清理由确定性 unit/integration 测试承担发布阻断；
+开放式多文件迁移、进程树、并发 owner、crash-tail 及其他高成本 provider/capability
+soak 由以下命令单独运行：
 
 ```bash
 bun run test:real-api
 ```
 
 国产模型通道属于可选 soak provider，不进入默认发布阻断矩阵。需要显式加入时设置
-`REAL_API_INCLUDE_OPTIONAL_PROVIDERS=1`；余额不足或共享通道限流不会降低 DeepSeek、
-Claude、GPT 的必需准出标准。下文按能力列出的扩展 required matrix 描述完整 soak
+`REAL_API_INCLUDE_OPTIONAL_PROVIDERS=1`。下文按能力列出的扩展矩阵描述完整 soak
 contract，不表示每个 patch 都要同步阻塞发布。
 
 凭据文件格式如下，`baseURL` 和单模型 `model` 可省略：
@@ -357,7 +285,7 @@ readiness 约束。readiness 超时必须输出结构化状态诊断，不得盲
 
 非干扰对照固定运行 Flash/Pro Headless `--task-isolation local` coding task 与 Flash/Pro
 raw PTY root turn；全部在同一最小 byte limit 下完成。既有 production Web task
-dispatch Flash/Pro worktree coding/FIFO trajectory继续 release-blocking。target 与
+dispatch Flash/Pro worktree coding/FIFO trajectory 继续作为完整 soak 运行。target 与
 controls 全部使用 `retry=0`，并回收 rejected inbox/Runtime/worktree、accepted task、
 browser、ACP process/terminal、proxy/socket、port、HOME/storage/workspace。Chromium
 只允许预期的 `/tasks` 429 resource error，其他 console/page/request fault 必须为零。
@@ -487,7 +415,7 @@ compaction request 返回受控 context overflow，要求第二个请求使用�
 - browser/page/SSE、PTY、ACP terminal/process、server/proxy/port、Session/foreground
   lease、临时 HOME/storage/workspace 全部回收，evidence 与日志不含 Provider credentials。
 
-该 release-blocking trajectory 在 `REAL_API_RELEASE_MATRIX=1` 时 framework retry 为 0。
+该 soak trajectory 在 `REAL_API_RELEASE_MATRIX=1` 时 framework retry 为 0。
 Desktop computer-use 只能作为非阻断视觉观察；它不能证明 JSONL、Provider request
 顺序或 marker non-fan-out，因此不是本 runtime contract 的 authority。
 
@@ -1100,7 +1028,7 @@ Runtime、TUI、Web、ACP 四条真实产品入口；worktree resume 另行验�
    字节、child 数量与 lineage 保持不变，证明没有重复执行 Task。
 
 required matrix 固定包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`，四个 surface 共八格。
-该轨迹属于 release-blocking real API qualification，不得由 mock、HTTP 200、仅 JSONL
+该轨迹属于完整 real API soak，不得由 mock、HTTP 200、仅 JSONL
 检查或刷新后偶然可见替代。
 
 ### Durable background-Subagent completion wake-up 轨迹
@@ -1152,7 +1080,7 @@ ACP update、diagnostics 或录制的 Provider body。
    Session lease、临时 storage/workspace/trust root，并全量扫描 credential absence。
 
 required matrix 固定包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`，四个 surface 共八格。
-该轨迹属于 release-blocking real API qualification，不得以 mock signal、直接调用
+该轨迹属于完整 real API soak，不得以 mock signal、直接调用
 `SessionRuntime.dispose()`、仅检查进程退出码或 cold `process_restart` 修复替代。
 
 ### Session discovery 与 durable fork 轨迹
@@ -1242,7 +1170,7 @@ keyless 测试替代。Chromium preflight 使用 `blade browser status`；缺失
 
 ## 当前回合活动状态
 
-当前回合活动的 release-blocking 矩阵固定运行 DeepSeek Flash/Pro × Headless、真实 ACP
+当前回合活动的完整 soak 矩阵固定运行 DeepSeek Flash/Pro × Headless、真实 ACP
 stdio、raw PTY TUI 与 production Chromium Web，共八格。每格要求 framework retry `0`、
 model `maxRetries=0`、一次 Bash 调用、连续 thinking/tool/responding/clear 状态和精确终答。
 Web 必须在工具仍被 host barrier 阻塞时 reload，并从 SSE `connected.turnActivity` 恢复
