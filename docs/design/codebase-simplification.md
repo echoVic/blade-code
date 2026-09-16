@@ -95,9 +95,11 @@ Representative commits:
 | Qualification focus | `89ba9afd` |
 | Regression matrix reduction | `5a36aaf7` |
 | Session decomposition | `c214641e` |
+| Runtime and static data compaction | `7b07d031` |
+| Final focused regression coverage | `a609f0a1` |
 
-At `c214641e`, tracked TypeScript/TSX/JavaScript is 413,082 lines:
+At `a609f0a1`, tracked TypeScript/TSX/JavaScript is 414,908 lines:
 
-- Net reduction: 180,848 lines
-- Reduction from baseline: 30.45%
-- Margin beyond the required reduction: 2,669 lines
+- Net reduction: 179,022 lines
+- Reduction from baseline: 30.1419%
+- Margin beyond the required reduction: 843 lines
