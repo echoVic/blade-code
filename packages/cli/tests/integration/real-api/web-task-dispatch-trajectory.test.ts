@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+
 import {
   BusEventSchema,
   CreateTaskResponseSchema,
@@ -26,6 +27,8 @@ import {
   resolveForkQualificationModels,
   type TestModelConfig,
 } from './testConfig.js';
+
+const subagentRegistry = getSubagentRegistry();
 
 const execFileAsync = promisify(execFile);
 const enabled = isRealApiTestEnabled();

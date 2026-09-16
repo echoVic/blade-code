@@ -6,18 +6,20 @@ import { join } from 'pathe';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AgentSessionStore } from '../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../src/agent/subagents/BackgroundAgentManager.js';
-import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
 import { PermissionMode } from '../../../src/config/types.js';
 import {
   installWorkspaceSandboxBackendForTests,
   type WorkspaceSandboxBackend,
 } from '../../../src/tools/builtin/shell/WorkspaceWriteSandbox.js';
-import { taskTool } from '../../../src/tools/builtin/task/task.js';
+import { createTaskTool } from '../../../src/tools/builtin/task/task.js';
 import { taskOutputTool } from '../../../src/tools/builtin/task/taskOutput.js';
 import { isRealApiTestEnabled } from './testConfig.js';
 
 const execFileAsync = promisify(execFile);
 const shouldRun = isRealApiTestEnabled();
+const subagentRegistry = getSubagentRegistry();
+const taskTool = createTaskTool({ registry: subagentRegistry });
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const result = await execFileAsync('git', args, {

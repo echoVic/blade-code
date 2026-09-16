@@ -302,9 +302,7 @@ vi.mock('../../../../src/acp/AcpServiceContext.js', () => ({
     destroyRegisteredSession: vi.fn(),
     destroySession: vi.fn(),
     setCurrentSession: vi.fn(),
-    getInstance: vi.fn(() => ({
-      getTerminalService: vi.fn(() => terminalState),
-    })),
+    getTerminalService: vi.fn(() => terminalState),
   },
 }));
 

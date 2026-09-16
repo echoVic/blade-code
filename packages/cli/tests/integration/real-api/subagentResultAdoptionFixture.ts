@@ -4,9 +4,12 @@ import {
   AgentSessionStore,
 } from '../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../src/agent/subagents/BackgroundAgentManager.js';
-import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
 import { PermissionMode } from '../../../src/config/types.js';
-import { taskTool } from '../../../src/tools/builtin/task/task.js';
+import { createTaskTool } from '../../../src/tools/builtin/task/task.js';
+
+const subagentRegistry = getSubagentRegistry();
+const taskTool = createTaskTool({ registry: subagentRegistry });
 
 export interface SubagentResultAdoptionFixture {
   sessionId: string;

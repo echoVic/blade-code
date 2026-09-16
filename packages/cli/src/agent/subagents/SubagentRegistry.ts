@@ -412,12 +412,3 @@ export function getSubagentRegistry(
 ): SubagentRegistry {
   return SubagentRegistry.getInstance(workspaceRoot);
 }
-
-/** @deprecated Use getSubagentRegistry(workspaceRoot). */
-export const subagentRegistry = new Proxy({} as SubagentRegistry, {
-  get(_target, property) {
-    const registry = getSubagentRegistry();
-    const value = Reflect.get(registry, property, registry) as unknown;
-    return typeof value === 'function' ? value.bind(registry) : value;
-  },
-});

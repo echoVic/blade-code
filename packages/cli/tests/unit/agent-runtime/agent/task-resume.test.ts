@@ -102,9 +102,10 @@ describe('Task durable subagent resume protocol', () => {
     previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
     storageRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-task-resume-'));
     process.env.BLADE_STORAGE_ROOT = storageRoot;
-    const { subagentRegistry } = await import(
+    const { getSubagentRegistry } = await import(
       '../../../../src/agent/subagents/SubagentRegistry.js'
     );
+    const subagentRegistry = getSubagentRegistry();
     subagentRegistry.clear();
     subagentRegistry.register({
       name: 'durable-reviewer',
@@ -144,7 +145,10 @@ describe('Task durable subagent resume protocol', () => {
   });
 
   async function taskTool() {
-    return (await import('../../../../src/tools/builtin/task/task.js')).taskTool;
+    const { createTaskTool } = await import(
+      '../../../../src/tools/builtin/task/task.js'
+    );
+    return createTaskTool();
   }
 
   async function resetProcessState() {
@@ -176,9 +180,10 @@ describe('Task durable subagent resume protocol', () => {
     const { createTaskTool } = await import(
       '../../../../src/tools/builtin/task/task.js'
     );
-    const { subagentRegistry } = await import(
+    const { getSubagentRegistry } = await import(
       '../../../../src/agent/subagents/SubagentRegistry.js'
     );
+    const subagentRegistry = getSubagentRegistry();
     const agentResources = {
       projectRoot: workspaceA,
       subagents: subagentRegistry,

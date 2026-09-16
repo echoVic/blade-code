@@ -9,8 +9,8 @@
  * 6. 会话恢复 - 支持 resume 参数
  */
 
-import path from 'node:path';
 import { nanoid } from 'nanoid';
+import path from 'node:path';
 import type { LoopEvent } from '../../../agent/loop/types.js';
 import type { SessionAgentResources } from '../../../agent/resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../../../agent/resources/WorkspaceModelResources.js';
@@ -25,7 +25,6 @@ import { SubagentExecutor } from '../../../agent/subagents/SubagentExecutor.js';
 import {
   getSubagentRegistry,
   type SubagentRegistry,
-  subagentRegistry,
 } from '../../../agent/subagents/SubagentRegistry.js';
 import { buildCompletedSubagentTaskResult } from '../../../agent/subagents/SubagentResultAdoption.js';
 import {
@@ -451,9 +450,6 @@ export function createTaskTool(deps: SubagentDelegationDeps = {}) {
     abstractPermissionRule: () => '',
   });
 }
-
-/** @deprecated Use createTaskTool({ registry }). */
-export const taskTool = createTaskTool({ registry: subagentRegistry });
 
 interface SubagentEventBridge {
   onStarted: () => void;

@@ -10,14 +10,14 @@ import {
   AgentSessionStore,
 } from '../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../src/agent/subagents/BackgroundAgentManager.js';
-import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
 import { BusEventSchema } from '../../../src/api/schemas.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { PermissionMode } from '../../../src/config/types.js';
 import { SessionRoutes } from '../../../src/server/routes/session.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
-import { taskTool } from '../../../src/tools/builtin/task/task.js';
+import { createTaskTool } from '../../../src/tools/builtin/task/task.js';
 import { createMockACPClient } from '../../support/mocks/mockACPClient.js';
 import {
   buildRealApiRuntimeConfig,
@@ -41,6 +41,8 @@ interface SseCollector {
 
 const modelConfigs = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 const enabled = modelConfigs.length > 0;
+const subagentRegistry = getSubagentRegistry();
+const taskTool = createTaskTool({ registry: subagentRegistry });
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 let originalConfig: RuntimeConfig | null = null;
 

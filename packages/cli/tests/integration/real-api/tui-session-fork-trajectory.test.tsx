@@ -7,7 +7,8 @@ import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
-import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
@@ -38,6 +39,8 @@ import {
   isRealApiTestEnabled,
   resolveForkQualificationModels,
 } from './testConfig.js';
+
+const subagentRegistry = getSubagentRegistry();
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 

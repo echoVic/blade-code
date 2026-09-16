@@ -6,7 +6,8 @@ import { Agent } from '../../../src/agent/Agent.js';
 import { drainLoop } from '../../../src/agent/loop/index.js';
 import type { LoopEvent } from '../../../src/agent/loop/types.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
-import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
@@ -32,6 +33,8 @@ import {
   isRealApiTestEnabled,
   resolveForkQualificationModels,
 } from './testConfig.js';
+
+const subagentRegistry = getSubagentRegistry();
 
 const enabled = isRealApiTestEnabled();
 const modelConfigs = enabled

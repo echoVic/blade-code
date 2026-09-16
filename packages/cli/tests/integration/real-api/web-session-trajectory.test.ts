@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
-import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+
 import {
   BusEventSchema,
   ForkSessionResponseSchema,
@@ -49,6 +50,8 @@ import {
   resolveForkQualificationModels,
   type TestModelConfig,
 } from './testConfig.js';
+
+const subagentRegistry = getSubagentRegistry();
 
 const enabled = isRealApiTestEnabled();
 const modelConfigs = enabled

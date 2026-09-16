@@ -65,7 +65,8 @@ vi.mock('../../../../../src/agent/subagents/BackgroundAgentManager', () => ({
   },
 }));
 
-import { subagentRegistry } from '../../../../../src/agent/subagents/SubagentRegistry';
+import { getSubagentRegistry } from '../../../../../src/agent/subagents/SubagentRegistry';
+
 import { TeamMailbox } from '../../../../../src/agent/teams/TeamMailbox';
 import { TeamStore } from '../../../../../src/agent/teams/TeamStore';
 import { TeamTaskGraph } from '../../../../../src/agent/teams/TeamTaskGraph';
@@ -74,6 +75,8 @@ import { getBuiltinTools } from '../../../../../src/tools/builtin/index';
 import { createTeamTools } from '../../../../../src/tools/builtin/team/index';
 import { executeToolInvocation } from '../../../../../src/tools/execution/ToolInvocationRunner';
 import type { Tool } from '../../../../../src/tools/types';
+
+const subagentRegistry = getSubagentRegistry();
 
 type TeamToolOptions = NonNullable<Parameters<typeof createTeamTools>[0]>;
 

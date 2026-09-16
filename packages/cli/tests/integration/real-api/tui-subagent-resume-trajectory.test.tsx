@@ -12,7 +12,8 @@ import {
   AgentSessionStore,
 } from '../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../src/agent/subagents/BackgroundAgentManager.js';
-import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { PermissionMode } from '../../../src/config/types.js';
 import { getState } from '../../../src/store/vanilla.js';
@@ -23,6 +24,8 @@ import {
   getEnabledModelConfigs,
   isRealApiTestEnabled,
 } from './testConfig.js';
+
+const subagentRegistry = getSubagentRegistry();
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 

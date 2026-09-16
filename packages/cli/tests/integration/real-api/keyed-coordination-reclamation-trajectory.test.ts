@@ -5,7 +5,8 @@ import * as acp from '@agentclientprotocol/sdk';
 import { chromium, type Page } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
-import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+
 import { ConfigManager } from '../../../src/config/ConfigManager.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { GoalStore } from '../../../src/goals/GoalStore.js';
@@ -24,6 +25,8 @@ import {
   resolveRequiredDeepSeekQualificationModels,
   type TestModelConfig,
 } from './testConfig.js';
+
+const subagentRegistry = getSubagentRegistry();
 
 const enabled = isRealApiTestEnabled();
 const models = enabled ? resolveRequiredDeepSeekQualificationModels() : [];

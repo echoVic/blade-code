@@ -4,7 +4,8 @@ import path from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
-import { subagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
+
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
 import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
@@ -27,6 +28,8 @@ import {
   releaseBlockingModels,
   resolveForkQualificationModels,
 } from './testConfig.js';
+
+const subagentRegistry = getSubagentRegistry();
 
 type NotificationPredicate = (notification: acp.SessionNotification) => boolean;
 
