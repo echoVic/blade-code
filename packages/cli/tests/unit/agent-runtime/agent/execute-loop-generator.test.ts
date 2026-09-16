@@ -367,8 +367,16 @@ function namedToolResponse(
   name: string,
   argumentsJson: string,
   id = `tool-call-${name}`,
-  promptTokens?: number
+  usage?: number | ChatResponse['usage']
 ): ChatResponse {
+  const normalizedUsage =
+    typeof usage === 'number'
+      ? {
+          promptTokens: usage,
+          completionTokens: 20,
+          totalTokens: usage + 20,
+        }
+      : usage;
   return {
     content: '',
     toolCalls: [
@@ -378,15 +386,7 @@ function namedToolResponse(
         function: { name, arguments: argumentsJson },
       },
     ],
-    ...(promptTokens === undefined
-      ? {}
-      : {
-          usage: {
-            promptTokens,
-            completionTokens: 20,
-            totalTokens: promptTokens + 20,
-          },
-        }),
+    ...(normalizedUsage ? { usage: normalizedUsage } : {}),
     finishReason: 'tool_calls',
   };
 }
@@ -772,21 +772,14 @@ describe('executeLoopGenerator', () => {
     const deps = createMockDeps();
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
     chatMock
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc-shared-task-list',
-            type: 'function',
-            function: {
-              name: 'TaskCreate',
-              arguments: '{"subject":"Shared","description":"Team task"}',
-            },
-          },
-        ],
-        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-        finishReason: 'tool_calls',
-      })
+      .mockResolvedValueOnce(
+        namedToolResponse(
+          'TaskCreate',
+          '{"subject":"Shared","description":"Team task"}',
+          'tc-shared-task-list',
+          { promptTokens: 100, completionTokens: 20, totalTokens: 120 }
+        )
+      )
       .mockResolvedValueOnce({
         content: 'Created the shared task.',
         toolCalls: undefined,
@@ -824,21 +817,13 @@ describe('executeLoopGenerator', () => {
     const deps = createMockDeps();
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
     chatMock
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc-host-turn',
-            type: 'function',
-            function: {
-              name: 'Read',
-              arguments: '{"path":"package.json"}',
-            },
-          },
-        ],
-        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-        finishReason: 'tool_calls',
-      })
+      .mockResolvedValueOnce(
+        namedToolResponse('Read', '{"path":"package.json"}', 'tc-host-turn', {
+          promptTokens: 100,
+          completionTokens: 20,
+          totalTokens: 120,
+        })
+      )
       .mockResolvedValueOnce({
         content: 'Read the file.',
         toolCalls: undefined,
@@ -902,21 +887,14 @@ describe('executeLoopGenerator', () => {
     const deps = createMockDeps();
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
     chatMock
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc-goal-task-list',
-            type: 'function',
-            function: {
-              name: 'TaskCreate',
-              arguments: '{"subject":"Goal","description":"Goal task"}',
-            },
-          },
-        ],
-        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-        finishReason: 'tool_calls',
-      })
+      .mockResolvedValueOnce(
+        namedToolResponse(
+          'TaskCreate',
+          '{"subject":"Goal","description":"Goal task"}',
+          'tc-goal-task-list',
+          { promptTokens: 100, completionTokens: 20, totalTokens: 120 }
+        )
+      )
       .mockResolvedValueOnce({
         content: 'Created the goal task.',
         toolCalls: undefined,
@@ -954,21 +932,14 @@ describe('executeLoopGenerator', () => {
     const deps = createMockDeps();
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
     chatMock
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc-frontier-task',
-            type: 'function',
-            function: {
-              name: 'TaskUpdate',
-              arguments: '{"taskId":"1","status":"completed"}',
-            },
-          },
-        ],
-        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-        finishReason: 'tool_calls',
-      })
+      .mockResolvedValueOnce(
+        namedToolResponse(
+          'TaskUpdate',
+          '{"taskId":"1","status":"completed"}',
+          'tc-frontier-task',
+          { promptTokens: 100, completionTokens: 20, totalTokens: 120 }
+        )
+      )
       .mockResolvedValueOnce({
         content: 'Updated the task.',
         toolCalls: undefined,
@@ -1047,23 +1018,16 @@ describe('executeLoopGenerator', () => {
     ]);
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
     chatMock
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'write-without-goal',
-            type: 'function',
-            function: {
-              name: 'Write',
-              arguments: JSON.stringify({
-                file_path: '/tmp/test/result.txt',
-                content: 'ok\n',
-              }),
-            },
-          },
-        ],
-        finishReason: 'tool_calls',
-      })
+      .mockResolvedValueOnce(
+        namedToolResponse(
+          'Write',
+          JSON.stringify({
+            file_path: '/tmp/test/result.txt',
+            content: 'ok\n',
+          }),
+          'write-without-goal'
+        )
+      )
       .mockResolvedValueOnce({
         content: 'Done.',
         toolCalls: undefined,
@@ -1328,20 +1292,9 @@ describe('executeLoopGenerator', () => {
         tools.filter((tool) => tool.name !== 'ToolSearch');
       const chat = vi
         .mocked(deps.chatService.chat)
-        .mockResolvedValueOnce({
-          content: '',
-          finishReason: 'tool_calls',
-          toolCalls: [
-            {
-              id: 'structured-skill',
-              type: 'function',
-              function: {
-                name: 'StructuredOutput',
-                arguments: '{"answer":"done"}',
-              },
-            },
-          ],
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('StructuredOutput', '{"answer":"done"}', 'structured-skill')
+        )
         .mockResolvedValueOnce(finalResponse(100, ''));
       const outputSchema = {
         type: 'object',
@@ -1815,22 +1768,18 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Read',
+            '{"path":"package.json"}',
+            'tc-read-before-compact',
             {
-              id: 'tc-read-before-compact',
-              type: 'function',
-              function: { name: 'Read', arguments: '{"path":"package.json"}' },
-            },
-          ],
-          usage: {
-            promptTokens: 90_000,
-            completionTokens: 20,
-            totalTokens: 90_020,
-          },
-          finishReason: 'tool_calls',
-        })
+              promptTokens: 90_000,
+              completionTokens: 20,
+              totalTokens: 90_020,
+            }
+          )
+        )
         .mockResolvedValueOnce({
           content: 'Compaction finished and work continued.',
           toolCalls: undefined,
@@ -2690,20 +2639,9 @@ describe('executeLoopGenerator', () => {
           content: 'The implementation is complete.',
           finishReason: 'stop',
         })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'verify-offloaded-input',
-              type: 'function',
-              function: {
-                name: 'Bash',
-                arguments: '{"command":"npm test"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('Bash', '{"command":"npm test"}', 'verify-offloaded-input')
+        )
         .mockResolvedValueOnce({
           content: 'The implementation and tests are complete.',
           finishReason: 'stop',
@@ -3298,18 +3236,13 @@ describe('executeLoopGenerator', () => {
       },
     });
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
-    chatMock.mockResolvedValueOnce({
-      content: '',
-      toolCalls: [
-        {
-          id: 'tc-turn-limit',
-          type: 'function',
-          function: { name: 'Read', arguments: '{"path":"foo"}' },
-        },
-      ],
-      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-      finishReason: 'tool_calls',
-    });
+    chatMock.mockResolvedValueOnce(
+      namedToolResponse('Read', '{"path":"foo"}', 'tc-turn-limit', {
+        promptTokens: 100,
+        completionTokens: 20,
+        totalTokens: 120,
+      })
+    );
     (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       success: true,
       llmContent: 'file content',
@@ -3333,24 +3266,17 @@ describe('executeLoopGenerator', () => {
     const { deps, saveMessage } = createTypedPersistenceHarness();
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
     for (let run = 1; run <= 8; run++) {
-      chatMock.mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: `task-output-${run}`,
-            type: 'function',
-            function: {
-              name: 'TaskOutput',
-              arguments: JSON.stringify({
-                task_id: 'bash-stagnant',
-                block: run % 2 === 0,
-                timeout: run * 1_000,
-              }),
-            },
-          },
-        ],
-        finishReason: 'tool_calls',
-      });
+      chatMock.mockResolvedValueOnce(
+        namedToolResponse(
+          'TaskOutput',
+          JSON.stringify({
+            task_id: 'bash-stagnant',
+            block: run % 2 === 0,
+            timeout: run * 1_000,
+          }),
+          `task-output-${run}`
+        )
+      );
     }
     chatMock.mockResolvedValueOnce({
       content: 'Changed strategy and stopped polling.',
@@ -3409,20 +3335,9 @@ describe('executeLoopGenerator', () => {
     });
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
     for (let run = 1; run <= 16; run++) {
-      chatMock.mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: `read-loop-${run}`,
-            type: 'function',
-            function: {
-              name: 'Read',
-              arguments: '{"file_path":"src/index.ts"}',
-            },
-          },
-        ],
-        finishReason: 'tool_calls',
-      });
+      chatMock.mockResolvedValueOnce(
+        namedToolResponse('Read', '{"file_path":"src/index.ts"}', `read-loop-${run}`)
+      );
     }
     (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: true,
@@ -3502,17 +3417,9 @@ describe('executeLoopGenerator', () => {
       permissionMode: 'yolo' as any,
     });
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
-    chatMock.mockResolvedValueOnce({
-      content: '',
-      toolCalls: [
-        {
-          id: 'tc-main-turn-limit',
-          type: 'function',
-          function: { name: 'Bash', arguments: '{"command":"echo retry"}' },
-        },
-      ],
-      finishReason: 'tool_calls',
-    });
+    chatMock.mockResolvedValueOnce(
+      namedToolResponse('Bash', '{"command":"echo retry"}', 'tc-main-turn-limit')
+    );
     (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       success: false,
       llmContent: 'blocked',
@@ -3934,18 +3841,13 @@ describe('executeLoopGenerator', () => {
     });
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
     chatMock
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc-turn-limit-marker',
-            type: 'function',
-            function: { name: 'Read', arguments: '{"path":"frontier.ts"}' },
-          },
-        ],
-        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-        finishReason: 'tool_calls',
-      })
+      .mockResolvedValueOnce(
+        namedToolResponse('Read', '{"path":"frontier.ts"}', 'tc-turn-limit-marker', {
+          promptTokens: 100,
+          completionTokens: 20,
+          totalTokens: 120,
+        })
+      )
       .mockResolvedValueOnce({
         content: 'Continuation completed.',
         finishReason: 'stop',
@@ -4034,18 +3936,13 @@ describe('executeLoopGenerator', () => {
         { role: 'assistant', content: 'after' },
       ],
     });
-    vi.mocked(deps.chatService.chat).mockResolvedValueOnce({
-      content: '',
-      toolCalls: [
-        {
-          id: 'tc-turn-limit-blocked',
-          type: 'function',
-          function: { name: 'Read', arguments: '{"path":"frontier.ts"}' },
-        },
-      ],
-      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-      finishReason: 'tool_calls',
-    });
+    vi.mocked(deps.chatService.chat).mockResolvedValueOnce(
+      namedToolResponse('Read', '{"path":"frontier.ts"}', 'tc-turn-limit-blocked', {
+        promptTokens: 100,
+        completionTokens: 20,
+        totalTokens: 120,
+      })
+    );
     (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       success: true,
       llmContent: 'frontier contents',
@@ -4079,17 +3976,9 @@ describe('executeLoopGenerator', () => {
     deps.config.maxTurns = 1;
     const context = createMockContext({ permissionMode: PermissionMode.YOLO });
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
-    chatMock.mockResolvedValueOnce({
-      content: '',
-      toolCalls: [
-        {
-          id: 'tc-config-turn-limit',
-          type: 'function',
-          function: { name: 'Bash', arguments: '{"command":"echo retry"}' },
-        },
-      ],
-      finishReason: 'tool_calls',
-    });
+    chatMock.mockResolvedValueOnce(
+      namedToolResponse('Bash', '{"command":"echo retry"}', 'tc-config-turn-limit')
+    );
     (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       success: false,
       llmContent: 'blocked',
@@ -4116,17 +4005,9 @@ describe('executeLoopGenerator', () => {
       const deps = createMockDeps();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'bash-host-failure',
-              type: 'function',
-              function: { name: 'Bash', arguments: '{"command":"true"}' },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('Bash', '{"command":"true"}', 'bash-host-failure')
+        )
         .mockResolvedValueOnce(finalResponse(120, 'Host execution is unavailable.'));
       vi.mocked(deps.toolExecutor.execute).mockResolvedValueOnce({
         success: false,
@@ -4196,17 +4077,9 @@ describe('executeLoopGenerator', () => {
       const deps = createMockDeps();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'bash-host-timeout',
-              type: 'function',
-              function: { name: 'Bash', arguments: '{"command":"true"}' },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('Bash', '{"command":"true"}', 'bash-host-timeout')
+        )
         .mockResolvedValueOnce(toolResponse(120))
         .mockResolvedValueOnce(finalResponse(140, 'Read succeeded.'));
       vi.mocked(deps.toolExecutor.execute)
@@ -4314,22 +4187,15 @@ describe('executeLoopGenerator', () => {
       deps.hydrateProjectRules = vi.fn(() => resolution);
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'read-contextual',
-              type: 'function',
-              function: {
-                name: 'Read',
-                arguments: JSON.stringify({
-                  file_path: '/tmp/test/packages/api/src/handler.ts',
-                }),
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Read',
+            JSON.stringify({
+              file_path: '/tmp/test/packages/api/src/handler.ts',
+            }),
+            'read-contextual'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'Contextual rules applied.',
           finishReason: 'stop',
@@ -4402,23 +4268,16 @@ describe('executeLoopGenerator', () => {
       });
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'write-contextual',
-              type: 'function',
-              function: {
-                name: 'Write',
-                arguments: JSON.stringify({
-                  file_path: '/tmp/test/packages/api/src/handler.ts',
-                  content: 'unsafe before rules',
-                }),
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Write',
+            JSON.stringify({
+              file_path: '/tmp/test/packages/api/src/handler.ts',
+              content: 'unsafe before rules',
+            }),
+            'write-contextual'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'Write will be retried with the applicable rules.',
           finishReason: 'stop',
@@ -5538,17 +5397,7 @@ describe('executeLoopGenerator', () => {
       const { deps } = createTypedPersistenceHarness();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'progress-call',
-              type: 'function',
-              function: { name: 'ProgressTool', arguments: '{}' },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(namedToolResponse('ProgressTool', '{}', 'progress-call'))
         .mockResolvedValueOnce({
           content: 'done',
           finishReason: 'stop',
@@ -5766,40 +5615,25 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'non-trivial-patch',
-              type: 'function',
-              function: {
-                name: 'ApplyPatch',
-                arguments: '{"patch":"*** Begin Patch\\n*** End Patch"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'ApplyPatch',
+            '{"patch":"*** Begin Patch\\n*** End Patch"}',
+            'non-trivial-patch'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'Implementation complete.',
           toolCalls: undefined,
           finishReason: 'stop',
         })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'independent-verifier',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"verification","description":"Verify implementation","prompt":"Independently verify the original request and changed files.","run_in_background":false,"isolation":"none"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"verification","description":"Verify implementation","prompt":"Independently verify the original request and changed files.","run_in_background":false,"isolation":"none"}',
+            'independent-verifier'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'Implementation and independent verification are complete.',
           toolCalls: undefined,
@@ -5875,20 +5709,13 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'non-trivial-patch',
-              type: 'function',
-              function: {
-                name: 'ApplyPatch',
-                arguments: '{"patch":"*** Begin Patch\\n*** End Patch"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'ApplyPatch',
+            '{"patch":"*** Begin Patch\\n*** End Patch"}',
+            'non-trivial-patch'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'Implementation complete.',
           toolCalls: undefined,
@@ -5932,53 +5759,31 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'request-goal-completion',
-              type: 'function',
-              function: {
-                name: 'UpdateGoal',
-                arguments: '{"status":"complete"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'UpdateGoal',
+            '{"status":"complete"}',
+            'request-goal-completion'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'The goal is complete.',
           finishReason: 'stop',
         })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'goal-verifier',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"verification","description":"Verify goal","prompt":"trust parent","run_in_background":true,"isolation":"worktree","resume_from":"stale"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'repeat-goal-completion',
-              type: 'function',
-              function: {
-                name: 'UpdateGoal',
-                arguments: '{"status":"complete"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"verification","description":"Verify goal","prompt":"trust parent","run_in_background":true,"isolation":"worktree","resume_from":"stale"}',
+            'goal-verifier'
+          )
+        )
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'UpdateGoal',
+            '{"status":"complete"}',
+            'repeat-goal-completion'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'Verified completion.',
           finishReason: 'stop',
@@ -6247,20 +6052,13 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'request-unverified-completion',
-              type: 'function',
-              function: {
-                name: 'UpdateGoal',
-                arguments: '{"status":"complete"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'UpdateGoal',
+            '{"status":"complete"}',
+            'request-unverified-completion'
+          )
+        )
         .mockResolvedValue({
           content: 'Done without independent evidence.',
           finishReason: 'stop',
@@ -6346,39 +6144,25 @@ describe('executeLoopGenerator', () => {
         finishReason: 'tool_calls',
       });
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'initial-patch',
-              type: 'function',
-              function: {
-                name: 'ApplyPatch',
-                arguments: '{"patch":"*** Begin Patch\\n*** End Patch"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'ApplyPatch',
+            '{"patch":"*** Begin Patch\\n*** End Patch"}',
+            'initial-patch'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'Initial implementation complete.',
           finishReason: 'stop',
         })
         .mockResolvedValueOnce(verifierCall('first-verifier'))
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'post-verification-edit',
-              type: 'function',
-              function: {
-                name: 'Edit',
-                arguments: '{"file_path":"src/a.ts"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Edit',
+            '{"file_path":"src/a.ts"}',
+            'post-verification-edit'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'The follow-up edit is complete.',
           finishReason: 'stop',
@@ -6445,20 +6229,13 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'unverified-patch',
-              type: 'function',
-              function: {
-                name: 'ApplyPatch',
-                arguments: '{"patch":"*** Begin Patch\\n*** End Patch"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'ApplyPatch',
+            '{"patch":"*** Begin Patch\\n*** End Patch"}',
+            'unverified-patch'
+          )
+        )
         .mockResolvedValue({
           content: 'Done without verification.',
           finishReason: 'stop',
@@ -6494,21 +6271,13 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'task-outcome-metadata',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"reviewer","description":"review","prompt":"review the change"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"reviewer","description":"review","prompt":"review the change"}',
+            'task-outcome-metadata'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'Review completed.',
           finishReason: 'stop',
@@ -6550,35 +6319,16 @@ describe('executeLoopGenerator', () => {
           content: 'The migration is complete.',
           finishReason: 'stop',
         })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-test',
-              type: 'function',
-              function: { name: 'Bash', arguments: '{"command":"npm test"}' },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('Bash', '{"command":"npm test"}', 'tc-test')
+        )
         .mockResolvedValueOnce({
           content: 'Tests pass.',
           finishReason: 'stop',
         })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-type-check',
-              type: 'function',
-              function: {
-                name: 'Bash',
-                arguments: '{"command":"npm run type-check"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('Bash', '{"command":"npm run type-check"}', 'tc-type-check')
+        )
         .mockResolvedValueOnce({
           content: 'Both checks pass.',
           finishReason: 'stop',
@@ -6626,21 +6376,13 @@ describe('executeLoopGenerator', () => {
           content: 'I completed the task directly.',
           finishReason: 'stop',
         })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-delegate-required',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
+            'tc-delegate-required'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'The delegated repair completed.',
           finishReason: 'stop',
@@ -6693,21 +6435,13 @@ describe('executeLoopGenerator', () => {
           content: 'I completed the work directly.',
           finishReason: 'stop',
         })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-required-by-invocation',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
+            'tc-required-by-invocation'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'The delegated repair completed.',
           finishReason: 'stop',
@@ -6755,21 +6489,13 @@ describe('executeLoopGenerator', () => {
         .mockRejectedValueOnce(
           new Error('maximum context length exceeded; status: 413')
         )
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-required-after-compaction',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
+            'tc-required-after-compaction'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'The delegated repair completed.',
           finishReason: 'stop',
@@ -7092,36 +6818,20 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-single-delegation',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-duplicate-delegation',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"channel-specialist","description":"repeat","prompt":"repeat the repair"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
+            'tc-single-delegation'
+          )
+        )
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"channel-specialist","description":"repeat","prompt":"repeat the repair"}',
+            'tc-duplicate-delegation'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'The delegated repair completed.',
           finishReason: 'stop',
@@ -7246,36 +6956,20 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-failed-delegation',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-retried-delegation',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"channel-specialist","description":"retry","prompt":"retry the repair"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"channel-specialist","description":"repair","prompt":"repair and test"}',
+            'tc-failed-delegation'
+          )
+        )
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"channel-specialist","description":"retry","prompt":"retry the repair"}',
+            'tc-retried-delegation'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'The delegated repair completed.',
           finishReason: 'stop',
@@ -7322,36 +7016,20 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-first-parallel-task',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"reviewer","description":"review one","prompt":"review the first area"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-second-parallel-task',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"reviewer","description":"review two","prompt":"review the second area"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"reviewer","description":"review one","prompt":"review the first area"}',
+            'tc-first-parallel-task'
+          )
+        )
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"reviewer","description":"review two","prompt":"review the second area"}',
+            'tc-second-parallel-task'
+          )
+        )
         .mockResolvedValueOnce({
           content: 'Both reviews completed.',
           finishReason: 'stop',
@@ -7405,36 +7083,20 @@ describe('executeLoopGenerator', () => {
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
 
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-enter',
-              type: 'function',
-              function: {
-                name: 'EnterWorktree',
-                arguments: '{"name":"isolated"}',
-              },
-            },
-          ],
-          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-bash',
-              type: 'function',
-              function: {
-                name: 'Bash',
-                arguments: '{"command":"pwd"}',
-              },
-            },
-          ],
-          usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('EnterWorktree', '{"name":"isolated"}', 'tc-enter', {
+            promptTokens: 100,
+            completionTokens: 20,
+            totalTokens: 120,
+          })
+        )
+        .mockResolvedValueOnce(
+          namedToolResponse('Bash', '{"command":"pwd"}', 'tc-bash', {
+            promptTokens: 120,
+            completionTokens: 20,
+            totalTokens: 140,
+          })
+        )
         .mockResolvedValueOnce({
           content: 'Worktree active.',
           toolCalls: undefined,
@@ -7479,77 +7141,25 @@ describe('executeLoopGenerator', () => {
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
 
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-enter',
-              type: 'function',
-              function: {
-                name: 'EnterWorktree',
-                arguments: '{"name":"isolated"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-edit',
-              type: 'function',
-              function: {
-                name: 'Edit',
-                arguments:
-                  '{"file_path":"/worktrees/isolated/src.ts","old_string":"bad","new_string":"good"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-exit-too-early',
-              type: 'function',
-              function: {
-                name: 'ExitWorktree',
-                arguments: '{"action":"keep"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-test',
-              type: 'function',
-              function: {
-                name: 'Bash',
-                arguments: '{"command":"npm test"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-exit',
-              type: 'function',
-              function: {
-                name: 'ExitWorktree',
-                arguments: '{"action":"keep"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('EnterWorktree', '{"name":"isolated"}', 'tc-enter')
+        )
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Edit',
+            '{"file_path":"/worktrees/isolated/src.ts","old_string":"bad","new_string":"good"}',
+            'tc-edit'
+          )
+        )
+        .mockResolvedValueOnce(
+          namedToolResponse('ExitWorktree', '{"action":"keep"}', 'tc-exit-too-early')
+        )
+        .mockResolvedValueOnce(
+          namedToolResponse('Bash', '{"command":"npm test"}', 'tc-test')
+        )
+        .mockResolvedValueOnce(
+          namedToolResponse('ExitWorktree', '{"action":"keep"}', 'tc-exit')
+        )
         .mockResolvedValueOnce({
           content: 'Verified worktree change complete.',
           finishReason: 'stop',
@@ -7621,42 +7231,26 @@ describe('executeLoopGenerator', () => {
           usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
           finishReason: 'stop',
         })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-failed-test',
-              type: 'function',
-              function: {
-                name: 'Bash',
-                arguments: '{"command":"npm test"}',
-              },
-            },
-          ],
-          usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('Bash', '{"command":"npm test"}', 'tc-failed-test', {
+            promptTokens: 120,
+            completionTokens: 20,
+            totalTokens: 140,
+          })
+        )
         .mockResolvedValueOnce({
           content: 'Tests have been handled.',
           toolCalls: undefined,
           usage: { promptTokens: 140, completionTokens: 20, totalTokens: 160 },
           finishReason: 'stop',
         })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-passed-test',
-              type: 'function',
-              function: {
-                name: 'Bash',
-                arguments: '{"command":"npm test"}',
-              },
-            },
-          ],
-          usage: { promptTokens: 160, completionTokens: 20, totalTokens: 180 },
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('Bash', '{"command":"npm test"}', 'tc-passed-test', {
+            promptTokens: 160,
+            completionTokens: 20,
+            totalTokens: 180,
+          })
+        )
         .mockResolvedValueOnce({
           content: 'Tests now pass.',
           toolCalls: undefined,
@@ -7728,18 +7322,13 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
 
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
-      chatMock.mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc1',
-            type: 'function',
-            function: { name: 'Edit', arguments: '{"file_path":"/tmp/demo.ts"}' },
-          },
-        ],
-        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-        finishReason: 'tool_calls',
-      });
+      chatMock.mockResolvedValueOnce(
+        namedToolResponse('Edit', '{"file_path":"/tmp/demo.ts"}', 'tc1', {
+          promptTokens: 100,
+          completionTokens: 20,
+          totalTokens: 120,
+        })
+      );
 
       const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockResolvedValueOnce({
@@ -7802,18 +7391,13 @@ describe('executeLoopGenerator', () => {
       const controller = new AbortController();
 
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
-      chatMock.mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc1',
-            type: 'function',
-            function: { name: 'Bash', arguments: '{"command":"sleep 30"}' },
-          },
-        ],
-        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-        finishReason: 'tool_calls',
-      });
+      chatMock.mockResolvedValueOnce(
+        namedToolResponse('Bash', '{"command":"sleep 30"}', 'tc1', {
+          promptTokens: 100,
+          completionTokens: 20,
+          totalTokens: 120,
+        })
+      );
 
       const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockImplementationOnce(async () => {
@@ -7871,18 +7455,13 @@ describe('executeLoopGenerator', () => {
       const controller = new AbortController();
 
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
-      chatMock.mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc1',
-            type: 'function',
-            function: { name: 'Edit', arguments: '{"file_path":"/tmp/demo.ts"}' },
-          },
-        ],
-        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-        finishReason: 'tool_calls',
-      });
+      chatMock.mockResolvedValueOnce(
+        namedToolResponse('Edit', '{"file_path":"/tmp/demo.ts"}', 'tc1', {
+          promptTokens: 100,
+          completionTokens: 20,
+          totalTokens: 120,
+        })
+      );
 
       const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockImplementationOnce(async () => {
@@ -7943,17 +7522,13 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const controller = new AbortController();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
-      chatMock.mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'provider-only-tool-id',
-            type: 'function',
-            function: { name: 'Edit', arguments: '{"file_path":"/tmp/demo.ts"}' },
-          },
-        ],
-        finishReason: 'tool_calls',
-      });
+      chatMock.mockResolvedValueOnce(
+        namedToolResponse(
+          'Edit',
+          '{"file_path":"/tmp/demo.ts"}',
+          'provider-only-tool-id'
+        )
+      );
       (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockImplementationOnce(
         async () => {
           controller.abort('user-cancel');
@@ -8001,20 +7576,9 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'provider-tool-id',
-              type: 'function',
-              function: {
-                name: 'Edit',
-                arguments: '{"file_path":"/tmp/demo.ts"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
+        .mockResolvedValueOnce(
+          namedToolResponse('Edit', '{"file_path":"/tmp/demo.ts"}', 'provider-tool-id')
+        )
         .mockResolvedValueOnce({
           content: 'This response must never be requested.',
           toolCalls: undefined,
@@ -8053,18 +7617,13 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
 
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
-      chatMock.mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'tc1',
-            type: 'function',
-            function: { name: 'ExitPlanMode', arguments: '{"plan":"approved"}' },
-          },
-        ],
-        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-        finishReason: 'tool_calls',
-      });
+      chatMock.mockResolvedValueOnce(
+        namedToolResponse('ExitPlanMode', '{"plan":"approved"}', 'tc1', {
+          promptTokens: 100,
+          completionTokens: 20,
+          totalTokens: 120,
+        })
+      );
 
       const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockResolvedValueOnce({
@@ -8657,35 +8216,20 @@ describe('executeLoopGenerator', () => {
     );
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
     chatMock
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'load-lsp',
-            type: 'function',
-            function: {
-              name: 'ToolSearch',
-              arguments: '{"query":"select:LSP","max_results":1}',
-            },
-          },
-        ],
-        finishReason: 'tool_calls',
-      })
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'call-lsp',
-            type: 'function',
-            function: {
-              name: 'LSP',
-              arguments:
-                '{"operation":"hover","filePath":"/tmp/test.ts","line":1,"character":1,"query":""}',
-            },
-          },
-        ],
-        finishReason: 'tool_calls',
-      })
+      .mockResolvedValueOnce(
+        namedToolResponse(
+          'ToolSearch',
+          '{"query":"select:LSP","max_results":1}',
+          'load-lsp'
+        )
+      )
+      .mockResolvedValueOnce(
+        namedToolResponse(
+          'LSP',
+          '{"operation":"hover","filePath":"/tmp/test.ts","line":1,"character":1,"query":""}',
+          'call-lsp'
+        )
+      )
       .mockResolvedValueOnce({
         content: 'Semantic result received.',
         finishReason: 'stop',
@@ -8806,42 +8350,15 @@ describe('executeLoopGenerator', () => {
 
     const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
     chatMock
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'unlock',
-            type: 'function',
-            function: { name: unlock.name, arguments: '{}' },
-          },
-        ],
-        finishReason: 'tool_calls',
-      })
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'load-dynamic',
-            type: 'function',
-            function: {
-              name: 'ToolSearch',
-              arguments: `{"query":"select:${dynamic.name}","max_results":1}`,
-            },
-          },
-        ],
-        finishReason: 'tool_calls',
-      })
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [
-          {
-            id: 'call-dynamic',
-            type: 'function',
-            function: { name: dynamic.name, arguments: '{}' },
-          },
-        ],
-        finishReason: 'tool_calls',
-      })
+      .mockResolvedValueOnce(namedToolResponse(unlock.name, '{}', 'unlock'))
+      .mockResolvedValueOnce(
+        namedToolResponse(
+          'ToolSearch',
+          `{"query":"select:${dynamic.name}","max_results":1}`,
+          'load-dynamic'
+        )
+      )
+      .mockResolvedValueOnce(namedToolResponse(dynamic.name, '{}', 'call-dynamic'))
       .mockResolvedValueOnce({
         content: 'Dynamic result received.',
         finishReason: 'stop',
