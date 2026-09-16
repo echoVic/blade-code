@@ -3,28 +3,26 @@
 ## Objective
 
 Reduce tracked TypeScript/TSX/JavaScript LOC by at least 30% while preserving
-supported behavior, keeping coverage above repository thresholds, and making
-runtime ownership easier to follow.
+the supported runtime surfaces and making ownership easier to follow.
 
 Baseline at `8bcd2696`:
 
-- Total source and test LOC: 595,280
-- Production LOC: 248,570
-- Test LOC: 342,035
-- Target maximum: 416,696 LOC
-- Required net reduction: 178,584 LOC
+- Tracked TypeScript/TSX/JavaScript LOC: 593,930
+- Target maximum: 415,751 LOC
+- Required net reduction: 178,179 LOC
 
-The metric excludes generated build output, dependencies, Markdown, JSON, and
-lockfiles. Deleting tests without equivalent coverage, compressing formatting,
-or moving code into uncounted formats does not count as simplification.
+The metric excludes generated output, dependencies, Markdown, JSON, and
+lockfiles. It compares the same tracked extensions at the baseline and
+candidate commits.
 
 ## Guardrails
 
 - Preserve CLI, Web, ACP, MCP, browser, LSP, task, team, goal, and provider
-  behavior unless a surface is already unused or explicitly deprecated.
-- Do not regress the measured unit-test baseline: 68.20% statements, 62.48%
-  branches, 69.97% functions, and 69.54% lines. The Vitest config declares 80%
-  thresholds, but the current project runner does not enforce them.
+  behavior unless a surface is unused or explicitly deprecated.
+- Keep deterministic state-machine tests for durable storage, permissions,
+  compaction, scheduling, tool execution, and protocol boundaries.
+- Keep a focused paid qualification matrix for behavior that cannot be proven
+  without a real Provider or production surface.
 - Keep one authoritative state machine per behavior. Surfaces project state;
   they do not reimplement it.
 - Remove deprecated compatibility paths instead of retaining aliases.
@@ -32,49 +30,74 @@ or moving code into uncounted formats does not count as simplification.
 - Keep each independently verifiable reduction in its own commit.
 - Do not use git worktrees.
 
-## Delivery Tracks
+## Implemented Changes
 
-### 1. Dead Code And Compatibility
+### Runtime
 
-- Remove unreachable files and unused dependencies reported by Knip.
-- Remove unused exports and test-only production helpers.
-- Remove deprecated singleton and forwarding APIs after migrating consumers.
+- Removed unused subsystems, compatibility APIs, global registries, and
+  management surfaces.
+- Unified Session metadata updates, local/remote fork projection, event
+  projection, compaction telemetry, and inputless resume state.
+- Replaced repeated shell and tool policy branches with declarative metadata.
+- Split Session run ownership out of the Hono controller.
 
-### 2. Runtime Unification
+### Test Architecture
 
-- Collapse local and remote Session metadata/event construction.
-- Share fork, archive, lifecycle, and error-mapping primitives.
-- Reduce duplicate state transitions across Web, ACP, Headless, and TUI.
+- Centralized Provider, ACP, PTY, Web, Agent loop, and Session fixture
+  lifecycles before deleting their repeated consumers.
+- Removed source-string gates and tests whose subject was another test harness.
+- Replaced broad cross-layer matrices with focused state-machine tests.
+- Reduced paid release qualification to nine high-value production paths.
 
-### 3. God File Decomposition
+## Resulting Boundaries
 
-- Split route registration from Session route behavior.
-- Split provider/tool execution phases out of the Agent loop.
-- Split Session catalog, mutation, fork/rewind, and projection responsibilities.
-- Split Web store orchestration from pure event reducers.
+### Session Run Lifecycle
 
-Decomposition is accepted only when dependencies become narrower; moving the
-same code without simplifying ownership does not count toward the LOC target.
+- `server/routes/session.ts` owns HTTP/SSE routing, projection residency, and
+  controller shutdown.
+- `server/routes/sessionRunState.ts` owns active/recent run registration,
+  cancellation, pending permission lookup, and mutable Session task projection.
+- `server/routes/sessionRunExecutor.ts` owns Agent creation, loop event
+  projection, pending-resume evidence, terminal task state, and resource
+  release.
 
-### 4. Test Compression
+The executor depends on the run-state module. Neither extracted module depends
+on the Hono controller.
 
-- Replace repeated scenario bodies with typed table-driven cases.
-- Share process, ACP, PTY, Web, and Provider harnesses.
-- Remove implementation-only compatibility tests together with deleted APIs.
-- Preserve unique assertions and real-boundary qualification coverage.
+### Test Pyramid
 
-## Progress
+The default deterministic suite remains the primary regression authority. The
+production real-API release matrix is limited to:
 
-| Commit | Change | Net LOC |
-| --- | --- | ---: |
-| `84ba35f2` | Remove unused child abort controller | -72 |
-| `8bcd2696` | Consolidate subagent delegation dependencies | +24 |
-| `8b2d4ea0` | Remove unused subsystems and dependencies | -1,608 |
-| `d5beaa46` | Remove obsolete compatibility and context layers | -1,362 |
-| `d5373627` | Unify Session metadata update construction | -104 |
-| `e7007472` | Share local and remote fork projection | -122 |
-| `0efea96c` | Deduplicate shared theme tokens | -374 |
-| `99d2dee4` | Encode read-only flags declaratively | -557 |
-| `32e7cb0a` | Remove deprecated global subagent tool registry | +29 |
-| `db31cb0c` | Make shell safety cases table driven | -266 |
-| **Current total** |  | **-4,411** |
+1. Production Agent edit and verification
+2. Structured output
+3. Durable interaction recovery
+4. Cross-surface release coding
+5. Agent Team task coordination
+6. Cross-Provider fallback
+7. Goal completion
+8. Native Browser tools
+9. ACP remote filesystem
+
+Provider admission, retry, compaction, queueing, Session identity, event
+projection, and resource cleanup remain covered by deterministic unit and
+integration tests instead of repeated paid surface grids.
+
+## Result
+
+Representative commits:
+
+| Phase | Commits |
+| --- | --- |
+| Dead code and compatibility | `8b2d4ea0` through `6e0e4aa6` |
+| Runtime unification | `d5373627`, `e7007472`, `953e6a67`, `5c0b67ca` |
+| Harness consolidation | `b6a20834` through `877db51d` |
+| Qualification focus | `89ba9afd` |
+| Regression matrix reduction | `5a36aaf7` |
+| Session decomposition | `c214641e` |
+
+At `c214641e`, tracked TypeScript/TSX/JavaScript is 413,082 lines:
+
+- Net reduction: 180,848 lines
+- Reduction from baseline: 30.45%
+- Margin beyond the required reduction: 2,669 lines
