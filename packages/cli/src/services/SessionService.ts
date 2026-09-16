@@ -3,93 +3,93 @@
  * 负责加载和恢复历史会话
  */
 
-import { nanoid } from 'nanoid';
 import type { BigIntStats } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
+import { nanoid } from 'nanoid';
 import {
-    type AcpRemoteStateScope,
-    assertAcpRemoteSessionTranscriptIdentity,
-    assertAcpRemoteStateFile,
-    assertAcpRemoteStateFileHandle,
-    deriveAcpRemoteHostStateRoot,
-    ensureAcpRemoteHostStateRoot,
-    listValidatedAcpRemoteStateScopes,
-    parseAcpRemoteWorkspaceDescriptor,
-    withValidatedAcpRemoteStateScope,
+  type AcpRemoteStateScope,
+  assertAcpRemoteSessionTranscriptIdentity,
+  assertAcpRemoteStateFile,
+  assertAcpRemoteStateFileHandle,
+  deriveAcpRemoteHostStateRoot,
+  ensureAcpRemoteHostStateRoot,
+  listValidatedAcpRemoteStateScopes,
+  parseAcpRemoteWorkspaceDescriptor,
+  withValidatedAcpRemoteStateScope,
 } from '../acp/AcpRemoteWorkspace.js';
 import { getOrCreateAcpRemoteWorkspaceReferenceInScope } from '../acp/AcpRemoteWorkspaceReference.js';
 import { SessionInUseError, SessionLease } from '../agent/runtime/SessionLease.js';
 import {
-    collectUserPromptArtifactIds,
-    UserPromptArtifactStore,
+  collectUserPromptArtifactIds,
+  UserPromptArtifactStore,
 } from '../agent/runtime/UserPromptArtifactStore.js';
 import {
-    MAX_INLINE_ATTACHMENT_BYTES,
-    MAX_INLINE_ATTACHMENT_COUNT,
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
 } from '../api/attachmentLimits.js';
 import { removeBrowserSessionArtifacts } from '../browser/BrowserArtifactStore.js';
 import type {
-    CommunicationStyleSelection,
-    ReasoningEffortSelection,
-    ResponseVerbositySelection,
-    ServiceTierSelection,
+  CommunicationStyleSelection,
+  ReasoningEffortSelection,
+  ResponseVerbositySelection,
+  ServiceTierSelection,
 } from '../config/types.js';
 import { parseCompactionReplacementMessages } from '../context/compactionCheckpoint.js';
 import {
-    findPendingSessionInteraction,
-    toPendingInteraction,
+  findPendingSessionInteraction,
+  toPendingInteraction,
 } from '../context/interactions.js';
 import {
-    codeReviewMessageMetadata,
-    projectSessionReviews,
-    renderCodeReview,
-    renderReviewStatus,
+  codeReviewMessageMetadata,
+  projectSessionReviews,
+  renderCodeReview,
+  renderReviewStatus,
 } from '../context/reviews.js';
 import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
-    assertValidSessionId,
-    detectGitBranch,
-    getAcpRemoteSessionFilePath,
-    getBladeStorageRoot,
-    getProjectStoragePath,
-    getSessionFilePath,
-    getSessionGoalFilePath,
-    isValidSessionId,
-    normalizeLocalWorkspacePath,
-    unescapeProjectPath,
+  assertValidSessionId,
+  detectGitBranch,
+  getAcpRemoteSessionFilePath,
+  getBladeStorageRoot,
+  getProjectStoragePath,
+  getSessionFilePath,
+  getSessionGoalFilePath,
+  isValidSessionId,
+  normalizeLocalWorkspacePath,
+  unescapeProjectPath,
 } from '../context/storage/pathUtils.js';
 import {
-    getProjectionDb,
-    type MetadataDeriver,
-    projectSessionSurfaceSummaryFields,
-    removeSessionFromProjection,
-    syncAcpRemoteScope,
-    syncAll,
-    syncAllAcpRemoteScopes,
+  getProjectionDb,
+  type MetadataDeriver,
+  projectSessionSurfaceSummaryFields,
+  removeSessionFromProjection,
+  syncAcpRemoteScope,
+  syncAll,
+  syncAllAcpRemoteScopes,
 } from '../context/storage/sqlite/projection.js';
-import { isSessionTaskFailure, toTaskFailure } from '../context/taskFailure.js';
 import {
-    findCurrentTokenBudgetHandoff,
-    projectTokenBudgetHandoffEvent,
+  findCurrentTokenBudgetHandoff,
+  projectTokenBudgetHandoffEvent,
 } from '../context/TokenBudgetHandoff.js';
+import { isSessionTaskFailure, toTaskFailure } from '../context/taskFailure.js';
 import type {
-    AcpRemoteWorkspaceDescriptorV1,
-    SessionEvent,
-    SessionPendingInteraction,
-    SessionPermissionMode,
-    SessionReviewTargetInfo,
-    SessionRewindMode,
-    SessionTaskDelivery,
-    SessionTaskDiffStat,
-    SessionTaskDispatch,
-    SessionTaskFailure,
-    SessionTaskIsolation,
-    SessionTaskKind,
-    SessionTaskPriority,
-    SessionTaskRetryRef,
-    SessionTaskStatus,
-    SessionTaskWorktree,
+  AcpRemoteWorkspaceDescriptorV1,
+  SessionEvent,
+  SessionPendingInteraction,
+  SessionPermissionMode,
+  SessionReviewTargetInfo,
+  SessionRewindMode,
+  SessionTaskDelivery,
+  SessionTaskDiffStat,
+  SessionTaskDispatch,
+  SessionTaskFailure,
+  SessionTaskIsolation,
+  SessionTaskKind,
+  SessionTaskPriority,
+  SessionTaskRetryRef,
+  SessionTaskStatus,
+  SessionTaskWorktree,
 } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonObject, JsonValue, SessionMessage } from '../store/types.js';
@@ -104,40 +104,40 @@ import { isReasoningEffortSelection } from './pi/reasoningEffort.js';
 import { isResponseVerbositySelection } from './pi/responseVerbosity.js';
 import { isServiceTierSelection } from './pi/serviceTier.js';
 import {
-    compareRemoteSessionCatalogItems,
-    compareSessionCatalogItems,
-    type NormalizedRemoteSessionListOptions,
-    type NormalizedSessionListOptions,
-    type NormalizedSessionTaskFilters,
-    normalizeRemoteSessionListOptions,
-    normalizeSessionListOptions,
-    normalizeSessionTaskFilters,
-    paginateRemoteSessionCatalog,
-    paginateSessionCatalog,
-    type RemoteSessionCatalogItem,
-    type RemoteSessionListOptions,
-    type RemoteSessionScanOptions,
-    resolveRemoteSessionCursorBoundary,
-    resolveSessionCursorBoundary,
-    sessionCatalogSortKey,
-    type SessionListOptions,
-    type SessionScanOptions,
-} from './sessionCatalog.js';
-import {
-    renderSessionMarkdown,
-    type SessionMarkdownExport,
-    type SessionMarkdownExportOptions,
+  renderSessionMarkdown,
+  type SessionMarkdownExport,
+  type SessionMarkdownExportOptions,
 } from './SessionMarkdownExporter.js';
-import {
-    listSessionRewindCheckpoints as listProjectedRewindCheckpoints,
-    materializeSessionEvents,
-    planSessionRewind,
-    type SessionRewindCheckpoint as ProjectedRewindCheckpoint,
-} from './sessionRewind.js';
 import { createStructuredOutputContract } from './StructuredOutputService.js';
 import {
-    renderUserShellCommandForDisplay,
-    userShellCommandRecordFromMetadata,
+  compareRemoteSessionCatalogItems,
+  compareSessionCatalogItems,
+  type NormalizedRemoteSessionListOptions,
+  type NormalizedSessionListOptions,
+  type NormalizedSessionTaskFilters,
+  normalizeRemoteSessionListOptions,
+  normalizeSessionListOptions,
+  normalizeSessionTaskFilters,
+  paginateRemoteSessionCatalog,
+  paginateSessionCatalog,
+  type RemoteSessionCatalogItem,
+  type RemoteSessionListOptions,
+  type RemoteSessionScanOptions,
+  resolveRemoteSessionCursorBoundary,
+  resolveSessionCursorBoundary,
+  type SessionListOptions,
+  type SessionScanOptions,
+  sessionCatalogSortKey,
+} from './sessionCatalog.js';
+import {
+  listSessionRewindCheckpoints as listProjectedRewindCheckpoints,
+  materializeSessionEvents,
+  type SessionRewindCheckpoint as ProjectedRewindCheckpoint,
+  planSessionRewind,
+} from './sessionRewind.js';
+import {
+  renderUserShellCommandForDisplay,
+  userShellCommandRecordFromMetadata,
 } from './UserShellCommandService.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -1089,10 +1089,7 @@ export class SessionService {
     const projected = await this.listRemoteSessionPageFromProjection(normalized);
     if (projected) return projected;
 
-    const stored = await this.scanRemoteStoredSessions(
-      normalized,
-      normalized.cursor ? 5_000 : 0
-    );
+    const stored = await this.scanRemoteStoredSessions(normalized);
     const filtered = this.toRemoteCatalogEntries(stored).sort(
       compareRemoteSessionCatalogItems
     );
@@ -1227,7 +1224,7 @@ export class SessionService {
   ): Promise<SessionPage | null> {
     resolveRemoteSessionCursorBoundary(options);
     try {
-      const sessions = await this.scanRemoteStoredSessionsFromProjection(options, 0);
+      const sessions = await this.scanRemoteStoredSessionsFromProjection(options);
       if (!sessions) return null;
       const page = paginateRemoteSessionCatalog(
         this.toRemoteCatalogEntries(sessions).sort(compareRemoteSessionCatalogItems),
@@ -1278,7 +1275,7 @@ export class SessionService {
           }
         : options
     );
-    const stored = await this.scanRemoteStoredSessions(normalized, 0);
+    const stored = await this.scanRemoteStoredSessions(normalized);
     const seenSessions = new Set<string>();
     return this.toRemoteCatalogEntries(stored)
       .sort(compareRemoteSessionCatalogItems)
@@ -1912,155 +1909,17 @@ export class SessionService {
     const rootId = sourceCreated.data.rootId || sourceSessionId;
     const gitBranch = detectGitBranch(targetProjectPath);
     const version = getVersion();
-    const {
-      status: _sourceStatus,
-      taskStatus: _sourceTaskStatus,
-      taskStatusReason: _sourceTaskStatusReason,
-      taskFailure: _sourceTaskFailure,
-      taskStartedAt: _sourceTaskStartedAt,
-      taskCompletedAt: _sourceTaskCompletedAt,
-      taskOwnerPid: _sourceTaskOwnerPid,
-      taskPromptSummary: _sourceTaskPromptSummary,
-      taskPriority: _sourceTaskPriority,
-      taskKind: _sourceTaskKind,
-      taskDueAt: _sourceTaskDueAt,
-      taskDispatch: _sourceTaskDispatch,
-      taskModelId: _sourceTaskModelId,
-      taskRetriedFrom: _sourceTaskRetriedFrom,
-      taskDelivery: _sourceTaskDelivery,
-      taskIsolation: _sourceTaskIsolation,
-      taskSourceProjectPath: _sourceTaskSourceProjectPath,
-      taskWorktree: _sourceTaskWorktree,
-      taskDiffStat: _sourceTaskDiffStat,
-      taskQueuePosition: _sourceTaskQueuePosition,
-      taskQueueDepth: _sourceTaskQueueDepth,
-      taskConcurrencyLimit: _sourceTaskConcurrencyLimit,
-      pendingInteraction: _sourcePendingInteraction,
-      ...sourceCreatedData
-    } = sourceCreated.data;
-    const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
-      id: nanoid(),
-      sessionId: targetSessionId,
-      timestamp: now,
-      type: 'session_created',
-      cwd: targetProjectPath,
-      gitBranch,
+    const childEntries = this.buildForkChildEntries({
+      sourceEntries,
+      sourceCreated,
+      sourceSessionId,
+      targetSessionId,
+      targetProjectPath,
+      rootId,
       version,
-      data: {
-        ...sourceCreatedData,
-        sessionId: targetSessionId,
-        rootId,
-        parentId: sourceSessionId,
-        relationType: 'fork',
-        taskStatus: 'completed',
-        taskCompletedAt: now,
-        taskIsolation: 'local',
-        taskSourceProjectPath: targetProjectPath,
-        createdAt: now,
-        updatedAt: now,
-      },
-    };
-    const copiedEntries = sourceEntries
-      .filter(
-        (entry) =>
-          entry.type !== 'session_created' &&
-          entry.type !== 'token_budget_handoff_recorded' &&
-          entry.type !== 'inbox_acknowledged' &&
-          entry.type !== 'interaction_requested' &&
-          entry.type !== 'interaction_responded' &&
-          entry.type !== 'interaction_recovered' &&
-          entry.type !== 'review_started' &&
-          entry.type !== 'review_completed'
-      )
-      .map((entry): SessionEvent => {
-        const base = {
-          ...entry,
-          id: nanoid(),
-          sessionId: targetSessionId,
-          cwd: targetProjectPath,
-          gitBranch,
-          version,
-        };
-        if (entry.type === 'session_updated') {
-          const {
-            status: _status,
-            taskStatus: _taskStatus,
-            taskStatusReason: _taskStatusReason,
-            taskFailure: _taskFailure,
-            taskStartedAt: _taskStartedAt,
-            taskCompletedAt: _taskCompletedAt,
-            taskOwnerPid: _taskOwnerPid,
-            taskPromptSummary: _taskPromptSummary,
-            taskPriority: _taskPriority,
-            taskKind: _taskKind,
-            taskDueAt: _taskDueAt,
-            taskDispatch: _taskDispatch,
-            taskModelId: _taskModelId,
-            taskRetriedFrom: _taskRetriedFrom,
-            taskDelivery: _taskDelivery,
-            taskIsolation: _taskIsolation,
-            taskSourceProjectPath: _taskSourceProjectPath,
-            taskWorktree: _taskWorktree,
-            taskDiffStat: _taskDiffStat,
-            taskQueuePosition: _taskQueuePosition,
-            taskQueueDepth: _taskQueueDepth,
-            taskConcurrencyLimit: _taskConcurrencyLimit,
-            pendingInteraction: _pendingInteraction,
-            ...updatedData
-          } = entry.data;
-          return {
-            ...base,
-            type: 'session_updated',
-            data: {
-              ...updatedData,
-              sessionId: targetSessionId,
-              rootId,
-              parentId: sourceSessionId,
-              relationType: 'fork',
-            },
-          };
-        }
-        if (entry.type === 'message_created') {
-          const { inboxMessageId: _inboxMessageId, ...data } = entry.data;
-          return {
-            ...base,
-            type: 'message_created',
-            data,
-          };
-        }
-        return base as SessionEvent;
-      });
-    const forkBoundary: Extract<SessionEvent, { type: 'session_updated' }> = {
-      id: nanoid(),
-      sessionId: targetSessionId,
-      timestamp: now,
-      type: 'session_updated',
-      cwd: targetProjectPath,
-      gitBranch,
-      version,
-      data: {
-        sessionId: targetSessionId,
-        rootId,
-        parentId: sourceSessionId,
-        relationType: 'fork',
-        taskStatus: 'completed',
-        taskStatusReason: null,
-        taskFailure: null,
-        taskStartedAt: null,
-        taskCompletedAt: now,
-        taskOwnerPid: null,
-        taskIsolation: 'local',
-        taskSourceProjectPath: targetProjectPath,
-        taskWorktree: null,
-        taskDiffStat: null,
-        taskDelivery: null,
-        taskQueuePosition: null,
-        taskQueueDepth: null,
-        taskConcurrencyLimit: null,
-        updatedAt: now,
-      },
-    };
-    const childEntries: SessionEvent[] = [childCreated, ...copiedEntries, forkBoundary];
+      now,
+      target: { kind: 'local', gitBranch },
+    });
     const targetFilePath = getSessionFilePath(targetProjectPath, targetSessionId);
 
     let targetCreated = false;
@@ -2195,7 +2054,10 @@ export class SessionService {
         rootId,
         version,
         now,
-        remoteDescriptor: sourceMetadata.remoteWorkspace,
+        target: {
+          kind: 'remote',
+          descriptor: sourceMetadata.remoteWorkspace,
+        },
       });
       const targetFilePath = getAcpRemoteSessionFilePath(scope, targetSessionId);
       let targetCreated = false;
@@ -2326,7 +2188,9 @@ export class SessionService {
     rootId: string;
     version: string;
     now: string;
-    remoteDescriptor: AcpRemoteWorkspaceDescriptorV1;
+    target:
+      | { kind: 'local'; gitBranch?: string }
+      | { kind: 'remote'; descriptor: AcpRemoteWorkspaceDescriptorV1 };
   }): SessionEvent[] {
     const {
       sourceEntries,
@@ -2337,8 +2201,28 @@ export class SessionService {
       rootId,
       version,
       now,
-      remoteDescriptor,
+      target,
     } = options;
+    const eventTarget =
+      target.kind === 'remote'
+        ? { projectPath: targetProjectPath }
+        : { gitBranch: target.gitBranch };
+    const createdTarget =
+      target.kind === 'remote'
+        ? { remoteWorkspace: target.descriptor }
+        : {
+            taskIsolation: 'local' as const,
+            taskSourceProjectPath: targetProjectPath,
+          };
+    const boundaryTarget =
+      target.kind === 'remote'
+        ? {}
+        : {
+            taskIsolation: 'local' as const,
+            taskSourceProjectPath: targetProjectPath,
+            taskWorktree: null,
+            taskDiffStat: null,
+          };
     const {
       status: _sourceStatus,
       taskStatus: _sourceTaskStatus,
@@ -2369,7 +2253,7 @@ export class SessionService {
     const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
       id: nanoid(),
       sessionId: targetSessionId,
-      projectPath: targetProjectPath,
+      ...eventTarget,
       timestamp: now,
       type: 'session_created',
       cwd: targetProjectPath,
@@ -2382,7 +2266,7 @@ export class SessionService {
         relationType: 'fork',
         taskStatus: 'completed',
         taskCompletedAt: now,
-        remoteWorkspace: remoteDescriptor,
+        ...createdTarget,
         createdAt: now,
         updatedAt: now,
       },
@@ -2402,10 +2286,10 @@ export class SessionService {
       .map((entry): SessionEvent => {
         const { gitBranch: _sourceGitBranch, ...entryWithoutGitBranch } = entry;
         const base = {
-          ...entryWithoutGitBranch,
+          ...(target.kind === 'remote' ? entryWithoutGitBranch : entry),
           id: nanoid(),
           sessionId: targetSessionId,
-          projectPath: targetProjectPath,
+          ...eventTarget,
           cwd: targetProjectPath,
           version,
         };
@@ -2458,7 +2342,7 @@ export class SessionService {
     const forkBoundary: Extract<SessionEvent, { type: 'session_updated' }> = {
       id: nanoid(),
       sessionId: targetSessionId,
-      projectPath: targetProjectPath,
+      ...eventTarget,
       timestamp: now,
       type: 'session_updated',
       cwd: targetProjectPath,
@@ -2474,6 +2358,7 @@ export class SessionService {
         taskStartedAt: null,
         taskCompletedAt: now,
         taskOwnerPid: null,
+        ...boundaryTarget,
         taskDelivery: null,
         taskQueuePosition: null,
         taskQueueDepth: null,
@@ -3982,7 +3867,7 @@ export class SessionService {
     const projected = await this.scanStoredSessionsFromProjection(
       scopedProjectPath,
       includeSubagents,
-      0,
+      projectionSyncMaxAgeMs,
       archived,
       taskFilters
     );
@@ -4100,13 +3985,9 @@ export class SessionService {
   }
 
   private static async scanRemoteStoredSessions(
-    options: NormalizedRemoteSessionListOptions,
-    projectionSyncMaxAgeMs = 0
+    options: NormalizedRemoteSessionListOptions
   ): Promise<StoredSessionMetadata[]> {
-    const projected = await this.scanRemoteStoredSessionsFromProjection(
-      options,
-      projectionSyncMaxAgeMs
-    );
+    const projected = await this.scanRemoteStoredSessionsFromProjection(options);
     if (projected) return projected;
 
     const scopes = await this.listRemoteSessionScopes(options);
@@ -4160,8 +4041,7 @@ export class SessionService {
   }
 
   private static async scanRemoteStoredSessionsFromProjection(
-    options: NormalizedRemoteSessionListOptions,
-    projectionSyncMaxAgeMs = 0
+    options: NormalizedRemoteSessionListOptions
   ): Promise<StoredSessionMetadata[] | null> {
     try {
       const db = await getProjectionDb();
@@ -4565,7 +4445,6 @@ export class SessionService {
         : path.resolve(committedProjectPath);
     const remoteWorkspace = this.parseRemoteWorkspaceFromCreated(
       created,
-      sessionId,
       resolvedProjectPath
     );
     const parsedTaskWorktree = parseTaskWorktree(durable.taskWorktree);
@@ -4747,7 +4626,6 @@ export class SessionService {
 
   private static parseRemoteWorkspaceFromCreated(
     created: Extract<SessionEvent, { type: 'session_created' }>,
-    sessionId: string,
     resolvedProjectPath: string
   ): AcpRemoteWorkspaceDescriptorV1 | undefined {
     if (!Object.hasOwn(created.data, 'remoteWorkspace')) {
