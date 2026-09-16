@@ -192,6 +192,7 @@ import type {
 } from '../../../../src/services/ChatServiceInterface.js';
 import { markProviderReplayBoundary } from '../../../../src/services/pi/providerRetry.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
+import { createTool } from '../../../../src/tools/core/createTool.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 import { TOOL_TURN_MAX_CALLS } from '../../../../src/tools/execution/ToolTurnAdmission.js';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
@@ -1108,6 +1109,200 @@ describe('executeLoopGenerator', () => {
           },
         }
       );
+    });
+  });
+
+  describe('Skill deferred tool projection', () => {
+    it.each([PermissionMode.DEFAULT, PermissionMode.PLAN])(
+      'exposes only Skill-admitted schemas when its loader is excluded in %s',
+      async (permissionMode) => {
+        const { deps } = createTypedPersistenceHarness();
+        const registry = new ToolRegistry();
+        for (const [name, kind] of [
+          ['ToolSearch', ToolKind.ReadOnly],
+          ['WebFetch', ToolKind.ReadOnly],
+          ['NotebookEdit', ToolKind.Write],
+          ['ReadPromptArtifact', ToolKind.ReadOnly],
+        ] as const) {
+          registry.register(
+            createTool({
+              name,
+              displayName: name,
+              kind,
+              schema: Type.Unknown(),
+              description: { short: name },
+              async execute() {
+                return { success: true, llmContent: name };
+              },
+            })
+          );
+        }
+        vi.mocked(deps.toolExecutor.getRegistry).mockReturnValue(registry);
+        deps.applySkillToolRestrictions = (tools) =>
+          tools.filter((tool) =>
+            ['WebFetch', 'NotebookEdit', 'ReadPromptArtifact'].includes(tool.name)
+          );
+        const chat = vi
+          .mocked(deps.chatService.chat)
+          .mockResolvedValue(finalResponse(100, 'done'));
+        const { result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Inspect the allowed tools.',
+            createMockContext({ permissionMode }),
+            { stream: false },
+            'ROOT_SYSTEM_PROMPT'
+          )
+        );
+        expect(result.success, JSON.stringify(result)).toBe(true);
+        const names = chat.mock.calls[0]?.[1]?.map((tool) => tool.name);
+        expect(names).toEqual(
+          permissionMode === PermissionMode.PLAN
+            ? ['WebFetch', 'ReadPromptArtifact']
+            : ['WebFetch', 'NotebookEdit', 'ReadPromptArtifact']
+        );
+        expect(registry.deferredToolManager.isLoaded('WebFetch')).toBe(false);
+      }
+    );
+
+    it('reprojects after Skill activation and restores lazy loading when restrictions clear', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      const registry = new ToolRegistry();
+      for (const name of ['Skill', 'ToolSearch', 'WebFetch', 'ReadPromptArtifact']) {
+        registry.register(
+          createTool({
+            name,
+            displayName: name,
+            kind: ToolKind.ReadOnly,
+            schema: Type.Unknown(),
+            description: { short: name },
+            async execute() {
+              return { success: true, llmContent: name };
+            },
+          })
+        );
+      }
+      vi.mocked(deps.toolExecutor.getRegistry).mockReturnValue(registry);
+      let allowed: readonly string[] | undefined;
+      deps.onSkillActivated = (skill) => {
+        allowed = skill.allowedTools;
+      };
+      deps.applySkillToolRestrictions = (tools) =>
+        allowed
+          ? tools.filter(
+              (tool) =>
+                allowed?.includes(tool.name) || tool.name === 'ReadPromptArtifact'
+            )
+          : tools;
+      vi.mocked(deps.toolExecutor.execute).mockImplementation(async (name) => {
+        if (name === 'Skill')
+          return {
+            success: true,
+            llmContent: 'Inspect with WebFetch.',
+            metadata: {
+              skillName: 'inspect',
+              allowedTools: ['WebFetch'],
+              basePath: '/tmp/skill',
+            },
+          };
+        allowed = undefined;
+        return { success: true, llmContent: 'inspection finished' };
+      });
+      const chat = vi.mocked(deps.chatService.chat);
+      for (const name of ['Skill', 'WebFetch']) {
+        chat.mockResolvedValueOnce({
+          content: '',
+          finishReason: 'tool_calls',
+          toolCalls: [
+            {
+              id: `call-${name}`,
+              type: 'function',
+              function: { name, arguments: '{}' },
+            },
+          ],
+        });
+      }
+      chat.mockResolvedValueOnce(finalResponse(100, 'done'));
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Perform the inspection.',
+          createMockContext(),
+          { stream: false },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result.success, JSON.stringify(result)).toBe(true);
+      expect(chat.mock.calls.map((call) => call[1]?.map((tool) => tool.name))).toEqual([
+        ['Skill', 'ToolSearch', 'ReadPromptArtifact'],
+        ['WebFetch', 'ReadPromptArtifact'],
+        ['Skill', 'ToolSearch', 'ReadPromptArtifact'],
+      ]);
+      expect(registry.deferredToolManager.isLoaded('WebFetch')).toBe(false);
+    });
+
+    it('retains the reserved structured output schema while exposing only Skill-admitted tools', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      const registry = new ToolRegistry();
+      for (const name of ['ToolSearch', 'WebFetch', 'ReadPromptArtifact']) {
+        registry.register(
+          createTool({
+            name,
+            displayName: name,
+            kind: ToolKind.ReadOnly,
+            schema: Type.Unknown(),
+            description: { short: name },
+            async execute() {
+              return { success: true, llmContent: name };
+            },
+          })
+        );
+      }
+      vi.mocked(deps.toolExecutor.getRegistry).mockReturnValue(registry);
+      deps.applySkillToolRestrictions = (tools) =>
+        tools.filter((tool) => tool.name !== 'ToolSearch');
+      const chat = vi
+        .mocked(deps.chatService.chat)
+        .mockResolvedValueOnce({
+          content: '',
+          finishReason: 'tool_calls',
+          toolCalls: [
+            {
+              id: 'structured-skill',
+              type: 'function',
+              function: {
+                name: 'StructuredOutput',
+                arguments: '{"answer":"done"}',
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce(finalResponse(100, ''));
+      const outputSchema = {
+        type: 'object',
+        properties: { answer: { type: 'string' } },
+        required: ['answer'],
+        additionalProperties: false,
+      };
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a structured answer.',
+          createMockContext(),
+          { stream: false, outputSchema },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+      expect(result).toMatchObject({
+        success: true,
+        metadata: { structuredOutput: { answer: 'done' } },
+      });
+      expect(chat.mock.calls[0]?.[1]?.map((tool) => tool.name)).toEqual([
+        'WebFetch',
+        'ReadPromptArtifact',
+        'StructuredOutput',
+      ]);
+      expect(chat.mock.calls[0]?.[1]?.at(-1)?.parameters).toEqual(outputSchema);
     });
   });
 

@@ -6,7 +6,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { type PermissionMode } from '../../config/index.js';
+import { PermissionMode } from '../../config/index.js';
 import {
   CompactionAbortedError,
   CompactionService,
@@ -1072,9 +1072,20 @@ export async function* executeLoopGenerator(
       ? createStructuredOutputContract(options.outputSchema)
       : undefined;
     const resolveTools = () => {
-      const tools = deps.applySkillToolRestrictions(
-        registry.getFunctionDeclarationsByMode(permissionMode)
-      );
+      const declarations = registry.getFunctionDeclarationsByMode(permissionMode);
+      let tools = deps.applySkillToolRestrictions(declarations);
+      if (
+        declarations.some((tool) => tool.name === 'ToolSearch') &&
+        !tools.some((tool) => tool.name === 'ToolSearch')
+      ) {
+        const admitted =
+          permissionMode === PermissionMode.PLAN
+            ? registry.getReadOnlyTools()
+            : registry.getAll();
+        tools = deps.applySkillToolRestrictions(
+          admitted.map((tool) => tool.getFunctionDeclaration())
+        );
+      }
       if (!structuredOutputContract) return tools;
       return [
         ...tools.filter((tool) => tool.name !== STRUCTURED_OUTPUT_TOOL_NAME),

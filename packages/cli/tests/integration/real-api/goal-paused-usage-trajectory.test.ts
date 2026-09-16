@@ -46,14 +46,13 @@ const surfaces = [
   'web-development',
 ] as const;
 const settlementCases = [
-  { settlementState: 'paused', directSchemas: false },
-  { settlementState: 'blocked', directSchemas: false },
-  { settlementState: 'blocked', directSchemas: true },
+  { settlementState: 'paused', directSchemas: false, skillSchemas: false },
+  { settlementState: 'blocked', directSchemas: false, skillSchemas: false },
+  { settlementState: 'blocked', directSchemas: true, skillSchemas: false },
+  { settlementState: 'blocked', directSchemas: false, skillSchemas: true },
 ] as const;
-if (enabled && models.length * surfaces.length * settlementCases.length !== 30) {
-  throw new Error(
-    'Goal usage qualification requires thirty surface/state/schema cells'
-  );
+if (enabled && models.length * surfaces.length * settlementCases.length !== 40) {
+  throw new Error('Goal usage qualification requires forty surface/state/schema cells');
 }
 const cliEntry = path.resolve(import.meta.dirname, '../../../dist/blade.js');
 const roots: string[] = [];
@@ -155,7 +154,8 @@ function responseEvidence(text: string): {
 async function createFixture(
   model: TestModelConfig,
   settlementState: SettlementState,
-  directSchemas = false
+  directSchemas = false,
+  skillSchemas = false
 ) {
   if (!model.baseURL) throw new Error('Missing real model base URL');
   const root = await mkdtemp(path.join(os.tmpdir(), 'blade-goal-paused-usage-'));
@@ -170,10 +170,28 @@ async function createFixture(
     mkdir(workspace),
     mkdir(path.join(home, '.blade'), { recursive: true }),
   ]);
+  if (skillSchemas) {
+    const skillRoot = path.join(home, '.blade', 'skills', 'goal-boundary');
+    await mkdir(skillRoot, { recursive: true });
+    await writeFile(
+      path.join(skillRoot, 'SKILL.md'),
+      [
+        '---',
+        'name: goal-boundary',
+        'description: Report the external prerequisite blocking this Goal',
+        'allowed-tools:',
+        '  - UpdateGoal',
+        '---',
+        `Required credentials are unavailable. Call UpdateGoal with status blocked and reason "${blocker}".`,
+        'Do not call other tools. Do not request more work or claim completion.',
+      ].join('\n')
+    );
+  }
   let requests = 0;
   let tokens = 0;
   const responseContents: string[] = [];
   let discovered = false;
+  let skillActivated = false;
   let blockingToolSeen = false;
   let finalResponseSeen = false;
   let failure: string | undefined;
@@ -188,7 +206,7 @@ async function createFixture(
       for await (const chunk of request)
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       const body = Buffer.concat(chunks);
-      if (directSchemas) {
+      if (directSchemas || (skillSchemas && requests > 1)) {
         const requestBody: unknown = JSON.parse(body.toString('utf8'));
         if (
           !requestBody ||
@@ -246,22 +264,31 @@ async function createFixture(
       const evidence = responseEvidence(text);
       responseContents.push(evidence.content);
       tokens += evidence.tokens;
+      const skillResponse = skillSchemas && !skillActivated && requests === 1;
       const discoveryResponse =
         !directSchemas &&
+        !skillSchemas &&
         settlementState === 'blocked' &&
         !discovered &&
         !blockingToolSeen &&
         requests === 1 &&
         evidence.toolNames.join(',') === 'ToolSearch';
       const blockingResponse =
-        settlementState === 'blocked' && !blockingToolSeen && !discoveryResponse;
+        settlementState === 'blocked' &&
+        !blockingToolSeen &&
+        !discoveryResponse &&
+        !skillResponse;
       if (
         observed.parseStatus !== 'complete' ||
         evidence.tokens <= 0 ||
-        (blockingResponse || discoveryResponse
+        (blockingResponse || discoveryResponse || skillResponse
           ? !observed.finishReasons.includes('tool_calls') ||
             evidence.toolNames.join(',') !==
-              (discoveryResponse ? 'ToolSearch' : 'UpdateGoal')
+              (skillResponse
+                ? 'Skill'
+                : discoveryResponse
+                  ? 'ToolSearch'
+                  : 'UpdateGoal')
           : !observed.finishReasons.includes('stop') ||
             observed.toolCallDeltas !== 0 ||
             evidence.content !== marker)
@@ -270,12 +297,14 @@ async function createFixture(
           `Unexpected real Provider response: ${JSON.stringify({ observed, tokens, toolNames: evidence.toolNames, content: evidence.content.slice(0, 256) })}`
         );
       }
-      if (blockingResponse || discoveryResponse) {
+      if (blockingResponse || discoveryResponse || skillResponse) {
         discovered ||= discoveryResponse;
+        skillActivated ||= skillResponse;
         blockingToolSeen ||= blockingResponse;
         response.writeHead(200, { 'content-type': 'text/event-stream' });
         response.end(text);
-        if (blockingResponse && discovered) await writeFile(readyFile, 'turn-limit');
+        if (blockingResponse && (discovered || skillActivated))
+          await writeFile(readyFile, 'turn-limit');
         return;
       }
       finalResponseSeen = true;
@@ -314,11 +343,13 @@ async function createFixture(
     },
   }));
   config.permissionMode = PermissionMode.YOLO;
-  config.allowedTools = directSchemas
-    ? ['UpdateGoal']
-    : settlementState === 'blocked'
-      ? ['ToolSearch', 'UpdateGoal']
-      : ['Read'];
+  config.allowedTools = skillSchemas
+    ? ['Skill', 'ToolSearch', 'UpdateGoal']
+    : directSchemas
+      ? ['UpdateGoal']
+      : settlementState === 'blocked'
+        ? ['ToolSearch', 'UpdateGoal']
+        : ['Read'];
   if (directSchemas) config.disallowedTools = ['ToolSearch'];
   config.maxTurns = settlementState === 'blocked' ? 2 : 1;
   config.hooks = { enabled: false };
@@ -357,8 +388,9 @@ async function createFixture(
         },
       });
       await runtime.createGoal({
-        objective:
-          settlementState === 'blocked'
+        objective: skillSchemas
+          ? 'Call Skill with skill "goal-boundary" first, then follow its instructions to report the external blocker. Do not call UpdateGoal before loading the skill.'
+          : settlementState === 'blocked'
             ? `This Goal cannot proceed because required credentials are unavailable and only the user can provide them.\n` +
               `Step 1: You MUST call UpdateGoal with {"status":"blocked","reason":"${blocker}"}. ` +
               `If its schema is deferred, first load it with ToolSearch. Never answer before the UpdateGoal tool succeeds.\n` +
@@ -388,6 +420,7 @@ async function createFixture(
   return {
     settlementState,
     directSchemas,
+    skillSchemas,
     workspace,
     home,
     storageRoot,
@@ -400,11 +433,12 @@ async function createFixture(
     responseContents: () => [...responseContents],
     requests: () => requests,
     discoveryRequests: () => Number(discovered),
-    turnLimitReached: () => discovered && blockingToolSeen,
+    skillActivated: () => skillActivated,
+    turnLimitReached: () => (discovered || skillActivated) && blockingToolSeen,
     ready: async () => {
       await waitFor(async () => {
         if (failure) throw new Error(failure);
-        if (discovered && blockingToolSeen) return true;
+        if ((discovered || skillActivated) && blockingToolSeen) return true;
         return access(readyFile).then(
           () => true,
           () => false
@@ -677,11 +711,13 @@ async function runHeadless(test: Fixture, secret: string) {
       '--resume',
       test.sessionId,
       '--allowed-tools',
-      test.directSchemas
-        ? 'UpdateGoal'
-        : test.settlementState === 'blocked'
-          ? 'ToolSearch,UpdateGoal'
-          : 'Read',
+      test.skillSchemas
+        ? 'Skill,ToolSearch,UpdateGoal'
+        : test.directSchemas
+          ? 'UpdateGoal'
+          : test.settlementState === 'blocked'
+            ? 'ToolSearch,UpdateGoal'
+            : 'Read',
       ...(test.directSchemas ? ['--disallowed-tools', 'ToolSearch'] : []),
       '--no-verification-agent',
     ],
@@ -924,14 +960,24 @@ suite('Stopped Goal usage surface matrix (real API)', () => {
         if (previousConfig) getState().config.actions.setConfig(previousConfig);
       }
     }, 180_000);
-    for (const { surface, settlementState, directSchemas } of surfaces.flatMap(
-      (surface) => settlementCases.map((scenario) => ({ surface, ...scenario }))
+    for (const {
+      surface,
+      settlementState,
+      directSchemas,
+      skillSchemas,
+    } of surfaces.flatMap((surface) =>
+      settlementCases.map((scenario) => ({ surface, ...scenario }))
     )) {
-      it(`${model.model} settles ${settlementState} usage through ${surface} without resuming over budget${directSchemas ? ' with direct schemas' : ''}`, async (context: TestContext) => {
+      it(`${model.model} settles ${settlementState} usage through ${surface} without resuming over budget${directSchemas ? ' with direct schemas' : skillSchemas ? ' with Skill schemas' : ''}`, async (context: TestContext) => {
         const retry = context.task.retry;
         expect(typeof retry === 'number' ? retry : (retry?.count ?? 0)).toBe(0);
         await access(cliEntry);
-        const test = await createFixture(model, settlementState, directSchemas);
+        const test = await createFixture(
+          model,
+          settlementState,
+          directSchemas,
+          skillSchemas
+        );
         try {
           if (surface === 'headless') await runHeadless(test, model.apiKey);
           else if (surface === 'acp') await runAcp(test, model.apiKey);
@@ -959,6 +1005,7 @@ suite('Stopped Goal usage surface matrix (real API)', () => {
                     secret: model.apiKey,
                     settlementState,
                     directSchemas,
+                    skillSchemas,
                   })
                 ).toString('base64'),
               }
@@ -989,6 +1036,7 @@ suite('Stopped Goal usage surface matrix (real API)', () => {
           });
           expect(test.requests()).toBe(settlementState === 'blocked' ? 2 : 1);
           expect(test.tokens()).toBeGreaterThan(1);
+          expect(test.skillActivated()).toBe(skillSchemas);
           console.log(
             'GOAL_PAUSED_USAGE_EVIDENCE',
             JSON.stringify({
@@ -996,6 +1044,7 @@ suite('Stopped Goal usage surface matrix (real API)', () => {
               surface,
               settlementState,
               directSchemas,
+              skillSchemas,
               tokens: test.tokens(),
               requests: test.requests(),
               discoveryRequests: test.discoveryRequests(),

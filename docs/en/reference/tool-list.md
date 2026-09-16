@@ -6,6 +6,8 @@ This document lists all built-in tools for Blade Code and their parameter descri
 
 Extension tools load on demand while `ToolSearch` is available. If an allowlist or denylist removes `ToolSearch`, the Runtime exposes full schemas for tools already admitted to the current registry, without adding a loader or relaxing execution permissions. Plan mode still exposes only read-only tools, and the same rule applies after MCP catalog additions, replacements, or removals.
 
+If an active Skill's `allowed-tools` excludes `ToolSearch`, requests include full schemas only for tools admitted by the registry, current mode, and Skill. Clearing the Skill restriction restores lazy loading without marking the temporary projection as permanently loaded. The reserved structured-output tool is preserved.
+
 ## Textual Tool-call Correction
 
 Tools execute only through the Provider's native tool-call protocol. If the user explicitly requests a currently available tool but the model returns only a JSON envelope such as `{"tool_calls":[...]}` as ordinary text, the Runtime requests a native invocation or a final answer based on existing results. It never converts text directly into an executable call.

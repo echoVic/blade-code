@@ -21,6 +21,7 @@ interface RunnerInput {
   secret: string;
   settlementState: 'paused' | 'blocked';
   directSchemas: boolean;
+  skillSchemas: boolean;
 }
 
 async function waitFor(
@@ -61,11 +62,13 @@ async function main(): Promise<void> {
       '--resume',
       input.sessionId,
       '--allowed-tools',
-      input.directSchemas
-        ? 'UpdateGoal'
-        : input.settlementState === 'blocked'
-          ? 'ToolSearch,UpdateGoal'
-          : 'Read',
+      input.skillSchemas
+        ? 'Skill,ToolSearch,UpdateGoal'
+        : input.directSchemas
+          ? 'UpdateGoal'
+          : input.settlementState === 'blocked'
+            ? 'ToolSearch,UpdateGoal'
+            : 'Read',
       ...(input.directSchemas ? ['--disallowed-tools', 'ToolSearch'] : []),
       '--no-verification-agent',
     ],
