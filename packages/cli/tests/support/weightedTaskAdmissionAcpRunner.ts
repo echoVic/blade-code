@@ -25,18 +25,6 @@ function loadInput(): RunnerInput {
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
 }
 
-function agentText(client: ChildBackedRecordingAcpClient, sessionId: string): string {
-  return client.sessionUpdates
-    .filter((notification) => notification.sessionId === sessionId)
-    .flatMap((notification) =>
-      notification.update.sessionUpdate === 'agent_message_chunk' &&
-      notification.update.content.type === 'text'
-        ? [notification.update.content.text]
-        : []
-    )
-    .join('');
-}
-
 function taskMetadata(
   client: ChildBackedRecordingAcpClient,
   sessionId: string
@@ -225,9 +213,9 @@ async function run(input: RunnerInput) {
       throw new Error('Weighted task ACP session/list lost capacity ownership');
     }
 
-    const primaryText = agentText(client, primarySessionId);
-    const rejectedText = agentText(client, rejectedSessionId);
-    const queuedText = agentText(client, queuedSessionId);
+    const primaryText = client.agentText(primarySessionId);
+    const rejectedText = client.agentText(rejectedSessionId);
+    const queuedText = client.agentText(queuedSessionId);
     if (
       !primaryText.includes(input.primaryMarker) ||
       !queuedText.includes(input.queuedMarker)

@@ -95,18 +95,6 @@ const SCENARIOS = {
   },
 } as const;
 
-function agentText(client: ChildBackedRecordingAcpClient, sessionId: string): string {
-  return client.sessionUpdates
-    .filter((notification) => notification.sessionId === sessionId)
-    .flatMap((notification) =>
-      notification.update.sessionUpdate === 'agent_message_chunk' &&
-      notification.update.content.type === 'text'
-        ? [notification.update.content.text]
-        : []
-    )
-    .join('');
-}
-
 function admissionMetadata(
   client: ChildBackedRecordingAcpClient,
   sessionId: string
@@ -237,8 +225,8 @@ async function run(input: RunnerInput) {
     if (!metadata.includes(null)) {
       throw new Error(`${scenario.label} metadata was not cleared`);
     }
-    const primaryText = agentText(client, primarySessionId);
-    const secondaryText = agentText(client, secondarySessionId);
+    const primaryText = client.agentText(primarySessionId);
+    const secondaryText = client.agentText(secondarySessionId);
     if (
       !primaryText.includes(input.primaryMarker) ||
       (scenario.requiresSecondaryMarker &&

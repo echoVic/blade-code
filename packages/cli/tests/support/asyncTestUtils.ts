@@ -1,5 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
+import { access } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
 
 export async function waitForCondition(
   predicate: () => boolean | Promise<boolean>,
@@ -17,6 +19,40 @@ export async function waitForCondition(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(message, { cause: lastError });
+}
+
+export async function waitForInboxRemoval(
+  workspace: string,
+  sessionId: string,
+  timeoutMs: number
+): Promise<void> {
+  const inboxPath = getSessionInboxFilePath(workspace, sessionId);
+  await waitForCondition(
+    async () =>
+      access(inboxPath).then(
+        () => false,
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return true;
+          throw error;
+        }
+      ),
+    'Session inbox was not removed before timeout',
+    timeoutMs
+  );
+}
+
+export async function waitForHttp(url: string, timeoutMs = 20_000): Promise<void> {
+  await waitForCondition(
+    async () => {
+      try {
+        return (await fetch(url)).ok;
+      } catch {
+        return false;
+      }
+    },
+    `Timed out waiting for ${url}`,
+    timeoutMs
+  );
 }
 
 export function waitForChildExit(

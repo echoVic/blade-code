@@ -27,18 +27,6 @@ function loadInput(): RunnerInput {
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
 }
 
-function agentText(client: ChildBackedRecordingAcpClient, sessionId: string): string {
-  return client.sessionUpdates
-    .filter((notification) => notification.sessionId === sessionId)
-    .flatMap((notification) =>
-      notification.update.sessionUpdate === 'agent_message_chunk' &&
-      notification.update.content.type === 'text'
-        ? [notification.update.content.text]
-        : []
-    )
-    .join('');
-}
-
 async function run(input: RunnerInput) {
   const child = spawn(process.execPath, [input.cliEntry, '--acp'], {
     cwd: input.workspace,
@@ -113,7 +101,7 @@ async function run(input: RunnerInput) {
         throw new Error('Manual compaction ACP did not report cancellation');
       if (!(await readFile(transcript)).equals(before))
         throw new Error('Cancelled manual compaction changed the transcript');
-      const content = agentText(client, sessionId);
+      const content = client.agentText(sessionId);
       if (!content.includes('上下文压缩已取消') || content.includes('[FAIL]'))
         throw new Error('Manual compaction ACP cancellation output is incorrect');
       child.kill('SIGTERM');
@@ -174,10 +162,10 @@ async function run(input: RunnerInput) {
     return {
       success: true,
       sessionId,
-      finalMarkerSeen: agentText(client, sessionId).includes(input.marker),
-      discoveryMarkerSeen: agentText(client, discovery.sessionId).includes(
-        input.discoveryMarker
-      ),
+      finalMarkerSeen: client.agentText(sessionId).includes(input.marker),
+      discoveryMarkerSeen: client
+        .agentText(discovery.sessionId)
+        .includes(input.discoveryMarker),
       compactions,
       updateCount: client.sessionUpdates.length,
     };

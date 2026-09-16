@@ -1,3 +1,4 @@
+import { observeBrowserFaults } from './webTestUtils.js';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -12,7 +13,6 @@ import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js
 import { reserveLoopbackPort as reservePort } from './asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
-  isExpectedBrowserRequestFailure,
   stopForegroundGuiLauncher,
 } from './foregroundBoundedOutputWebDriver.js';
 
@@ -361,27 +361,10 @@ function attachFaultCollection(
   faults: string[],
   state: { refreshing: boolean; closing: boolean }
 ): void {
-  page.on('pageerror', (error) => faults.push(`pageerror:${error.message}`));
-  page.on('console', (message) => {
-    if (message.type() === 'error') faults.push(`console:${message.text()}`);
-  });
-  page.on('response', (response) => {
-    if (response.status() >= 400) {
-      faults.push(`http:${response.status()}:${response.url()}`);
-    }
-  });
-  page.on('requestfailed', (request) => {
-    const failure: BrowserFailure = {
-      url: request.url(),
-      resourceType: request.resourceType(),
-      errorText: request.failure()?.errorText ?? 'unknown',
-      refreshing: state.refreshing,
-      closing: state.closing,
-    };
-    if (!isExpectedBrowserRequestFailure(failure)) {
-      faults.push(`requestfailed:${failure.errorText}:${failure.url}`);
-    }
-  });
+  observeBrowserFaults(page, faults, () => ({
+    refreshing: state.refreshing,
+    closing: state.closing,
+  }));
 }
 
 async function waitForCatalogBaseline(page: Page, taskKey: string): Promise<void> {

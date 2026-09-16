@@ -1701,6 +1701,10 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       new URL('../../support/tokenBudgetHandoffWebDriver.ts', import.meta.url),
       'utf8'
     );
+    const webTestUtils = readFileSync(
+      new URL('../../support/webTestUtils.ts', import.meta.url),
+      'utf8'
+    );
 
     expect(ptyRunner).toContain('failureStage');
     expect(ptyRunner).toContain('failureCode');
@@ -1710,9 +1714,10 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     expect(webDriver).toContain('Token-budget Web production driver failed at');
     expect(webDriver).toContain('const deadline = Date.now() + timeoutMs - 10_000');
     expect(webDriver).toContain('remainingStageBudget(deadline');
-    expect(webDriver).toContain('[data-blade-permission-option="yolo"]');
-    expect(webDriver).toContain('[data-blade-yolo-confirm]');
-    expect(webDriver).toContain(
+    expect(webDriver).toContain('ensureYoloMode(page)');
+    expect(webTestUtils).toContain('[data-blade-permission-option="yolo"]');
+    expect(webTestUtils).toContain('[data-blade-yolo-confirm]');
+    expect(webTestUtils).toContain(
       "getAttribute('data-blade-permission-mode') === 'yolo'"
     );
     expect(webDriver).not.toContain(

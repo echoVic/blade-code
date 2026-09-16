@@ -86,18 +86,6 @@ function queueMetadata(
   });
 }
 
-function agentText(client: ChildBackedRecordingAcpClient, sessionId: string): string {
-  return client.sessionUpdates
-    .filter((notification) => notification.sessionId === sessionId)
-    .flatMap((notification) =>
-      notification.update.sessionUpdate === 'agent_message_chunk' &&
-      notification.update.content.type === 'text'
-        ? [notification.update.content.text]
-        : []
-    )
-    .join('');
-}
-
 function endChildInput(child: ChildProcess): Promise<void> {
   if (!child.stdin || child.stdin.destroyed || child.stdin.writableEnded) {
     return Promise.resolve();
@@ -214,10 +202,10 @@ async function run(input: RunnerInput) {
       () =>
         queueMetadata(client, sessionId).some((metadata) => metadata.locked > 0) &&
         queueMetadata(client, sessionId).at(-1)?.pending === 0 &&
-        agentText(client, sessionId).includes(input.expectedOutput),
+        client.agentText(sessionId).includes(input.expectedOutput),
       `ACP queue did not transition through lock and acknowledgement: ${JSON.stringify({
         metadata: queueMetadata(client, sessionId),
-        agentText: agentText(client, sessionId).slice(-2_000),
+        agentText: client.agentText(sessionId).slice(-2_000),
       })}`,
       180_000
     );

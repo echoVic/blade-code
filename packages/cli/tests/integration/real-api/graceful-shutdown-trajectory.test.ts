@@ -1,3 +1,4 @@
+import { ensureYoloMode } from '../../support/webTestUtils.js';
 import { type ChildProcess, execFile, spawn as spawnChild } from 'node:child_process';
 import {
   access,
@@ -504,19 +505,7 @@ async function runWebSurface(input: {
     await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
     const composer = page.locator('textarea[data-blade-composer]');
     await composer.waitFor({ state: 'visible' });
-    const permissionMode = page.locator('[data-blade-permission-mode]');
-    await permissionMode.waitFor({ state: 'visible' });
-    if ((await permissionMode.getAttribute('data-blade-permission-mode')) !== 'yolo') {
-      await permissionMode.click();
-      await page.locator('[data-blade-permission-option="yolo"]').click();
-      await page.locator('[data-blade-yolo-confirm]').click();
-      await page.waitForFunction(
-        () =>
-          document
-            .querySelector('[data-blade-permission-mode]')
-            ?.getAttribute('data-blade-permission-mode') === 'yolo'
-      );
-    }
+    await ensureYoloMode(page);
     await composer.fill(input.fixture.prompt);
     const submission = page.waitForResponse(
       (browserResponse) =>

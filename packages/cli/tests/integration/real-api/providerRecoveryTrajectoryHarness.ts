@@ -1,3 +1,4 @@
+import { ensureYoloMode } from '../../support/webTestUtils.js';
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -16,6 +17,7 @@ import {
   reserveLoopbackPort as reservePort,
   waitForCondition as waitFor,
   waitForChildExit,
+  waitForHttp,
 } from '../../support/asyncTestUtils.js';
 import {
   createSplitPtyMarkerInstruction,
@@ -638,20 +640,6 @@ async function runSubprocessRunner(input: {
   return parsed;
 }
 
-async function waitForHttp(url: string): Promise<void> {
-  await waitFor(
-    async () => {
-      try {
-        return (await fetch(url)).ok;
-      } catch {
-        return false;
-      }
-    },
-    `Timed out waiting for ${url}`,
-    20_000
-  );
-}
-
 async function createWebSession(origin: string, projectPath: string): Promise<string> {
   const response = await fetch(`${origin}/sessions`, {
     method: 'POST',
@@ -755,19 +743,7 @@ async function openWebSessionPage(
   navigation.searchParams.set('project', projectPath);
   await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
   await page.locator('textarea[data-blade-composer]').waitFor({ state: 'visible' });
-  const permissionMode = page.locator('[data-blade-permission-mode]');
-  await permissionMode.waitFor({ state: 'visible' });
-  if ((await permissionMode.getAttribute('data-blade-permission-mode')) !== 'yolo') {
-    await permissionMode.click();
-    await page.locator('[data-blade-permission-option="yolo"]').click();
-    await page.locator('[data-blade-yolo-confirm]').click();
-    await page.waitForFunction(
-      () =>
-        document
-          .querySelector('[data-blade-permission-mode]')
-          ?.getAttribute('data-blade-permission-mode') === 'yolo'
-    );
-  }
+  await ensureYoloMode(page);
   return page;
 }
 

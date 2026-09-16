@@ -1,14 +1,16 @@
+import { observeBrowserFaults } from './webTestUtils.js';
 import { spawn } from 'node:child_process';
-import { access } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { chromium, type Page } from 'playwright';
-import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
 import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
-import { reserveLoopbackPort as reservePort } from './asyncTestUtils.js';
+import {
+  reserveLoopbackPort as reservePort,
+  waitForInboxRemoval,
+  waitForHttp,
+} from './asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
-  isExpectedBrowserRequestFailure,
   stopForegroundGuiLauncher,
 } from './foregroundBoundedOutputWebDriver.js';
 
@@ -17,41 +19,6 @@ export interface SubagentResultAdoptionWebEvidence {
   parentVisible: true;
   visibleAfterReload: true;
   browserFaults: [];
-}
-
-async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-    } catch {
-      // Production server is still starting.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error('Subagent adoption Web server did not become ready');
-}
-
-async function waitForInboxRemoval(
-  workspace: string,
-  sessionId: string,
-  timeoutMs: number
-): Promise<void> {
-  const inboxPath = getSessionInboxFilePath(workspace, sessionId);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      await access(inboxPath);
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        return;
-      }
-      throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error('Web adoption did not acknowledge its durable parent input');
 }
 
 function appendTail(current: string, chunk: Buffer | string): string {
@@ -118,27 +85,7 @@ export async function runSubagentResultAdoptionWebDriver(input: {
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext();
     page = await context.newPage();
-    page.on('pageerror', (error) => faults.push(`pageerror:${error.message}`));
-    page.on('console', (message) => {
-      if (message.type() === 'error') faults.push(`console:${message.text()}`);
-    });
-    page.on('response', (response) => {
-      if (response.status() >= 400) {
-        faults.push(`http:${response.status()}:${response.url()}`);
-      }
-    });
-    page.on('requestfailed', (request) => {
-      const failure = {
-        url: request.url(),
-        resourceType: request.resourceType(),
-        errorText: request.failure()?.errorText ?? 'unknown',
-        refreshing,
-        closing,
-      };
-      if (!isExpectedBrowserRequestFailure(failure)) {
-        faults.push(`requestfailed:${failure.errorText}:${failure.url}`);
-      }
-    });
+    observeBrowserFaults(page, faults, () => ({ refreshing, closing }));
 
     const navigation = new URL(origin);
     navigation.searchParams.set('session', input.sessionId);

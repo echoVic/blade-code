@@ -1,3 +1,4 @@
+import { ensureYoloMode, observeBrowserFaults } from './webTestUtils.js';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import path from 'node:path';
@@ -5,10 +6,9 @@ import { chromium } from 'playwright';
 import { expect } from 'vitest';
 import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
 import type { BrowserToolFixture } from '../integration/real-api/browser-tool-fixture.js';
-import { reserveLoopbackPort as reservePort } from './asyncTestUtils.js';
+import { reserveLoopbackPort as reservePort, waitForHttp } from './asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
-  isExpectedBrowserRequestFailure,
   stopForegroundGuiLauncher,
 } from './foregroundBoundedOutputWebDriver.js';
 
@@ -19,19 +19,6 @@ export interface BrowserToolWebEvidence {
   agentBrowserProjected: true;
   toolNames: string[];
   browserFaults: [];
-}
-
-async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      if ((await fetch(url)).ok) return;
-    } catch {
-      // Production server is still starting.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error('Browser Tool Web server did not become ready');
 }
 
 async function stop(
@@ -171,22 +158,7 @@ export async function runBrowserToolWebDriver(input: {
 
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    page.on('pageerror', (error) => faults.push(`pageerror:${error.message}`));
-    page.on('console', (message) => {
-      if (message.type() === 'error') faults.push(`console:${message.text()}`);
-    });
-    page.on('requestfailed', (request) => {
-      const failure = {
-        url: request.url(),
-        resourceType: request.resourceType(),
-        errorText: request.failure()?.errorText ?? 'unknown',
-        refreshing,
-        closing,
-      };
-      if (!isExpectedBrowserRequestFailure(failure)) {
-        faults.push(`requestfailed:${failure.errorText}:${failure.url}`);
-      }
-    });
+    observeBrowserFaults(page, faults, () => ({ refreshing, closing }), false);
 
     const navigation = new URL(origin);
     navigation.searchParams.set('session', created.sessionId);
@@ -194,19 +166,7 @@ export async function runBrowserToolWebDriver(input: {
     await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
     const composer = page.locator('textarea[data-blade-composer]');
     await composer.waitFor({ state: 'visible', timeout: 30_000 });
-    const permissionMode = page.locator('[data-blade-permission-mode]');
-    await permissionMode.waitFor({ state: 'visible' });
-    if ((await permissionMode.getAttribute('data-blade-permission-mode')) !== 'yolo') {
-      await permissionMode.click();
-      await page.locator('[data-blade-permission-option="yolo"]').click();
-      await page.locator('[data-blade-yolo-confirm]').click();
-      await page.waitForFunction(
-        () =>
-          document
-            .querySelector('[data-blade-permission-mode]')
-            ?.getAttribute('data-blade-permission-mode') === 'yolo'
-      );
-    }
+    await ensureYoloMode(page);
     await composer.fill(input.fixture.prompt);
     await composer.press('Enter');
     const browserPanel = page.locator('[data-browser-panel]');

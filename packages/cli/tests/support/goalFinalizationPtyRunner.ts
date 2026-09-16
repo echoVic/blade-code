@@ -1,7 +1,5 @@
-import { access } from 'node:fs/promises';
 import { spawn } from 'bun-pty';
-import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
-import { waitForCondition as waitFor } from './asyncTestUtils.js';
+import { waitForCondition as waitFor, waitForInboxRemoval } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   latchPtyMarker,
@@ -14,27 +12,6 @@ function required(name: string): string {
   if (!value)
     throw new Error(`Missing required Goal finalization PTY setting: ${name}`);
   return value;
-}
-
-async function waitForInboxRemoval(
-  workspace: string,
-  sessionId: string,
-  timeoutMs: number
-): Promise<void> {
-  const inboxPath = getSessionInboxFilePath(workspace, sessionId);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      await access(inboxPath);
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        return;
-      }
-      throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error('TUI Goal finalization did not acknowledge its durable inbox');
 }
 
 async function main(): Promise<void> {

@@ -1,7 +1,5 @@
-import { access } from 'node:fs/promises';
 import { spawn } from 'bun-pty';
-import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
-import { waitForCondition as waitFor } from './asyncTestUtils.js';
+import { waitForCondition as waitFor, waitForInboxRemoval } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   latchPtyMarker,
@@ -13,27 +11,6 @@ function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing background completion PTY setting: ${name}`);
   return value;
-}
-
-async function waitForInboxRemoval(
-  workspace: string,
-  sessionId: string,
-  timeoutMs: number
-): Promise<void> {
-  const inboxPath = getSessionInboxFilePath(workspace, sessionId);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      await access(inboxPath);
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        return;
-      }
-      throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error('TUI background completion was not durably acknowledged');
 }
 
 async function main(): Promise<void> {

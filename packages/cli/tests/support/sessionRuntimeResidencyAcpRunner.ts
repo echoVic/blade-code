@@ -36,18 +36,6 @@ function prompt(connection: acp.ClientSideConnection, sessionId: string, text: s
   });
 }
 
-function agentText(client: ChildBackedRecordingAcpClient, sessionId: string): string {
-  return client.sessionUpdates
-    .filter((notification) => notification.sessionId === sessionId)
-    .flatMap((notification) =>
-      notification.update.sessionUpdate === 'agent_message_chunk' &&
-      notification.update.content.type === 'text'
-        ? [notification.update.content.text]
-        : []
-    )
-    .join('');
-}
-
 function hasAcknowledgedUserText(
   storageRoot: string,
   sessionId: string,
@@ -252,7 +240,7 @@ async function run(input: RunnerInput) {
                 event.data.payload.text.includes(input.followUpMarker)
             ),
             eventTail: events.slice(-20).map((event) => event.type),
-            primaryTextTail: agentText(client, primarySessionId).slice(-2_048),
+            primaryTextTail: client.agentText(primarySessionId).slice(-2_048),
             recentUpdates: client.sessionUpdates
               .filter((notification) => notification.sessionId === primarySessionId)
               .slice(-20)
@@ -263,8 +251,8 @@ async function run(input: RunnerInput) {
     }
     await connection.closeSession({ sessionId: primarySessionId });
 
-    const primaryText = agentText(client, primarySessionId);
-    const secondaryText = agentText(client, secondarySessionId);
+    const primaryText = client.agentText(primarySessionId);
+    const secondaryText = client.agentText(secondarySessionId);
     if (!secondaryText.includes(input.secondaryMarker)) {
       throw new Error(
         `Session residency ACP controls did not finish: ${JSON.stringify({

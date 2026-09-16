@@ -1,3 +1,4 @@
+import { ensureYoloMode, observeBrowserFaults } from './webTestUtils.js';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import path from 'node:path';
@@ -11,7 +12,6 @@ import type { TokenBudgetHandoffSurfaceEvidence } from '../integration/real-api/
 import { reserveLoopbackPort as reservePort } from './asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
-  isExpectedBrowserRequestFailure,
   stopForegroundGuiLauncher,
   waitForForegroundGuiLauncherReady,
 } from './foregroundBoundedOutputWebDriver.js';
@@ -784,46 +784,14 @@ export async function runTokenBudgetHandoffWebDriver(input: {
     );
     failureStage = 'page_ready';
     const page = await context.newPage();
-    page.on('pageerror', (error) => faults.push(`pageerror:${error.message}`));
-    page.on('console', (message) => {
-      if (message.type() === 'error') faults.push(`console:${message.text()}`);
-    });
-    page.on('response', (response) => {
-      if (response.status() >= 400) {
-        faults.push(`http:${response.status()}:${response.url()}`);
-      }
-    });
-    page.on('requestfailed', (request) => {
-      const failure = {
-        url: request.url(),
-        resourceType: request.resourceType(),
-        errorText: request.failure()?.errorText ?? 'unknown',
-        refreshing,
-        closing,
-      };
-      if (!isExpectedBrowserRequestFailure(failure)) {
-        faults.push(`requestfailed:${failure.errorText}:${failure.url}`);
-      }
-    });
+    observeBrowserFaults(page, faults, () => ({ refreshing, closing }));
     const navigation = new URL(origin);
     navigation.searchParams.set('session', sessionId);
     navigation.searchParams.set('project', workspace);
     await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
     const composer = page.locator('textarea[data-blade-composer]');
     await composer.waitFor({ state: 'visible' });
-    const permissionMode = page.locator('[data-blade-permission-mode]');
-    await permissionMode.waitFor({ state: 'visible' });
-    if ((await permissionMode.getAttribute('data-blade-permission-mode')) !== 'yolo') {
-      await permissionMode.click();
-      await page.locator('[data-blade-permission-option="yolo"]').click();
-      await page.locator('[data-blade-yolo-confirm]').click();
-      await page.waitForFunction(
-        () =>
-          document
-            .querySelector('[data-blade-permission-mode]')
-            ?.getAttribute('data-blade-permission-mode') === 'yolo'
-      );
-    }
+    await ensureYoloMode(page);
     failureStage = 'task_start';
     const providerRequestsBeforeStart = input.providerRequestCount();
     if (!isNonNegativeSafeInteger(providerRequestsBeforeStart)) {

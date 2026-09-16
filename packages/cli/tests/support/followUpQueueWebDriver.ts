@@ -1,3 +1,4 @@
+import { observeBrowserFaults } from './webTestUtils.js';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -11,7 +12,6 @@ import {
 } from './asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
-  isExpectedBrowserRequestFailure,
   stopForegroundGuiLauncher,
 } from './foregroundBoundedOutputWebDriver.js';
 import { createTuiTaskAttentionSecretScanner } from './tuiTaskAttentionPtyDriver.js';
@@ -150,26 +150,10 @@ export async function runFollowUpQueueWebDriver(input: {
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ locale: 'en-US' });
     page = await context.newPage();
-    page.on('pageerror', (error) => faults.push(`pageerror:${error.message}`));
-    page.on('console', (message) => {
-      if (message.type() === 'error') faults.push(`console:${message.text()}`);
-    });
-    page.on('response', (response) => {
-      if (response.status() >= 400)
-        faults.push(`http:${response.status()}:${response.url()}`);
-    });
-    page.on('requestfailed', (request) => {
-      const failure = {
-        url: request.url(),
-        resourceType: request.resourceType(),
-        errorText: request.failure()?.errorText ?? 'unknown',
-        refreshing: requestState.refreshing,
-        closing: requestState.closing,
-      };
-      if (!isExpectedBrowserRequestFailure(failure)) {
-        faults.push(`requestfailed:${failure.errorText}:${failure.url}`);
-      }
-    });
+    observeBrowserFaults(page, faults, () => ({
+      refreshing: requestState.refreshing,
+      closing: requestState.closing,
+    }));
     const navigation = new URL(origin);
     navigation.searchParams.set('session', session.sessionId);
     navigation.searchParams.set('project', input.workspace);
