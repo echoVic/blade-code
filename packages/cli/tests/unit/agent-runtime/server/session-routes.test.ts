@@ -38,6 +38,24 @@ type EventReplaySubscriber = {
 
 type RequestableApp = Pick<Hono<{ Variables: { directory: string } }>, 'request'>;
 
+const requestJson = (
+  app: RequestableApp,
+  path: string,
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+  body: unknown
+) =>
+  app.request(path, {
+    method,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+const loadSessionRoutes = async () =>
+  (await import('../../../../src/server/routes/session.js')).SessionRoutes;
+const loadSessionService = async () =>
+  (await import('../../../../src/services/SessionService.js')).SessionService;
+const loadBus = async () => (await import('../../../../src/server/bus.js')).Bus;
+
 type CreateMetadataInitial = Pick<
   SessionMetadataUpdate,
   | 'title'
@@ -133,44 +151,16 @@ const makeSessionMetadata = (
       }
     >
 ): SessionMetadata => ({
+  ...overrides,
   sessionId: overrides.sessionId,
   projectPath: overrides.projectPath,
   rootId: overrides.rootId ?? overrides.sessionId,
   title: overrides.title ?? `Session ${overrides.sessionId}`,
   taskStatus: overrides.taskStatus ?? 'completed',
-  taskStatusReason: overrides.taskStatusReason,
-  taskFailure: overrides.taskFailure,
-  taskStartedAt: overrides.taskStartedAt,
-  taskCompletedAt: overrides.taskCompletedAt,
-  taskPromptSummary: overrides.taskPromptSummary,
-  taskPriority: overrides.taskPriority,
-  taskKind: overrides.taskKind,
-  taskDueAt: overrides.taskDueAt,
-  taskModelId: overrides.taskModelId,
-  selectedModelId: overrides.selectedModelId,
-  permissionMode: overrides.permissionMode,
-  reasoningEffort: overrides.reasoningEffort,
-  serviceTier: overrides.serviceTier,
-  responseVerbosity: overrides.responseVerbosity,
-  communicationStyle: overrides.communicationStyle,
-  taskRetryAvailable: overrides.taskRetryAvailable,
-  taskRetriedFrom: overrides.taskRetriedFrom,
-  taskDelivery: overrides.taskDelivery,
-  taskIsolation: overrides.taskIsolation,
-  taskSourceProjectPath: overrides.taskSourceProjectPath,
-  taskWorktreePath: overrides.taskWorktreePath,
-  taskWorktreeBranch: overrides.taskWorktreeBranch,
-  taskBaseCommit: overrides.taskBaseCommit,
-  taskDiffStat: overrides.taskDiffStat,
-  taskQueuePosition: overrides.taskQueuePosition,
-  taskQueueDepth: overrides.taskQueueDepth,
-  taskConcurrencyLimit: overrides.taskConcurrencyLimit,
   messageCount: overrides.messageCount ?? 0,
   firstMessageTime: overrides.firstMessageTime ?? new Date(0).toISOString(),
   lastMessageTime: overrides.lastMessageTime ?? new Date(1).toISOString(),
   hasErrors: overrides.hasErrors ?? false,
-  ...(overrides.parentId ? { parentId: overrides.parentId } : {}),
-  ...(overrides.relationType ? { relationType: overrides.relationType } : {}),
 });
 
 const runtimeState = vi.hoisted(() => ({
@@ -1088,7 +1078,7 @@ describe('SessionRoutes runtime reuse', () => {
     const { PermissionRoutes } = await import(
       '../../../../src/server/routes/permission.js'
     );
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     const app = new Hono();
     app.onError((error, c) => {
@@ -1103,7 +1093,7 @@ describe('SessionRoutes runtime reuse', () => {
   };
 
   const createMountedSessionApp = async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const app = new Hono<{ Variables: { directory: string } }>();
     app.use('*', async (context, next) => {
       context.set(
@@ -2358,13 +2348,11 @@ describe('SessionRoutes runtime reuse', () => {
     try {
       await hydrationStarted;
       const permissionResponsePromise = Promise.resolve(
-        app.request(
+        requestJson(
+          app,
           `/permissions/${permissionId}?sessionId=${sessionId}&projectPath=${encodeURIComponent(projectPath)}`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ approved: true }),
-          }
+          'POST',
+          { approved: true }
         )
       ).then((response) => {
         permissionSettled = true;
@@ -2507,7 +2495,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns a cursor-based public session catalog page', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const metadata = metadataFor('catalog-session', '/tmp/catalog-workspace');
     vi.mocked(SessionService.listSessionPage).mockResolvedValue({
       sessions: [metadata],
@@ -2533,7 +2521,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects invalid session catalog pagination input', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     vi.mocked(SessionService.listSessionPage).mockRejectedValue(
       new Error('Session catalog limit must be an integer from 1 to 100')
     );
@@ -2544,7 +2532,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('lists archived sessions in an independently scoped catalog', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     vi.mocked(SessionService.listSessionPage).mockResolvedValue({
       sessions: [],
       nextCursor: 'archived-next',
@@ -2569,16 +2557,8 @@ describe('SessionRoutes runtime reuse', () => {
     const responses = await Promise.all([
       app.request('/sessions/catalog?projectPath=' + encodedRoot),
       app.request('/sessions/local-session?projectPath=' + encodedRoot),
-      app.request('/sessions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ projectPath: protectedRoot }),
-      }),
-      app.request('/sessions?directory=' + encodedRoot, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      }),
+      requestJson(app, '/sessions', 'POST', { projectPath: protectedRoot }),
+      requestJson(app, '/sessions?directory=' + encodedRoot, 'POST', {}),
       app.request('/sessions', {
         method: 'POST',
         headers: {
@@ -2603,7 +2583,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('preserves exact V1 local session lookup semantics beside the V2 mount', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const projectPath = '/tmp/v1-local-parity';
     const metadata = metadataFor('v1-local-session', projectPath);
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
@@ -2626,7 +2606,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('exports an exact active or archived session as non-cacheable Markdown', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const projectPath = '/tmp/export-workspace';
     const metadata = metadataFor('export-session', projectPath, {
       title: 'Export session',
@@ -2672,7 +2652,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('validates export visibility and maps empty conversations to conflict', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const invalid = await SessionRoutes().request(
       '/missing/export?includeReasoning=maybe'
     );
@@ -2691,7 +2671,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('archives and restores an inactive session tree through exact workspace routes', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const projectPath = '/tmp/archive-workspace';
     const root = metadataFor('archive-root', projectPath);
     const child = metadataFor('archive-child', projectPath, {
@@ -2751,7 +2731,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('reuses one SessionRuntime for repeated messages in the same session', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { SessionRuntime } = await import(
       '../../../../src/agent/runtime/SessionRuntime.js'
     );
@@ -2761,10 +2741,8 @@ describe('SessionRoutes runtime reuse', () => {
     const app = SessionRoutes();
 
     const sendMessage = async (content: string) => {
-      const response = await app.request('/session-1/message', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content }),
+      const response = await requestJson(app, '/session-1/message', 'POST', {
+        content,
       });
 
       expect(response.status).toBe(202);
@@ -2798,7 +2776,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('falls back from a removed durable model and migrates the Session metadata', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const metadata = makeSessionMetadata({
       sessionId: 'stale-model-session',
       projectPath: '/tmp/stale-model-workspace',
@@ -2808,13 +2786,11 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
     vi.mocked(SessionService.loadSession).mockResolvedValue(makeMessages());
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       `/stale-model-session/message?projectPath=${encodeURIComponent(metadata.projectPath)}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'continue with an available model' }),
-      }
+      'POST',
+      { content: 'continue with an available model' }
     );
 
     expect(response.status).toBe(202);
@@ -2829,7 +2805,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns a stable conflict when a restored task worktree is unavailable', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { WorktreeUnavailableError } = await import(
       '../../../../src/worktree/WorktreeManager.js'
     );
@@ -2859,13 +2835,11 @@ describe('SessionRoutes runtime reuse', () => {
       new WorktreeUnavailableError('missing')
     );
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       `/${metadata.sessionId}/message?projectPath=${encodeURIComponent(metadata.projectPath)}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'continue' }),
-      }
+      'POST',
+      { content: 'continue' }
     );
 
     expect(response.status).toBe(409);
@@ -2910,22 +2884,18 @@ describe('SessionRoutes runtime reuse', () => {
     });
     const controller = createSessionRouteController();
 
-    const first = await controller.app.request(
+    const first = await requestJson(
+      controller.app,
       '/resident-active-a/message?projectPath=%2Ftmp%2Fresidency',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'hold resident A' }),
-      }
+      'POST',
+      { content: 'hold resident A' }
     );
     expect(first.status).toBe(202);
-    const second = await controller.app.request(
+    const second = await requestJson(
+      controller.app,
       '/resident-active-b/message?projectPath=%2Ftmp%2Fresidency',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'must not initialize B' }),
-      }
+      'POST',
+      { content: 'must not initialize B' }
     );
 
     expect(second.status).toBe(429);
@@ -2971,13 +2941,11 @@ describe('SessionRoutes runtime reuse', () => {
     );
     const controller = createSessionRouteController();
     const send = async (sessionId: string, content: string) => {
-      const response = await controller.app.request(
+      const response = await requestJson(
+        controller.app,
         `/${sessionId}/message?projectPath=%2Ftmp%2Fresidency`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content }),
-        }
+        'POST',
+        { content }
       );
       expect(response.status).toBe(202);
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -3030,13 +2998,11 @@ describe('SessionRoutes runtime reuse', () => {
 
     const controller = createSessionRouteController();
     const send = async (sessionId: string, content: string) => {
-      const response = await controller.app.request(
+      const response = await requestJson(
+        controller.app,
         `/${sessionId}/message?projectPath=${encodeURIComponent('/tmp/projection-cold')}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content }),
-        }
+        'POST',
+        { content }
       );
       expect(response.status).toBe(202);
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -3080,13 +3046,11 @@ describe('SessionRoutes runtime reuse', () => {
     const controller = createSessionRouteController();
 
     for (const session of metadata) {
-      const response = await controller.app.request(
+      const response = await requestJson(
+        controller.app,
         `/${session.sessionId}/message?projectPath=${encodeURIComponent(projectPath)}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content: `message ${session.sessionId}` }),
-        }
+        'POST',
+        { content: `message ${session.sessionId}` }
       );
       expect(response.status).toBe(202);
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -3113,9 +3077,9 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('routes a second message into the active turn instead of starting a concurrent run', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { Agent } = await import('../../../../src/agent/Agent.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const Bus = await loadBus();
     mockResolvedSession('steering-session');
     let releaseRun: () => void = () => undefined;
     const runGate = new Promise<void>((resolve) => {
@@ -3132,10 +3096,8 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     const app = SessionRoutes();
-    const first = await app.request('/steering-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'initial request' }),
+    const first = await requestJson(app, '/steering-session/message', 'POST', {
+      content: 'initial request',
     });
     expect(first.status).toBe(202);
     await vi.waitFor(() => {
@@ -3146,10 +3108,8 @@ describe('SessionRoutes runtime reuse', () => {
       );
     });
 
-    const second = await app.request('/steering-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'updated requirement' }),
+    const second = await requestJson(app, '/steering-session/message', 'POST', {
+      content: 'updated requirement',
     });
 
     expect(second.status).toBe(202);
@@ -3224,8 +3184,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('reads and mutates the authoritative follow-up queue through the runtime', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     const projectPath = '/tmp/follow-up-queue-routes';
     mockResolvedSession('follow-up-routes', { projectPath });
     vi.mocked(SessionRuntime.hasDurableFollowUpInbox).mockResolvedValue(true);
@@ -3245,14 +3205,15 @@ describe('SessionRoutes runtime reuse', () => {
     expect(read.status).toBe(200);
     await expect(read.json()).resolves.toEqual(before);
 
-    const mutate = await app.request(`/follow-up-routes/follow-ups/mutate${query}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const mutate = await requestJson(
+      app,
+      `/follow-up-routes/follow-ups/mutate${query}`,
+      'POST',
+      {
         expectedVersion: before.version,
         operation: { type: 'remove', messageId: 'follow-up-1' },
-      }),
-    });
+      }
+    );
     expect(mutate.status).toBe(200);
     await expect(mutate.json()).resolves.toEqual({ snapshot: after });
     expect(runtimeState.runtime.mutateFollowUpQueue).toHaveBeenCalledWith({
@@ -3267,7 +3228,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('moves a follow-up to the requested position', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const projectPath = '/tmp/move-follow-up-queue';
     mockResolvedSession('move-follow-up-queue', { projectPath });
     const moved = makeFollowUpQueueSnapshot({
@@ -3282,15 +3243,13 @@ describe('SessionRoutes runtime reuse', () => {
     });
     runtimeState.runtime.mutateFollowUpQueue.mockResolvedValue({ snapshot: moved });
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       `/move-follow-up-queue/follow-ups/mutate?projectPath=${encodeURIComponent(projectPath)}`,
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          expectedVersion: 'a'.repeat(64),
-          operation: { type: 'move', messageId: 'follow-up-2', toPosition: 0 },
-        }),
+        expectedVersion: 'a'.repeat(64),
+        operation: { type: 'move', messageId: 'follow-up-2', toPosition: 0 },
       }
     );
 
@@ -3302,20 +3261,18 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('routes a queue mutation by projectPath in the request body', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const projectPath = '/tmp/body-follow-up-queue';
     mockResolvedSession('body-follow-up-queue', { projectPath });
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       '/body-follow-up-queue/follow-ups/mutate',
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          projectPath,
-          expectedVersion: 'a'.repeat(64),
-          operation: { type: 'remove', messageId: 'follow-up-1' },
-        }),
+        projectPath,
+        expectedVersion: 'a'.repeat(64),
+        operation: { type: 'remove', messageId: 'follow-up-1' },
       }
     );
 
@@ -3331,7 +3288,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns a canonical empty queue without initializing an idle runtime', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const projectPath = '/tmp/empty-follow-up-queue';
     mockResolvedSession('empty-follow-up-queue', { projectPath });
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
@@ -3353,7 +3310,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns typed queue conflicts with the latest snapshot', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { FollowUpQueueMutationError } = await import(
       '../../../../src/agent/runtime/FollowUpQueueProjection.js'
     );
@@ -3368,15 +3325,13 @@ describe('SessionRoutes runtime reuse', () => {
       )
     );
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       `/stale-follow-up-queue/follow-ups/mutate?projectPath=${encodeURIComponent(projectPath)}`,
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          expectedVersion: 'a'.repeat(64),
-          operation: { type: 'remove', messageId: 'follow-up-1' },
-        }),
+        expectedVersion: 'a'.repeat(64),
+        operation: { type: 'remove', messageId: 'follow-up-1' },
       }
     );
 
@@ -3399,7 +3354,7 @@ describe('SessionRoutes runtime reuse', () => {
     ['invalid_mutation', 400],
     ['storage_unavailable', 503],
   ] as const)('maps the %s queue error to HTTP %s', async (code, status) => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { FollowUpQueueMutationError } = await import(
       '../../../../src/agent/runtime/FollowUpQueueProjection.js'
     );
@@ -3410,15 +3365,13 @@ describe('SessionRoutes runtime reuse', () => {
       new FollowUpQueueMutationError(code, latest, `Queue error: ${code}`)
     );
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       `/${code}-follow-up-queue/follow-ups/mutate?projectPath=${encodeURIComponent(projectPath)}`,
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          expectedVersion: latest.version,
-          operation: { type: 'remove', messageId: 'follow-up-1' },
-        }),
+        expectedVersion: latest.version,
+        operation: { type: 'remove', messageId: 'follow-up-1' },
       }
     );
 
@@ -3430,20 +3383,18 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects malformed follow-up mutations before acquiring a runtime', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const projectPath = '/tmp/invalid-follow-up-queue';
     mockResolvedSession('invalid-follow-up-queue', { projectPath });
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       `/invalid-follow-up-queue/follow-ups/mutate?projectPath=${encodeURIComponent(projectPath)}`,
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          expectedVersion: 'not-a-version',
-          operation: { type: 'remove', messageId: 'follow-up-1' },
-          unexpected: true,
-        }),
+        expectedVersion: 'not-a-version',
+        operation: { type: 'remove', messageId: 'follow-up-1' },
+        unexpected: true,
       }
     );
 
@@ -3456,7 +3407,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('uses exact compound identity and rejects ambiguous follow-up queue lookup', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const left = metadataFor('shared-follow-up', '/tmp/follow-up-left');
     const right = metadataFor('shared-follow-up', '/tmp/follow-up-right');
     vi.mocked(SessionService.listSessions).mockResolvedValue([left, right]);
@@ -3487,7 +3438,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects archived and ACP-remote follow-up queue surfaces', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { SessionArchivedError } = await import(
       '../../../../src/services/SessionService.js'
     );
@@ -3514,8 +3465,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('publishes an unsequenced queue snapshot to an active SSE stream', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     const projectPath = '/tmp/follow-up-sse';
     mockResolvedSession('follow-up-sse', { projectPath });
     vi.mocked(SessionRuntime.hasDurableFollowUpInbox).mockResolvedValue(true);
@@ -3549,8 +3500,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('commits a queue mutation after its SSE observer disconnects', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     const projectPath = '/tmp/disconnected-follow-up-sse';
     mockResolvedSession('disconnected-follow-up-sse', { projectPath });
     vi.mocked(SessionRuntime.hasDurableFollowUpInbox).mockResolvedValue(true);
@@ -3582,15 +3533,13 @@ describe('SessionRoutes runtime reuse', () => {
     const collector = createSseCollector(eventsResponse);
     await collector.next();
 
-    const mutationResponsePromise = app.request(
+    const mutationResponsePromise = requestJson(
+      app,
       `/disconnected-follow-up-sse/follow-ups/mutate?projectPath=${encodeURIComponent(projectPath)}`,
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          expectedVersion: 'a'.repeat(64),
-          operation: { type: 'remove', messageId: 'follow-up-1' },
-        }),
+        expectedVersion: 'a'.repeat(64),
+        operation: { type: 'remove', messageId: 'follow-up-1' },
       }
     );
     await mutationStarted;
@@ -3609,8 +3558,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects changing models while a turn is active', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     mockResolvedSession('active-model-session');
     let releaseRun: () => void = () => undefined;
     const runGate = new Promise<void>((resolve) => {
@@ -3627,10 +3576,8 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     const app = SessionRoutes();
-    const first = await app.request('/active-model-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'start with model one' }),
+    const first = await requestJson(app, '/active-model-session/message', 'POST', {
+      content: 'start with model one',
     });
     expect(first.status).toBe(202);
     await vi.waitFor(() => {
@@ -3647,13 +3594,9 @@ describe('SessionRoutes runtime reuse', () => {
       model: 'gpt-4.1',
     };
     runtimeState.runtime.getCurrentModelId.mockReturnValueOnce('model-1');
-    const second = await app.request('/active-model-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        content: 'switch too early',
-        modelId: 'model-2',
-      }),
+    const second = await requestJson(app, '/active-model-session/message', 'POST', {
+      content: 'switch too early',
+      modelId: 'model-2',
     });
 
     expect(second.status).toBe(409);
@@ -3664,14 +3607,15 @@ describe('SessionRoutes runtime reuse', () => {
     });
     expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
 
-    const effortSwitch = await app.request('/active-model-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const effortSwitch = await requestJson(
+      app,
+      '/active-model-session/message',
+      'POST',
+      {
         content: 'switch effort too early',
         reasoningEffort: 'low',
-      }),
-    });
+      }
+    );
     expect(effortSwitch.status).toBe(409);
     await expect(effortSwitch.json()).resolves.toMatchObject({
       error: {
@@ -3679,13 +3623,9 @@ describe('SessionRoutes runtime reuse', () => {
       },
     });
 
-    const tierSwitch = await app.request('/active-model-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        content: 'switch service tier too early',
-        serviceTier: 'fast',
-      }),
+    const tierSwitch = await requestJson(app, '/active-model-session/message', 'POST', {
+      content: 'switch service tier too early',
+      serviceTier: 'fast',
     });
     expect(tierSwitch.status).toBe(409);
     await expect(tierSwitch.json()).resolves.toMatchObject({
@@ -3694,14 +3634,15 @@ describe('SessionRoutes runtime reuse', () => {
       },
     });
 
-    const verbositySwitch = await app.request('/active-model-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const verbositySwitch = await requestJson(
+      app,
+      '/active-model-session/message',
+      'POST',
+      {
         content: 'switch response verbosity too early',
         responseVerbosity: 'high',
-      }),
-    });
+      }
+    );
     expect(verbositySwitch.status).toBe(409);
     await expect(verbositySwitch.json()).resolves.toMatchObject({
       error: {
@@ -3710,14 +3651,15 @@ describe('SessionRoutes runtime reuse', () => {
       },
     });
 
-    const styleSwitch = await app.request('/active-model-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const styleSwitch = await requestJson(
+      app,
+      '/active-model-session/message',
+      'POST',
+      {
         content: 'switch communication style too early',
         communicationStyle: 'friendly',
-      }),
-    });
+      }
+    );
     expect(styleSwitch.status).toBe(409);
     await expect(styleSwitch.json()).resolves.toMatchObject({
       error: {
@@ -3737,8 +3679,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('defers input submitted after the active turn seals', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     mockResolvedSession('follow-up-session');
     let releaseRun: () => void = () => undefined;
     const runGate = new Promise<void>((resolve) => {
@@ -3755,10 +3697,8 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     const app = SessionRoutes();
-    await app.request('/follow-up-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'initial request' }),
+    await requestJson(app, '/follow-up-session/message', 'POST', {
+      content: 'initial request',
     });
     await vi.waitFor(() => {
       expect(Bus.publish).toHaveBeenCalledWith(
@@ -3774,10 +3714,8 @@ describe('SessionRoutes runtime reuse', () => {
       delivery: 'next_turn',
     });
 
-    const response = await app.request('/follow-up-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'run after this answer' }),
+    const response = await requestJson(app, '/follow-up-session/message', 'POST', {
+      content: 'run after this answer',
     });
 
     expect(await response.json()).toMatchObject({
@@ -3804,7 +3742,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('serializes concurrent startup input behind one durable runtime preparation', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { SessionRuntime } = await import(
       '../../../../src/agent/runtime/SessionRuntime.js'
     );
@@ -3833,10 +3771,8 @@ describe('SessionRoutes runtime reuse', () => {
     const app = SessionRoutes();
     let firstSettled = false;
     const firstPromise = Promise.resolve(
-      app.request('/startup-steering/message', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'initial request' }),
+      requestJson(app, '/startup-steering/message', 'POST', {
+        content: 'initial request',
       })
     ).then((response) => {
       firstSettled = true;
@@ -3845,10 +3781,8 @@ describe('SessionRoutes runtime reuse', () => {
 
     let secondSettled = false;
     const secondPromise = Promise.resolve(
-      app.request('/startup-steering/message', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'guidance during startup' }),
+      requestJson(app, '/startup-steering/message', 'POST', {
+        content: 'guidance during startup',
       })
     ).then((response) => {
       secondSettled = true;
@@ -3880,7 +3814,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not return 202 until the initial input has been durably prepared', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { SessionRuntime } = await import(
       '../../../../src/agent/runtime/SessionRuntime.js'
     );
@@ -3906,10 +3840,8 @@ describe('SessionRoutes runtime reuse', () => {
     const app = SessionRoutes();
     let settled = false;
     const responsePromise = Promise.resolve(
-      app.request('/durable-accept/message', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'persist before accepting' }),
+      requestJson(app, '/durable-accept/message', 'POST', {
+        content: 'persist before accepting',
       })
     ).then((response) => {
       settled = true;
@@ -3930,11 +3862,9 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('wakes a persisted durable follow-up when Web SSE reconnects', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { Agent } = await import('../../../../src/agent/Agent.js');
-    const { SessionService } = await import(
-      '../../../../src/services/SessionService.js'
-    );
+    const SessionService = await loadSessionService();
     const recoveredMetadata = metadataFor(
       'recovered-web-session',
       '/persisted-workspace',
@@ -4195,13 +4125,11 @@ describe('SessionRoutes runtime reuse', () => {
         expect(agentState.chatStream).toHaveBeenCalledTimes(1);
       });
 
-      const steering = await controller.app.request(
+      const steering = await requestJson(
+        controller.app,
         '/steered-pending-resume/message?projectPath=%2Fpersisted-workspace',
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content: 'new requirement' }),
-        }
+        'POST',
+        { content: 'new requirement' }
       );
       expect(steering.status).toBe(202);
       await expect(steering.json()).resolves.toMatchObject({
@@ -4332,7 +4260,7 @@ describe('SessionRoutes runtime reuse', () => {
     const { SessionRuntimeResidency: CurrentSessionRuntimeResidency } = await import(
       '../../../../src/agent/runtime/SessionRuntimeResidency.js'
     );
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const Bus = await loadBus();
     const { TeamMailbox } = await import('../../../../src/agent/teams/TeamMailbox.js');
     vi.useFakeTimers({ now: 1_000 });
     const sessionId = 'single-flight-retry-resume';
@@ -5407,13 +5335,11 @@ describe('SessionRoutes runtime reuse', () => {
           );
           expect(deleteResponse.status).toBe(200);
         } else if (cleanup === 'new message run') {
-          const messageResponse = await controller.app.request(
+          const messageResponse = await requestJson(
+            controller.app,
             `/${sessionId}/message?projectPath=${encodeURIComponent(projectPath)}`,
-            {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ content: 'start a fresh run' }),
-            }
+            'POST',
+            { content: 'start a fresh run' }
           );
           expect(messageResponse.status).toBe(202);
           await vi.waitFor(() => {
@@ -5596,9 +5522,9 @@ describe('SessionRoutes runtime reuse', () => {
   );
 
   it('projects recovery attention without starting a Web run on reconnect', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { Agent } = await import('../../../../src/agent/Agent.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const Bus = await loadBus();
     const recoveredMetadata = metadataFor(
       'attention-web-session',
       '/attention-workspace',
@@ -5645,9 +5571,9 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('projects recovery attention for an interrupted isolated task after restart', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { Agent } = await import('../../../../src/agent/Agent.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const Bus = await loadBus();
     const recoveredMetadata = metadataFor(
       'isolated-attention-web-session',
       '/isolated-attention-workspace',
@@ -5697,9 +5623,9 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('projects completed recovery before Web resume eligibility short-circuits', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const { Agent } = await import('../../../../src/agent/Agent.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const Bus = await loadBus();
     const recoveredMetadata = metadataFor(
       'completed-web-session',
       '/completed-workspace',
@@ -5746,8 +5672,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('wakes an idle Web parent when a background completion is durably queued', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     const recoveredMetadata = metadataFor(
       'background-web-session',
       '/background-workspace',
@@ -5807,10 +5733,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not start a Goal run after Runtime startup finalizes its durable handoff', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { SessionService } = await import(
-      '../../../../src/services/SessionService.js'
-    );
+    const SessionRoutes = await loadSessionRoutes();
+    const SessionService = await loadSessionService();
     const recoveredMetadata = metadataFor(
       'goal-handoff-web-session',
       '/goal-handoff-workspace',
@@ -5856,7 +5780,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not wake residual inbox input for a terminal task on Web SSE reconnect', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const terminalMetadata = makeSessionMetadata({
       sessionId: 'cancelled-web-task',
       projectPath: '/cancelled-task-workspace',
@@ -5884,18 +5808,14 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('builds multimodal user content from image attachments', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('session-2');
 
     const app = SessionRoutes();
 
-    const response = await app.request('/session-2/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        content: 'describe this image',
-        attachments: [{ type: 'image', content: 'data:image/png;base64,abc' }],
-      }),
+    const response = await requestJson(app, '/session-2/message', 'POST', {
+      content: 'describe this image',
+      attachments: [{ type: 'image', content: 'data:image/png;base64,abc' }],
     });
 
     expect(response.status).toBe(202);
@@ -5912,18 +5832,14 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('builds image-only user content when the request only contains image attachments', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('session-3');
 
     const app = SessionRoutes();
 
-    const response = await app.request('/session-3/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        content: '',
-        attachments: [{ type: 'image', content: 'data:image/png;base64,image-only' }],
-      }),
+    const response = await requestJson(app, '/session-3/message', 'POST', {
+      content: '',
+      attachments: [{ type: 'image', content: 'data:image/png;base64,image-only' }],
     });
 
     expect(response.status).toBe(202);
@@ -5937,7 +5853,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('persists selected conversation annotations as input metadata', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('annotated-session');
     const annotations = [
       {
@@ -5949,14 +5865,15 @@ describe('SessionRoutes runtime reuse', () => {
       },
     ];
 
-    const response = await SessionRoutes().request('/annotated-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const response = await requestJson(
+      SessionRoutes(),
+      '/annotated-session/message',
+      'POST',
+      {
         content: 'Why does this matter?',
         annotations,
-      }),
-    });
+      }
+    );
 
     expect(response.status).toBe(202);
     expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(
@@ -5968,7 +5885,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('validates and durably prepares a turn-scoped output schema', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('structured-session');
     const outputSchema = {
       type: 'object',
@@ -5977,14 +5894,15 @@ describe('SessionRoutes runtime reuse', () => {
       additionalProperties: false,
     };
 
-    const response = await SessionRoutes().request('/structured-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const response = await requestJson(
+      SessionRoutes(),
+      '/structured-session/message',
+      'POST',
+      {
         content: 'return a structured answer',
         outputSchema,
-      }),
-    });
+      }
+    );
 
     expect(response.status).toBe(202);
     expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(
@@ -6001,23 +5919,21 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects an invalid output schema before preparing durable input', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('invalid-structured-session');
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       '/invalid-structured-session/message',
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          content: 'return a structured answer',
-          outputSchema: {
-            type: 'object',
-            properties: {
-              answer: { $ref: 'https://example.com/remote.json' },
-            },
+        content: 'return a structured answer',
+        outputSchema: {
+          type: 'object',
+          properties: {
+            answer: { $ref: 'https://example.com/remote.json' },
           },
-        }),
+        },
       }
     );
 
@@ -6027,7 +5943,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('hides the reserved structured-output tool from client history', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('structured-history-session');
     vi.mocked(SessionService.loadSession).mockResolvedValue([
       {
@@ -6096,7 +6012,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('refreshes an idle session runtime to the model selected for the message', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('model-selected-session');
     modelState.current = {
       id: 'model-2',
@@ -6105,13 +6021,9 @@ describe('SessionRoutes runtime reuse', () => {
     };
 
     const app = SessionRoutes();
-    const response = await app.request('/model-selected-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        content: 'use the selected model',
-        modelId: 'model-2',
-      }),
+    const response = await requestJson(app, '/model-selected-session/message', 'POST', {
+      content: 'use the selected model',
+      modelId: 'model-2',
     });
 
     expect(response.status).toBe(202);
@@ -6128,144 +6040,79 @@ describe('SessionRoutes runtime reuse', () => {
     );
   });
 
-  it('validates, persists, and publishes an idle Session reasoning switch', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    mockResolvedSession('reasoning-selected-session');
+  it.each([
+    {
+      label: 'reasoning',
+      sessionId: 'reasoning-selected-session',
+      content: 'use low reasoning',
+      setting: { reasoningEffort: 'low' },
+      verifyResolution: () =>
+        expect(runtimeState.runtime.resolveReasoningConfiguration).toHaveBeenCalledWith(
+          'low',
+          undefined
+        ),
+    },
+    {
+      label: 'service tier',
+      sessionId: 'tier-selected-session',
+      content: 'use the priority provider tier',
+      setting: { serviceTier: 'fast' },
+      verifyResolution: () =>
+        expect(
+          runtimeState.runtime.resolveServiceTierConfiguration
+        ).toHaveBeenCalledWith('fast', undefined),
+    },
+    {
+      label: 'response verbosity',
+      sessionId: 'verbosity-selected-session',
+      content: 'use detailed responses',
+      setting: { responseVerbosity: 'high' },
+      verifyResolution: () =>
+        expect(
+          runtimeState.runtime.resolveResponseVerbosityConfiguration
+        ).toHaveBeenCalledWith('high', undefined),
+    },
+    {
+      label: 'communication style',
+      sessionId: 'style-selected-session',
+      content: 'use an explanatory communication style',
+      setting: { communicationStyle: 'explanatory' },
+      verifyResolution: () =>
+        expect(
+          runtimeState.runtime.resolveCommunicationStyleConfiguration
+        ).toHaveBeenCalledWith('explanatory'),
+    },
+  ])(
+    'validates, persists, and publishes an idle Session $label switch',
+    async ({ sessionId, content, setting, verifyResolution }) => {
+      const SessionRoutes = await loadSessionRoutes();
+      mockResolvedSession(sessionId);
 
-    const response = await SessionRoutes().request(
-      '/reasoning-selected-session/message',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          content: 'use low reasoning',
-          reasoningEffort: 'low',
-        }),
-      }
-    );
+      const response = await requestJson(
+        SessionRoutes(),
+        `/${sessionId}/message`,
+        'POST',
+        { content, ...setting }
+      );
 
-    expect(response.status).toBe(202);
-    expect(runtimeState.runtime.resolveReasoningConfiguration).toHaveBeenCalledWith(
-      'low',
-      undefined
-    );
-    expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
-      reasoningEffort: 'low',
-    });
-    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
-      'reasoning-selected-session',
-      expect.any(String),
-      { reasoningEffort: 'low' }
-    );
-    expect(busState.publish).toHaveBeenCalledWith(
-      refFor('reasoning-selected-session'),
-      'session.updated',
-      { reasoningEffort: 'low' }
-    );
-  });
-
-  it('validates, persists, and publishes an idle Session service-tier switch', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    mockResolvedSession('tier-selected-session');
-
-    const response = await SessionRoutes().request('/tier-selected-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        content: 'use the priority provider tier',
-        serviceTier: 'fast',
-      }),
-    });
-
-    expect(response.status).toBe(202);
-    expect(runtimeState.runtime.resolveServiceTierConfiguration).toHaveBeenCalledWith(
-      'fast',
-      undefined
-    );
-    expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
-      serviceTier: 'fast',
-    });
-    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
-      'tier-selected-session',
-      expect.any(String),
-      { serviceTier: 'fast' }
-    );
-    expect(busState.publish).toHaveBeenCalledWith(
-      refFor('tier-selected-session'),
-      'session.updated',
-      { serviceTier: 'fast' }
-    );
-  });
-
-  it('validates, persists, and publishes an idle Session response-verbosity switch', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    mockResolvedSession('verbosity-selected-session');
-
-    const response = await SessionRoutes().request(
-      '/verbosity-selected-session/message',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          content: 'use detailed responses',
-          responseVerbosity: 'high',
-        }),
-      }
-    );
-
-    expect(response.status).toBe(202);
-    expect(
-      runtimeState.runtime.resolveResponseVerbosityConfiguration
-    ).toHaveBeenCalledWith('high', undefined);
-    expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
-      responseVerbosity: 'high',
-    });
-    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
-      'verbosity-selected-session',
-      expect.any(String),
-      { responseVerbosity: 'high' }
-    );
-    expect(busState.publish).toHaveBeenCalledWith(
-      refFor('verbosity-selected-session'),
-      'session.updated',
-      { responseVerbosity: 'high' }
-    );
-  });
-
-  it('validates, persists, and publishes an idle Session communication-style switch', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    mockResolvedSession('style-selected-session');
-
-    const response = await SessionRoutes().request('/style-selected-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        content: 'use an explanatory communication style',
-        communicationStyle: 'explanatory',
-      }),
-    });
-
-    expect(response.status).toBe(202);
-    expect(
-      runtimeState.runtime.resolveCommunicationStyleConfiguration
-    ).toHaveBeenCalledWith('explanatory');
-    expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
-      communicationStyle: 'explanatory',
-    });
-    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
-      'style-selected-session',
-      expect.any(String),
-      { communicationStyle: 'explanatory' }
-    );
-    expect(busState.publish).toHaveBeenCalledWith(
-      refFor('style-selected-session'),
-      'session.updated',
-      { communicationStyle: 'explanatory' }
-    );
-  });
+      expect(response.status).toBe(202);
+      verifyResolution();
+      expect(runtimeState.runtime.refresh).toHaveBeenCalledWith(setting);
+      expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+        sessionId,
+        expect.any(String),
+        setting
+      );
+      expect(busState.publish).toHaveBeenCalledWith(
+        refFor(sessionId),
+        'session.updated',
+        setting
+      );
+    }
+  );
 
   it('rolls back an idle runtime switch when the selected model cannot be persisted', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('model-persistence-failure');
     modelState.current = {
       id: 'model-2',
@@ -6277,15 +6124,13 @@ describe('SessionRoutes runtime reuse', () => {
       new Error('disk unavailable')
     );
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       '/model-persistence-failure/message',
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          content: 'do not accept a volatile model switch',
-          modelId: 'model-2',
-        }),
+        content: 'do not accept a volatile model switch',
+        modelId: 'model-2',
       }
     );
 
@@ -6304,22 +6149,20 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects message attachments above the shared inline budget', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('oversized-message-session');
     const halfBudget = 'x'.repeat(Math.floor(MAX_INLINE_ATTACHMENT_BYTES / 2) + 1);
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       '/oversized-message-session/message',
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          content: 'inspect these screenshots',
-          attachments: [
-            { type: 'image', content: halfBudget },
-            { type: 'image', content: halfBudget },
-          ],
-        }),
+        content: 'inspect these screenshots',
+        attachments: [
+          { type: 'image', content: halfBudget },
+          { type: 'image', content: halfBudget },
+        ],
       }
     );
 
@@ -6333,17 +6176,15 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('accepts large Web prompts for durable runtime offload', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('large-web-prompt-session');
     const content = `WEB_HEAD_${'x'.repeat(40_000)}_WEB_TAIL`;
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       '/large-web-prompt-session/message',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content }),
-      }
+      'POST',
+      { content }
     );
 
     expect(response.status).toBe(202);
@@ -6351,17 +6192,15 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects Web prompts above the durable character limit before runtime use', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('too-large-web-prompt-session');
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       '/too-large-web-prompt-session/message',
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          content: 'x'.repeat(MAX_USER_MESSAGE_TEXT_CHARS + 1),
-        }),
+        content: 'x'.repeat(MAX_USER_MESSAGE_TEXT_CHARS + 1),
       }
     );
 
@@ -6371,7 +6210,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('loads persisted model context without retaining Web Session history', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('persisted-session', {
       projectPath: '/persisted-workspace',
       messages: makeMessages(
@@ -6388,10 +6227,8 @@ describe('SessionRoutes runtime reuse', () => {
 
     const app = SessionRoutes();
 
-    const response = await app.request('/persisted-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'follow up' }),
+    const response = await requestJson(app, '/persisted-session/message', 'POST', {
+      content: 'follow up',
     });
 
     expect(response.status).toBe(202);
@@ -6419,17 +6256,18 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('restores the persisted permission mode when a cold follow-up omits it', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('persisted-mode', {
       projectPath: '/persisted-mode-workspace',
       permissionMode: 'yolo',
     });
 
-    const response = await SessionRoutes().request('/persisted-mode/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'continue with the frozen policy' }),
-    });
+    const response = await requestJson(
+      SessionRoutes(),
+      '/persisted-mode/message',
+      'POST',
+      { content: 'continue with the frozen policy' }
+    );
 
     expect(response.status).toBe(202);
     await vi.waitFor(() => {
@@ -6449,20 +6287,21 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('persists an explicit permission override before preparing the next turn', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('override-mode', {
       projectPath: '/override-mode-workspace',
       permissionMode: 'yolo',
     });
 
-    const response = await SessionRoutes().request('/override-mode/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const response = await requestJson(
+      SessionRoutes(),
+      '/override-mode/message',
+      'POST',
+      {
         content: 'continue under automatic edits only',
         permissionMode: 'autoEdit',
-      }),
-    });
+      }
+    );
 
     expect(response.status).toBe(202);
     expect(SessionService.setSessionPermissionMode).toHaveBeenCalledWith(
@@ -6487,7 +6326,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not start a turn when an explicit permission override cannot persist', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('failed-mode', {
       projectPath: '/failed-mode-workspace',
       permissionMode: 'default',
@@ -6496,14 +6335,15 @@ describe('SessionRoutes runtime reuse', () => {
       new Error('permission mode fsync failed')
     );
 
-    const response = await SessionRoutes().request('/failed-mode/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const response = await requestJson(
+      SessionRoutes(),
+      '/failed-mode/message',
+      'POST',
+      {
         content: 'do not run with a volatile policy',
         permissionMode: 'yolo',
-      }),
-    });
+      }
+    );
 
     expect(response.status).toBe(500);
     expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
@@ -6511,8 +6351,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('publishes a run error and releases a prepared owner on loop failure', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     mockResolvedSession('failed-prepared-run');
     agentState.chatStream.mockImplementationOnce(async function* () {
       if (Date.now() < 0) yield undefined;
@@ -6524,10 +6364,8 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     const app = SessionRoutes();
-    const response = await app.request('/failed-prepared-run/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'durable request' }),
+    const response = await requestJson(app, '/failed-prepared-run/message', 'POST', {
+      content: 'durable request',
     });
 
     expect(response.status).toBe(202);
@@ -6556,7 +6394,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('preserves recovery evidence when outer Web cleanup retries an ack failure', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('failed-recovery-ack');
     runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({
       state: 'requires_attention',
@@ -6569,11 +6407,12 @@ describe('SessionRoutes runtime reuse', () => {
       throw new Error('recovery acknowledgement fsync failed');
     });
 
-    const response = await SessionRoutes().request('/failed-recovery-ack/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'confirm external state' }),
-    });
+    const response = await requestJson(
+      SessionRoutes(),
+      '/failed-recovery-ack/message',
+      'POST',
+      { content: 'confirm external state' }
+    );
 
     expect(response.status).toBe(202);
     await vi.waitFor(() => {
@@ -6585,8 +6424,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('settles Web recovery attention without publishing completion', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     mockResolvedSession('attention-run');
     const assessment = {
       state: 'requires_attention' as const,
@@ -6608,11 +6447,12 @@ describe('SessionRoutes runtime reuse', () => {
       };
     });
 
-    const response = await SessionRoutes().request('/attention-run/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'continue only after attention clears' }),
-    });
+    const response = await requestJson(
+      SessionRoutes(),
+      '/attention-run/message',
+      'POST',
+      { content: 'continue only after attention clears' }
+    );
 
     expect(response.status).toBe(202);
     await vi.waitFor(() => {
@@ -6634,8 +6474,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('stops the Web follow-up loop when recovery attention appears', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     mockResolvedSession('attention-follow-up');
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
     const assessment = {
@@ -6667,11 +6507,12 @@ describe('SessionRoutes runtime reuse', () => {
         };
       });
 
-    const response = await SessionRoutes().request('/attention-follow-up/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'start the run' }),
-    });
+    const response = await requestJson(
+      SessionRoutes(),
+      '/attention-follow-up/message',
+      'POST',
+      { content: 'start the run' }
+    );
 
     expect(response.status).toBe(202);
     await vi.waitFor(() => expect(agentState.chatStream).toHaveBeenCalledTimes(2));
@@ -6683,8 +6524,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('publishes loop lifecycle events and preserves canonical tool failure state', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     mockResolvedSession('surface-events');
 
     agentState.chatStream.mockImplementationOnce(async function* () {
@@ -6909,10 +6750,8 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     const app = SessionRoutes();
-    const response = await app.request('/surface-events/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'recover from the failed command' }),
+    const response = await requestJson(app, '/surface-events/message', 'POST', {
+      content: 'recover from the failed command',
     });
 
     expect(response.status).toBe(202);
@@ -7120,20 +6959,14 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('creates durable metadata before inserting an active session', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
-    const { SessionService } = await import(
-      '../../../../src/services/SessionService.js'
-    );
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
+    const SessionService = await loadSessionService();
 
     const app = SessionRoutes();
-    const response = await app.request('/', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        title: 'Created from web',
-        projectPath: '/tmp/task4-create-workspace',
-      }),
+    const response = await requestJson(app, '/', 'POST', {
+      title: 'Created from web',
+      projectPath: '/tmp/task4-create-workspace',
     });
 
     expect(response.status).toBe(200);
@@ -7200,13 +7033,9 @@ describe('SessionRoutes runtime reuse', () => {
       );
       await hydrationStarted;
 
-      const second = await controller.app.request('/', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          title: 'Create B',
-          projectPath: '/tmp/task4-create-capacity-b',
-        }),
+      const second = await requestJson(controller.app, '/', 'POST', {
+        title: 'Create B',
+        projectPath: '/tmp/task4-create-capacity-b',
       });
 
       expect(second.status).toBe(429);
@@ -7269,13 +7098,11 @@ describe('SessionRoutes runtime reuse', () => {
     const controller = createSessionRouteController();
 
     try {
-      const activeResponse = await controller.app.request(
+      const activeResponse = await requestJson(
+        controller.app,
         `/${active.sessionId}/message?projectPath=${encodeURIComponent(active.projectPath)}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content: 'hold this projection lease' }),
-        }
+        'POST',
+        { content: 'hold this projection lease' }
       );
       expect(activeResponse.status).toBe(202);
       await vi.waitFor(() => {
@@ -7390,11 +7217,12 @@ describe('SessionRoutes runtime reuse', () => {
         maxResident: 1,
       });
 
-      const forkResponse = await controller.app.request(`/${source.sessionId}/fork`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ projectPath: source.projectPath }),
-      });
+      const forkResponse = await requestJson(
+        controller.app,
+        `/${source.sessionId}/fork`,
+        'POST',
+        { projectPath: source.projectPath }
+      );
 
       expect(forkResponse.status).toBe(201);
       const fork = (await forkResponse.json()) as {
@@ -7473,11 +7301,12 @@ describe('SessionRoutes runtime reuse', () => {
     const controller = createSessionRouteController();
 
     try {
-      const forkResponse = await controller.app.request(`/${source.sessionId}/fork`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ projectPath: source.projectPath }),
-      });
+      const forkResponse = await requestJson(
+        controller.app,
+        `/${source.sessionId}/fork`,
+        'POST',
+        { projectPath: source.projectPath }
+      );
       expect(forkResponse.status).toBe(201);
       const fork = (await forkResponse.json()) as {
         session: { sessionId: string; projectPath: string };
@@ -7507,25 +7336,20 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('starts a native read-only review for an exact Session workspace', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const app = SessionRoutes();
     const projectPath = '/tmp/native-review-workspace';
-    const created = await app.request('/', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: 'Review', projectPath }),
+    const created = await requestJson(app, '/', 'POST', {
+      title: 'Review',
+      projectPath,
     });
     const session = (await created.json()) as { sessionId: string };
 
-    const response = await app.request(`/${session.sessionId}/review`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        projectPath,
-        kind: 'base',
-        ref: 'main',
-        modelId: 'model-1',
-      }),
+    const response = await requestJson(app, `/${session.sessionId}/review`, 'POST', {
+      projectPath,
+      kind: 'base',
+      ref: 'main',
+      modelId: 'model-1',
     });
 
     expect(response.status).toBe(202);
@@ -7555,13 +7379,9 @@ describe('SessionRoutes runtime reuse', () => {
     {
       label: 'shell',
       invoke: async (app: RequestableApp) =>
-        app.request('/owner-pin-shell/shell', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            command: 'pwd',
-            projectPath: '/tmp/owner-pin-shell',
-          }),
+        requestJson(app, '/owner-pin-shell/shell', 'POST', {
+          command: 'pwd',
+          projectPath: '/tmp/owner-pin-shell',
         }),
       configure: () => {
         const metadata = makeSessionMetadata({
@@ -7603,15 +7423,11 @@ describe('SessionRoutes runtime reuse', () => {
     {
       label: 'review',
       invoke: async (app: RequestableApp) =>
-        app.request('/owner-pin-review/review', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            projectPath: '/tmp/owner-pin-review',
-            kind: 'base',
-            ref: 'main',
-            modelId: 'model-1',
-          }),
+        requestJson(app, '/owner-pin-review/review', 'POST', {
+          projectPath: '/tmp/owner-pin-review',
+          kind: 'base',
+          ref: 'main',
+          modelId: 'model-1',
         }),
       configure: () => {
         const metadata = makeSessionMetadata({
@@ -8853,16 +8669,12 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('keeps an active session visible when another workspace persists the same id as a subagent', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     const app = SessionRoutes();
-    const createResponse = await app.request('/', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        title: 'Workspace B active session',
-        projectPath: '/tmp/workspace-b',
-      }),
+    const createResponse = await requestJson(app, '/', 'POST', {
+      title: 'Workspace B active session',
+      projectPath: '/tmp/workspace-b',
     });
     const activeSession = await createResponse.json();
     vi.mocked(SessionService.listSessions).mockResolvedValue([
@@ -8886,7 +8698,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('isolates module-global session state between SessionRoutes instances and aborts ghost runs', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     const metadata = metadataFor('ghost-session', '/tmp/ghost-workspace', {
       title: 'Ghost session',
@@ -8914,13 +8726,11 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     const app1 = SessionRoutes();
-    const startResponse = await app1.request(
+    const startResponse = await requestJson(
+      app1,
       `/ghost-session/message?projectPath=${encodeURIComponent('/tmp/ghost-workspace')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'leave a ghost run behind' }),
-      }
+      'POST',
+      { content: 'leave a ghost run behind' }
     );
     expect(startResponse.status).toBe(202);
     expect(observedSignal?.aborted).toBe(false);
@@ -8946,22 +8756,16 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not keep an in-memory session when durable creation fails', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { SessionService } = await import(
-      '../../../../src/services/SessionService.js'
-    );
+    const SessionRoutes = await loadSessionRoutes();
+    const SessionService = await loadSessionService();
     vi.mocked(SessionService.createSessionMetadata).mockRejectedValueOnce(
       new Error('disk full')
     );
 
     const app = SessionRoutes();
-    const createResponse = await app.request('/', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        title: 'Unpersisted',
-        projectPath: '/tmp/task4-create-fail',
-      }),
+    const createResponse = await requestJson(app, '/', 'POST', {
+      title: 'Unpersisted',
+      projectPath: '/tmp/task4-create-fail',
     });
 
     expect(createResponse.status).toBe(500);
@@ -8972,19 +8776,13 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('updates durable metadata before mutating the active session title', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { SessionService } = await import(
-      '../../../../src/services/SessionService.js'
-    );
+    const SessionRoutes = await loadSessionRoutes();
+    const SessionService = await loadSessionService();
 
     const app = SessionRoutes();
-    const createResponse = await app.request('/', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        title: 'Before rename',
-        projectPath: '/tmp/task4-rename-workspace',
-      }),
+    const createResponse = await requestJson(app, '/', 'POST', {
+      title: 'Before rename',
+      projectPath: '/tmp/task4-rename-workspace',
     });
     const created = await createResponse.json();
 
@@ -8997,13 +8795,9 @@ describe('SessionRoutes runtime reuse', () => {
       })
     );
 
-    const patchResponse = await app.request(`/${created.sessionId}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        title: 'Renamed durably',
-        projectPath: '/tmp/task4-rename-workspace',
-      }),
+    const patchResponse = await requestJson(app, `/${created.sessionId}`, 'PATCH', {
+      title: 'Renamed durably',
+      projectPath: '/tmp/task4-rename-workspace',
     });
 
     expect(patchResponse.status).toBe(200);
@@ -9019,10 +8813,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not mutate the active title when durable rename fails', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { SessionService } = await import(
-      '../../../../src/services/SessionService.js'
-    );
+    const SessionRoutes = await loadSessionRoutes();
+    const SessionService = await loadSessionService();
     const metadata = metadataFor('stable-title-session', '/tmp/task4-stable-title', {
       title: 'Stable title',
     });
@@ -9042,13 +8834,9 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionService.updateSessionMetadata).mockRejectedValueOnce(
       new Error('rename failed')
     );
-    const patchResponse = await app.request('/stable-title-session', {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        title: 'Should not stick',
-        projectPath: '/tmp/task4-stable-title',
-      }),
+    const patchResponse = await requestJson(app, '/stable-title-session', 'PATCH', {
+      title: 'Should not stick',
+      projectPath: '/tmp/task4-stable-title',
     });
 
     expect(patchResponse.status).toBe(500);
@@ -9063,10 +8851,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('requires projectPath when duplicate session ids exist across workspaces', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { SessionService } = await import(
-      '../../../../src/services/SessionService.js'
-    );
+    const SessionRoutes = await loadSessionRoutes();
+    const SessionService = await loadSessionService();
 
     vi.mocked(SessionService.listSessions).mockResolvedValue([
       makeSessionMetadata({
@@ -9094,10 +8880,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('resolves duplicate ids to the exact workspace for get and message history', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { SessionService } = await import(
-      '../../../../src/services/SessionService.js'
-    );
+    const SessionRoutes = await loadSessionRoutes();
+    const SessionService = await loadSessionService();
 
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath?: string) => {
@@ -9157,7 +8941,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns exact lookup errors for SSE instead of falling back to the request directory', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     const app = SessionRoutes();
 
@@ -9198,8 +8982,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('delivers SSE events only to the collector for the exact session workspace', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath?: string) => {
         if (
@@ -9309,7 +9093,7 @@ describe('SessionRoutes runtime reuse', () => {
         }
       }
     );
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('readiness-session', { projectPath: '/tmp/workspace-a' });
 
     const controller = new AbortController();
@@ -9337,7 +9121,7 @@ describe('SessionRoutes runtime reuse', () => {
       .spyOn(SSEStreamingApi.prototype, 'writeSSE')
       .mockRejectedValueOnce(new Error('connected write failed'));
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('write-failure-session', {
       projectPath: '/tmp/workspace-a',
     });
@@ -9365,8 +9149,8 @@ describe('SessionRoutes runtime reuse', () => {
         return originalWriteSse.call(this, message);
       })
       .mockRejectedValueOnce(new Error('Bus event write failed'));
-    const { Bus } = await import('../../../../src/server/bus.js');
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     mockResolvedSession('bus-write-failure', { projectPath: '/tmp/workspace-a' });
 
     let readSettled = false;
@@ -9435,7 +9219,7 @@ describe('SessionRoutes runtime reuse', () => {
         return originalWriteSse.call(this, message);
       })
       .mockRejectedValueOnce(new Error('heartbeat write failed'));
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('heartbeat-write-failure', {
       projectPath: '/tmp/workspace-a',
     });
@@ -9492,7 +9276,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not lose an exact Bus event published as soon as connected is consumed', async () => {
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const Bus = await loadBus();
     const NativeTransformStream = globalThis.TransformStream;
     let publishedAtConnectedWrite = false;
     vi.stubGlobal(
@@ -9519,7 +9303,7 @@ describe('SessionRoutes runtime reuse', () => {
         }
       }
     );
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     mockResolvedSession('readiness-session', { projectPath: '/tmp/workspace-a' });
 
     const controller = new AbortController();
@@ -9549,8 +9333,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('cuts replay over to live committed events without duplicates or cursor regression', async () => {
-    const { Bus } = await import('../../../../src/server/bus.js');
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     const ref = {
       sessionId: 'replay-cutover-session',
       projectPath: '/tmp/workspace-a',
@@ -9642,8 +9426,8 @@ describe('SessionRoutes runtime reuse', () => {
         if (this === slowWriter && !connected) return slowWrite;
         return originalWriteSse.call(this, message);
       });
-    const { Bus } = await import('../../../../src/server/bus.js');
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
     const ref = {
       sessionId: 'slow-subscriber-session',
       projectPath: '/tmp/workspace-a',
@@ -9669,13 +9453,11 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     const app = SessionRoutes();
-    const start = await app.request(
+    const start = await requestJson(
+      app,
       `/${ref.sessionId}/message?projectPath=${encodeURIComponent(ref.projectPath)}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'keep running' }),
-      }
+      'POST',
+      { content: 'keep running' }
     );
     expect(start.status).toBe(202);
     await vi.waitFor(() => expect(turnSignal).toBeDefined());
@@ -9727,17 +9509,15 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects message posts for an explicit missing workspace without creating runtime state', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { Bus } = await import('../../../../src/server/bus.js');
+    const SessionRoutes = await loadSessionRoutes();
+    const Bus = await loadBus();
 
     const app = SessionRoutes();
-    const response = await app.request(
+    const response = await requestJson(
+      app,
       `/missing-session/message?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'hello from nowhere' }),
-      }
+      'POST',
+      { content: 'hello from nowhere' }
     );
 
     expect(response.status).toBe(404);
@@ -9750,7 +9530,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('requires projectPath for duplicate session ids before accepting a message', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     vi.mocked(SessionService.listSessions).mockResolvedValue([
       makeSessionMetadata({
         sessionId: 'shared-session',
@@ -9767,10 +9547,8 @@ describe('SessionRoutes runtime reuse', () => {
     ]);
 
     const app = SessionRoutes();
-    const response = await app.request('/shared-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'ambiguous' }),
+    const response = await requestJson(app, '/shared-session/message', 'POST', {
+      content: 'ambiguous',
     });
 
     expect(response.status).toBe(409);
@@ -9780,7 +9558,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('creates isolated runtimes for the same session id in different explicit workspaces', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath?: string) => {
         if (
@@ -9798,21 +9576,17 @@ describe('SessionRoutes runtime reuse', () => {
     );
 
     const app = SessionRoutes();
-    const firstResponse = await app.request(
+    const firstResponse = await requestJson(
+      app,
       `/shared-session/message?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'workspace a' }),
-      }
+      'POST',
+      { content: 'workspace a' }
     );
-    const secondResponse = await app.request(
+    const secondResponse = await requestJson(
+      app,
       `/shared-session/message?projectPath=${encodeURIComponent('/tmp/workspace-b')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'workspace b' }),
-      }
+      'POST',
+      { content: 'workspace b' }
     );
 
     expect(firstResponse.status).toBe(202);
@@ -9831,7 +9605,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('routes a same-id message by projectPath in the shared request payload', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath?: string) => {
         if (sessionId === 'shared-session' && projectPath === '/tmp/workspace-b') {
@@ -9841,14 +9615,15 @@ describe('SessionRoutes runtime reuse', () => {
       }
     );
 
-    const response = await SessionRoutes().request('/shared-session/message', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const response = await requestJson(
+      SessionRoutes(),
+      '/shared-session/message',
+      'POST',
+      {
         content: 'workspace b',
         projectPath: '/tmp/workspace-b',
-      }),
-    });
+      }
+    );
 
     expect(response.status).toBe(202);
     expect(SessionRuntime.create).toHaveBeenCalledWith({
@@ -9859,7 +9634,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('patches only the exact same-id workspace and rejects duplicate no-path patch requests', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     const metadataA = metadataFor('shared-session', '/tmp/workspace-a', {
       title: 'Workspace A',
@@ -9941,15 +9716,13 @@ describe('SessionRoutes runtime reuse', () => {
     controllerB.abort();
     await Promise.all([collectorA.cancel(), collectorB.cancel()]);
 
-    const patchA = await app.request(
+    const patchA = await requestJson(
+      app,
       `/shared-session?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
+      'PATCH',
       {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          projectPath: '/tmp/workspace-a',
-          title: 'Workspace A2',
-        }),
+        projectPath: '/tmp/workspace-a',
+        title: 'Workspace A2',
       }
     );
 
@@ -9985,10 +9758,8 @@ describe('SessionRoutes runtime reuse', () => {
     busState.subscribers.clear();
     vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
 
-    const ambiguousPatch = await app.request('/shared-session', {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: 'Should fail without path' }),
+    const ambiguousPatch = await requestJson(app, '/shared-session', 'PATCH', {
+      title: 'Should fail without path',
     });
 
     expect(ambiguousPatch.status).toBe(409);
@@ -10284,7 +10055,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('deletes only the exact same-id workspace and rejects duplicate no-path delete requests', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     const metadataA = metadataFor('shared-session', '/tmp/workspace-a', {
       title: 'Workspace A',
@@ -10378,13 +10149,11 @@ describe('SessionRoutes runtime reuse', () => {
 
     const app = SessionRoutes();
     const sendMessage = (projectPath: string, content: string) =>
-      app.request(
+      requestJson(
+        app,
         `/shared-session/message?projectPath=${encodeURIComponent(projectPath)}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content }),
-        }
+        'POST',
+        { content }
       );
 
     const [messageA, messageB] = await Promise.all([
@@ -10451,7 +10220,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('keeps volatile session state after durable delete failure while marking the run cancelled', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     const metadata = metadataFor(
       'delete-failure-session',
@@ -10498,13 +10267,11 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     const app = SessionRoutes();
-    const startResponse = await app.request(
+    const startResponse = await requestJson(
+      app,
       `/delete-failure-session/message?projectPath=${encodeURIComponent('/tmp/delete-failure-workspace')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'start delete failure run' }),
-      }
+      'POST',
+      { content: 'start delete failure run' }
     );
     expect(startResponse.status).toBe(202);
 
@@ -10562,7 +10329,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('aborts only the exact same-id workspace run and rejects duplicate no-path abort requests', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     const metadataA = metadataFor('shared-session', '/tmp/workspace-a');
     const metadataB = metadataFor('shared-session', '/tmp/workspace-b');
@@ -10628,13 +10395,11 @@ describe('SessionRoutes runtime reuse', () => {
 
     const app = SessionRoutes();
     const startRun = (projectPath: string) =>
-      app.request(
+      requestJson(
+        app,
         `/shared-session/message?projectPath=${encodeURIComponent(projectPath)}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content: `start ${projectPath}` }),
-        }
+        'POST',
+        { content: `start ${projectPath}` }
       );
 
     const [runA, runB] = await Promise.all([
@@ -10690,7 +10455,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns exact same-id workspace status and rejects duplicate no-path status requests', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     const metadataA = metadataFor('shared-session', '/tmp/workspace-a');
     const metadataB = metadataFor('shared-session', '/tmp/workspace-b');
@@ -10754,23 +10519,19 @@ describe('SessionRoutes runtime reuse', () => {
       });
 
     const app = SessionRoutes();
-    const runA = await app.request(
+    const runA = await requestJson(
+      app,
       `/shared-session/message?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'start a' }),
-      }
+      'POST',
+      { content: 'start a' }
     );
     expect(runA.status).toBe(202);
 
-    const runB = await app.request(
+    const runB = await requestJson(
+      app,
       `/shared-session/message?projectPath=${encodeURIComponent('/tmp/workspace-b')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'start b' }),
-      }
+      'POST',
+      { content: 'start b' }
     );
     expect(runB.status).toBe(202);
 
@@ -10809,26 +10570,22 @@ describe('SessionRoutes runtime reuse', () => {
   it('routes permission responses through the unified exact session resolver', async () => {
     const permissionApp = await createPermissionsApp();
 
-    const relativeProjectPath = await permissionApp.request(
+    const relativeProjectPath = await requestJson(
+      permissionApp,
       '/permissions/perm-1?sessionId=shared-session&projectPath=relative-path',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ approved: true }),
-      }
+      'POST',
+      { approved: true }
     );
     expect(relativeProjectPath.status).toBe(400);
     await expect(relativeProjectPath.json()).resolves.toMatchObject({
       error: { code: 'BAD_REQUEST' },
     });
 
-    const explicitMissing = await permissionApp.request(
+    const explicitMissing = await requestJson(
+      permissionApp,
       `/permissions/perm-1?sessionId=shared-session&projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ approved: true }),
-      }
+      'POST',
+      { approved: true }
     );
     expect(explicitMissing.status).toBe(404);
     expect(SessionService.findSessionMetadata).toHaveBeenCalledWith(
@@ -10851,13 +10608,11 @@ describe('SessionRoutes runtime reuse', () => {
       }),
     ]);
 
-    const ambiguous = await permissionApp.request(
+    const ambiguous = await requestJson(
+      permissionApp,
       '/permissions/perm-1?sessionId=shared-session',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ approved: true }),
-      }
+      'POST',
+      { approved: true }
     );
     expect(ambiguous.status).toBe(409);
     await expect(ambiguous.json()).resolves.toMatchObject({
@@ -10915,13 +10670,11 @@ describe('SessionRoutes runtime reuse', () => {
     );
 
     const messageRequest = (projectPath: string) =>
-      app.request(
+      requestJson(
+        app,
         `/sessions/shared-session/message?projectPath=${encodeURIComponent(projectPath)}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ content: `run in ${projectPath}` }),
-        }
+        'POST',
+        { content: `run in ${projectPath}` }
       );
 
     const [firstMessageResponse, secondMessageResponse] = await Promise.all([
@@ -10976,13 +10729,11 @@ describe('SessionRoutes runtime reuse', () => {
       },
     });
 
-    const firstPermissionResponse = await app.request(
+    const firstPermissionResponse = await requestJson(
+      app,
       `/permissions/${firstPermissionId}?sessionId=shared-session&projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ approved: true }),
-      }
+      'POST',
+      { approved: true }
     );
     expect(firstPermissionResponse.status).toBe(200);
 
@@ -10995,13 +10746,11 @@ describe('SessionRoutes runtime reuse', () => {
       );
     });
 
-    const secondPermissionResponse = await app.request(
+    const secondPermissionResponse = await requestJson(
+      app,
       `/permissions/${secondPermissionId}?sessionId=shared-session&projectPath=${encodeURIComponent('/tmp/workspace-b')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ approved: true }),
-      }
+      'POST',
+      { approved: true }
     );
     expect(secondPermissionResponse.status).toBe(200);
 
@@ -11011,7 +10760,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('routes goal creation and continuation to the exact session workspace', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const metadataA = metadataFor('shared-goal', '/tmp/workspace-a');
     const metadataB = metadataFor('shared-goal', '/tmp/workspace-b');
     const goal = {
@@ -11052,13 +10801,11 @@ describe('SessionRoutes runtime reuse', () => {
     );
 
     const app = SessionRoutes();
-    const response = await app.request(
+    const response = await requestJson(
+      app,
       `/shared-goal/goal?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
-      {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ objective: 'finish workspace A' }),
-      }
+      'PUT',
+      { objective: 'finish workspace A' }
     );
 
     expect(response.status).toBe(202);
@@ -11086,17 +10833,15 @@ describe('SessionRoutes runtime reuse', () => {
       );
     });
 
-    const ambiguous = await app.request('/shared-goal/goal', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ objective: 'must not guess a workspace' }),
+    const ambiguous = await requestJson(app, '/shared-goal/goal', 'PUT', {
+      objective: 'must not guess a workspace',
     });
     expect(ambiguous.status).toBe(409);
     expect(createGoalB).not.toHaveBeenCalled();
   });
 
   it('lists and rewinds checkpoints in the exact session workspace', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const metadataA = metadataFor('shared-rewind', '/tmp/workspace-a');
     const metadataB = metadataFor('shared-rewind', '/tmp/workspace-b');
     const rewoundMetadataA = metadataFor('shared-rewind', '/tmp/workspace-a', {
@@ -11178,13 +10923,11 @@ describe('SessionRoutes runtime reuse', () => {
     expect(listA).toHaveBeenCalledOnce();
     expect(listB).not.toHaveBeenCalled();
 
-    const rewindResponse = await app.request(
+    const rewindResponse = await requestJson(
+      app,
       `/shared-rewind/rewind?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ targetMessageId: 'user-a', mode: 'both' }),
-      }
+      'POST',
+      { targetMessageId: 'user-a', mode: 'both' }
     );
     expect(rewindResponse.status).toBe(200);
     await expect(rewindResponse.json()).resolves.toMatchObject({
@@ -11234,7 +10977,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('lists and resumes durable subagents in the exact session workspace', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const metadataA = metadataFor('shared-subagents', '/tmp/workspace-a');
     const metadataB = metadataFor('shared-subagents', '/tmp/workspace-b');
     const source = {
@@ -11330,13 +11073,11 @@ describe('SessionRoutes runtime reuse', () => {
     expect(listA).toHaveBeenCalledOnce();
     expect(listB).not.toHaveBeenCalled();
 
-    const resumed = await app.request(
+    const resumed = await requestJson(
+      app,
       `/shared-subagents/subagents/${source.id}/resume?projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: 'Check the follow-up' }),
-      }
+      'POST',
+      { prompt: 'Check the follow-up' }
     );
     expect(resumed.status).toBe(200);
     await expect(resumed.json()).resolves.toMatchObject({
@@ -11379,7 +11120,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns a generic internal error body when an unexpected session route error occurs', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     vi.mocked(SessionService.findSessionMetadata).mockRejectedValueOnce(
       new Error('failed to parse /secret/path.jsonl')
@@ -11400,7 +11141,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns a generic internal error when listing sessions fails instead of leaking paths or returning []', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
 
     vi.mocked(SessionService.listSessions).mockRejectedValueOnce(
       new Error('scan failed for /secret/workspaces/project/.blade/sessions')
@@ -11422,10 +11163,8 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('executes a user shell command through the exact Session runtime', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
-    const { SessionService } = await import(
-      '../../../../src/services/SessionService.js'
-    );
+    const SessionRoutes = await loadSessionRoutes();
+    const SessionService = await loadSessionService();
     const initialMetadata = makeSessionMetadata({
       sessionId: 'shell-session',
       projectPath: '/tmp/shell-workspace',
@@ -11461,13 +11200,9 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     const app = SessionRoutes();
-    const response = await app.request('/shell-session/shell', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        command: 'pwd',
-        projectPath: '/tmp/shell-workspace',
-      }),
+    const response = await requestJson(app, '/shell-session/shell', 'POST', {
+      command: 'pwd',
+      projectPath: '/tmp/shell-workspace',
     });
 
     expect(response.status).toBe(200);
@@ -11498,7 +11233,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('answers a side question without creating or steering a main run', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
       makeSessionMetadata({
         sessionId: 'side-session',
@@ -11519,14 +11254,15 @@ describe('SessionRoutes runtime reuse', () => {
       },
     });
 
-    const response = await SessionRoutes().request('/side-session/side-question', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const response = await requestJson(
+      SessionRoutes(),
+      '/side-session/side-question',
+      'POST',
+      {
         question: 'What is running?',
         projectPath: '/tmp/side-workspace',
-      }),
-    });
+      }
+    );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -11585,11 +11321,12 @@ describe('SessionRoutes runtime reuse', () => {
         }
       );
       const controller = createSessionRouteController();
-      const pending = controller.app.request(`/${sessionId}/side-question`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ question: 'Explain the current work', projectPath }),
-      });
+      const pending = requestJson(
+        controller.app,
+        `/${sessionId}/side-question`,
+        'POST',
+        { question: 'Explain the current work', projectPath }
+      );
       let shutdown: Promise<void> | undefined;
       try {
         const signal = await started;
@@ -11656,11 +11393,12 @@ describe('SessionRoutes runtime reuse', () => {
       expect(signal.reason).toBe('client-dismissed');
       releaseCompletion();
       await pending;
-      const next = await controller.app.request(`/${sessionId}/side-question`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ question: 'Try another side question', projectPath }),
-      });
+      const next = await requestJson(
+        controller.app,
+        `/${sessionId}/side-question`,
+        'POST',
+        { question: 'Try another side question', projectPath }
+      );
       expect(next.status).toBe(200);
     } finally {
       releaseCompletion();
@@ -11787,21 +11525,21 @@ describe('SessionRoutes runtime reuse', () => {
       }
     );
     const controller = createSessionRouteController();
-    const pending = controller.app.request(`/${sessionId}/side-question`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ question: 'Explain the current work', projectPath }),
+    const pending = requestJson(controller.app, `/${sessionId}/side-question`, 'POST', {
+      question: 'Explain the current work',
+      projectPath,
     });
     let shutdown: Promise<void> | undefined;
     try {
       await started;
       shutdown = controller.shutdown('initialization-shutdown');
       expect(runtimeState.runtime.dispose).not.toHaveBeenCalled();
-      const rejected = await controller.app.request(`/${sessionId}/side-question`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ question: 'Do not admit this request', projectPath }),
-      });
+      const rejected = await requestJson(
+        controller.app,
+        `/${sessionId}/side-question`,
+        'POST',
+        { question: 'Do not admit this request', projectPath }
+      );
       expect(rejected.status).toBe(503);
       releaseInitialization();
       await pending;
@@ -11854,7 +11592,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('uses the source project for a discarded worktree side conversation', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const projectPath = '/tmp/removed-side-worktree';
     const sourceProjectPath = '/tmp/source-project';
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
@@ -11876,15 +11614,13 @@ describe('SessionRoutes runtime reuse', () => {
       durationMs: 11,
     });
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       '/discarded-side-session/side-question',
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          question: 'What did this task do?',
-          projectPath,
-        }),
+        question: 'What did this task do?',
+        projectPath,
       }
     );
 
@@ -11929,7 +11665,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns a clear conflict when a discarded worktree has no source project', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const projectPath = '/tmp/removed-side-worktree';
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
       makeSessionMetadata({
@@ -11945,15 +11681,13 @@ describe('SessionRoutes runtime reuse', () => {
       })
     );
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       '/missing-side-source/side-question',
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          question: 'What did this task do?',
-          projectPath,
-        }),
+        question: 'What did this task do?',
+        projectPath,
       }
     );
 
@@ -11971,7 +11705,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns a clear conflict when the side conversation fallback path is missing', async () => {
-    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const SessionRoutes = await loadSessionRoutes();
     const projectPath = '/tmp/removed-side-worktree';
     const sourceProjectPath = '/tmp/missing-source-project';
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
@@ -11992,15 +11726,13 @@ describe('SessionRoutes runtime reuse', () => {
       Object.assign(new Error('missing workspace'), { code: 'ENOENT' })
     );
 
-    const response = await SessionRoutes().request(
+    const response = await requestJson(
+      SessionRoutes(),
       '/missing-side-workspace/side-question',
+      'POST',
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          question: 'What did this task do?',
-          projectPath,
-        }),
+        question: 'What did this task do?',
+        projectPath,
       }
     );
 
