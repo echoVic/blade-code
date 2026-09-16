@@ -16,6 +16,7 @@ import {
   type ProcessIdentity,
   processIdentityMatches,
 } from '../../../src/utils/process/ProcessIdentity.js';
+import { waitForCondition as waitFor } from '../../support/asyncTestUtils.js';
 import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
 import { findSessionTranscript } from './sessionForkTrajectoryHarness.js';
 import {
@@ -42,19 +43,6 @@ function safeSlug(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 60_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 async function readTree(root: string): Promise<string> {

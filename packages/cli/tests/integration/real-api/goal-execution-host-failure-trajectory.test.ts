@@ -16,6 +16,10 @@ import {
 import { resetProjectionDbCache } from '../../../src/context/storage/sqlite/projection.js';
 import { GoalStore } from '../../../src/goals/GoalStore.js';
 import {
+  reserveLoopbackPort as reservePort,
+  waitForCondition as waitFor,
+} from '../../support/asyncTestUtils.js';
+import {
   captureForegroundGuiLauncherIdentity,
   isExpectedBrowserRequestFailure,
   stopForegroundGuiLauncher,
@@ -182,33 +186,6 @@ async function createFixture(
   });
   roots.push(fixture.root);
   return fixture;
-}
-
-async function reservePort(): Promise<number> {
-  const server = createNetServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('No Web port');
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve()))
-  );
-  return address.port;
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 60_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 async function waitForHttp(origin: string): Promise<void> {

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { chromium, type Page } from 'playwright';
 import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
 import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
+import { reserveLoopbackPort as reservePort } from './asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
   isExpectedBrowserRequestFailure,
@@ -16,23 +17,6 @@ export interface SubagentResultAdoptionWebEvidence {
   parentVisible: true;
   visibleAfterReload: true;
   browserFaults: [];
-}
-
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Unable to reserve subagent adoption browser port');
-  }
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return address.port;
 }
 
 async function waitForHttp(url: string, timeoutMs: number): Promise<void> {

@@ -19,11 +19,15 @@ import { SessionSchema } from '../../../src/api/schemas.js';
 import { TurnActivityProjectionSchema } from '../../../src/api/turnActivitySchemas.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import { SessionService } from '../../../src/services/SessionService.js';
-import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
+import {
+  reserveLoopbackPort as reservePort,
+  waitForChildExit,
+} from '../../support/asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
   stopForegroundGuiLauncher,
 } from '../../support/foregroundBoundedOutputWebDriver.js';
+import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import {
   type RecordingProviderProxy,
   startRecordingProviderProxy,
@@ -102,36 +106,6 @@ function childEnvironment(
   };
 }
 
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 30_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Turn activity child did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
-}
-
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   message: string,
@@ -148,21 +122,6 @@ async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(message, { cause: lastError });
-}
-
-async function reservePort(): Promise<number> {
-  const server = createNetServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string')
-    throw new Error('Unable to reserve port');
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve()))
-  );
-  return address.port;
 }
 
 async function openEventProbe(

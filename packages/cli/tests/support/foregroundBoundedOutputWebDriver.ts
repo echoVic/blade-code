@@ -9,6 +9,7 @@ import {
   processIdentityMatches,
 } from '../../src/utils/process/ProcessIdentity.js';
 import type { ForegroundBoundedOutputFixture } from '../integration/real-api/foregroundBoundedOutputFixture.js';
+import { reserveLoopbackPort as reservePort } from './asyncTestUtils.js';
 
 const GUI_LAUNCHER_IDENTITY_TIMEOUT_MS = 2_000;
 const GUI_LAUNCHER_IDENTITY_RETRY_MS = 25;
@@ -63,24 +64,6 @@ export function parseForegroundGuiReadyLine(
   } catch {
     return undefined;
   }
-}
-
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve());
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Unable to reserve browser qualification port');
-  }
-  const port = address.port;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return port;
 }
 
 function appendTail(current: string, chunk: Buffer | string): string {

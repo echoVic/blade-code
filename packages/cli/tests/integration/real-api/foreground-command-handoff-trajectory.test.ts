@@ -11,6 +11,10 @@ import {
   type ProcessIdentity,
   processIdentityMatches,
 } from '../../../src/utils/process/ProcessIdentity.js';
+import {
+  reserveLoopbackPort as reservePort,
+  waitForChildExit,
+} from '../../support/asyncTestUtils.js';
 import { isCompleteRawPtyMarkerEvidence } from '../../support/foregroundBoundedOutputPtyDriver.js';
 import {
   createForegroundCommandHandoffFixture,
@@ -120,54 +124,6 @@ async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(message, { cause: lastError });
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 30_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Foreground handoff surface process did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
-}
-
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Unable to reserve foreground handoff Web port');
-  }
-  const port = address.port;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return port;
 }
 
 async function initializeWorkspace(workspace: string): Promise<string> {

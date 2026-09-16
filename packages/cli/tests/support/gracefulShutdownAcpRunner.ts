@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
+import { waitForChildExit } from './asyncTestUtils.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -55,36 +56,6 @@ async function waitForRootPid(filePath: string): Promise<number> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error('Timed out waiting for ACP foreground process');
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 30_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('ACP child did not exit after shutdown signal'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
 }
 
 function updateShape(

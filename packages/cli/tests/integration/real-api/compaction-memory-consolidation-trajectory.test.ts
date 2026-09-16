@@ -31,11 +31,12 @@ import { resolveModelConfig } from '../../../src/services/pi/resolveModelConfig.
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
-import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
+import { reserveLoopbackPort as reservePort } from '../../support/asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
   stopForegroundGuiLauncher,
 } from '../../support/foregroundBoundedOutputWebDriver.js';
+import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import {
   OpenAIResponseSummaryCollector,
   type RecordingProviderResponseSummary,
@@ -965,19 +966,6 @@ async function runRunner(
         : { success: true, finalMarkerSeen: true, discoveryMarkerSeen: true }
   );
   return evidence;
-}
-
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address() as AddressInfo;
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve()))
-  );
-  return address.port;
 }
 
 async function waitFor(

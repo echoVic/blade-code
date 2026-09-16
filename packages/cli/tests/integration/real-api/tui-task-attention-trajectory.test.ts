@@ -9,6 +9,7 @@ import { PermissionMode } from '../../../src/config/types.js';
 import { resetProjectionDbCache } from '../../../src/context/storage/sqlite/projection.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import type { ProcessIdentity } from '../../../src/utils/process/ProcessIdentity.js';
+import { reserveLoopbackPort as reservePort } from '../../support/asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
   stopForegroundGuiLauncher,
@@ -54,23 +55,6 @@ function redact(value: string, secrets: readonly string[]): string {
 function frameworkRetryBudget(context: TestContext): number {
   const retry = context.task.retry;
   return typeof retry === 'number' ? retry : (retry?.count ?? 0);
-}
-
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Unable to reserve TUI attention server port');
-  }
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return address.port;
 }
 
 function serverExited(child: ChildProcess): boolean {

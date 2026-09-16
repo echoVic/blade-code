@@ -17,6 +17,10 @@ import { describe, expect, it } from 'vitest';
 import { INTERRUPTED_TURN_MARKER } from '../../../src/agent/loop/conversationPersistence.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
+import {
+  reserveLoopbackPort as reservePort,
+  waitForChildExit,
+} from '../../support/asyncTestUtils.js';
 import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
 import { assertNoForegroundLeases } from './foregroundBoundedOutputHarness.js';
 import {
@@ -211,54 +215,6 @@ async function waitForProcessGone(pid: number): Promise<void> {
       return true;
     }
   }, 15_000);
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 30_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Blade child did not exit after graceful shutdown'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
-}
-
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Unable to reserve Web qualification port');
-  }
-  const port = address.port;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return port;
 }
 
 async function waitForHttp(url: string): Promise<void> {

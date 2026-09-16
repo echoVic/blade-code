@@ -5,6 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
+import {
+  reserveLoopbackPort as reservePort,
+  waitForChildExit,
+} from '../../support/asyncTestUtils.js';
 import { isRealApiTestEnabled } from './testConfig.js';
 
 interface LauncherReady {
@@ -31,23 +35,6 @@ const MAX_OUTPUT_CHARS = 256_000;
 
 function appendTail(current: string, chunk: Buffer | string): string {
   return `${current}${chunk.toString()}`.slice(-MAX_OUTPUT_CHARS);
-}
-
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Unable to reserve Provider deadline Web port');
-  }
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return address.port;
 }
 
 async function waitFor<T>(
@@ -134,36 +121,6 @@ function readStopped(output: string): LauncherStopped | undefined {
       typeof candidate.stallCount === 'number'
   );
   return record as LauncherStopped | undefined;
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 30_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Provider deadline launcher did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
 }
 
 describe.skipIf(!enabled)('Provider attempt deadline Web trajectory (real API)', () => {

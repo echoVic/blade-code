@@ -8,6 +8,10 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
+import {
+  reserveLoopbackPort as reservePort,
+  waitForChildExit,
+} from '../../support/asyncTestUtils.js';
 import { isExpectedBrowserRequestFailure } from '../../support/foregroundBoundedOutputWebDriver.js';
 import {
   buildRealApiRuntimeConfig,
@@ -30,23 +34,6 @@ function browserCacheRoot(): string {
   throw new Error('Unable to locate the qualified Playwright browser cache');
 }
 
-async function reservePort(): Promise<number> {
-  const server = createTcpServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Unable to reserve embedded-browser Web port');
-  }
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return address.port;
-}
-
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   message: string,
@@ -63,36 +50,6 @@ async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(message, { cause });
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 30_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Embedded-browser Web server did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
 }
 
 async function closeServer(server: Server): Promise<void> {

@@ -4,6 +4,7 @@ import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import type { TurnActivityProjection } from '../../src/api/turnActivitySchemas.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
+import { waitForChildExit } from './asyncTestUtils.js';
 import { createTuiTaskAttentionRunnerEnvironment } from './tuiTaskAttentionPtyDriver.js';
 
 interface RunnerInput {
@@ -28,36 +29,6 @@ function loadInput(): RunnerInput {
   if (!encoded) throw new Error('Missing BLADE_TURN_ACTIVITY_ACP_INPUT');
   delete process.env.BLADE_TURN_ACTIVITY_ACP_INPUT;
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 30_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Turn activity ACP child did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
 }
 
 async function waitFor(

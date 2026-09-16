@@ -8,6 +8,7 @@ import { processIdentityMatches } from '../../src/utils/process/ProcessIdentity.
 import { assertNoSecrets } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import type { TokenBudgetHandoffFixture } from '../integration/real-api/tokenBudgetHandoffFixture.js';
 import type { TokenBudgetHandoffSurfaceEvidence } from '../integration/real-api/tokenBudgetHandoffHarness.js';
+import { reserveLoopbackPort as reservePort } from './asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
   isExpectedBrowserRequestFailure,
@@ -350,24 +351,6 @@ export function parseTokenBudgetHandoffWebEvidence(
     launcherGone: true,
     portReusable: true,
   };
-}
-
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Token-budget Web port reservation failed');
-  }
-  const port = address.port;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return port;
 }
 
 async function assertPortReusable(port: number): Promise<void> {

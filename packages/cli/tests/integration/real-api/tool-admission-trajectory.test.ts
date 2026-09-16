@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
+import { reserveLoopbackPort as reservePort } from '../../support/asyncTestUtils.js';
 import {
   assertSplitPtyMarkerInstructionAtEnd,
   createSplitPtyMarkerInstruction,
@@ -307,24 +308,6 @@ async function directoryEntries(directory: string): Promise<string[]> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
   }
-}
-
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Unable to reserve Web qualification port');
-  }
-  const port = address.port;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return port;
 }
 
 async function waitForHttp(url: string): Promise<void> {

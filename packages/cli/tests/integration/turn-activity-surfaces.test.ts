@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { chromium } from 'playwright';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SessionSchema } from '../../src/api/schemas.js';
+import { reserveLoopbackPort as reservePort } from '../support/asyncTestUtils.js';
 import { stopForegroundGuiLauncher } from '../support/foregroundBoundedOutputWebDriver.js';
 
 vi.unmock('node:child_process');
@@ -127,19 +128,6 @@ async function startProvider(marker: string) {
       );
     },
   };
-}
-
-async function reservePort(): Promise<number> {
-  const server = createHttpServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address() as AddressInfo;
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve()))
-  );
-  return address.port;
 }
 
 async function waitForHttp(origin: string): Promise<void> {

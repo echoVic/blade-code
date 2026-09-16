@@ -18,6 +18,7 @@ import { chromium } from 'playwright';
 import { SessionLease } from '../../src/agent/runtime/SessionLease.js';
 import { getProjectStoragePath } from '../../src/context/storage/pathUtils.js';
 import { SessionService } from '../../src/services/SessionService.js';
+import { reserveLoopbackPort as reservePort } from './asyncTestUtils.js';
 import { createTuiPtyEnvironment } from './ptyInput.js';
 
 const root = await realpath(
@@ -29,19 +30,6 @@ const workspace = path.join(root, 'team-project_with_underscore');
 const storage = path.join(root, 'storage');
 const home = path.join(root, 'home');
 const repo = path.resolve(import.meta.dirname, '../../../..');
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  assert(address && typeof address !== 'string');
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve()))
-  );
-  return address.port;
-}
 const backendPort = await reservePort();
 const frontendPort = await reservePort();
 await mkdir(workspace, { recursive: true });
