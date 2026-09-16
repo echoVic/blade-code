@@ -470,10 +470,17 @@ describe('production qualification contract', () => {
       __dirname,
       '../../integration/real-api/provider-rate-limit-cooldown-trajectory.test.ts'
     );
+    const realApiHarnessPath = path.resolve(
+      __dirname,
+      '../../integration/real-api/providerRecoveryTrajectoryHarness.ts'
+    );
     const deterministic = fs.readFileSync(deterministicPath, 'utf8');
     const acpRunner = fs.readFileSync(acpRunnerPath, 'utf8');
     const ptyRunner = fs.readFileSync(ptyRunnerPath, 'utf8');
-    const realApi = fs.readFileSync(realApiPath, 'utf8');
+    const realApi = [
+      fs.readFileSync(realApiPath, 'utf8'),
+      fs.readFileSync(realApiHarnessPath, 'utf8'),
+    ].join('\n');
 
     expect(deterministic).toContain('access(cliEntry)');
     expect(deterministic).toContain("['opened', 'waiting', 'probe', 'closed']");
@@ -491,8 +498,8 @@ describe('production qualification contract', () => {
     );
     expect(realApi).toContain('resolveRequiredDeepSeekQualificationModels');
     expect(realApi).toContain("['headless', 'acp', 'pty', 'web']");
-    expect(realApi).toContain('const INJECTED_FAILURES = 1');
-    expect(realApi).toContain('response.writeHead(429');
+    expect(realApi).toContain('injectedFailures: 1');
+    expect(realApi).toContain('failureStatus: 429');
     expect(realApi).toContain('expectRateLimitCooldown: true');
   });
 

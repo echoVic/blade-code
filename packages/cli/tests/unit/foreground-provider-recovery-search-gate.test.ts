@@ -5,6 +5,13 @@ function source(path: string): string {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
+function providerRecoveryTrajectorySource(): string {
+  return [
+    source('../integration/real-api/foreground-provider-recovery-trajectory.test.ts'),
+    source('../integration/real-api/providerRecoveryTrajectoryHarness.ts'),
+  ].join('\n');
+}
+
 describe('foreground Provider recovery source gate', () => {
   it('keeps extended recovery owned by root Agent requests', () => {
     const loop = source('../../src/agent/loop/executeLoopGenerator.ts');
@@ -54,9 +61,7 @@ describe('foreground Provider recovery source gate', () => {
 
   it('requires sticky raw PTY completion evidence in the release trajectory', () => {
     const runner = source('../support/foregroundProviderRecoveryPtyRunner.ts');
-    const trajectory = source(
-      '../integration/real-api/foreground-provider-recovery-trajectory.test.ts'
-    );
+    const trajectory = providerRecoveryTrajectorySource();
 
     expect(runner).toContain('finalMarkerSeen: finalMarkerLatch.seen');
     expect(runner).toContain('secretSeen: secretLatch.seen');
@@ -90,7 +95,7 @@ describe('foreground Provider recovery source gate', () => {
       "envName: 'BLADE_FOREGROUND_PROVIDER_RECOVERY_PTY_INPUT'"
     );
     const ptyTimeout = trajectory.indexOf('timeoutMs: 480_000', ptyBranch);
-    const webBranch = trajectory.indexOf('} else {', ptyBranch);
+    const webBranch = trajectory.indexOf('web: () =>', ptyBranch);
     expect(ptyBranch).toBeGreaterThanOrEqual(0);
     expect(ptyTimeout).toBeGreaterThan(ptyBranch);
     expect(ptyTimeout).toBeLessThan(webBranch);
@@ -104,9 +109,7 @@ describe('foreground Provider recovery source gate', () => {
     const web = source('../../web/src/components/chat/ProviderRecoveryBanner.tsx');
     const acpRunner = source('../support/foregroundProviderRecoveryAcpRunner.ts');
     const ptyRunner = source('../support/foregroundProviderRecoveryPtyRunner.ts');
-    const trajectory = source(
-      '../integration/real-api/foreground-provider-recovery-trajectory.test.ts'
-    );
+    const trajectory = providerRecoveryTrajectorySource();
 
     expect(runtime).toContain('private readonly providerRecovery');
     expect(agent).toContain('beginProviderRecovery()');
