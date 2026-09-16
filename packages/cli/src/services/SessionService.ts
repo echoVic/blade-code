@@ -2472,6 +2472,19 @@ export class SessionService {
     sessionId: string
   ): void {
     if (
+      update.taskStatus !== undefined &&
+      !SESSION_TASK_STATUSES.has(update.taskStatus)
+    ) {
+      throw new Error(`Invalid session task status: ${String(update.taskStatus)}`);
+    }
+    if (
+      update.taskOwnerPid !== undefined &&
+      update.taskOwnerPid !== null &&
+      (!Number.isInteger(update.taskOwnerPid) || update.taskOwnerPid <= 0)
+    ) {
+      throw new Error('Session task owner PID must be a positive integer');
+    }
+    if (
       update.taskPromptSummary !== undefined &&
       update.taskPromptSummary !== null &&
       (!update.taskPromptSummary.trim() || update.taskPromptSummary.length > 1000)
@@ -2705,62 +2718,10 @@ export class SessionService {
       gitBranch: detectGitBranch(resolvedProjectPath),
       version: getVersion(),
       data: {
+        ...buildSessionUpdatedData(sessionId, initial, now, true),
         sessionId,
         rootId: sessionId,
-        ...(initial.title !== undefined ? { title: initial.title } : {}),
         taskStatus: initial.taskStatus ?? 'queued',
-        ...(initial.taskPromptSummary !== undefined
-          ? { taskPromptSummary: initial.taskPromptSummary }
-          : {}),
-        ...(initial.taskPriority !== undefined
-          ? { taskPriority: initial.taskPriority }
-          : {}),
-        ...(initial.taskKind !== undefined ? { taskKind: initial.taskKind } : {}),
-        ...(typeof initial.taskDueAt === 'string'
-          ? { taskDueAt: new Date(initial.taskDueAt).toISOString() }
-          : {}),
-        ...(initial.taskDispatch !== undefined
-          ? { taskDispatch: initial.taskDispatch }
-          : {}),
-        ...(initial.taskModelId !== undefined
-          ? { taskModelId: initial.taskModelId }
-          : {}),
-        ...(initial.taskRetriedFrom !== undefined
-          ? { taskRetriedFrom: initial.taskRetriedFrom }
-          : {}),
-        ...(initial.taskIsolation !== undefined
-          ? { taskIsolation: initial.taskIsolation }
-          : {}),
-        ...(initial.taskSourceProjectPath !== undefined
-          ? { taskSourceProjectPath: initial.taskSourceProjectPath }
-          : {}),
-        ...(initial.taskWorktree !== undefined
-          ? { taskWorktree: initial.taskWorktree }
-          : {}),
-        ...(initial.selectedModelId !== undefined
-          ? { selectedModelId: initial.selectedModelId }
-          : {}),
-        ...(initial.permissionMode !== undefined
-          ? { permissionMode: initial.permissionMode }
-          : {}),
-        ...(initial.reasoningEffort !== undefined
-          ? { reasoningEffort: initial.reasoningEffort }
-          : {}),
-        ...(initial.serviceTier !== undefined
-          ? { serviceTier: initial.serviceTier }
-          : {}),
-        ...(initial.responseVerbosity !== undefined
-          ? { responseVerbosity: initial.responseVerbosity }
-          : {}),
-        ...(initial.communicationStyle !== undefined
-          ? { communicationStyle: initial.communicationStyle }
-          : {}),
-        ...(initial.communicationStyleDigest !== undefined
-          ? { communicationStyleDigest: initial.communicationStyleDigest }
-          : {}),
-        ...(initial.projectInstructionsDigest !== undefined
-          ? { projectInstructionsDigest: initial.projectInstructionsDigest }
-          : {}),
         createdAt: now,
         updatedAt: now,
       },
@@ -2829,48 +2790,11 @@ export class SessionService {
         cwd: hostStateRoot,
         version: getVersion(),
         data: {
+          ...buildSessionUpdatedData(sessionId, initial, now, false),
           sessionId,
           rootId: sessionId,
           remoteWorkspace: validatedDescriptor,
-          ...(initial.title !== undefined ? { title: initial.title } : {}),
           taskStatus: initial.taskStatus ?? 'queued',
-          ...(initial.taskPromptSummary !== undefined
-            ? { taskPromptSummary: initial.taskPromptSummary }
-            : {}),
-          ...(initial.taskPriority !== undefined
-            ? { taskPriority: initial.taskPriority }
-            : {}),
-          ...(initial.taskKind !== undefined ? { taskKind: initial.taskKind } : {}),
-          ...(typeof initial.taskDueAt === 'string'
-            ? { taskDueAt: new Date(initial.taskDueAt).toISOString() }
-            : {}),
-          ...(initial.taskModelId !== undefined
-            ? { taskModelId: initial.taskModelId }
-            : {}),
-          ...(initial.selectedModelId !== undefined
-            ? { selectedModelId: initial.selectedModelId }
-            : {}),
-          ...(initial.permissionMode !== undefined
-            ? { permissionMode: initial.permissionMode }
-            : {}),
-          ...(initial.reasoningEffort !== undefined
-            ? { reasoningEffort: initial.reasoningEffort }
-            : {}),
-          ...(initial.serviceTier !== undefined
-            ? { serviceTier: initial.serviceTier }
-            : {}),
-          ...(initial.responseVerbosity !== undefined
-            ? { responseVerbosity: initial.responseVerbosity }
-            : {}),
-          ...(initial.communicationStyle !== undefined
-            ? { communicationStyle: initial.communicationStyle }
-            : {}),
-          ...(initial.communicationStyleDigest !== undefined
-            ? { communicationStyleDigest: initial.communicationStyleDigest }
-            : {}),
-          ...(initial.projectInstructionsDigest !== undefined
-            ? { projectInstructionsDigest: initial.projectInstructionsDigest }
-            : {}),
           createdAt: now,
           updatedAt: now,
         },
@@ -3186,19 +3110,6 @@ export class SessionService {
   ): Promise<SessionMetadata> {
     assertValidSessionId(sessionId);
     SessionService.validateTaskMetadataUpdate(update, sessionId);
-    if (
-      update.taskStatus !== undefined &&
-      !SESSION_TASK_STATUSES.has(update.taskStatus)
-    ) {
-      throw new Error(`Invalid session task status: ${String(update.taskStatus)}`);
-    }
-    if (
-      update.taskOwnerPid !== undefined &&
-      update.taskOwnerPid !== null &&
-      (!Number.isInteger(update.taskOwnerPid) || update.taskOwnerPid <= 0)
-    ) {
-      throw new Error('Session task owner PID must be a positive integer');
-    }
     const resolvedProjectPath = SessionService.resolveCatalogWorkspace(projectPath);
     if (
       update.taskWorktree &&
@@ -3280,19 +3191,6 @@ export class SessionService {
   ): Promise<SessionMetadata> {
     assertValidSessionId(sessionId);
     SessionService.validateTaskMetadataUpdate(update, sessionId);
-    if (
-      update.taskStatus !== undefined &&
-      !SESSION_TASK_STATUSES.has(update.taskStatus)
-    ) {
-      throw new Error(`Invalid session task status: ${String(update.taskStatus)}`);
-    }
-    if (
-      update.taskOwnerPid !== undefined &&
-      update.taskOwnerPid !== null &&
-      (!Number.isInteger(update.taskOwnerPid) || update.taskOwnerPid <= 0)
-    ) {
-      throw new Error('Session task owner PID must be a positive integer');
-    }
 
     let descriptor: AcpRemoteWorkspaceDescriptorV1;
     try {
