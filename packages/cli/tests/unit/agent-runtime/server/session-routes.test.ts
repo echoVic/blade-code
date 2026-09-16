@@ -132,11 +132,16 @@ const makeProviderRecoveryBudgetFailure = (detail = 'opaque') => ({
   metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
 });
 
-function promiseGate<T = void>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
+function promiseGate<T = void>(): readonly [
+  Promise<T>,
+  (value?: T | PromiseLike<T>) => void,
+] {
+  let settle!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
+    settle = resolvePromise;
   });
+  const resolve = (value?: T | PromiseLike<T>) =>
+    settle(value as T | PromiseLike<T>);
   return [promise, resolve] as const;
 }
 
@@ -1199,6 +1204,25 @@ describe('SessionRoutes runtime reuse', () => {
       projectPath,
       ...overrides,
     });
+
+  const mockDuplicateSessions = (
+    sessionId: string,
+    overridesA: Parameters<typeof metadataFor>[2] = {},
+    overridesB: Parameters<typeof metadataFor>[2] = {}
+  ) => {
+    const metadataA = metadataFor(sessionId, '/tmp/workspace-a', overridesA);
+    const metadataB = metadataFor(sessionId, '/tmp/workspace-b', overridesB);
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, projectPath) => {
+        if (requestedSessionId !== sessionId) return undefined;
+        if (projectPath === metadataA.projectPath) return metadataA;
+        if (projectPath === metadataB.projectPath) return metadataB;
+        return undefined;
+      }
+    );
+    return { metadataA, metadataB };
+  };
 
   const mockResolvedSession = (
     sessionId: string,
@@ -4057,18 +4081,12 @@ describe('SessionRoutes runtime reuse', () => {
       permissionMode: 'yolo',
     });
     mockPendingResume(metadata);
-    let releaseStatus: () => void = () => undefined;
-    const statusGate = new Promise<undefined>((resolve) => {
-      releaseStatus = () => resolve(undefined);
-    });
+    const [statusGate, releaseStatus] = promiseGate<undefined>();
     runtimeState.runtime.setTaskStatus.mockImplementationOnce(async () => {
       await statusGate;
       return undefined;
     });
-    let releaseDestroy: () => void = () => undefined;
-    const destroyGate = new Promise<undefined>((resolve) => {
-      releaseDestroy = () => resolve(undefined);
-    });
+    const [destroyGate, releaseDestroy] = promiseGate<undefined>();
     agentState.destroy.mockImplementationOnce(() => destroyGate);
     agentState.chatStream
       .mockImplementationOnce(async function* () {
@@ -4158,18 +4176,12 @@ describe('SessionRoutes runtime reuse', () => {
       })
     );
 
-    let releaseStatus: () => void = () => undefined;
-    const statusGate = new Promise<undefined>((resolve) => {
-      releaseStatus = () => resolve(undefined);
-    });
+    const [statusGate, releaseStatus] = promiseGate<undefined>();
     const setTaskStatus = vi.fn(async () => {
       await statusGate;
       return undefined;
     });
-    let releaseDestroy: () => void = () => undefined;
-    const destroyGate = new Promise<undefined>((resolve) => {
-      releaseDestroy = () => resolve(undefined);
-    });
+    const [destroyGate, releaseDestroy] = promiseGate<undefined>();
     const [secondDestroyStarted, markSecondDestroyStarted] = promiseGate();
     let destroyCalls = 0;
     const destroy = agentState.destroy.mockReset().mockImplementation(async () => {
@@ -4588,10 +4600,7 @@ describe('SessionRoutes runtime reuse', () => {
     const metadata = metadataFor(sessionId, projectPath, { permissionMode: 'yolo' });
     mockPendingResume(metadata);
 
-    let releaseDestroy: () => void = () => undefined;
-    const destroyGate = new Promise<undefined>((resolve) => {
-      releaseDestroy = () => resolve(undefined);
-    });
+    const [destroyGate, releaseDestroy] = promiseGate<undefined>();
     agentState.destroy.mockImplementationOnce(() => destroyGate);
     agentState.chatStream.mockImplementationOnce(async function* () {
       if (Date.now() < 0) yield undefined;
@@ -9706,16 +9715,10 @@ describe('SessionRoutes runtime reuse', () => {
       }
     );
 
-    let releaseRunA: () => void = () => undefined;
-    let releaseRunB: () => void = () => undefined;
     let signalA: AbortSignal | undefined;
     let signalB: AbortSignal | undefined;
-    const runGateA = new Promise<void>((resolve) => {
-      releaseRunA = resolve;
-    });
-    const runGateB = new Promise<void>((resolve) => {
-      releaseRunB = resolve;
-    });
+    const [runGateA, releaseRunA] = promiseGate();
+    const [runGateB, releaseRunB] = promiseGate();
     agentState.chatStream
       .mockImplementationOnce(async function* (
         _content,
@@ -9925,35 +9928,13 @@ describe('SessionRoutes runtime reuse', () => {
   it('aborts only the exact same-id workspace run and rejects duplicate no-path abort requests', async () => {
     const SessionRoutes = await loadSessionRoutes();
 
-    const metadataA = metadataFor('shared-session', '/tmp/workspace-a');
-    const metadataB = metadataFor('shared-session', '/tmp/workspace-b');
-
-    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
-      async (sessionId: string, projectPath?: string) => {
-        if (sessionId !== 'shared-session') {
-          return undefined;
-        }
-        if (projectPath === '/tmp/workspace-a') {
-          return metadataA;
-        }
-        if (projectPath === '/tmp/workspace-b') {
-          return metadataB;
-        }
-        return undefined;
-      }
-    );
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+    mockDuplicateSessions('shared-session');
 
     let signalA: AbortSignal | undefined;
     let signalB: AbortSignal | undefined;
-    let releaseRunA: () => void = () => undefined;
-    let releaseRunB: () => void = () => undefined;
-    const runGateA = new Promise<void>((resolve) => {
-      releaseRunA = resolve;
-    });
-    const runGateB = new Promise<void>((resolve) => {
-      releaseRunB = resolve;
-    });
+
+    const [runGateA, releaseRunA] = promiseGate();
+    const [runGateB, releaseRunB] = promiseGate();
 
     agentState.chatStream
       .mockImplementationOnce(async function* (
@@ -10051,33 +10032,10 @@ describe('SessionRoutes runtime reuse', () => {
   it('returns exact same-id workspace status and rejects duplicate no-path status requests', async () => {
     const SessionRoutes = await loadSessionRoutes();
 
-    const metadataA = metadataFor('shared-session', '/tmp/workspace-a');
-    const metadataB = metadataFor('shared-session', '/tmp/workspace-b');
+    mockDuplicateSessions('shared-session');
 
-    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
-      async (sessionId: string, projectPath?: string) => {
-        if (sessionId !== 'shared-session') {
-          return undefined;
-        }
-        if (projectPath === '/tmp/workspace-a') {
-          return metadataA;
-        }
-        if (projectPath === '/tmp/workspace-b') {
-          return metadataB;
-        }
-        return undefined;
-      }
-    );
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
-
-    let releaseRunA: () => void = () => undefined;
-    let releaseRunB: () => void = () => undefined;
-    const runGateA = new Promise<void>((resolve) => {
-      releaseRunA = resolve;
-    });
-    const runGateB = new Promise<void>((resolve) => {
-      releaseRunB = resolve;
-    });
+    const [runGateA, releaseRunA] = promiseGate();
+    const [runGateB, releaseRunB] = promiseGate();
     const runtimeA = await createRuntimeDouble();
     const runtimeB = await createRuntimeDouble();
     vi.mocked(SessionRuntime.create).mockImplementation(
@@ -10355,8 +10313,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('routes goal creation and continuation to the exact session workspace', async () => {
     const SessionRoutes = await loadSessionRoutes();
-    const metadataA = metadataFor('shared-goal', '/tmp/workspace-a');
-    const metadataB = metadataFor('shared-goal', '/tmp/workspace-b');
+    mockDuplicateSessions('shared-goal');
     const goal = {
       version: 1 as const,
       sessionId: 'shared-goal',
@@ -10380,15 +10337,6 @@ describe('SessionRoutes runtime reuse', () => {
       createGoal: createGoalB,
     });
 
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
-    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
-      async (sessionId: string, projectPath?: string) => {
-        if (sessionId !== 'shared-goal') return undefined;
-        if (projectPath === '/tmp/workspace-a') return metadataA;
-        if (projectPath === '/tmp/workspace-b') return metadataB;
-        return undefined;
-      }
-    );
     vi.mocked(SessionRuntime.create).mockImplementation(
       async ({ workspaceRoot }: SessionRuntimeOptions) =>
         workspaceRoot === '/tmp/workspace-a' ? runtimeA : runtimeB
@@ -10572,8 +10520,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('lists and resumes durable subagents in the exact session workspace', async () => {
     const SessionRoutes = await loadSessionRoutes();
-    const metadataA = metadataFor('shared-subagents', '/tmp/workspace-a');
-    const metadataB = metadataFor('shared-subagents', '/tmp/workspace-b');
+    mockDuplicateSessions('shared-subagents');
     const source = {
       schemaVersion: 2 as const,
       id: 'agent-source',
@@ -10636,15 +10583,6 @@ describe('SessionRoutes runtime reuse', () => {
       resumeSubagent: resumeB,
     });
 
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
-    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
-      async (sessionId: string, projectPath?: string) => {
-        if (sessionId !== 'shared-subagents') return undefined;
-        if (projectPath === '/tmp/workspace-a') return metadataA;
-        if (projectPath === '/tmp/workspace-b') return metadataB;
-        return undefined;
-      }
-    );
     vi.mocked(SessionRuntime.create).mockImplementation(
       async ({ workspaceRoot }: SessionRuntimeOptions) =>
         workspaceRoot === '/tmp/workspace-a' ? runtimeA : runtimeB

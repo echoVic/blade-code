@@ -87,6 +87,11 @@ import { sessionRefKey } from '../../../src/store/session/sessionIdentity';
 import { taskTerminalSignature } from '../../../src/store/session/taskAttention';
 import type { Message } from '../../../src/store/session/types';
 
+const loadActualSessionService = () =>
+  vi.importActual<typeof import('../../../src/services/sessionService')>(
+    '../../../src/services/sessionService'
+  );
+
 const actualReplaceEventSubscription =
   useSessionStore.getState().replaceEventSubscription;
 const actualPrepareEventSubscription =
@@ -220,6 +225,21 @@ function createSurfaceOpenResult(
   };
 }
 
+function createLocalSurface(session: Session) {
+  return createSurfaceOpenResult({
+    version: 2,
+    sessionId: session.sessionId,
+    workspace: { kind: 'local', projectPath: session.projectPath },
+  }).session;
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -283,16 +303,9 @@ function createMessage(
   overrides: Partial<Message> & Pick<Message, 'role' | 'content'>
 ): Message {
   return {
+    ...overrides,
     id: overrides.id ?? `message-${Date.now()}`,
-    role: overrides.role,
-    content: overrides.content,
     timestamp: overrides.timestamp ?? Date.now(),
-    metadata: overrides.metadata,
-    tool_call_id: overrides.tool_call_id,
-    name: overrides.name,
-    tool_calls: overrides.tool_calls,
-    thinkingContent: overrides.thinkingContent,
-    agentContent: overrides.agentContent,
   };
 }
 
@@ -1828,11 +1841,7 @@ describe('sessionSlice multimodal sendMessage', () => {
 
   it('removes a directly deleted Surface row without deleting same-id siblings', async () => {
     const local = createSession({ sessionId: 'direct-delete' });
-    const summary = createSurfaceOpenResult({
-      version: 2,
-      sessionId: local.sessionId,
-      workspace: { kind: 'local', projectPath: local.projectPath },
-    }).session;
+    const summary = createLocalSurface(local);
     const sibling = createSurfaceOpenResult({
       version: 2,
       sessionId: local.sessionId,
@@ -1856,11 +1865,7 @@ describe('sessionSlice multimodal sendMessage', () => {
 
   it('refreshes the Surface catalog when a locally created session is added', async () => {
     const local = createSession({ sessionId: 'direct-created' });
-    const summary = createSurfaceOpenResult({
-      version: 2,
-      sessionId: local.sessionId,
-      workspace: { kind: 'local', projectPath: local.projectPath },
-    }).session;
+    const summary = createLocalSurface(local);
     vi.mocked(sessionService.listSurfaceCatalog).mockResolvedValue({
       sessions: [summary],
     });
@@ -2359,9 +2364,7 @@ describe('sessionSlice multimodal sendMessage', () => {
     } as Response);
     vi.stubGlobal('fetch', fetchMock);
 
-    const { sessionService: actualSessionService } = await vi.importActual<
-      typeof import('../../../src/services/sessionService')
-    >('../../../src/services/sessionService');
+    const { sessionService: actualSessionService } = await loadActualSessionService();
 
     await expect(actualSessionService.listSessions()).rejects.toThrow();
   });
@@ -2371,37 +2374,20 @@ describe('sessionSlice multimodal sendMessage', () => {
     const snapshot = createFollowUpQueue('f'.repeat(64));
     const fetchMock = vi
       .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(snapshot))
       .mockResolvedValueOnce(
-        new Response(JSON.stringify(snapshot), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        })
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
+        jsonResponse(
+          {
             error: { code: 'revision_conflict', message: 'Queue changed' },
             snapshot,
-          }),
-          { status: 409, headers: { 'content-type': 'application/json' } }
+          },
+          409
         )
       )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ ...snapshot, leaked: true }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        })
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ snapshot: { ...snapshot, leaked: true } }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        })
-      );
+      .mockResolvedValueOnce(jsonResponse({ ...snapshot, leaked: true }))
+      .mockResolvedValueOnce(jsonResponse({ snapshot: { ...snapshot, leaked: true } }));
     vi.stubGlobal('fetch', fetchMock);
-    const actual = await vi.importActual<
-      typeof import('../../../src/services/sessionService')
-    >('../../../src/services/sessionService');
+    const actual = await loadActualSessionService();
 
     await expect(actual.sessionService.getFollowUpQueue(ref)).resolves.toEqual(
       snapshot
@@ -2466,9 +2452,7 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
     const onEvent = vi.fn();
     const snapshot = createFollowUpQueue('e'.repeat(64));
-    const actual = await vi.importActual<
-      typeof import('../../../src/services/sessionService')
-    >('../../../src/services/sessionService');
+    const actual = await loadActualSessionService();
 
     try {
       const ready = actual.sessionService.openEventSubscription(
@@ -2565,9 +2549,7 @@ describe('sessionSlice multimodal sendMessage', () => {
         activeToolOverflow: 0,
       },
     };
-    const actual = await vi.importActual<
-      typeof import('../../../src/services/sessionService')
-    >('../../../src/services/sessionService');
+    const actual = await loadActualSessionService();
 
     try {
       const ready = actual.sessionService.openEventSubscription(
@@ -2673,18 +2655,12 @@ describe('sessionSlice multimodal sendMessage', () => {
       nextCursor: 'catalog-next',
     };
     const responses = [catalog, opened, history, opened];
-    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
-      async () =>
-        new Response(JSON.stringify(responses.shift()), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        })
-    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => jsonResponse(responses.shift()));
     vi.stubGlobal('fetch', fetchMock);
 
-    const { sessionService: actualSessionService } = await vi.importActual<
-      typeof import('../../../src/services/sessionService')
-    >('../../../src/services/sessionService');
+    const { sessionService: actualSessionService } = await loadActualSessionService();
 
     await expect(
       actualSessionService.listSurfaceCatalog({
@@ -2744,29 +2720,24 @@ describe('sessionSlice multimodal sendMessage', () => {
   it('rejects malformed V2 surface responses instead of casting them into state', async () => {
     const validSummary = createSurfaceOpenResult().session;
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          sessions: [
-            {
-              ...validSummary,
-              locator: {
-                ...validSummary.locator,
-                workspace: {
-                  ...validSummary.locator.workspace,
-                  kind: 'acp-remote',
-                  projectPath: '/private/host/state',
-                },
+      jsonResponse({
+        sessions: [
+          {
+            ...validSummary,
+            locator: {
+              ...validSummary.locator,
+              workspace: {
+                ...validSummary.locator.workspace,
+                kind: 'acp-remote',
+                projectPath: '/private/host/state',
               },
             },
-          ],
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } }
-      )
+          },
+        ],
+      })
     );
     vi.stubGlobal('fetch', fetchMock);
-    const { sessionService: actualSessionService } = await vi.importActual<
-      typeof import('../../../src/services/sessionService')
-    >('../../../src/services/sessionService');
+    const { sessionService: actualSessionService } = await loadActualSessionService();
 
     await expect(actualSessionService.listSurfaceCatalog()).rejects.toThrow();
   });
@@ -3439,11 +3410,7 @@ describe('sessionSlice multimodal sendMessage', () => {
     'refreshes ready Surface membership after %s without changing selection',
     async (type) => {
       const local = createSession({ sessionId: 'discovered-task' });
-      const summary = createSurfaceOpenResult({
-        version: 2,
-        sessionId: local.sessionId,
-        workspace: { kind: 'local', projectPath: local.projectPath },
-      }).session;
+      const summary = createLocalSurface(local);
       const remote = createSurfaceOpenResult().session;
       const selected = createRef('foreground-task', local.projectPath);
       useSessionStore.setState({
@@ -3473,11 +3440,7 @@ describe('sessionSlice multimodal sendMessage', () => {
     'immediately removes only the exact local Surface row on %s',
     async (type) => {
       const local = createSession();
-      const summary = createSurfaceOpenResult({
-        version: 2,
-        sessionId: local.sessionId,
-        workspace: { kind: 'local', projectPath: local.projectPath },
-      }).session;
+      const summary = createLocalSurface(local);
       const sibling = createSurfaceOpenResult({
         version: 2,
         sessionId: local.sessionId,
@@ -3579,17 +3542,10 @@ describe('sessionSlice multimodal sendMessage', () => {
       sessionId: 'shared-id',
       projectPath: '/tmp/project-b',
     });
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify(session), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    );
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(session));
     vi.stubGlobal('fetch', fetchMock);
 
-    const { sessionService: actualSessionService } = await vi.importActual<
-      typeof import('../../../src/services/sessionService')
-    >('../../../src/services/sessionService');
+    const { sessionService: actualSessionService } = await loadActualSessionService();
 
     await expect(
       actualSessionService.getSession({
@@ -4323,13 +4279,8 @@ describe('sessionSlice multimodal sendMessage', () => {
       archivedAt: archivedRoot.archivedAt,
       archivedBySessionId: root.sessionId,
     };
-    const surfaceCatalog = [root, child, unrelated].map(
-      (session) =>
-        createSurfaceOpenResult({
-          version: 2,
-          sessionId: session.sessionId,
-          workspace: { kind: 'local', projectPath: session.projectPath },
-        }).session
+    const surfaceCatalog = [root, child, unrelated].map((session) =>
+      createLocalSurface(session)
     );
     const unrelatedSurface = surfaceCatalog[2]!;
     const unsubscribe = vi.fn();
@@ -4377,11 +4328,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       sessionId: 'archived-during-surface-load',
       projectPath: '/tmp/archive',
     });
-    const local = createSurfaceOpenResult({
-      version: 2,
-      sessionId: session.sessionId,
-      workspace: { kind: 'local', projectPath: session.projectPath },
-    }).session;
+    const local = createLocalSurface(session);
     const remote = createSurfaceOpenResult(
       createRemoteLocator(session.sessionId)
     ).session;
@@ -5080,9 +5027,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       })
     );
     vi.stubGlobal('fetch', fetchMock);
-    const { sessionService: actualSessionService } = await vi.importActual<
-      typeof import('../../../src/services/sessionService')
-    >('../../../src/services/sessionService');
+    const { sessionService: actualSessionService } = await loadActualSessionService();
 
     await expect(
       actualSessionService.exportSessionMarkdown(ref, true)
@@ -5109,9 +5054,7 @@ describe('sessionSlice multimodal sendMessage', () => {
         })
       )
     );
-    const { sessionService: actualSessionService } = await vi.importActual<
-      typeof import('../../../src/services/sessionService')
-    >('../../../src/services/sessionService');
+    const { sessionService: actualSessionService } = await loadActualSessionService();
     await expect(
       actualSessionService.exportSessionMarkdown(createRef('session', '/workspace'))
     ).rejects.toThrow('integrity hash');
@@ -5389,20 +5332,15 @@ describe('sessionSlice multimodal sendMessage', () => {
   });
 
   it('normalizes raw persisted history without requiring UI ids or timestamps', async () => {
-    const actual = await vi.importActual<
-      typeof import('../../../src/services/sessionService')
-    >('../../../src/services/sessionService');
+    const actual = await loadActualSessionService();
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify([
-          {
-            role: 'assistant',
-            content: 'persisted answer',
-            reasoningContent: 'persisted reasoning',
-          },
-        ]),
-        { status: 200, headers: { 'content-type': 'application/json' } }
-      )
+      jsonResponse([
+        {
+          role: 'assistant',
+          content: 'persisted answer',
+          reasoningContent: 'persisted reasoning',
+        },
+      ])
     );
     const previousFetch = globalThis.fetch;
     Object.defineProperty(globalThis, 'fetch', {
@@ -5467,9 +5405,7 @@ describe('sessionSlice multimodal sendMessage', () => {
 
     try {
       const onEvent = vi.fn();
-      const actual = await vi.importActual<
-        typeof import('../../../src/services/sessionService')
-      >('../../../src/services/sessionService');
+      const actual = await loadActualSessionService();
       const actualService = actual.sessionService;
       const connectionStates: string[] = [];
 
