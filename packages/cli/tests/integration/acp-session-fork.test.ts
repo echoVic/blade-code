@@ -10,7 +10,7 @@ import {
   deriveAcpRemoteHostStateRoot,
   withValidatedAcpRemoteStateScope,
 } from '../../src/acp/AcpRemoteWorkspace.js';
-import { BladeAgent } from '../../src/acp/BladeAgent.js';
+import type { BladeAgent } from '../../src/acp/BladeAgent.js';
 import { JSONLStore } from '../../src/context/storage/JSONLStore.js';
 import {
   getAcpRemoteSessionFilePath,
@@ -21,6 +21,7 @@ import { SessionService } from '../../src/services/SessionService.js';
 import { getState, vanillaStore } from '../../src/store/vanilla.js';
 import { worktreeManager } from '../../src/worktree/WorktreeManager.js';
 import { ControlledFileClient } from '../support/acp/ControlledFileClient.js';
+import { createBladeAcpHarness } from '../support/acp/createBladeAcpHarness.js';
 import { createDefaultMockConfig } from '../support/mocks/mockConfig.js';
 
 class DeterministicClient implements acp.Client {
@@ -44,55 +45,11 @@ interface PairedAcpHarness {
 function createHarness(
   client: acp.Client = new DeterministicClient()
 ): PairedAcpHarness {
-  const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
-  const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
-  let agent: BladeAgent | undefined;
-  let closePromise: Promise<void> | undefined;
-
-  const clientConnection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
-  );
-  const agentConnection = new acp.AgentSideConnection(
-    (connection) => {
-      agent = new BladeAgent(connection);
-      return agent;
-    },
-    acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
-  );
-  if (!agent) throw new Error('ACP Agent was not created');
-  const createdAgent = agent;
-
+  const harness = createBladeAcpHarness(client);
   return {
-    agent: createdAgent,
-    clientConnection,
-    close: () => {
-      closePromise ??= (async () => {
-        let firstError: unknown;
-        try {
-          await createdAgent.destroy();
-        } catch (error) {
-          firstError = error;
-        }
-
-        try {
-          const clientWriter = clientToAgent.writable.getWriter();
-          const agentWriter = agentToClient.writable.getWriter();
-          try {
-            await Promise.all([clientWriter.close(), agentWriter.close()]);
-          } finally {
-            clientWriter.releaseLock();
-            agentWriter.releaseLock();
-          }
-          await Promise.all([clientConnection.closed, agentConnection.closed]);
-        } catch (error) {
-          firstError ??= error;
-        }
-
-        if (firstError !== undefined) throw firstError;
-      })();
-      return closePromise;
-    },
+    agent: harness.agent,
+    clientConnection: harness.connection,
+    close: harness.close,
   };
 }
 

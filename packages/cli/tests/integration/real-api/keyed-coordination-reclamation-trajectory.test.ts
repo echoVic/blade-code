@@ -4,7 +4,7 @@ import path from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
 import { chromium, type Page } from 'playwright';
 import { describe, expect, it } from 'vitest';
-import { BladeAgent } from '../../../src/acp/BladeAgent.js';
+import type { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { getSubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
 
 import { ConfigManager } from '../../../src/config/ConfigManager.js';
@@ -18,6 +18,7 @@ import { sessionInteractionCoordinationStatsForTests } from '../../../src/servic
 import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { createBladeAcpHarness } from '../../support/acp/createBladeAcpHarness.js';
 import { waitForCondition as waitFor } from '../../support/asyncTestUtils.js';
 import { findSessionTranscript } from './sessionForkTrajectoryHarness.js';
 import {
@@ -271,52 +272,11 @@ async function waitForWebCoordinationIdle(): Promise<void> {
 }
 
 function createAcpHarness(client: RecordingAcpClient): AcpHarness {
-  const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
-  const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
-  let agent: BladeAgent | undefined;
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
-  );
-  const agentConnection = new acp.AgentSideConnection(
-    (productionConnection) => {
-      agent = new BladeAgent(productionConnection);
-      return agent;
-    },
-    acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
-  );
-  if (!agent) throw new Error('ACP Agent was not created');
-  const productionAgent = agent;
-  let closePromise: Promise<void> | undefined;
-
+  const harness = createBladeAcpHarness(client);
   return {
-    connection,
-    agent: productionAgent,
-    close: () => {
-      closePromise ??= (async () => {
-        let firstError: unknown;
-        try {
-          await productionAgent.destroy();
-        } catch (error) {
-          firstError = error;
-        }
-        try {
-          const clientWriter = clientToAgent.writable.getWriter();
-          const agentWriter = agentToClient.writable.getWriter();
-          try {
-            await Promise.all([clientWriter.close(), agentWriter.close()]);
-          } finally {
-            clientWriter.releaseLock();
-            agentWriter.releaseLock();
-          }
-          await Promise.all([connection.closed, agentConnection.closed]);
-        } catch (error) {
-          firstError ??= error;
-        }
-        if (firstError !== undefined) throw firstError;
-      })();
-      return closePromise;
-    },
+    connection: harness.connection,
+    agent: harness.agent,
+    close: harness.close,
   };
 }
 

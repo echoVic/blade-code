@@ -7,7 +7,6 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import * as acp from '@agentclientprotocol/sdk';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
@@ -18,6 +17,7 @@ import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import { ChildProcessRecordingAcpClient } from '../../support/acp/ChildProcessRecordingAcpClient.js';
+import { createBladeAcpHarness } from '../../support/acp/createBladeAcpHarness.js';
 import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
 import {
   assertNoSecrets,
@@ -40,28 +40,6 @@ const proModel = qualification?.models[1] ?? '';
 const enabled = Boolean(qualification);
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 let originalConfig: RuntimeConfig | null = null;
-
-function createHarness(client: ChildProcessRecordingAcpClient): {
-  connection: acp.ClientSideConnection;
-  agent: BladeAgent;
-} {
-  const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
-  const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
-  let agent: BladeAgent | undefined;
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
-  );
-  new acp.AgentSideConnection(
-    (agentConnection) => {
-      agent = new BladeAgent(agentConnection);
-      return agent;
-    },
-    acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
-  );
-  if (!agent) throw new Error('ACP Agent was not created');
-  return { connection, agent };
-}
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
@@ -185,7 +163,9 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
       startRecordingProviderProxy(upstreamBaseUrl),
     ]);
     const client = new ChildProcessRecordingAcpClient();
-    const harness = createHarness(client);
+    const harness = createBladeAcpHarness(client, {
+      disposeClient: () => client.close(),
+    });
     const ids = ['compact-global', 'compact-a', 'compact-b'];
     const priorVariables = ids.map((id) => {
       const name = getModelApiKeyEnvironmentVariable(id);
@@ -324,8 +304,7 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
         JSON.stringify({ globalRequests: 0, sessionRequests: [1, 1], model: proModel })
       );
     } finally {
-      await harness.agent.destroy();
-      await client.close();
+      await harness.close();
       await Promise.all(proxies.map((proxy) => proxy.close()));
       for (const { name, previous } of priorVariables) {
         if (previous === undefined) delete process.env[name];
@@ -339,7 +318,9 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-model-switch-'));
     const proxy = await startModelRecordingProxy();
     const client = new ChildProcessRecordingAcpClient();
-    const harness = createHarness(client);
+    const harness = createBladeAcpHarness(client, {
+      disposeClient: () => client.close(),
+    });
     process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
     const flashModelId = `acp-switch-${flashModel}`;
     const proModelId = `acp-switch-${proModel}`;
@@ -487,8 +468,7 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
       expect(client.activeTerminalCount()).toBe(0);
       expect(JSON.stringify(client.sessionUpdates)).not.toContain(apiKey);
     } finally {
-      await harness.agent.destroy().catch(() => undefined);
-      await client.close().catch(() => undefined);
+      await harness.close().catch(() => undefined);
       await proxy.close();
       WorkspaceTrustService.resetInstance();
       await rm(workspace, { recursive: true, force: true });

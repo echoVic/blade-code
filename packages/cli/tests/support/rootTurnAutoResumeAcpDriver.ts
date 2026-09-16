@@ -1,8 +1,8 @@
 import { access } from 'node:fs/promises';
 import * as acp from '@agentclientprotocol/sdk';
-import { BladeAgent } from '../../src/acp/BladeAgent.js';
 import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
 import { runWithCwdOverride } from '../../src/utils/cwd.js';
+import { createBladeAcpHarness } from './acp/createBladeAcpHarness.js';
 
 class RecordingClient implements acp.Client {
   readonly updates: acp.SessionNotification[] = [];
@@ -28,59 +28,7 @@ interface AcpHarness {
 }
 
 function createHarness(): AcpHarness {
-  const client = new RecordingClient();
-  const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
-  const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
-  let agent: BladeAgent | undefined;
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
-  );
-  const agentConnection = new acp.AgentSideConnection(
-    (productionConnection) => {
-      agent = new BladeAgent(productionConnection);
-      return agent;
-    },
-    acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
-  );
-  if (!agent) throw new Error('ACP root-turn Agent was not created');
-  const productionAgent = agent;
-  let closePromise: Promise<void> | undefined;
-
-  return {
-    client,
-    connection,
-    close: () => {
-      closePromise ??= (async () => {
-        let firstError: unknown;
-        try {
-          await productionAgent.destroy();
-        } catch (error) {
-          firstError = error;
-        }
-
-        try {
-          const clientWriter = clientToAgent.writable.getWriter();
-          const agentWriter = agentToClient.writable.getWriter();
-          try {
-            await Promise.all([clientWriter.close(), agentWriter.close()]);
-          } finally {
-            clientWriter.releaseLock();
-            agentWriter.releaseLock();
-          }
-          await Promise.all([
-            connection.closed.catch(() => undefined),
-            agentConnection.closed.catch(() => undefined),
-          ]);
-        } catch (error) {
-          firstError ??= error;
-        }
-
-        if (firstError !== undefined) throw firstError;
-      })();
-      return closePromise;
-    },
-  };
+  return createBladeAcpHarness(new RecordingClient());
 }
 
 function finalAgentText(updates: readonly acp.SessionNotification[]): string {

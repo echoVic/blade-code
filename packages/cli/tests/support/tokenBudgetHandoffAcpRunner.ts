@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
-import { BladeAgent } from '../../src/acp/BladeAgent.js';
 import {
   assertValidSessionId,
   isValidSessionId,
@@ -12,6 +11,7 @@ import { ensureStoreInitialized } from '../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../src/utils/cwd.js';
 import { processIdentityMatches } from '../../src/utils/process/ProcessIdentity.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
+import { createBladeAcpHarness } from './acp/createBladeAcpHarness.js';
 
 interface RunnerInput {
   mode: 'task' | 'load';
@@ -264,60 +264,7 @@ function loadInput(): RunnerInput {
 
 function createHarness(forbidden: readonly string[]): Harness {
   const client = new RecordingClient(forbidden);
-  const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
-  const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
-  let agent: BladeAgent | undefined;
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
-  );
-  const agentConnection = new acp.AgentSideConnection(
-    (productionConnection) => {
-      agent = new BladeAgent(productionConnection);
-      return agent;
-    },
-    acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
-  );
-  if (!agent) throw new Error('Token-budget ACP Agent was not created');
-  const productionAgent = agent;
-  let closePromise: Promise<void> | undefined;
-  return {
-    client,
-    connection,
-    close: () => {
-      closePromise ??= (async () => {
-        let failed = false;
-        let firstError: unknown;
-        await productionAgent.destroy().catch((error) => {
-          failed = true;
-          firstError = error;
-        });
-        await client.close().catch((error) => {
-          if (!failed) firstError = error;
-          failed = true;
-        });
-        try {
-          const clientWriter = clientToAgent.writable.getWriter();
-          const agentWriter = agentToClient.writable.getWriter();
-          try {
-            await Promise.all([clientWriter.close(), agentWriter.close()]);
-          } finally {
-            clientWriter.releaseLock();
-            agentWriter.releaseLock();
-          }
-          await Promise.all([
-            connection.closed.catch(() => undefined),
-            agentConnection.closed.catch(() => undefined),
-          ]);
-        } catch (error) {
-          if (!failed) firstError = error;
-          failed = true;
-        }
-        if (failed) throw firstError;
-      })();
-      return closePromise;
-    },
-  };
+  return createBladeAcpHarness(client, { disposeClient: () => client.close() });
 }
 
 export function finalAgentTextFromUpdates(

@@ -40,6 +40,12 @@ export interface PairedAcpAppHarness {
   close(): Promise<void>;
 }
 
+export interface PairedAcpHarnessOptions<TAgent extends acp.Agent = acp.Agent> {
+  createAgent?(connection: acp.AgentSideConnection): TAgent;
+  disposeAgent?(agent: TAgent): Promise<void>;
+  disposeClient?(): Promise<void>;
+}
+
 async function closeWriter(writable: WritableStream<Uint8Array>): Promise<void> {
   let writer: WritableStreamDefaultWriter<Uint8Array>;
   try {
@@ -90,6 +96,7 @@ function createClosableHarness<
   agentToClient: TransformStream<Uint8Array, Uint8Array>;
   closeClientConnection?: () => void;
   getClientCloseError?: () => unknown;
+  beforeClose?: () => Promise<void>;
 }): {
   clientConnection: TClientConnection;
   agentConnection: acp.AgentSideConnection;
@@ -102,6 +109,12 @@ function createClosableHarness<
     agentConnection: input.agentConnection,
     close: () => {
       closePromise ??= (async () => {
+        let firstError: unknown;
+        try {
+          await input.beforeClose?.();
+        } catch (error) {
+          firstError = error;
+        }
         const closeError = input.getClientCloseError?.();
         input.closeClientConnection?.();
         await Promise.all([
@@ -112,6 +125,9 @@ function createClosableHarness<
           settleWithin(input.clientConnection.closed),
           settleWithin(input.agentConnection.closed),
         ]);
+        if (firstError !== undefined) {
+          throw firstError;
+        }
         if (closeError !== undefined && !isBenignCloseError(closeError)) {
           throw closeError;
         }
@@ -127,15 +143,25 @@ export function closePairedAcpHarness(
   return harness.close();
 }
 
-export function createPairedAcpHarness(client: acp.Client): PairedAcpHarness {
+export function createPairedAcpHarness<TAgent extends acp.Agent = acp.Agent>(
+  client: acp.Client,
+  options: PairedAcpHarnessOptions<TAgent> = {}
+): PairedAcpHarness {
   const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
   const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
   const clientConnection = new acp.ClientSideConnection(
     () => client,
     acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
   );
+  let ownedAgent: TAgent | undefined;
   const agentConnection = new acp.AgentSideConnection(
-    () => new MinimalAgent(),
+    (connection) => {
+      if (!options.createAgent) {
+        return new MinimalAgent();
+      }
+      ownedAgent = options.createAgent(connection);
+      return ownedAgent;
+    },
     acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
   );
   return createClosableHarness({
@@ -143,6 +169,22 @@ export function createPairedAcpHarness(client: acp.Client): PairedAcpHarness {
     agentConnection,
     clientToAgent,
     agentToClient,
+    beforeClose: async () => {
+      let firstError: unknown;
+      try {
+        if (ownedAgent && options.disposeAgent) {
+          await options.disposeAgent(ownedAgent);
+        }
+      } catch (error) {
+        firstError = error;
+      }
+      try {
+        await options.disposeClient?.();
+      } catch (error) {
+        firstError ??= error;
+      }
+      if (firstError !== undefined) throw firstError;
+    },
   });
 }
 

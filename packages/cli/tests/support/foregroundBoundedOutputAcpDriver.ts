@@ -2,11 +2,11 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import * as acp from '@agentclientprotocol/sdk';
-import { BladeAgent } from '../../src/acp/BladeAgent.js';
 import { runWithCwdOverride } from '../../src/utils/cwd.js';
 import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
 import type { ForegroundBoundedOutputFixture } from '../integration/real-api/foregroundBoundedOutputFixture.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
+import { createBladeAcpHarness } from './acp/createBladeAcpHarness.js';
 
 const execFileAsync = promisify(execFile);
 const ACP_EVIDENCE_PREFIX = '__BLADE_BOUNDED_ACP_EVIDENCE__';
@@ -24,23 +24,15 @@ interface PairedHarness {
 
 function createHarness(options: { sessionUpdateDelayMs?: number } = {}): PairedHarness {
   const client = new ChildBackedRecordingAcpClient();
-  const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
-  const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
-  let agent: BladeAgent | undefined;
   const egressMetrics = {
     sessionUpdateCalls: 0,
     sessionUpdateInFlight: 0,
     maxSessionUpdateInFlight: 0,
   };
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
-  );
-  const agentConnection = new acp.AgentSideConnection(
-    (productionConnection) => {
-      const sessionUpdate =
-        productionConnection.sessionUpdate.bind(productionConnection);
-      productionConnection.sessionUpdate = async (params) => {
+  const paired = createBladeAcpHarness(client, {
+    prepareConnection: (connection) => {
+      const sessionUpdate = connection.sessionUpdate.bind(connection);
+      connection.sessionUpdate = async (params) => {
         egressMetrics.sessionUpdateCalls += 1;
         egressMetrics.sessionUpdateInFlight += 1;
         egressMetrics.maxSessionUpdateInFlight = Math.max(
@@ -58,49 +50,12 @@ function createHarness(options: { sessionUpdateDelayMs?: number } = {}): PairedH
           egressMetrics.sessionUpdateInFlight -= 1;
         }
       };
-      agent = new BladeAgent(productionConnection);
-      return agent;
     },
-    acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
-  );
-  if (!agent) throw new Error('ACP bounded output Agent was not created');
-  const productionAgent = agent;
-  let closePromise: Promise<void> | undefined;
+    disposeClient: () => client.close(),
+  });
   return {
-    client,
-    connection,
+    ...paired,
     egressMetrics,
-    close: () => {
-      closePromise ??= (async () => {
-        let firstError: unknown;
-        try {
-          await productionAgent.destroy();
-        } catch (error) {
-          firstError = error;
-        }
-        await client.close().catch((error) => {
-          firstError ??= error;
-        });
-        try {
-          const clientWriter = clientToAgent.writable.getWriter();
-          const agentWriter = agentToClient.writable.getWriter();
-          try {
-            await Promise.all([clientWriter.close(), agentWriter.close()]);
-          } finally {
-            clientWriter.releaseLock();
-            agentWriter.releaseLock();
-          }
-          await Promise.all([
-            connection.closed.catch(() => undefined),
-            agentConnection.closed.catch(() => undefined),
-          ]);
-        } catch (error) {
-          firstError ??= error;
-        }
-        if (firstError !== undefined) throw firstError;
-      })();
-      return closePromise;
-    },
   };
 }
 

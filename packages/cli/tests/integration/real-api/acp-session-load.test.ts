@@ -13,7 +13,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import * as acp from '@agentclientprotocol/sdk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { BladeAgent } from '../../../src/acp/BladeAgent.js';
+import type { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { AcpSession, createLocalAcpSessionRoots } from '../../../src/acp/Session.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
@@ -22,6 +22,7 @@ import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustServi
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { createBladeAcpHarness } from '../../support/acp/createBladeAcpHarness.js';
 import {
   BOUNDED_OUTPUT_PROOF,
   BOUNDED_OUTPUT_TAIL,
@@ -85,55 +86,12 @@ interface PairedAcpHarness {
 }
 
 function createHarness(client: RecordingClient): PairedAcpHarness {
-  const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
-  const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
-  let agent: BladeAgent | undefined;
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
-  );
-  const agentConnection = new acp.AgentSideConnection(
-    (agentConnection) => {
-      agent = new BladeAgent(agentConnection);
-      return agent;
-    },
-    acp.ndJsonStream(agentToClient.writable, clientToAgent.readable)
-  );
-  if (!agent) throw new Error('ACP Agent was not created');
-  const productionAgent = agent;
-  let closePromise: Promise<void> | undefined;
-
+  const harness = createBladeAcpHarness(client);
   return {
-    connection,
-    agentConnection,
-    agent: productionAgent,
-    close: () => {
-      closePromise ??= (async () => {
-        let firstError: unknown;
-        try {
-          await productionAgent.destroy();
-        } catch (error) {
-          firstError = error;
-        }
-
-        try {
-          const clientWriter = clientToAgent.writable.getWriter();
-          const agentWriter = agentToClient.writable.getWriter();
-          try {
-            await Promise.all([clientWriter.close(), agentWriter.close()]);
-          } finally {
-            clientWriter.releaseLock();
-            agentWriter.releaseLock();
-          }
-          await Promise.all([connection.closed, agentConnection.closed]);
-        } catch (error) {
-          firstError ??= error;
-        }
-
-        if (firstError !== undefined) throw firstError;
-      })();
-      return closePromise;
-    },
+    connection: harness.connection,
+    agentConnection: harness.agentConnection,
+    agent: harness.agent,
+    close: harness.close,
   };
 }
 
