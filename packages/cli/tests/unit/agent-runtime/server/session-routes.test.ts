@@ -52,6 +52,9 @@ const requestJson = (
 
 const loadSessionRoutes = async () =>
   (await import('../../../../src/server/routes/session.js')).SessionRoutes;
+const loadSessionRouteController = async () =>
+  (await import('../../../../src/server/routes/session.js'))
+    .createSessionRouteController;
 const loadSessionService = async () =>
   (await import('../../../../src/services/SessionService.js')).SessionService;
 const loadBus = async () => (await import('../../../../src/server/bus.js')).Bus;
@@ -116,6 +119,33 @@ const makeSteeringEnqueueResult = (): SteeringEnqueueResult => ({
   delivery: 'current_turn',
   queue: makeFollowUpQueueSnapshot(),
 });
+
+const makeProviderRecoveryBudgetFailure = (detail = 'opaque') => ({
+  success: false as const,
+  error: {
+    type: 'api_error' as const,
+    message: 'Provider request failed.',
+    details: Object.assign(new Error(detail), {
+      code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+    }),
+  },
+  metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+});
+
+function promiseGate<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return [promise, resolve] as const;
+}
+
+function mockPendingResume(metadata: SessionMetadata): void {
+  vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+  vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+  vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+  runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+}
 
 const makeMessages = (...messages: Message[]): Message[] => messages;
 
@@ -708,6 +738,16 @@ function createSseCollector(response: Response) {
   };
 }
 
+async function closeSse(
+  controller: { shutdown(): Promise<void> },
+  signal: AbortController,
+  response: Response
+): Promise<void> {
+  signal.abort();
+  await response.body?.cancel().catch(() => undefined);
+  await controller.shutdown();
+}
+
 describe('SessionRoutes runtime reuse', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1205,9 +1245,7 @@ describe('SessionRoutes runtime reuse', () => {
   };
 
   it('hydrates an idle Session SSE projection without loading durable history', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'history-free-sse-session';
     const projectPath = '/tmp/history-free-sse-workspace';
     mockResolvedSession(sessionId, {
@@ -1245,9 +1283,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('resolves a Browser route without loading durable history', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'history-free-browser-session';
     const projectPath = '/tmp/history-free-browser-workspace';
     mockResolvedSession(sessionId, { projectPath });
@@ -1276,20 +1312,12 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns projection capacity 429 for metadata-only after projection eviction Browser hydrate', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     projectionResidencyConfig.maxResident = 1;
     const idleA = metadataFor('projection-browser-idle-a', '/tmp/projection-browser');
     const idleB = metadataFor('projection-browser-idle-b', '/tmp/projection-browser');
-    let releaseHydration!: () => void;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
     vi.mocked(SessionService.listSessions).mockResolvedValue([idleA, idleB]);
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId, projectPath) => {
@@ -1351,9 +1379,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('loads and filters durable messages after an SSE projection already exists', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'durable-history-after-sse';
     const projectPath = '/tmp/durable-history-after-sse';
     const metadata = metadataFor(sessionId, projectPath, { messageCount: 2 });
@@ -1415,9 +1441,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rehydrates metadata-only after projection eviction and keeps GET /message durable fresh', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     projectionResidencyConfig.maxResident = 1;
     const sessionId = 'projection-evicted-sse';
     const projectPath = '/tmp/projection-evicted-sse';
@@ -1494,23 +1518,15 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not resurrect a deleted Session from an in-flight SSE hydration', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'delete-hydration-fence';
     const projectPath = '/tmp/delete-hydration-fence';
     const metadata = metadataFor(sessionId, projectPath, {
       title: 'Deleted hydration',
     });
     let deleted = false;
-    let releaseHydration!: () => void;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
     let taskWorktreeLookups = 0;
 
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
@@ -1607,22 +1623,14 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not let an old controller hydration populate replacement state', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'replacement-hydration-fence';
     const projectPath = '/tmp/replacement-hydration-fence';
     const metadata = metadataFor(sessionId, projectPath, {
       title: 'Old controller hydration',
     });
-    let releaseHydration!: () => void;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
     let taskWorktreeLookups = 0;
 
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
@@ -1710,9 +1718,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not let an invalidated hydration overwrite or release a newer same-key generation', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'same-key-hydration-generation';
     const projectPath = '/tmp/same-key-hydration-generation';
     const oldMetadata = metadataFor(sessionId, projectPath, {
@@ -1728,22 +1734,10 @@ describe('SessionRoutes runtime reuse', () => {
     });
     let durableMetadata: SessionMetadata = oldMetadata;
     let taskWorktreeLookups = 0;
-    let releaseOldHydration!: () => void;
-    const oldHydrationGate = new Promise<void>((resolve) => {
-      releaseOldHydration = resolve;
-    });
-    let markOldHydrationStarted!: () => void;
-    const oldHydrationStarted = new Promise<void>((resolve) => {
-      markOldHydrationStarted = resolve;
-    });
-    let releaseNewHydration!: () => void;
-    const newHydrationGate = new Promise<void>((resolve) => {
-      releaseNewHydration = resolve;
-    });
-    let markNewHydrationStarted!: () => void;
-    const newHydrationStarted = new Promise<void>((resolve) => {
-      markNewHydrationStarted = resolve;
-    });
+    const [oldHydrationGate, releaseOldHydration] = promiseGate();
+    const [oldHydrationStarted, markOldHydrationStarted] = promiseGate();
+    const [newHydrationGate, releaseNewHydration] = promiseGate();
+    const [newHydrationStarted, markNewHydrationStarted] = promiseGate();
 
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (requestedSessionId, requestedProjectPath) =>
@@ -1863,20 +1857,12 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('invalidates an in-flight Session hydration during shutdown', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'shutdown-hydration-fence';
     const projectPath = '/tmp/shutdown-hydration-fence';
     const metadata = metadataFor(sessionId, projectPath);
-    let releaseHydration!: () => void;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
 
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (requestedSessionId, requestedProjectPath) =>
@@ -1952,9 +1938,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('does not resurrect an archived Session from an in-flight SSE hydration', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'archive-hydration-fence';
     const projectPath = '/tmp/archive-hydration-fence';
     const metadata = metadataFor(sessionId, projectPath);
@@ -1964,14 +1948,8 @@ describe('SessionRoutes runtime reuse', () => {
       archivedBySessionId: sessionId,
     };
     let archiveCommitted = false;
-    let releaseHydration!: () => void;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
 
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (requestedSessionId, requestedProjectPath) =>
@@ -2061,20 +2039,12 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('keeps an in-flight Session hydration valid when durable archive fails', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'failed-archive-hydration';
     const projectPath = '/tmp/failed-archive-hydration';
     const metadata = metadataFor(sessionId, projectPath);
-    let releaseHydration!: () => void;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
 
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (requestedSessionId, requestedProjectPath) =>
@@ -2144,20 +2114,12 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('keeps same-key concurrent Session hydrations single-flight', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'same-key-hydration';
     const projectPath = '/tmp/same-key-hydration';
     const metadata = metadataFor(sessionId, projectPath);
-    let releaseHydration!: () => void;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
 
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (requestedSessionId, requestedProjectPath) =>
@@ -2245,9 +2207,7 @@ describe('SessionRoutes runtime reuse', () => {
     const { PermissionRoutes } = await import(
       '../../../../src/server/routes/permission.js'
     );
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const { SessionInteractionService } = await import(
       '../../../../src/services/SessionInteractionService.js'
     );
@@ -2275,28 +2235,16 @@ describe('SessionRoutes runtime reuse', () => {
     const findPending = vi
       .spyOn(SessionInteractionService, 'findPending')
       .mockResolvedValue(pending);
-    let continueDurableRecovery!: () => void;
-    const durableRecoveryGate = new Promise<void>((resolve) => {
-      continueDurableRecovery = resolve;
-    });
-    let markDurableRecoveryStarted!: () => void;
-    const durableRecoveryStarted = new Promise<void>((resolve) => {
-      markDurableRecoveryStarted = resolve;
-    });
+    const [durableRecoveryGate, continueDurableRecovery] = promiseGate();
+    const [durableRecoveryStarted, markDurableRecoveryStarted] = promiseGate();
     const respondAndRecover = vi
       .spyOn(SessionInteractionService, 'respondAndRecover')
       .mockImplementation(async () => {
         markDurableRecoveryStarted();
         await durableRecoveryGate;
       });
-    let releaseHydration!: () => void;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
     let taskWorktreeLookups = 0;
     let metadataLookups = 0;
 
@@ -2853,9 +2801,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects a second Session while the only resident Runtime is active', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     runtimeResidencyConfig.maxResident = 1;
     const metadata = [
       metadataFor('resident-active-a', '/tmp/residency'),
@@ -2869,10 +2815,7 @@ describe('SessionRoutes runtime reuse', () => {
             candidate.sessionId === sessionId && candidate.projectPath === projectPath
         )
     );
-    let releaseRun!: () => void;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    const [runGate, releaseRun] = promiseGate();
     agentState.chatStream.mockImplementationOnce(async function* () {
       if (Date.now() < 0) yield undefined;
       await runGate;
@@ -2923,9 +2866,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('evicts the idle LRU Runtime and cold-rehydrates durable history', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     runtimeResidencyConfig.maxResident = 1;
     const metadata = [
       metadataFor('resident-idle-a', '/tmp/residency'),
@@ -2975,9 +2916,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('loads durable model context for a cold follow-up after projection eviction', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     runtimeResidencyConfig.maxResident = 1;
     const sessionA = metadataFor('projection-cold-follow-up-a', '/tmp/projection-cold');
     const sessionB = metadataFor('projection-cold-follow-up-b', '/tmp/projection-cold');
@@ -3029,9 +2968,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('reclaims high-cardinality message and task-delivery coordination keys', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const projectPath = '/tmp/coordination-churn';
     const metadata = Array.from({ length: 32 }, (_, index) =>
       metadataFor(`coordination-${index}`, projectPath)
@@ -3081,10 +3018,7 @@ describe('SessionRoutes runtime reuse', () => {
     const { Agent } = await import('../../../../src/agent/Agent.js');
     const Bus = await loadBus();
     mockResolvedSession('steering-session');
-    let releaseRun: () => void = () => undefined;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    const [runGate, releaseRun] = promiseGate();
     agentState.chatStream.mockImplementationOnce(async function* () {
       yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
       await runGate;
@@ -3511,14 +3445,8 @@ describe('SessionRoutes runtime reuse', () => {
       mutable: 0,
       items: [],
     });
-    let markMutationStarted!: () => void;
-    const mutationStarted = new Promise<void>((resolve) => {
-      markMutationStarted = resolve;
-    });
-    let releaseMutation!: () => void;
-    const mutationGate = new Promise<void>((resolve) => {
-      releaseMutation = resolve;
-    });
+    const [mutationStarted, markMutationStarted] = promiseGate();
+    const [mutationGate, releaseMutation] = promiseGate();
     runtimeState.runtime.mutateFollowUpQueue.mockImplementationOnce(async () => {
       markMutationStarted();
       await mutationGate;
@@ -3561,10 +3489,7 @@ describe('SessionRoutes runtime reuse', () => {
     const SessionRoutes = await loadSessionRoutes();
     const Bus = await loadBus();
     mockResolvedSession('active-model-session');
-    let releaseRun: () => void = () => undefined;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    const [runGate, releaseRun] = promiseGate();
     agentState.chatStream.mockImplementationOnce(async function* () {
       yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
       await runGate;
@@ -3682,10 +3607,7 @@ describe('SessionRoutes runtime reuse', () => {
     const SessionRoutes = await loadSessionRoutes();
     const Bus = await loadBus();
     mockResolvedSession('follow-up-session');
-    let releaseRun: () => void = () => undefined;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    const [runGate, releaseRun] = promiseGate();
     agentState.chatStream.mockImplementationOnce(async function* () {
       yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
       await runGate;
@@ -3754,10 +3676,7 @@ describe('SessionRoutes runtime reuse', () => {
           releaseRuntime = async () => resolve(await createRuntimeDouble());
         })
     );
-    let releaseRun: () => void = () => undefined;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    const [runGate, releaseRun] = promiseGate();
     agentState.chatStream.mockImplementationOnce(async function* () {
       yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
       await runGate;
@@ -3884,10 +3803,7 @@ describe('SessionRoutes runtime reuse', () => {
     );
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-    let releaseRun: () => void = () => undefined;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    const [runGate, releaseRun] = promiseGate();
     agentState.chatStream.mockImplementationOnce(async function* () {
       yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
       await runGate;
@@ -3935,9 +3851,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('retries a retryable zero-side-effect Web pending resume', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const recoveredMetadata = metadataFor(
       'retry-recovered-web-session',
       '/persisted-workspace',
@@ -3986,17 +3900,7 @@ describe('SessionRoutes runtime reuse', () => {
             items: [],
           }),
         };
-        return {
-          success: false,
-          error: {
-            type: 'api_error' as const,
-            message: 'Provider request failed.',
-            details: Object.assign(new Error('opaque Provider failure'), {
-              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-            }),
-          },
-          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-        };
+        return makeProviderRecoveryBudgetFailure('opaque Provider failure');
       })
       .mockImplementationOnce(async function* () {
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
@@ -4084,26 +3988,16 @@ describe('SessionRoutes runtime reuse', () => {
       )
     ).toHaveLength(1);
 
-    eventsController.abort();
-    await response.body?.cancel().catch(() => undefined);
-    await controller.shutdown();
+    await closeSse(controller, eventsController, response);
   });
 
   it('keeps terminal events when a new message steers an active Web pending resume', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const metadata = metadataFor('steered-pending-resume', '/persisted-workspace', {
       permissionMode: 'yolo',
     });
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
-    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
-    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-    let releaseRun: () => void = () => undefined;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    mockPendingResume(metadata);
+    const [runGate, releaseRun] = promiseGate();
     agentState.chatStream.mockImplementationOnce(async function* () {
       yield { kind: 'content_delta' as const, delta: 'completed response' };
       await runGate;
@@ -4152,24 +4046,17 @@ describe('SessionRoutes runtime reuse', () => {
         busState.publish.mock.calls.some(([, type]) => type === 'session.completed')
       ).toBe(true);
     } finally {
-      eventsController.abort();
-      await response.body?.cancel().catch(() => undefined);
-      await controller.shutdown();
+      await closeSse(controller, eventsController, response);
     }
   });
 
   it('waits for failed Web pending resume cleanup before retrying', async () => {
     vi.useFakeTimers();
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const metadata = metadataFor('settling-resume', '/persisted-workspace', {
       permissionMode: 'yolo',
     });
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
-    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
-    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    mockPendingResume(metadata);
     let releaseStatus: () => void = () => undefined;
     const statusGate = new Promise<undefined>((resolve) => {
       releaseStatus = () => resolve(undefined);
@@ -4187,17 +4074,7 @@ describe('SessionRoutes runtime reuse', () => {
       .mockImplementationOnce(async function* () {
         if (Date.now() < 0)
           yield { kind: 'turn_start' as const, turn: 1, maxTurns: 10 };
-        return {
-          success: false,
-          error: {
-            type: 'api_error' as const,
-            message: 'Provider request failed.',
-            details: Object.assign(new Error('opaque'), {
-              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-            }),
-          },
-          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-        };
+        return makeProviderRecoveryBudgetFailure();
       })
       .mockImplementationOnce(async function* () {
         if (Date.now() < 0) yield undefined;
@@ -4243,9 +4120,7 @@ describe('SessionRoutes runtime reuse', () => {
       ).toHaveLength(1);
     });
 
-    eventsController.abort();
-    await response.body?.cancel().catch(() => undefined);
-    await controller.shutdown();
+    await closeSse(controller, eventsController, response);
     vi.useRealTimers();
   });
 
@@ -4295,10 +4170,7 @@ describe('SessionRoutes runtime reuse', () => {
     const destroyGate = new Promise<undefined>((resolve) => {
       releaseDestroy = () => resolve(undefined);
     });
-    let markSecondDestroyStarted!: () => void;
-    const secondDestroyStarted = new Promise<void>((resolve) => {
-      markSecondDestroyStarted = resolve;
-    });
+    const [secondDestroyStarted, markSecondDestroyStarted] = promiseGate();
     let destroyCalls = 0;
     const destroy = agentState.destroy.mockReset().mockImplementation(async () => {
       destroyCalls++;
@@ -4306,10 +4178,7 @@ describe('SessionRoutes runtime reuse', () => {
       else markSecondDestroyStarted();
     });
     let attempts = 0;
-    let markSecondAttemptStarted!: () => void;
-    const secondAttemptStarted = new Promise<void>((resolve) => {
-      markSecondAttemptStarted = resolve;
-    });
+    const [secondAttemptStarted, markSecondAttemptStarted] = promiseGate();
     const leaseHandoffOrder: string[] = [];
     const chatStream = agentState.chatStream
       .mockReset()
@@ -4318,17 +4187,7 @@ describe('SessionRoutes runtime reuse', () => {
         leaseHandoffOrder.push(`chat:${attempts}`);
         if (attempts === 1) {
           if (Date.now() < 0) yield undefined;
-          return {
-            success: false,
-            error: {
-              type: 'api_error' as const,
-              message: 'Provider request failed.',
-              details: Object.assign(new Error('opaque'), {
-                code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-              }),
-            },
-            metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-          };
+          return makeProviderRecoveryBudgetFailure();
         }
         markSecondAttemptStarted();
         if (Date.now() < 0) yield undefined;
@@ -4398,9 +4257,7 @@ describe('SessionRoutes runtime reuse', () => {
     const markDelivered = vi
       .spyOn(TeamMailbox.prototype, 'markDelivered')
       .mockResolvedValue(undefined);
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const controller = createSessionRouteController();
     const eventControllers = [
       new AbortController(),
@@ -4522,9 +4379,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('fails closed when a scheduled Web pending resume fails before startRun', async () => {
     vi.useFakeTimers();
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const metadata = metadataFor('retry-startup-failure', '/persisted-workspace', {
       permissionMode: 'yolo',
     });
@@ -4534,10 +4389,7 @@ describe('SessionRoutes runtime reuse', () => {
       .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error('private retry startup details'))
       .mockResolvedValue(true);
-    let releaseTerminalPersist: () => void = () => undefined;
-    const terminalPersistGate = new Promise<void>((resolve) => {
-      releaseTerminalPersist = resolve;
-    });
+    const [terminalPersistGate, releaseTerminalPersist] = promiseGate();
     vi.mocked(SessionService.updateSessionMetadata).mockImplementationOnce(
       async (sessionId, projectPath, update) => {
         await terminalPersistGate;
@@ -4555,17 +4407,7 @@ describe('SessionRoutes runtime reuse', () => {
     agentState.chatStream
       .mockImplementationOnce(async function* () {
         if (Date.now() < 0) yield undefined;
-        return {
-          success: false,
-          error: {
-            type: 'api_error' as const,
-            message: 'Provider request failed.',
-            details: Object.assign(new Error('opaque'), {
-              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-            }),
-          },
-          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-        };
+        return makeProviderRecoveryBudgetFailure();
       })
       .mockImplementationOnce(async function* () {
         if (Date.now() < 0) yield undefined;
@@ -4662,9 +4504,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('stays terminal when persisting a pending resume startup failure rejects', async () => {
     vi.useFakeTimers();
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'retry-terminal-persist-failure';
     const projectPath = '/persisted-workspace';
     const metadata = metadataFor(sessionId, projectPath, { permissionMode: 'yolo' });
@@ -4680,17 +4520,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
     agentState.chatStream.mockImplementationOnce(async function* () {
       if (Date.now() < 0) yield undefined;
-      return {
-        success: false,
-        error: {
-          type: 'api_error' as const,
-          message: 'Provider request failed.',
-          details: Object.assign(new Error('opaque'), {
-            code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-          }),
-        },
-        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-      };
+      return makeProviderRecoveryBudgetFailure();
     });
 
     const controller = createSessionRouteController();
@@ -4752,16 +4582,11 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('exhausts a Web pending resume whose cleanup crosses the recovery deadline', async () => {
     vi.useFakeTimers({ now: 1_000 });
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'cleanup-crosses-resume-deadline';
     const projectPath = '/persisted-workspace';
     const metadata = metadataFor(sessionId, projectPath, { permissionMode: 'yolo' });
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
-    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
-    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    mockPendingResume(metadata);
 
     let releaseDestroy: () => void = () => undefined;
     const destroyGate = new Promise<undefined>((resolve) => {
@@ -4770,17 +4595,7 @@ describe('SessionRoutes runtime reuse', () => {
     agentState.destroy.mockImplementationOnce(() => destroyGate);
     agentState.chatStream.mockImplementationOnce(async function* () {
       if (Date.now() < 0) yield undefined;
-      return {
-        success: false,
-        error: {
-          type: 'api_error' as const,
-          message: 'Provider request failed.',
-          details: Object.assign(new Error('opaque'), {
-            code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-          }),
-        },
-        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-      };
+      return makeProviderRecoveryBudgetFailure();
     });
 
     const controller = createSessionRouteController();
@@ -4856,25 +4671,18 @@ describe('SessionRoutes runtime reuse', () => {
       }
     } finally {
       releaseDestroy();
-      eventsController.abort();
-      await response.body?.cancel().catch(() => undefined);
-      await controller.shutdown();
+      await closeSse(controller, eventsController, response);
       vi.useRealTimers();
     }
   });
 
   it('rejects pending permission and ignores late success at the Web resume deadline', async () => {
     vi.useFakeTimers({ now: 1_000 });
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const metadata = metadataFor('deadline-resume', '/persisted-workspace', {
       permissionMode: 'yolo',
     });
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
-    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
-    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    mockPendingResume(metadata);
     let confirmationResponse: { approved: boolean; reason?: string } | undefined;
     agentState.chatStream.mockImplementationOnce(async function* (_content, context) {
       if (Date.now() < 0) yield undefined;
@@ -4987,19 +4795,14 @@ describe('SessionRoutes runtime reuse', () => {
   ])(
     'does not retry Web pending resume after %s evidence',
     async (boundary, event, toolCallsCount) => {
-      const { createSessionRouteController } = await import(
-        '../../../../src/server/routes/session.js'
-      );
+      const createSessionRouteController = await loadSessionRouteController();
       const sessionId = `no-retry-${boundary}`
         .replaceAll('_', '-')
         .replaceAll(' ', '-');
       const metadata = metadataFor(sessionId, '/persisted-workspace', {
         permissionMode: 'yolo',
       });
-      vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
-      vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-      vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
-      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      mockPendingResume(metadata);
       const retryable = boundary !== 'nonretryable';
       agentState.chatStream.mockImplementationOnce(async function* () {
         if (event) yield event;
@@ -5077,9 +4880,7 @@ describe('SessionRoutes runtime reuse', () => {
           await reconnectResponse.body?.cancel().catch(() => undefined);
         }
       } finally {
-        eventsController.abort();
-        await response.body?.cancel().catch(() => undefined);
-        await controller.shutdown();
+        await closeSse(controller, eventsController, response);
       }
     }
   );
@@ -5088,30 +4889,15 @@ describe('SessionRoutes runtime reuse', () => {
     'cancels a scheduled Web pending resume on %s',
     async (cleanup) => {
       vi.useFakeTimers();
-      const { createSessionRouteController } = await import(
-        '../../../../src/server/routes/session.js'
-      );
+      const createSessionRouteController = await loadSessionRouteController();
       const sessionId = `cleanup-${cleanup.replace(' ', '-')}`;
       const metadata = metadataFor(sessionId, '/persisted-workspace', {
         permissionMode: 'yolo',
       });
-      vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
-      vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-      vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
-      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      mockPendingResume(metadata);
       agentState.chatStream.mockImplementation(async function* () {
         if (Date.now() < 0) yield undefined;
-        return {
-          success: false,
-          error: {
-            type: 'api_error' as const,
-            message: 'Provider request failed.',
-            details: Object.assign(new Error('opaque'), {
-              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-            }),
-          },
-          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-        };
+        return makeProviderRecoveryBudgetFailure();
       });
 
       const controller = createSessionRouteController();
@@ -5148,23 +4934,15 @@ describe('SessionRoutes runtime reuse', () => {
   );
 
   it('releases pending resume owners when shutdown closes admission during handoff', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'shutdown-before-pending-start-run';
     const projectPath = '/persisted-workspace';
     const metadata = metadataFor(sessionId, projectPath, { permissionMode: 'yolo' });
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
-    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
-    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    mockPendingResume(metadata);
 
     const controller = createSessionRouteController();
     let shutdownPromise: Promise<void> | undefined;
-    let markShutdownStarted!: () => void;
-    const shutdownStarted = new Promise<void>((resolve) => {
-      markShutdownStarted = resolve;
-    });
+    const [shutdownStarted, markShutdownStarted] = promiseGate();
     runtimeState.runtime.hasTurnOwner.mockImplementationOnce(() => {
       queueMicrotask(() => {
         shutdownPromise = controller.shutdown('test-shutdown');
@@ -5184,43 +4962,26 @@ describe('SessionRoutes runtime reuse', () => {
       expect(Agent.createWithRuntime).not.toHaveBeenCalled();
       expect(controller.getProjectionResidencyStats().pinned).toBe(0);
     } finally {
-      eventsController.abort();
-      await response.body?.cancel().catch(() => undefined);
-      await controller.shutdown();
+      await closeSse(controller, eventsController, response);
     }
   });
 
   it('invalidates a pending resume attempt when abort arrives during its disk probe', async () => {
     vi.useFakeTimers();
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'abort-during-pending-resume-probe';
     const projectPath = '/persisted-workspace';
     const metadata = metadataFor(sessionId, projectPath, { permissionMode: 'yolo' });
     vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-    let releaseProbe: (pending: boolean) => void = () => undefined;
-    const probeGate = new Promise<boolean>((resolve) => {
-      releaseProbe = resolve;
-    });
+    const [probeGate, releaseProbe] = promiseGate<boolean>();
     vi.mocked(SessionRuntime.hasPendingInbox)
       .mockResolvedValueOnce(true)
       .mockImplementationOnce(() => probeGate);
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
     agentState.chatStream.mockImplementationOnce(async function* () {
       if (Date.now() < 0) yield undefined;
-      return {
-        success: false,
-        error: {
-          type: 'api_error' as const,
-          message: 'Provider request failed.',
-          details: Object.assign(new Error('opaque'), {
-            code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-          }),
-        },
-        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-      };
+      return makeProviderRecoveryBudgetFailure();
     });
 
     const controller = createSessionRouteController();
@@ -5263,9 +5024,7 @@ describe('SessionRoutes runtime reuse', () => {
       ).toBe(false);
     } finally {
       releaseProbe(true);
-      eventsController.abort();
-      await response.body?.cancel().catch(() => undefined);
-      await controller.shutdown();
+      await closeSse(controller, eventsController, response);
       vi.useRealTimers();
     }
   });
@@ -5274,31 +5033,16 @@ describe('SessionRoutes runtime reuse', () => {
     'clears a scheduled Web pending resume on %s',
     async (cleanup) => {
       vi.useFakeTimers();
-      const { createSessionRouteController } = await import(
-        '../../../../src/server/routes/session.js'
-      );
+      const createSessionRouteController = await loadSessionRouteController();
       const sessionId = `pending-resume-${cleanup.replaceAll(' ', '-')}`;
       const projectPath = '/persisted-workspace';
       const metadata = metadataFor(sessionId, projectPath, {
         permissionMode: 'yolo',
       });
-      vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
-      vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-      vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
-      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      mockPendingResume(metadata);
       agentState.chatStream.mockImplementationOnce(async function* () {
         if (Date.now() < 0) yield undefined;
-        return {
-          success: false,
-          error: {
-            type: 'api_error' as const,
-            message: 'Provider request failed.',
-            details: Object.assign(new Error('opaque'), {
-              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-            }),
-          },
-          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-        };
+        return makeProviderRecoveryBudgetFailure();
       });
       if (cleanup === 'new message run') {
         agentState.chatStream.mockImplementationOnce(async function* () {
@@ -5353,9 +5097,7 @@ describe('SessionRoutes runtime reuse', () => {
         await vi.advanceTimersByTimeAsync(5_000);
         expect(agentState.chatStream).toHaveBeenCalledTimes(callsAfterCleanup);
       } finally {
-        eventsController.abort();
-        await response.body?.cancel().catch(() => undefined);
-        await controller.shutdown();
+        await closeSse(controller, eventsController, response);
         await resetController?.shutdown();
         vi.useRealTimers();
       }
@@ -5364,32 +5106,17 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('keeps a scheduled pending resume projection pinned across the retry gap and releases on cleanup', async () => {
     vi.useFakeTimers();
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     projectionResidencyConfig.maxResident = 1;
     const sessionId = 'pending-resume-projection-pin';
     const projectPath = '/persisted-workspace';
     const metadata = metadataFor(sessionId, projectPath, {
       permissionMode: 'yolo',
     });
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
-    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
-    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    mockPendingResume(metadata);
     agentState.chatStream.mockImplementationOnce(async function* () {
       if (Date.now() < 0) yield undefined;
-      return {
-        success: false,
-        error: {
-          type: 'api_error' as const,
-          message: 'Provider request failed.',
-          details: Object.assign(new Error('opaque'), {
-            code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-          }),
-        },
-        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-      };
+      return makeProviderRecoveryBudgetFailure();
     });
 
     const controller = createSessionRouteController();
@@ -5451,9 +5178,7 @@ describe('SessionRoutes runtime reuse', () => {
         pinned: 0,
       });
     } finally {
-      eventsController.abort();
-      await response.body?.cancel().catch(() => undefined);
-      await controller.shutdown();
+      await closeSse(controller, eventsController, response);
       vi.useRealTimers();
     }
   });
@@ -5461,9 +5186,7 @@ describe('SessionRoutes runtime reuse', () => {
   it.each(['Goal-only', 'task-isolated'] as const)(
     'does not attach Web pending recovery to a %s run',
     async (kind) => {
-      const { createSessionRouteController } = await import(
-        '../../../../src/server/routes/session.js'
-      );
+      const createSessionRouteController = await loadSessionRouteController();
       const sessionId = `excluded-${kind.toLowerCase()}`;
       const metadata = metadataFor(sessionId, '/persisted-workspace', {
         permissionMode: 'yolo',
@@ -5485,17 +5208,7 @@ describe('SessionRoutes runtime reuse', () => {
       );
       agentState.chatStream.mockImplementationOnce(async function* () {
         if (Date.now() < 0) yield undefined;
-        return {
-          success: false,
-          error: {
-            type: 'api_error' as const,
-            message: 'Provider request failed.',
-            details: Object.assign(new Error('opaque'), {
-              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-            }),
-          },
-          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-        };
+        return makeProviderRecoveryBudgetFailure();
       });
 
       const controller = createSessionRouteController();
@@ -5514,9 +5227,7 @@ describe('SessionRoutes runtime reuse', () => {
           busState.publish.mock.calls.some(([, type]) => type === 'pending.resume')
         ).toBe(false);
       } finally {
-        eventsController.abort();
-        await response.body?.cancel().catch(() => undefined);
-        await controller.shutdown();
+        await closeSse(controller, eventsController, response);
       }
     }
   );
@@ -6994,22 +6705,14 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('returns projection capacity 429 before POST create durable write', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     projectionResidencyConfig.maxResident = 1;
     const resident = metadataFor(
       'projection-create-resident',
       '/tmp/task4-create-capacity-resident'
     );
-    let releaseHydration!: () => void;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
     vi.mocked(SessionService.listSessions).mockResolvedValue([resident]);
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId, projectPath) => {
@@ -7068,9 +6771,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('pins the active message projection until the run settles', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     projectionResidencyConfig.maxResident = 1;
     const active = metadataFor('projection-pinned-message', '/tmp/projection-pin');
     const blocked = metadataFor('projection-capacity-blocked', '/tmp/projection-pin');
@@ -7082,10 +6783,7 @@ describe('SessionRoutes runtime reuse', () => {
             candidate.sessionId === sessionId && candidate.projectPath === projectPath
         )
     );
-    let releaseRun: () => void = () => undefined;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    const [runGate, releaseRun] = promiseGate();
     agentState.chatStream.mockImplementationOnce(async function* () {
       yield { kind: 'turn_start' as const, turn: 1, maxTurns: 10 };
       await runGate;
@@ -7149,20 +6847,12 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('creates a durable child without a projection when fork projection capacity is full', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     projectionResidencyConfig.maxResident = 1;
     const source = metadataFor('fork-source-session', '/tmp/task4-fork-source');
     let durableChild: SessionMetadata | undefined;
-    let releaseHydration!: () => void;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
     vi.mocked(SessionService.listSessions).mockImplementation(async () =>
       durableChild ? [source, durableChild] : [source]
     );
@@ -7270,9 +6960,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('commits a successful fork projection under the generated child identity', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const source = metadataFor('fork-projection-source', '/tmp/fork-projection-source');
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId, projectPath) =>
@@ -7389,10 +7077,7 @@ describe('SessionRoutes runtime reuse', () => {
           projectPath: '/tmp/owner-pin-shell',
         });
         vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-        let release: () => void = () => undefined;
-        const shellGate = new Promise<void>((resolve) => {
-          release = resolve;
-        });
+        const [shellGate, release] = promiseGate();
         runtimeState.runtime.executeUserShellCommand.mockImplementationOnce(
           async () => {
             await shellGate;
@@ -7435,10 +7120,7 @@ describe('SessionRoutes runtime reuse', () => {
           projectPath: '/tmp/owner-pin-review',
         });
         vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-        let release: () => void = () => undefined;
-        const reviewGate = new Promise<void>((resolve) => {
-          release = resolve;
-        });
+        const [reviewGate, release] = promiseGate();
         reviewState.start.mockImplementationOnce(async () => ({
           reviewId: 'review-owner-pin',
           completion: (async () => {
@@ -7459,9 +7141,7 @@ describe('SessionRoutes runtime reuse', () => {
     'pins the active $label owner projection until completion',
     async ({ label, invoke, configure }) => {
       projectionResidencyConfig.maxResident = 1;
-      const { createSessionRouteController } = await import(
-        '../../../../src/server/routes/session.js'
-      );
+      const createSessionRouteController = await loadSessionRouteController();
       const { release } = configure();
       const controller = createSessionRouteController();
       const app = controller.app;
@@ -7498,9 +7178,7 @@ describe('SessionRoutes runtime reuse', () => {
   ])(
     'dispatches a durable $isolation task after prompt fsync',
     async ({ isolation, executionPath }) => {
-      const { createSessionRouteController } = await import(
-        '../../../../src/server/routes/session.js'
-      );
+      const createSessionRouteController = await loadSessionRouteController();
       if (isolation === 'worktree') {
         worktreeState.enter.mockImplementationOnce(
           async (input: {
@@ -7604,9 +7282,7 @@ describe('SessionRoutes runtime reuse', () => {
   );
 
   it('disposes a terminal task runtime after completion', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const controller = createSessionRouteController();
 
     const dispatched = await controller.dispatchTask({
@@ -7632,9 +7308,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects task dispatch before durable creation when no model is configured', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     modelState.current = undefined;
     const controller = createSessionRouteController();
 
@@ -7655,9 +7329,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('retries from the exact durable dispatch into a new linked session', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const source = makeSessionMetadata({
       sessionId: 'retry-source',
       projectPath: '/tmp/retry-source',
@@ -7737,9 +7409,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('persists a task failure when the agent cannot be created after admission', async () => {
     const { Agent } = await import('../../../../src/agent/Agent.js');
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     vi.mocked(Agent.createWithRuntime).mockRejectedValueOnce(
       new Error('agent initialization failed')
     );
@@ -7786,18 +7456,13 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('admits task runs through the process-wide FIFO limit', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 1,
       maxQueued: 10,
       maxQueuedBytes: 64 * 1024 * 1024,
     });
-    let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
+    const [firstGate, releaseFirst] = promiseGate();
     const started: string[] = [];
     agentState.chatStream.mockImplementation(async function* (
       _content: unknown,
@@ -7889,17 +7554,9 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('closes admission and drains active work before disposing runtimes', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
-    let observeAbort!: (reason: unknown) => void;
-    const aborted = new Promise<unknown>((resolve) => {
-      observeAbort = resolve;
-    });
-    let releaseCompletion!: () => void;
-    const completionBarrier = new Promise<void>((resolve) => {
-      releaseCompletion = resolve;
-    });
+    const createSessionRouteController = await loadSessionRouteController();
+    const [aborted, observeAbort] = promiseGate<unknown>();
+    const [completionBarrier, releaseCompletion] = promiseGate();
     agentState.chatStream.mockImplementationOnce(async function* (
       _content: unknown,
       context: { signal?: AbortSignal }
@@ -7968,9 +7625,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('disposes an uncommitted Runtime when residency commit rejects', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const { SessionRuntime: CurrentSessionRuntime } = await import(
       '../../../../src/agent/runtime/SessionRuntime.js'
     );
@@ -8037,9 +7692,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('keeps the original residency commit failure when uncommitted cleanup rejects', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const { SessionRuntime: CurrentSessionRuntime } = await import(
       '../../../../src/agent/runtime/SessionRuntime.js'
     );
@@ -8115,18 +7768,13 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('keeps every admitted run active beyond the recent-run retention limit', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 1,
       maxQueued: 101,
       maxQueuedBytes: 64 * 1024 * 1024,
     });
-    let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
+    const [firstGate, releaseFirst] = promiseGate();
     const started: string[] = [];
     agentState.chatStream.mockImplementation(async function* (
       _content: unknown,
@@ -8181,18 +7829,13 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('cancels a queued run durably and immediately reuses its queue slot', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 1,
       maxQueued: 1,
       maxQueuedBytes: 64 * 1024 * 1024,
     });
-    let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
+    const [firstGate, releaseFirst] = promiseGate();
     const started: string[] = [];
     agentState.chatStream.mockImplementation(async function* (
       _content: unknown,
@@ -8253,9 +7896,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('discards durable input when a running task ends normally after user abort', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     agentState.chatStream.mockImplementationOnce(async function* (
       _content: unknown,
       context: { signal: AbortSignal }
@@ -8291,18 +7932,13 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects overflow with 429 semantics and removes the unaccepted task', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 1,
       maxQueued: 1,
       maxQueuedBytes: 64 * 1024 * 1024,
     });
-    let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
+    const [firstGate, releaseFirst] = promiseGate();
     agentState.chatStream.mockImplementation(async function* () {
       if (Date.now() < 0) yield undefined;
       await firstGate;
@@ -8352,18 +7988,13 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects pending task byte overflow and immediately reuses capacity', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 1,
       maxQueued: 10,
       maxQueuedBytes: 64 * 1024,
     });
-    let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
+    const [firstGate, releaseFirst] = promiseGate();
     const started: string[] = [];
     agentState.chatStream.mockImplementation(async function* (
       _content: unknown,
@@ -8426,9 +8057,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('recovers durable queued tasks and fails half-created entries without input', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const recoverable = makeSessionMetadata({
       sessionId: 'task-recoverable',
       projectPath: '/tmp/recoverable',
@@ -8493,9 +8122,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('counts only the unvisited suffix when recovery reaches a full queue', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const metadata = ['broken', 'running', 'queued', 'overflow'].map((suffix, index) =>
       makeSessionMetadata({
         sessionId: `task-${suffix}`,
@@ -8522,10 +8149,7 @@ describe('SessionRoutes runtime reuse', () => {
       maxQueued: 1,
       maxQueuedBytes: 64 * 1024 * 1024,
     });
-    let releaseRunning!: () => void;
-    const runningGate = new Promise<void>((resolve) => {
-      releaseRunning = resolve;
-    });
+    const [runningGate, releaseRunning] = promiseGate();
     agentState.chatStream.mockImplementation(async function* (
       _content: unknown,
       context: { sessionId: string }
@@ -8552,9 +8176,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rolls back a clean worktree when durable task creation fails', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     worktreeState.enter.mockImplementationOnce(
       async (input: { sessionId: string; workspaceRoot: string; name: string }) => ({
         sessionId: input.sessionId,
@@ -8593,22 +8215,14 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('rejects task creation before durable writes when projection capacity is reserved elsewhere', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     projectionResidencyConfig.maxResident = 1;
     const resident = metadataFor(
       'task-capacity-resident',
       '/tmp/task-capacity-resident'
     );
-    let releaseHydration: () => void = () => undefined;
-    const hydrationGate = new Promise<void>((resolve) => {
-      releaseHydration = resolve;
-    });
-    let markHydrationStarted!: () => void;
-    const hydrationStarted = new Promise<void>((resolve) => {
-      markHydrationStarted = resolve;
-    });
+    const [hydrationGate, releaseHydration] = promiseGate();
+    const [hydrationStarted, markHydrationStarted] = promiseGate();
     vi.mocked(SessionService.listSessions).mockResolvedValue([resident]);
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId, projectPath) => {
@@ -8704,10 +8318,7 @@ describe('SessionRoutes runtime reuse', () => {
       title: 'Ghost session',
     });
     let observedSignal: AbortSignal | undefined;
-    let releaseRun: () => void = () => undefined;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    const [runGate, releaseRun] = promiseGate();
 
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
     vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
@@ -9412,10 +9023,7 @@ describe('SessionRoutes runtime reuse', () => {
     const { SSEStreamingApi } = await import('hono/streaming');
     const originalWriteSse = SSEStreamingApi.prototype.writeSSE;
     let slowWriter: unknown;
-    let releaseSlowWrite!: () => void;
-    const slowWrite = new Promise<void>((resolve) => {
-      releaseSlowWrite = resolve;
-    });
+    const [slowWrite, releaseSlowWrite] = promiseGate();
     const writeSse = vi
       .spyOn(SSEStreamingApi.prototype, 'writeSSE')
       .mockImplementation(function (message) {
@@ -9434,10 +9042,7 @@ describe('SessionRoutes runtime reuse', () => {
     };
     mockResolvedSession(ref.sessionId, { projectPath: ref.projectPath });
     let turnSignal: AbortSignal | undefined;
-    let releaseRun!: () => void;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    const [runGate, releaseRun] = promiseGate();
     agentState.chatStream.mockImplementationOnce(async function* (
       _content,
       context: { signal: AbortSignal }
@@ -9770,9 +9375,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('removes a deleted task worktree after durable session deletion', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const taskWorktree = {
       sessionId: '',
       name: 'delete-task-worktree',
@@ -9835,9 +9438,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('applies a terminal task once and persists its delivery projection', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const taskWorktree = {
       sessionId: 'delivery-task',
       name: 'task/delivery-task',
@@ -9918,9 +9519,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('persists a safe conflict reason without removing the task worktree', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const { WorktreeDeliveryConflict } = await import(
       '../../../../src/worktree/WorktreeManager.js'
     );
@@ -9977,9 +9576,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('lets an explicit discard abandon an unavailable task worktree', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const taskWorktree = {
       sessionId: 'missing-artifact-task',
       name: 'task/missing-artifact-task',
@@ -10233,10 +9830,7 @@ describe('SessionRoutes runtime reuse', () => {
     const dispose = vi.fn().mockResolvedValue(undefined);
     const runtime = await createRuntimeDouble({ dispose });
     let observedSignal: AbortSignal | undefined;
-    let releaseRun: () => void = () => undefined;
-    const runGate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
+    const [runGate, releaseRun] = promiseGate();
 
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath?: string) => {
@@ -11287,9 +10881,7 @@ describe('SessionRoutes runtime reuse', () => {
   it.each([false, true])(
     'aborts an active side question before waiting for shutdown (fallback: %s)',
     async (fallback) => {
-      const { createSessionRouteController } = await import(
-        '../../../../src/server/routes/session.js'
-      );
+      const createSessionRouteController = await loadSessionRouteController();
       const sessionId = 'shutdown-side-question';
       const projectPath = '/tmp/shutdown-side-question';
       vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
@@ -11304,14 +10896,8 @@ describe('SessionRoutes runtime reuse', () => {
             : {}),
         })
       );
-      let releaseCompletion!: () => void;
-      const completion = new Promise<void>((resolve) => {
-        releaseCompletion = resolve;
-      });
-      let resolveStarted!: (signal: AbortSignal) => void;
-      const started = new Promise<AbortSignal>((resolve) => {
-        resolveStarted = resolve;
-      });
+      const [completion, releaseCompletion] = promiseGate();
+      const [started, resolveStarted] = promiseGate<AbortSignal>();
       runtimeState.runtime.askSideQuestion.mockImplementationOnce(
         async (_question, options) => {
           if (!options?.signal) throw new Error('Missing side-question signal');
@@ -11356,20 +10942,12 @@ describe('SessionRoutes runtime reuse', () => {
   );
 
   it('forwards client cancellation to the side question without shutting down the controller', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'client-cancel-side-question';
     const projectPath = '/tmp/client-cancel-side-question';
     mockResolvedSession(sessionId, { projectPath });
-    let releaseCompletion!: () => void;
-    const completion = new Promise<void>((resolve) => {
-      releaseCompletion = resolve;
-    });
-    let resolveStarted!: (signal: AbortSignal) => void;
-    const started = new Promise<AbortSignal>((resolve) => {
-      resolveStarted = resolve;
-    });
+    const [completion, releaseCompletion] = promiseGate();
+    const [started, resolveStarted] = promiseGate<AbortSignal>();
     runtimeState.runtime.askSideQuestion.mockImplementationOnce(
       async (_question, options) => {
         if (!options?.signal) throw new Error('Missing side-question signal');
@@ -11410,33 +10988,19 @@ describe('SessionRoutes runtime reuse', () => {
   it.each(['during preparation', 'after acceptance'] as const)(
     'keeps a server-owned main run alive when its submitting client aborts %s',
     async (abortPhase) => {
-      const { createSessionRouteController } = await import(
-        '../../../../src/server/routes/session.js'
-      );
+      const createSessionRouteController = await loadSessionRouteController();
       const sessionId = 'client-independent-main-run';
       const projectPath = '/tmp/client-independent-main-run';
       mockResolvedSession(sessionId, { projectPath });
-      let releasePreparation!: () => void;
-      const preparation = new Promise<void>((resolve) => {
-        releasePreparation = resolve;
-      });
-      let resolvePreparing!: () => void;
-      const preparing = new Promise<void>((resolve) => {
-        resolvePreparing = resolve;
-      });
+      const [preparation, releasePreparation] = promiseGate();
+      const [preparing, resolvePreparing] = promiseGate();
       runtimeState.runtime.prepareInputTurn.mockImplementationOnce(async () => {
         resolvePreparing();
         await preparation;
         return makePreparedInputTurn();
       });
-      let releaseRun!: () => void;
-      const completion = new Promise<void>((resolve) => {
-        releaseRun = resolve;
-      });
-      let resolveStarted!: (signal: AbortSignal) => void;
-      const started = new Promise<AbortSignal>((resolve) => {
-        resolveStarted = resolve;
-      });
+      const [completion, releaseRun] = promiseGate();
+      const [started, resolveStarted] = promiseGate<AbortSignal>();
       agentState.chatStream.mockImplementationOnce(async function* (
         _content,
         context: { signal: AbortSignal }
@@ -11498,20 +11062,12 @@ describe('SessionRoutes runtime reuse', () => {
   );
 
   it('preserves shutdown cancellation while a side-question runtime initializes', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'initializing-side-question';
     const projectPath = '/tmp/initializing-side-question';
     mockResolvedSession(sessionId, { projectPath });
-    let releaseInitialization!: () => void;
-    const initialization = new Promise<void>((resolve) => {
-      releaseInitialization = resolve;
-    });
-    let resolveStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      resolveStarted = resolve;
-    });
+    const [initialization, releaseInitialization] = promiseGate();
+    const [started, resolveStarted] = promiseGate();
     vi.mocked(SessionRuntime.create).mockImplementationOnce(async () => {
       resolveStarted();
       await initialization;
@@ -11557,9 +11113,7 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('releases client cancellation listeners after a side question settles', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'settled-side-question';
     const projectPath = '/tmp/settled-side-question';
     mockResolvedSession(sessionId, { projectPath });
@@ -11750,20 +11304,12 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('terminates a Session SSE lease aborted before stream handoff', async () => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'shutdown-before-sse-handoff';
     const projectPath = '/tmp/shutdown-before-sse-handoff';
     const metadata = mockResolvedSession(sessionId, { projectPath });
-    let releaseLookup!: () => void;
-    const lookupGate = new Promise<void>((resolve) => {
-      releaseLookup = resolve;
-    });
-    let resolveLookupStarted!: () => void;
-    const lookupStarted = new Promise<void>((resolve) => {
-      resolveLookupStarted = resolve;
-    });
+    const [lookupGate, releaseLookup] = promiseGate();
+    const [lookupStarted, resolveLookupStarted] = promiseGate();
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (requestedSessionId, requestedProjectPath) => {
         if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
@@ -11823,22 +11369,14 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('owns session SSE shutdown, drains connected readers, and blocks runtime disposal until a team callback settles', async () => {
     const { TeamMailbox } = await import('../../../../src/agent/teams/TeamMailbox.js');
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionId = 'shutdown-owned-session';
     const projectPath = '/tmp/shutdown-owned-session';
     const ref = { sessionId, projectPath };
     mockResolvedSession(sessionId, { projectPath });
 
-    let releaseEnqueue!: () => void;
-    const enqueueGate = new Promise<void>((resolve) => {
-      releaseEnqueue = resolve;
-    });
-    let resolveEnqueueStarted!: () => void;
-    const enqueueStarted = new Promise<void>((resolve) => {
-      resolveEnqueueStarted = resolve;
-    });
+    const [enqueueGate, releaseEnqueue] = promiseGate();
+    const [enqueueStarted, resolveEnqueueStarted] = promiseGate();
     runtimeState.runtime.enqueueSteering.mockImplementationOnce(
       async () =>
         new Promise((resolve) => {
@@ -11952,9 +11490,7 @@ describe('SessionRoutes runtime reuse', () => {
 
   it('isolates per-stream SSE background operations so one client abort does not wait for another stream callback', async () => {
     const { TeamMailbox } = await import('../../../../src/agent/teams/TeamMailbox.js');
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
+    const createSessionRouteController = await loadSessionRouteController();
     const sessionA = {
       sessionId: 'shutdown-owned-session-a',
       projectPath: '/tmp/shutdown-owned-session-a',
@@ -11978,22 +11514,10 @@ describe('SessionRoutes runtime reuse', () => {
       }
     );
 
-    let releaseEnqueueA!: () => void;
-    const enqueueGateA = new Promise<void>((resolve) => {
-      releaseEnqueueA = resolve;
-    });
-    let releaseEnqueueB!: () => void;
-    const enqueueGateB = new Promise<void>((resolve) => {
-      releaseEnqueueB = resolve;
-    });
-    let resolveEnqueueAStarted!: () => void;
-    const enqueueAStarted = new Promise<void>((resolve) => {
-      resolveEnqueueAStarted = resolve;
-    });
-    let resolveEnqueueBStarted!: () => void;
-    const enqueueBStarted = new Promise<void>((resolve) => {
-      resolveEnqueueBStarted = resolve;
-    });
+    const [enqueueGateA, releaseEnqueueA] = promiseGate();
+    const [enqueueGateB, releaseEnqueueB] = promiseGate();
+    const [enqueueAStarted, resolveEnqueueAStarted] = promiseGate();
+    const [enqueueBStarted, resolveEnqueueBStarted] = promiseGate();
     runtimeState.runtime.enqueueSteering
       .mockImplementationOnce(async (): Promise<SteeringEnqueueResult> => {
         resolveEnqueueAStarted();

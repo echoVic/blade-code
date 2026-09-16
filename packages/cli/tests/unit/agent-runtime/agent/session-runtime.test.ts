@@ -510,7 +510,7 @@ async function createPersistedBackgroundTask(
   workspaceRoot: string,
   childSessionId: string
 ) {
-  const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+  const runtime = await createTestRuntime(sessionId, workspaceRoot);
   const prepared = await runtime.prepareInputTurn('launch the background child');
   if (!prepared.accepted) throw new Error('Expected direct input preparation');
   const contextManager = runtime.getExecutionEngine().getContextManager();
@@ -617,6 +617,16 @@ function saveBackgroundSubagent(options: {
   AgentSessionStore.getInstance().saveSession(session);
 }
 
+function createTestRuntime(
+  sessionId: string,
+  workspaceRoot?: string
+): Promise<SessionRuntime> {
+  return SessionRuntime.create({
+    sessionId,
+    ...(workspaceRoot ? { workspaceRoot } : {}),
+  });
+}
+
 describe('SessionRuntime', () => {
   let storageRoot: string;
 
@@ -633,10 +643,7 @@ describe('SessionRuntime', () => {
   });
 
   it('allows residency eviction only without active or background ownership', async () => {
-    const runtime = await SessionRuntime.create({
-      sessionId: 'residency-idle-session',
-      workspaceRoot: storageRoot,
-    });
+    const runtime = await createTestRuntime('residency-idle-session', storageRoot);
     expect(runtime.isIdleForResidency()).toBe(true);
 
     const turn = await runtime.beginTurn();
@@ -697,7 +704,7 @@ describe('SessionRuntime', () => {
       .mockResolvedValueOnce({ prompt: 'warmup prompt', sources: [] })
       .mockResolvedValueOnce({ prompt: 'runtime prompt', sources: [] });
 
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     (
       runtime.getAgentResources().skills as {
         generateAvailableSkillsList?: () => string;
@@ -749,10 +756,7 @@ describe('SessionRuntime', () => {
     async (owner) => {
       const chatService = createDisposableChatService(vi.fn(async () => undefined));
       vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
-      const runtime = await SessionRuntime.create({
-        sessionId: `side-catalog-${owner}`,
-        workspaceRoot: storageRoot,
-      });
+      const runtime = await createTestRuntime(`side-catalog-${owner}`, storageRoot);
       const executor = runtime.createToolExecutor();
       let release!: () => void;
       const barrier = new Promise<void>((resolve) => {
@@ -806,10 +810,7 @@ describe('SessionRuntime', () => {
   it('does not prepare a side question whose client already cancelled', async () => {
     const chatService = createDisposableChatService(vi.fn(async () => undefined));
     vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
-    const runtime = await SessionRuntime.create({
-      sessionId: 'side-already-cancelled',
-      workspaceRoot: storageRoot,
-    });
+    const runtime = await createTestRuntime('side-already-cancelled', storageRoot);
     chatService.chat.mockResolvedValueOnce({ content: 'Should not be generated' });
     vi.mocked(buildSystemPrompt).mockResolvedValueOnce({
       prompt: 'Valid side prompt',
@@ -837,10 +838,7 @@ describe('SessionRuntime', () => {
     const chatService = createDisposableChatService(vi.fn(async () => undefined));
     chatService.chat.mockResolvedValue({ content: 'Should not be generated' });
     vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
-    const runtime = await SessionRuntime.create({
-      sessionId: 'side-context-cancelled',
-      workspaceRoot: storageRoot,
-    });
+    const runtime = await createTestRuntime('side-context-cancelled', storageRoot);
     let release!: () => void;
     const barrier = new Promise<void>((resolve) => {
       release = resolve;
@@ -888,10 +886,10 @@ describe('SessionRuntime', () => {
       const chatDispose = vi.fn(async () => undefined);
       const chatService = createDisposableChatService(chatDispose);
       vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
-      const runtime = await SessionRuntime.create({
-        sessionId: `side-preparation-${failed}-${siblingRejects}`,
-        workspaceRoot: storageRoot,
-      });
+      const runtime = await createTestRuntime(
+        `side-preparation-${failed}-${siblingRejects}`,
+        storageRoot
+      );
       const firstError = new Error(`${failed} preparation failed first`);
       const lateError = new Error('Sibling preparation failed later');
       let failContext!: (error: Error) => void;
@@ -978,10 +976,7 @@ describe('SessionRuntime', () => {
       const chatService = createDisposableChatService(vi.fn(async () => undefined));
       chatService.chat.mockResolvedValueOnce({ content: 'Prepared side answer' });
       vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
-      const runtime = await SessionRuntime.create({
-        sessionId: `side-parallel-${first}`,
-        workspaceRoot: storageRoot,
-      });
+      const runtime = await createTestRuntime(`side-parallel-${first}`, storageRoot);
       let resolveContext!: (
         messages: Awaited<ReturnType<SessionRuntime['loadModelContext']>>
       ) => void;
@@ -1111,10 +1106,7 @@ describe('SessionRuntime', () => {
     );
     const globalRegistry = vi.spyOn(McpRegistry, 'getInstance');
 
-    const runtime = await SessionRuntime.create({
-      sessionId: 'workspace-mcp-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime('workspace-mcp-session', workspaceRoot);
 
     expect(mcpResolverMocks.resolve).toHaveBeenCalledWith({
       workspaceRoot,
@@ -1134,7 +1126,7 @@ describe('SessionRuntime', () => {
   });
 
   it('creates a runtime from the current store config', async () => {
-    const runtime = await SessionRuntime.create({ sessionId: 'session-1' });
+    const runtime = await createTestRuntime('session-1');
     const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
     const builtinOptions = vi.mocked(getBuiltinTools).mock.calls.at(-1)?.[0];
 
@@ -1164,7 +1156,7 @@ describe('SessionRuntime', () => {
     const workspaceRoot = path.join(storageRoot, 'goal-frontier-failure-project');
     mkdirSync(workspaceRoot, { recursive: true });
     const sessionId = 'goal-frontier-failure-session';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const goal = await runtime.createGoal({
       objective: 'recover from task corruption',
     });
@@ -1195,7 +1187,7 @@ describe('SessionRuntime', () => {
     const workspaceRoot = path.join(storageRoot, 'goal-lineage-project');
     mkdirSync(workspaceRoot, { recursive: true });
     const sessionId = 'goal-lineage-session';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const created = await runtime.createGoal({ objective: 'trace every turn' });
 
     const first = await runtime.beginGoalTurn(created);
@@ -1245,10 +1237,7 @@ describe('SessionRuntime', () => {
   it('binds a direct user turn into an existing Goal without incrementing it', async () => {
     const workspaceRoot = path.join(storageRoot, 'goal-user-lineage-project');
     mkdirSync(workspaceRoot, { recursive: true });
-    const runtime = await SessionRuntime.create({
-      sessionId: 'goal-user-lineage-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime('goal-user-lineage-session', workspaceRoot);
     const created = await runtime.createGoal(
       { objective: 'retain the root across user input' },
       { turnId: 'root-user-turn' }
@@ -1272,10 +1261,10 @@ describe('SessionRuntime', () => {
   it('releases Goal turn ownership when durable start persistence fails', async () => {
     const workspaceRoot = path.join(storageRoot, 'goal-start-failure-project');
     mkdirSync(workspaceRoot, { recursive: true });
-    const runtime = await SessionRuntime.create({
-      sessionId: 'goal-start-failure-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime(
+      'goal-start-failure-session',
+      workspaceRoot
+    );
     const created = await runtime.createGoal({ objective: 'survive start failure' });
     vi.spyOn(PersistentStore.prototype, 'saveTurnStart').mockRejectedValueOnce(
       new Error('turn start fsync failed')
@@ -1294,7 +1283,7 @@ describe('SessionRuntime', () => {
     const workspaceRoot = path.join(storageRoot, 'goal-stale-claim-project');
     mkdirSync(workspaceRoot, { recursive: true });
     const sessionId = 'goal-stale-claim-session';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const created = await runtime.createGoal({
       objective: 'retain the original claim',
     });
@@ -1336,10 +1325,10 @@ describe('SessionRuntime', () => {
   it('binds a queued pending turn into the active Goal lineage', async () => {
     const workspaceRoot = path.join(storageRoot, 'goal-pending-lineage-project');
     mkdirSync(workspaceRoot, { recursive: true });
-    const runtime = await SessionRuntime.create({
-      sessionId: 'goal-pending-lineage-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime(
+      'goal-pending-lineage-session',
+      workspaceRoot
+    );
     const created = await runtime.createGoal(
       { objective: 'chain queued user input' },
       { turnId: 'root-user-turn' }
@@ -1364,10 +1353,10 @@ describe('SessionRuntime', () => {
   it('invalidates Goal root lineage when external steering joins the active turn', async () => {
     const workspaceRoot = path.join(storageRoot, 'goal-steering-lineage-project');
     mkdirSync(workspaceRoot, { recursive: true });
-    const runtime = await SessionRuntime.create({
-      sessionId: 'goal-steering-lineage-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime(
+      'goal-steering-lineage-session',
+      workspaceRoot
+    );
     await runtime.createGoal(
       { objective: 'invalidate ambiguous active-turn ancestry' },
       { turnId: 'root-user-turn' }
@@ -1396,7 +1385,7 @@ describe('SessionRuntime', () => {
     const workspaceRoot = path.join(storageRoot, 'goal-frontier-stall-project');
     mkdirSync(workspaceRoot, { recursive: true });
     const sessionId = 'goal-frontier-stall-session';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const goal = await runtime.createGoal({ objective: 'recover a stalled task' });
     const taskListId = getGoalTaskListId(goal);
     const manager = TaskListManager.getInstance(taskListId, storageRoot);
@@ -1443,10 +1432,7 @@ describe('SessionRuntime', () => {
   it('reloads a recovered durable inbox into an idle cached runtime', async () => {
     const workspaceRoot = path.join(storageRoot, 'recovered-inbox-workspace');
     mkdirSync(workspaceRoot, { recursive: true });
-    const runtime = await SessionRuntime.create({
-      sessionId: 'recovered-inbox-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime('recovered-inbox-session', workspaceRoot);
     expect(runtime.getPendingSteeringCount()).toBe(0);
 
     const inbox = await DurableSteeringInbox.open(
@@ -1494,10 +1480,7 @@ describe('SessionRuntime', () => {
       .spyOn(HookManager.getInstance(), 'executeSessionStartHooks')
       .mockResolvedValue({ proceed: true });
 
-    const runtime = await SessionRuntime.create({
-      sessionId: 'permission-mode-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime('permission-mode-session', workspaceRoot);
 
     expect(runtime.getConfig().permissionMode).toBe(PermissionMode.YOLO);
     expect(sessionStart).toHaveBeenCalledWith(
@@ -1662,9 +1645,7 @@ describe('SessionRuntime', () => {
 
     let runtime: SessionRuntime | undefined;
     try {
-      runtime = await SessionRuntime.create({
-        sessionId: 'session-environment',
-      });
+      runtime = await createTestRuntime('session-environment');
       expect(runtime.getConfig().env).toMatchObject({
         BASE_SESSION_ENV: 'base-value',
         [variable]: 'hook-value',
@@ -1704,9 +1685,9 @@ describe('SessionRuntime', () => {
     );
 
     try {
-      await expect(
-        SessionRuntime.create({ sessionId: 'invalid-session-environment' })
-      ).rejects.toThrow('Invalid environment variable name');
+      await expect(createTestRuntime('invalid-session-environment')).rejects.toThrow(
+        'Invalid environment variable name'
+      );
     } finally {
       off();
       HookManager.resetInstance();
@@ -1721,10 +1702,7 @@ describe('SessionRuntime', () => {
       taskModelId: 'model-2',
     });
 
-    const runtime = await SessionRuntime.create({
-      sessionId: 'task-model-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime('task-model-session', workspaceRoot);
 
     expect(runtime.getCurrentModelId()).toBe('model-2');
     await runtime.dispose();
@@ -1741,10 +1719,7 @@ describe('SessionRuntime', () => {
       }
     );
 
-    const runtime = await SessionRuntime.create({
-      sessionId: 'selected-model-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime('selected-model-session', workspaceRoot);
 
     expect(runtime.getCurrentModelId()).toBe('model-2');
     await runtime.dispose();
@@ -1757,10 +1732,7 @@ describe('SessionRuntime', () => {
       selectedModelId: 'removed-model',
     });
 
-    const runtime = await SessionRuntime.create({
-      sessionId: 'removed-model-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime('removed-model-session', workspaceRoot);
 
     expect(runtime.getCurrentModelId()).toBe('model-1');
     await runtime.dispose();
@@ -1768,10 +1740,7 @@ describe('SessionRuntime', () => {
 
   it('owns the explicit workspace root across runtime initialization', async () => {
     const workspaceRoot = path.join(storageRoot, 'project');
-    const runtime = await SessionRuntime.create({
-      sessionId: 'workspace-owned-session',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime('workspace-owned-session', workspaceRoot);
 
     expect(runtime.workspaceRoot).toBe(workspaceRoot);
     expect(worktreeMocks.cleanupStaleAgentWorktrees).toHaveBeenCalledWith({
@@ -2286,10 +2255,7 @@ describe('SessionRuntime', () => {
       deletions: 4,
       commits: 1,
     });
-    const runtime = await SessionRuntime.create({
-      sessionId,
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
 
     try {
       expect(worktreeMocks.restoreSession).toHaveBeenCalledWith(taskWorktree);
@@ -2319,10 +2285,7 @@ describe('SessionRuntime', () => {
 
   it('delegates rewind through the idle session runtime boundary', async () => {
     const workspaceRoot = path.join(storageRoot, 'rewind-project');
-    const runtime = await SessionRuntime.create({
-      sessionId: 'runtime-rewind',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime('runtime-rewind', workspaceRoot);
     const checkpoints = [
       {
         messageId: 'user-2',
@@ -2362,10 +2325,10 @@ describe('SessionRuntime', () => {
   });
 
   it('rejects rewind while a turn owns the session', async () => {
-    const runtime = await SessionRuntime.create({
-      sessionId: 'runtime-rewind-active',
-      workspaceRoot: path.join(storageRoot, 'rewind-active-project'),
-    });
+    const runtime = await createTestRuntime(
+      'runtime-rewind-active',
+      path.join(storageRoot, 'rewind-active-project')
+    );
     const handle = await runtime.beginTurn();
     const rewind = vi.spyOn(SessionService, 'rewindSession');
 
@@ -2382,10 +2345,10 @@ describe('SessionRuntime', () => {
   });
 
   it('rejects rewind while durable input is pending', async () => {
-    const runtime = await SessionRuntime.create({
-      sessionId: 'runtime-rewind-pending',
-      workspaceRoot: path.join(storageRoot, 'rewind-pending-project'),
-    });
+    const runtime = await createTestRuntime(
+      'runtime-rewind-pending',
+      path.join(storageRoot, 'rewind-pending-project')
+    );
     await runtime.enqueueSteering('queued input', { allowBeforeTurn: true });
     const rewind = vi.spyOn(SessionService, 'rewindSession');
 
@@ -2403,10 +2366,7 @@ describe('SessionRuntime', () => {
   it('durably discards pending input after explicit cancellation', async () => {
     const workspaceRoot = path.join(storageRoot, 'cancelled-input-project');
     const sessionId = 'runtime-cancelled-input';
-    const runtime = await SessionRuntime.create({
-      sessionId,
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await runtime.prepareInputTurn('do not replay this input');
     expect(prepared.accepted).toBe(true);
     expect(runtime.getPendingSteeringCount()).toBe(1);
@@ -2438,7 +2398,7 @@ describe('SessionRuntime', () => {
     const fullPrompt = `${'a'.repeat(
       MAX_INLINE_USER_MESSAGE_TEXT_BYTES
     )}_PRIVATE_MIDDLE_${'b'.repeat(10_000)}`;
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
 
     const prepared = await first.prepareInputTurn(fullPrompt);
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
@@ -2457,7 +2417,7 @@ describe('SessionRuntime', () => {
     ]);
 
     await first.dispose();
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     const pending = recovered.getPendingSteeringMessages()[0]!;
     await expect(
       recovered.restoreUserMessage(pending.content, pending.metadata)
@@ -2485,7 +2445,7 @@ describe('SessionRuntime', () => {
     await expect(
       SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
     ).resolves.toBe(true);
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
 
     expect(runtime.getPendingSteeringMessages()).toEqual([
       expect.objectContaining({
@@ -2504,10 +2464,7 @@ describe('SessionRuntime', () => {
 
   it('lists and resumes subagents through the exact runtime owner', async () => {
     const workspaceRoot = path.join(storageRoot, 'subagent-project');
-    const runtime = await SessionRuntime.create({
-      sessionId: 'runtime-subagent-owner',
-      workspaceRoot,
-    });
+    const runtime = await createTestRuntime('runtime-subagent-owner', workspaceRoot);
     const source: AgentSession = {
       schemaVersion: 2,
       id: 'agent-source',
@@ -2583,10 +2540,10 @@ describe('SessionRuntime', () => {
   });
 
   it('rejects direct subagent resume while the parent turn is active', async () => {
-    const runtime = await SessionRuntime.create({
-      sessionId: 'runtime-subagent-active',
-      workspaceRoot: path.join(storageRoot, 'subagent-active-project'),
-    });
+    const runtime = await createTestRuntime(
+      'runtime-subagent-active',
+      path.join(storageRoot, 'subagent-active-project')
+    );
     const handle = await runtime.beginTurn();
     const getManager = vi.spyOn(BackgroundAgentManager, 'getInstance');
 
@@ -2604,17 +2561,11 @@ describe('SessionRuntime', () => {
 
   it('exclusively owns a session until the runtime is disposed', async () => {
     const workspaceRoot = path.join(storageRoot, 'exclusive-project');
-    const first = await SessionRuntime.create({
-      sessionId: 'exclusive-session',
-      workspaceRoot,
-    });
+    const first = await createTestRuntime('exclusive-session', workspaceRoot);
     await first.setTaskStatus('running');
 
     await expect(
-      SessionRuntime.create({
-        sessionId: 'exclusive-session',
-        workspaceRoot,
-      })
+      createTestRuntime('exclusive-session', workspaceRoot)
     ).rejects.toMatchObject({
       name: 'SessionInUseError',
       code: 'BLADE_SESSION_IN_USE',
@@ -2625,10 +2576,7 @@ describe('SessionRuntime', () => {
 
     await first.dispose();
 
-    const resumed = await SessionRuntime.create({
-      sessionId: 'exclusive-session',
-      workspaceRoot,
-    });
+    const resumed = await createTestRuntime('exclusive-session', workspaceRoot);
     expect(resumed.sessionId).toBe('exclusive-session');
     await resumed.dispose();
   });
@@ -2636,7 +2584,7 @@ describe('SessionRuntime', () => {
   it('closes an orphaned durable turn after acquiring the released session lease', async () => {
     const workspaceRoot = path.join(storageRoot, 'orphaned-turn-project');
     const sessionId = 'orphaned-turn-session';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     const orphaned = await first.beginTurn('user');
     await first
       .getExecutionEngine()
@@ -2647,7 +2595,7 @@ describe('SessionRuntime', () => {
       });
     await first.dispose();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
     expect(events).toEqual(
       expect.arrayContaining([
@@ -2696,7 +2644,7 @@ describe('SessionRuntime', () => {
   it('binds recovered empty-final state to the originally claimed inbox input', async () => {
     const workspaceRoot = path.join(storageRoot, 'empty-final-recovery-project');
     const sessionId = 'empty-final-recovery-session';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await first.prepareInputTurn('finish after restart');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     const contextManager = first.getExecutionEngine().getContextManager();
@@ -2718,7 +2666,7 @@ describe('SessionRuntime', () => {
     });
     await first.dispose();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     expect(recovered.getStartupTurnRecovery()).toEqual({
       turnId: prepared.handle.id,
       outcome: 'aborted',
@@ -2767,7 +2715,7 @@ describe('SessionRuntime', () => {
   it('keeps an inputless Goal tool recovery gated across repeated restarts', async () => {
     const workspaceRoot = path.join(storageRoot, 'goal-tool-recovery-project');
     const sessionId = 'goal-tool-recovery-session';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     await first.createGoal({ objective: 'finish the durable Goal safely' });
     await first.beginTurn('goal');
     await first
@@ -2779,7 +2727,7 @@ describe('SessionRuntime', () => {
       });
     await first.dispose();
 
-    const firstRestart = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const firstRestart = await createTestRuntime(sessionId, workspaceRoot);
     expect(firstRestart.getTurnRecoveryAssessment()).toMatchObject({
       state: 'requires_attention',
       inputMessageCount: 0,
@@ -2787,7 +2735,7 @@ describe('SessionRuntime', () => {
     });
     await firstRestart.dispose();
 
-    const secondRestart = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const secondRestart = await createTestRuntime(sessionId, workspaceRoot);
     expect(secondRestart.getTurnRecoveryAssessment()).toMatchObject({
       state: 'requires_attention',
       inputMessageCount: 0,
@@ -2796,10 +2744,7 @@ describe('SessionRuntime', () => {
     await secondRestart.acknowledgeStartupTurnRecovery();
     await secondRestart.dispose();
 
-    const acknowledgedRestart = await SessionRuntime.create({
-      sessionId,
-      workspaceRoot,
-    });
+    const acknowledgedRestart = await createTestRuntime(sessionId, workspaceRoot);
     expect(acknowledgedRestart.getTurnRecoveryAssessment()).toEqual({ state: 'none' });
     await acknowledgedRestart.dispose();
   });
@@ -2807,7 +2752,7 @@ describe('SessionRuntime', () => {
   it('inherits dangerous recovery when a confirmation turn aborts before execution', async () => {
     const workspaceRoot = path.join(storageRoot, 'ack-failure-recovery-project');
     const sessionId = 'ack-failure-recovery-session';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     await first.beginTurn('goal');
     const contextManager = first.getExecutionEngine().getContextManager();
     const toolCallId = await contextManager.saveToolUse(sessionId, 'Write', {
@@ -2817,7 +2762,7 @@ describe('SessionRuntime', () => {
     await contextManager.saveToolResult(sessionId, toolCallId, 'Write', 'written');
     await first.dispose();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     expect(recovered.getTurnRecoveryAssessment()).toMatchObject({
       state: 'requires_attention',
       reason: 'successful_tool_result',
@@ -2841,7 +2786,7 @@ describe('SessionRuntime', () => {
     });
     await recovered.dispose();
 
-    const restarted = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const restarted = await createTestRuntime(sessionId, workspaceRoot);
     expect(restarted.getTurnRecoveryAssessment()).toMatchObject({
       state: 'requires_attention',
       reason: 'successful_tool_result',
@@ -2852,7 +2797,7 @@ describe('SessionRuntime', () => {
   it('does not bind recovered empty-final state to a different inbox input', async () => {
     const workspaceRoot = path.join(storageRoot, 'empty-final-unrelated-project');
     const sessionId = 'empty-final-unrelated-session';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await first.prepareInputTurn('old interrupted input');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     const contextManager = first.getExecutionEngine().getContextManager();
@@ -2865,7 +2810,7 @@ describe('SessionRuntime', () => {
     await contextManager.saveToolResult(sessionId, toolCallId, 'Read', 'old success');
     await first.dispose();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     await recovered.discardPendingInput();
     const unrelated = await recovered.prepareInputTurn('new unrelated input');
     if (!unrelated.accepted) throw new Error('Expected unrelated input preparation');
@@ -2882,7 +2827,7 @@ describe('SessionRuntime', () => {
   it('does not bind recovered empty-final state to a mixed-input turn', async () => {
     const workspaceRoot = path.join(storageRoot, 'empty-final-mixed-input-project');
     const sessionId = 'empty-final-mixed-input-session';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await first.prepareInputTurn('old interrupted input');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     const contextManager = first.getExecutionEngine().getContextManager();
@@ -2899,7 +2844,7 @@ describe('SessionRuntime', () => {
     });
     await first.dispose();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     const mixed = await recovered.prepareInputTurn('new input in the recovered turn');
     if (!mixed.accepted) throw new Error('Expected mixed input preparation');
     expect(mixed.mode).toBe('pending');
@@ -2920,7 +2865,7 @@ describe('SessionRuntime', () => {
   it('clears stale recovery authority after an unrelated abort', async () => {
     const workspaceRoot = path.join(storageRoot, 'stale-recovery-project');
     const sessionId = 'stale-recovery-session';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await first.prepareInputTurn('old interrupted input');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     const contextManager = first.getExecutionEngine().getContextManager();
@@ -2937,7 +2882,7 @@ describe('SessionRuntime', () => {
     });
     await first.dispose();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     expect(recovered.getStartupTurnRecovery()).toMatchObject({
       turnId: prepared.handle.id,
       inputMessageIds: [prepared.messageId],
@@ -2963,7 +2908,7 @@ describe('SessionRuntime', () => {
   it('preserves empty-final recovery state for an unacknowledged retry in one runtime', async () => {
     const workspaceRoot = path.join(storageRoot, 'empty-final-same-runtime-project');
     const sessionId = 'empty-final-same-runtime-session';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await runtime.prepareInputTurn('retry after failure');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     const contextManager = runtime.getExecutionEngine().getContextManager();
@@ -3003,7 +2948,7 @@ describe('SessionRuntime', () => {
     await runtime.finishTurn(retry);
     await runtime.dispose();
 
-    const third = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const third = await createTestRuntime(sessionId, workspaceRoot);
     expect(third.getStartupTurnRecovery()).toEqual({
       turnId: retry.id,
       outcome: 'aborted',
@@ -3017,7 +2962,7 @@ describe('SessionRuntime', () => {
   it('recovers a final-ready turn without replaying its durable input', async () => {
     const workspaceRoot = path.join(storageRoot, 'final-ready-turn-project');
     const sessionId = 'final-ready-turn-session';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await first.prepareInputTurn('complete this exactly once');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     await first
@@ -3034,7 +2979,7 @@ describe('SessionRuntime', () => {
       });
     await first.dispose();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     expect(recovered.getPendingSteeringCount()).toBe(0);
     await expect(
       SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
@@ -3055,7 +3000,7 @@ describe('SessionRuntime', () => {
   it('acknowledges a terminal failed turn without marking it completed', async () => {
     const workspaceRoot = path.join(storageRoot, 'terminal-failure-project');
     const sessionId = 'terminal-failure-session';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await runtime.prepareInputTurn('reject this exactly once');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     await runtime
@@ -3114,7 +3059,7 @@ describe('SessionRuntime', () => {
     expect(acknowledgement?.seq).toBe((abort?.seq ?? 0) + 1);
     await runtime.dispose();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     expect(recovered.getPendingSteeringCount()).toBe(0);
     await recovered.dispose();
   });
@@ -3122,7 +3067,7 @@ describe('SessionRuntime', () => {
   it('keeps claimed but unapplied input when terminal failure acknowledges input', async () => {
     const workspaceRoot = path.join(storageRoot, 'partial-terminal-ack-project');
     const sessionId = 'partial-terminal-ack-session';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await runtime.prepareInputTurn('applied input');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     await runtime
@@ -3152,7 +3097,7 @@ describe('SessionRuntime', () => {
       queued.messageId,
     ]);
     await runtime.dispose();
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     expect(recovered.getPendingSteeringMessages().map((message) => message.id)).toEqual(
       [queued.messageId]
     );
@@ -3163,7 +3108,7 @@ describe('SessionRuntime', () => {
     const workspaceRoot = path.join(storageRoot, 'subagent-adoption-project');
     const sessionId = 'subagent-adoption-parent';
     const childSessionId = 'agent-adopted-runtime-child';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await first.prepareInputTurn('delegate this work once');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     const contextManager = first.getExecutionEngine().getContextManager();
@@ -3221,7 +3166,7 @@ describe('SessionRuntime', () => {
     });
     await first.dispose();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     expect(recovered.getStartupTurnRecovery()).toEqual({
       turnId: prepared.handle.id,
       outcome: 'aborted',
@@ -3270,7 +3215,7 @@ describe('SessionRuntime', () => {
     );
     await recovered.dispose();
 
-    const second = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const second = await createTestRuntime(sessionId, workspaceRoot);
     expect(second.takeStartupAdoptedToolResults()).toEqual([]);
     expect(second.getStartupTurnRecovery()).toEqual({
       turnId: prepared.handle.id,
@@ -3331,7 +3276,7 @@ describe('SessionRuntime', () => {
         }
       }
     });
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     unsubscribe();
 
     expect(recovered.getPendingSteeringMessages()).toEqual([
@@ -3375,7 +3320,7 @@ describe('SessionRuntime', () => {
     expect(recovered.getPendingSteeringCount()).toBe(0);
     await recovered.dispose();
 
-    const second = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const second = await createTestRuntime(sessionId, workspaceRoot);
     expect(second.getPendingSteeringCount()).toBe(0);
     const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
     expect(
@@ -3428,7 +3373,7 @@ describe('SessionRuntime', () => {
     );
     const sessionId = 'team-member-without-background-task-parent';
     const childSessionId = 'team-reviewer-without-background-task';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const queuedEvents: Array<Record<string, unknown>> = [];
     const unsubscribe = Bus.subscribe((event) => {
       if (
@@ -3576,7 +3521,7 @@ describe('SessionRuntime', () => {
         busWakeEvents.push(event.properties);
       }
     });
-    const second = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const second = await createTestRuntime(sessionId, workspaceRoot);
 
     try {
       expect(second.getPendingSteeringCount()).toBe(0);
@@ -3687,7 +3632,7 @@ describe('SessionRuntime', () => {
       )
     ).toHaveLength(0);
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     try {
       expect(recovered.getPendingSteeringMessages()).toEqual([
         expect.objectContaining({
@@ -3734,7 +3679,7 @@ describe('SessionRuntime', () => {
       mode: 'conversation',
     });
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     try {
       expect(recovered.getPendingSteeringCount()).toBe(0);
       const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
@@ -3758,7 +3703,7 @@ describe('SessionRuntime', () => {
     );
     const sessionId = 'background-subagent-waiter-handoff-parent';
     const childSessionId = 'agent-background-subagent-waiter-handoff';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     const firstPrepared = await first.prepareInputTurn('launch the background child');
     if (!firstPrepared.accepted) throw new Error('Expected direct input preparation');
     const firstContextManager = first.getExecutionEngine().getContextManager();
@@ -3816,7 +3761,7 @@ describe('SessionRuntime', () => {
     expect(firstWaiterSettled).toBe(true);
     await expect(firstDispose).resolves.toBeUndefined();
 
-    const second = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const second = await createTestRuntime(sessionId, workspaceRoot);
     const secondPrepared = await second.prepareInputTurn('resume waiting');
     if (!secondPrepared.accepted) throw new Error('Expected direct input preparation');
     const secondContextManager = second.getExecutionEngine().getContextManager();
@@ -3920,7 +3865,7 @@ describe('SessionRuntime', () => {
       );
       const sessionId = `background-subagent-${label}-parent`;
       const childSessionId = `agent-background-subagent-${label}`;
-      const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+      const first = await createTestRuntime(sessionId, workspaceRoot);
       const prepared = await first.prepareInputTurn('launch background child');
       if (!prepared.accepted) throw new Error('Expected direct input preparation');
       const contextManager = first.getExecutionEngine().getContextManager();
@@ -4024,7 +3969,7 @@ describe('SessionRuntime', () => {
       });
       await first.dispose();
 
-      const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+      const recovered = await createTestRuntime(sessionId, workspaceRoot);
       try {
         await staleNotify(childSessionId);
         expect(recovered.getPendingSteeringMessages()).toEqual([
@@ -4071,7 +4016,7 @@ describe('SessionRuntime', () => {
         return originalPersist.call(this, currentSessionId, completion);
       });
 
-    const seed = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const seed = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await seed.prepareInputTurn('launch child');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     const contextManager = seed.getExecutionEngine().getContextManager();
@@ -4115,7 +4060,7 @@ describe('SessionRuntime', () => {
     });
     await seed.dispose();
 
-    await expect(SessionRuntime.create({ sessionId, workspaceRoot })).rejects.toThrow(
+    await expect(createTestRuntime(sessionId, workspaceRoot)).rejects.toThrow(
       'attach reconcile failed'
     );
     expect(persistSpy).toHaveBeenCalled();
@@ -4125,7 +4070,7 @@ describe('SessionRuntime', () => {
     expect(statsAfterFailure.activeOwnerOperations).toBe(0);
     persistSpy.mockRestore();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     await recovered.dispose();
   });
 
@@ -4133,7 +4078,7 @@ describe('SessionRuntime', () => {
     const workspaceRoot = path.join(storageRoot, 'background-subagent-dispose-gate');
     const sessionId = 'background-subagent-dispose-gate-parent';
     const childSessionId = 'agent-background-subagent-dispose-gate';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const contextManager = runtime.getExecutionEngine().getContextManager();
     const assistantMessageId = await contextManager.saveMessage(
       sessionId,
@@ -4249,7 +4194,7 @@ describe('SessionRuntime', () => {
     const workspaceRoot = path.join(storageRoot, 'background-wait-abort-project');
     const sessionId = 'background-wait-abort-parent';
     const childSessionId = 'agent-background-wait-abort';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const contextManager = runtime.getExecutionEngine().getContextManager();
     const assistantMessageId = await contextManager.saveMessage(
       sessionId,
@@ -4302,7 +4247,7 @@ describe('SessionRuntime', () => {
     const workspaceRoot = path.join(storageRoot, 'background-wait-live-project');
     const sessionId = 'background-wait-live-parent';
     const childSessionId = 'agent-background-wait-live';
-    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const runtime = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await runtime.prepareInputTurn('launch and wait');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     await runtime.createGoal(
@@ -4409,7 +4354,7 @@ describe('SessionRuntime', () => {
   it('finalizes a matching Goal handoff while recovering its final-ready turn', async () => {
     const workspaceRoot = path.join(storageRoot, 'goal-final-ready-project');
     const sessionId = 'goal-final-ready-session';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await first.prepareInputTurn('finish the durable goal');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     const goalStore = new GoalStore(workspaceRoot, sessionId);
@@ -4441,7 +4386,7 @@ describe('SessionRuntime', () => {
       });
     await first.dispose();
 
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject({
       goalId: created.goalId,
       status: 'complete',
@@ -4461,7 +4406,7 @@ describe('SessionRuntime', () => {
   it('retries Goal handoff reconciliation after the turn terminal already exists', async () => {
     const workspaceRoot = path.join(storageRoot, 'goal-terminal-handoff-project');
     const sessionId = 'goal-terminal-handoff-session';
-    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const first = await createTestRuntime(sessionId, workspaceRoot);
     const prepared = await first.prepareInputTurn('finish before sidecar commit');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     const goalStore = new GoalStore(workspaceRoot, sessionId);
@@ -4519,7 +4464,7 @@ describe('SessionRuntime', () => {
         goalUpdates.push(event.properties.goal);
       }
     });
-    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const recovered = await createTestRuntime(sessionId, workspaceRoot);
     unsubscribe();
     await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject({
       goalId: created.goalId,
@@ -4552,9 +4497,7 @@ describe('SessionRuntime', () => {
     await SessionService.archiveSession(sessionId, workspaceRoot);
     worktreeMocks.cleanupStaleAgentWorktrees.mockClear();
 
-    await expect(
-      SessionRuntime.create({ sessionId, workspaceRoot })
-    ).rejects.toMatchObject({
+    await expect(createTestRuntime(sessionId, workspaceRoot)).rejects.toMatchObject({
       name: 'SessionArchivedError',
       code: 'BLADE_SESSION_ARCHIVED',
       archivedBySessionId: sessionId,
@@ -4582,7 +4525,7 @@ describe('SessionRuntime', () => {
     );
 
     try {
-      await expect(SessionRuntime.create({ sessionId, workspaceRoot })).rejects.toThrow(
+      await expect(createTestRuntime(sessionId, workspaceRoot)).rejects.toThrow(
         'provider initialization failed'
       );
       await expect(
@@ -4646,13 +4589,11 @@ describe('SessionRuntime', () => {
       new Error('provider initialization failed')
     );
 
-    await expect(
-      SessionRuntime.create({ sessionId: 'failed-initialization' })
-    ).rejects.toThrow('provider initialization failed');
+    await expect(createTestRuntime('failed-initialization')).rejects.toThrow(
+      'provider initialization failed'
+    );
 
-    const recovered = await SessionRuntime.create({
-      sessionId: 'failed-initialization',
-    });
+    const recovered = await createTestRuntime('failed-initialization');
     expect(recovered.sessionId).toBe('failed-initialization');
     await recovered.dispose();
   });
@@ -4756,7 +4697,7 @@ describe('SessionRuntime', () => {
     vi.mocked(createChatServiceAsync)
       .mockResolvedValueOnce(firstService as any)
       .mockResolvedValueOnce(secondService as any);
-    const runtime = await SessionRuntime.create({ sessionId: 'model-switch' });
+    const runtime = await createTestRuntime('model-switch');
 
     await runtime.refresh({ modelId: 'model-2' });
 
@@ -5030,10 +4971,7 @@ describe('SessionRuntime', () => {
       }
     );
     await expect(
-      SessionRuntime.create({
-        sessionId: 'custom-style-mismatch',
-        workspaceRoot: mismatchedWorkspace,
-      })
+      createTestRuntime('custom-style-mismatch', mismatchedWorkspace)
     ).rejects.toThrow('Communication style provenance mismatch');
 
     const legacyWorkspace = path.join(storageRoot, 'style-backfill');
@@ -5045,10 +4983,7 @@ describe('SessionRuntime', () => {
         communicationStyle: 'project:strict',
       }
     );
-    const runtime = await SessionRuntime.create({
-      sessionId: 'custom-style-backfill',
-      workspaceRoot: legacyWorkspace,
-    });
+    const runtime = await createTestRuntime('custom-style-backfill', legacyWorkspace);
     expect(
       (
         await SessionService.findSessionMetadata(
@@ -5116,29 +5051,23 @@ describe('SessionRuntime', () => {
       projectInstructionsDigest: 'f'.repeat(64),
     });
     await expect(
-      SessionRuntime.create({
-        sessionId: 'project-rules-mismatch',
-        workspaceRoot: workspace,
-      })
+      createTestRuntime('project-rules-mismatch', workspace)
     ).rejects.toThrow('Project instruction provenance mismatch');
 
     await SessionService.createSessionMetadata('project-rules-backfill', workspace, {
       taskStatus: 'completed',
     });
-    const runtime = await SessionRuntime.create({
-      sessionId: 'project-rules-backfill',
-      workspaceRoot: workspace,
-    });
+    const runtime = await createTestRuntime('project-rules-backfill', workspace);
     expect(
       (await SessionService.findSessionMetadata('project-rules-backfill', workspace))
         ?.projectInstructionsDigest
     ).toBe(digest);
     await runtime.dispose();
 
-    const freshRuntime = await SessionRuntime.create({
-      sessionId: 'project-rules-fresh-session',
-      workspaceRoot: workspace,
-    });
+    const freshRuntime = await createTestRuntime(
+      'project-rules-fresh-session',
+      workspace
+    );
     expect(
       (
         await SessionService.findSessionMetadata(
@@ -5182,7 +5111,7 @@ describe('SessionRuntime', () => {
     vi.mocked(createChatServiceAsync)
       .mockResolvedValueOnce(firstService as any)
       .mockRejectedValueOnce(new Error('replacement provider unavailable'));
-    const runtime = await SessionRuntime.create({ sessionId: 'failed-model-switch' });
+    const runtime = await createTestRuntime('failed-model-switch');
 
     await expect(runtime.refresh({ modelId: 'model-2' })).rejects.toThrow(
       'replacement provider unavailable'
@@ -5314,10 +5243,7 @@ describe('SessionRuntime', () => {
       createNamedTestTool('ToolSearch', ToolKind.ReadOnly),
       createNamedTestTool('Write', ToolKind.Write),
     ]);
-    const runtime = await SessionRuntime.create({
-      sessionId: 'filtered-deferred-schema',
-      workspaceRoot: storageRoot,
-    });
+    const runtime = await createTestRuntime('filtered-deferred-schema', storageRoot);
     const executor = runtime.createToolExecutor({
       permissionMode: PermissionMode.YOLO,
       toolWhitelist: ['UpdateGoal', 'Write'],
@@ -5351,10 +5277,7 @@ describe('SessionRuntime', () => {
     vi.mocked(getBuiltinTools).mockImplementationOnce(async (options) => [
       createReadPromptArtifactTool(options!.userPromptArtifactStore!) as never,
     ]);
-    const runtime = await SessionRuntime.create({
-      sessionId: 'prompt-artifact-tool-filter',
-      workspaceRoot: storageRoot,
-    });
+    const runtime = await createTestRuntime('prompt-artifact-tool-filter', storageRoot);
     const executor = runtime.createToolExecutor({
       permissionMode: PermissionMode.YOLO,
       toolWhitelist: ['Read'],
@@ -5374,9 +5297,7 @@ describe('SessionRuntime', () => {
   });
 
   it('only attaches hidden project verification to an explicit YOLO executor', async () => {
-    const runtime = await SessionRuntime.create({
-      sessionId: 'auto-verify-permission-boundary',
-    });
+    const runtime = await createTestRuntime('auto-verify-permission-boundary');
 
     const defaultExecutor = runtime.createToolExecutor({
       permissionMode: PermissionMode.DEFAULT,
@@ -5407,10 +5328,7 @@ describe('SessionRuntime', () => {
         },
       },
     });
-    const runtime = await SessionRuntime.create({
-      sessionId: 'session-lsp-resources',
-      workspaceRoot: storageRoot,
-    });
+    const runtime = await createTestRuntime('session-lsp-resources', storageRoot);
     const executor = runtime.createToolExecutor({
       permissionMode: PermissionMode.YOLO,
     });
@@ -5447,7 +5365,7 @@ describe('SessionRuntime', () => {
     const chatDispose = vi.fn().mockResolvedValue(undefined);
     const chatService = createDisposableChatService(chatDispose);
     vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
-    const runtime = await SessionRuntime.create({ sessionId: 'idempotent-dispose' });
+    const runtime = await createTestRuntime('idempotent-dispose');
 
     await runtime.dispose();
     await runtime.dispose();
@@ -5458,9 +5376,7 @@ describe('SessionRuntime', () => {
   it('clears session-scoped file access records on dispose', async () => {
     const tracker = FileAccessTracker.getInstance();
     const clearSession = vi.spyOn(tracker, 'clearSession');
-    const runtime = await SessionRuntime.create({
-      sessionId: 'file-access-cleanup',
-    });
+    const runtime = await createTestRuntime('file-access-cleanup');
 
     try {
       await runtime.dispose();
@@ -5474,9 +5390,7 @@ describe('SessionRuntime', () => {
   });
 
   it('clears runtime-owned resources before a disposed instance is refreshed', async () => {
-    const runtime = await SessionRuntime.create({
-      sessionId: 'refresh-after-dispose',
-    });
+    const runtime = await createTestRuntime('refresh-after-dispose');
     const previousEngine = runtime.getExecutionEngine();
     const previousContextManager = previousEngine.getContextManager();
 
