@@ -1,7 +1,4 @@
-/**
- * 全局测试设置文件
- * 提供所有测试类型的基础配置和模拟
- */
+/** 全局测试设置文件 提供所有测试类型的基础配置和模拟 */
 
 import { TextDecoder, TextEncoder } from 'util';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
@@ -190,30 +187,22 @@ vi.mock('https', async () => {
 
 // 测试工具函数
 const testUtils = {
-  /**
-   * 创建模拟数据
-   */
+  /** 创建模拟数据 */
   createMockData: <T>(factory: () => T, count: number = 1): T[] => {
     return Array.from({ length: count }, factory);
   },
 
-  /**
-   * 等待指定时间
-   */
+  /** 等待指定时间 */
   wait: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
 
-  /**
-   * 创建模拟Promise
-   */
+  /** 创建模拟Promise */
   createMockPromise: <T>(value: T, delay: number = 0): Promise<T> => {
     return new Promise((resolve) => {
       setTimeout(() => resolve(value), delay);
     });
   },
 
-  /**
-   * 创建模拟错误Promise
-   */
+  /** 创建模拟错误Promise */
   createMockErrorPromise: (error: Error, delay: number = 0): Promise<never> => {
     return new Promise((_, reject) => {
       setTimeout(() => reject(error), delay);

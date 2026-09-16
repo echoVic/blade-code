@@ -1,6 +1,4 @@
-/**
- * Slash Commands 解析逻辑测试
- */
+/** Slash Commands 解析逻辑测试 */
 
 import { describe, expect, it, vi } from 'vitest';
 import {

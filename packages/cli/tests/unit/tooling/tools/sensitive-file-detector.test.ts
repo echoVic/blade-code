@@ -1,6 +1,4 @@
-/**
- * SensitiveFileDetector 单元测试
- */
+/** SensitiveFileDetector 单元测试 */
 
 import { describe, expect, it } from 'vitest';
 import {

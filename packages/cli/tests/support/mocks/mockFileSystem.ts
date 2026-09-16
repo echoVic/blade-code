@@ -1,8 +1,4 @@
-/**
- * Mock FileSystem
- *
- * 用于测试文件工具，模拟文件系统操作
- */
+/** Mock FileSystem 用于测试文件工具，模拟文件系统操作 */
 
 import type { FileSystemService } from '../../../src/services/FileSystemService.js';
 import { vi } from 'vitest';
@@ -23,9 +19,7 @@ export class MockFileSystem implements FileSystemService {
     this.directories.add('/');
   }
 
-  /**
-   * 读取文本文件
-   */
+  /** 读取文本文件 */
   async readTextFile(path: string): Promise<string> {
     const file = this.files.get(path);
     if (!file) {
@@ -42,9 +36,7 @@ export class MockFileSystem implements FileSystemService {
     return file.content;
   }
 
-  /**
-   * 读取二进制文件
-   */
+  /** 读取二进制文件 */
   async readBinaryFile(path: string): Promise<Buffer> {
     const file = this.files.get(path);
     if (!file) {
@@ -61,9 +53,7 @@ export class MockFileSystem implements FileSystemService {
     return file.content;
   }
 
-  /**
-   * 写入文本文件
-   */
+  /** 写入文本文件 */
   async writeTextFile(path: string, content: string): Promise<void> {
     this.files.set(path, {
       content,
@@ -74,9 +64,7 @@ export class MockFileSystem implements FileSystemService {
     this.ensureDirectoryExists(path);
   }
 
-  /**
-   * 写入二进制文件
-   */
+  /** 写入二进制文件 */
   async writeBinaryFile(path: string, content: Buffer): Promise<void> {
     this.files.set(path, {
       content,
@@ -86,16 +74,12 @@ export class MockFileSystem implements FileSystemService {
     this.ensureDirectoryExists(path);
   }
 
-  /**
-   * 检查文件或目录是否存在
-   */
+  /** 检查文件或目录是否存在 */
   async exists(path: string): Promise<boolean> {
     return this.files.has(path) || this.directories.has(path);
   }
 
-  /**
-   * 获取文件统计信息
-   */
+  /** 获取文件统计信息 */
   async stat(path: string): Promise<{
     size: number;
     isDirectory: boolean;
@@ -129,9 +113,7 @@ export class MockFileSystem implements FileSystemService {
     };
   }
 
-  /**
-   * 创建目录
-   */
+  /** 创建目录 */
   async mkdir(
     path: string,
     options?: { recursive?: boolean; mode?: number }
@@ -151,9 +133,7 @@ export class MockFileSystem implements FileSystemService {
     }
   }
 
-  /**
-   * 删除文件或目录
-   */
+  /** 删除文件或目录 */
   async rm(path: string, options?: { recursive?: boolean }): Promise<void> {
     if (options?.recursive && this.directories.has(path)) {
       // 递归删除所有子文件和目录
@@ -173,9 +153,7 @@ export class MockFileSystem implements FileSystemService {
     }
   }
 
-  /**
-   * 复制文件
-   */
+  /** 复制文件 */
   async copyFile(source: string, dest: string): Promise<void> {
     const file = this.files.get(source);
     if (!file) {
@@ -190,9 +168,7 @@ export class MockFileSystem implements FileSystemService {
     this.ensureDirectoryExists(dest);
   }
 
-  /**
-   * 移动/重命名文件
-   */
+  /** 移动/重命名文件 */
   async rename(source: string, dest: string): Promise<void> {
     const file = this.files.get(source);
     if (!file) {
@@ -208,9 +184,7 @@ export class MockFileSystem implements FileSystemService {
     this.ensureDirectoryExists(dest);
   }
 
-  /**
-   * 列出目录内容
-   */
+  /** 列出目录内容 */
   async readdir(path: string): Promise<string[]> {
     const entries: string[] = [];
 
@@ -235,9 +209,7 @@ export class MockFileSystem implements FileSystemService {
 
   // === 辅助方法 ===
 
-  /**
-   * 确保父目录存在
-   */
+  /** 确保父目录存在 */
   private ensureDirectoryExists(filePath: string): void {
     const dirPath = filePath.substring(0, filePath.lastIndexOf('/')) || '/';
     if (dirPath !== '/' && !this.directories.has(dirPath)) {
@@ -245,9 +217,7 @@ export class MockFileSystem implements FileSystemService {
     }
   }
 
-  /**
-   * 设置文件内容（用于测试准备）
-   */
+  /** 设置文件内容（用于测试准备） */
   setFile(path: string, content: string | Buffer): void {
     this.files.set(path, {
       content,
@@ -257,9 +227,7 @@ export class MockFileSystem implements FileSystemService {
     this.ensureDirectoryExists(path);
   }
 
-  /**
-   * 创建目录（用于测试准备）
-   */
+  /** 创建目录（用于测试准备） */
   createDirectory(path: string): void {
     this.directories.add(path);
     // 确保所有父目录存在
@@ -271,16 +239,12 @@ export class MockFileSystem implements FileSystemService {
     }
   }
 
-  /**
-   * 获取所有文件（用于测试断言）
-   */
+  /** 获取所有文件（用于测试断言） */
   getAllFiles(): Map<string, MockFile> {
     return new Map(this.files);
   }
 
-  /**
-   * 清空所有文件和目录
-   */
+  /** 清空所有文件和目录 */
   clear(): void {
     this.files.clear();
     this.directories.clear();

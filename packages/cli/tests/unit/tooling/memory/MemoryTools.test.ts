@@ -1,6 +1,4 @@
-/**
- * MemoryReadTool / MemoryWriteTool 单元测试
- */
+/** MemoryReadTool / MemoryWriteTool 单元测试 */
 
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';

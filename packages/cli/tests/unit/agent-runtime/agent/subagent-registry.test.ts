@@ -1,6 +1,4 @@
-/**
- * SubagentRegistry 测试
- */
+/** SubagentRegistry 测试 */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SubagentRegistry } from '../../../../src/agent/subagents/SubagentRegistry.js';

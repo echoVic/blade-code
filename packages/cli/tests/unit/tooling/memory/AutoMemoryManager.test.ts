@@ -1,6 +1,4 @@
-/**
- * AutoMemoryManager 单元测试
- */
+/** AutoMemoryManager 单元测试 */
 
 import { execFile } from 'node:child_process';
 import * as fs from 'node:fs/promises';

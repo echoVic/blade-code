@@ -1,6 +1,4 @@
-/**
- * PermissionChecker 单元测试
- */
+/** PermissionChecker 单元测试 */
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import {

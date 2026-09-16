@@ -1,7 +1,4 @@
-/**
- * CompactionService 单元测试
- * 测试上下文压缩服务的孤儿 tool 消息过滤逻辑和 post-compact 文件恢复
- */
+/** CompactionService 单元测试 测试上下文压缩服务的孤儿 tool 消息过滤逻辑和 post-compact 文件恢复 */
 
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -1839,10 +1836,7 @@ describe('CompactionService - 输出协议', () => {
   });
 });
 
-/**
- * 模拟孤儿 tool 消息场景
- * 场景：压缩时保留了 tool 消息，但对应的 assistant 消息被压缩掉了
- */
+/** 模拟孤儿 tool 消息场景 场景：压缩时保留了 tool 消息，但对应的 assistant 消息被压缩掉了 */
 describe('CompactionService - 孤儿 tool 消息过滤', () => {
   test('应该过滤掉孤儿 tool 消息', () => {
     // 模拟消息历史（压缩前）

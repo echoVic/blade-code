@@ -1,6 +1,4 @@
-/**
- * Markdown 工具函数测试
- */
+/** Markdown 工具函数测试 */
 
 import { describe, expect, it } from 'vitest';
 import {

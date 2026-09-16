@@ -1,6 +1,4 @@
-/**
- * WriteTool 测试
- */
+/** WriteTool 测试 */
 
 import { promises as fs } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

@@ -1,6 +1,4 @@
-/**
- * PathSecurity 单元测试
- */
+/** PathSecurity 单元测试 */
 
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';

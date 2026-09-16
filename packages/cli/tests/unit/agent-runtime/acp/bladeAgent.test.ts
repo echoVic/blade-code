@@ -1,6 +1,4 @@
-/**
- * BladeAgent 测试
- */
+/** BladeAgent 测试 */
 
 import {
   type ClientCapabilities,

@@ -1,6 +1,4 @@
-/**
- * AtMentionParser 单元测试
- */
+/** AtMentionParser 单元测试 */
 
 import { describe, expect, it } from 'vitest';
 import { AtMentionParser } from '../../../../src/prompts/processors/AtMentionParser.js';

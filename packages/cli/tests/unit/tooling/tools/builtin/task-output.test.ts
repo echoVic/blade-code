@@ -1,6 +1,4 @@
-/**
- * TaskOutput 工具单元测试
- */
+/** TaskOutput 工具单元测试 */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

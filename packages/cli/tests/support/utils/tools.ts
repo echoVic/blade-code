@@ -1,7 +1,4 @@
-/**
- * 测试工具类
- * 提供 Blade 项目测试中常用的工具方法
- */
+/** 测试工具类 提供 Blade 项目测试中常用的工具方法 */
 
 import { expect, vi } from 'vitest';
 

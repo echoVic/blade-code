@@ -1,6 +1,4 @@
-/**
- * FileAccessTracker 测试
- */
+/** FileAccessTracker 测试 */
 
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';

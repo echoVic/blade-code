@@ -1,8 +1,4 @@
-/**
- * BackgroundAgentManager 单元测试
- *
- * 测试后台 agent 管理器的核心功能
- */
+/** BackgroundAgentManager 单元测试 测试后台 agent 管理器的核心功能 */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PermissionMode } from '../../../../src/config/types.js';

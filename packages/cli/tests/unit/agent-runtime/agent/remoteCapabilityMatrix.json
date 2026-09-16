@@ -1,0 +1,58 @@
+[
+  {
+    "label": "fs=none terminal=false",
+    "readTextFile": false,
+    "writeTextFile": false,
+    "terminal": false,
+    "allowed": []
+  },
+  {
+    "label": "fs=none terminal=true",
+    "readTextFile": false,
+    "writeTextFile": false,
+    "terminal": true,
+    "allowed": ["Bash"]
+  },
+  {
+    "label": "fs=read terminal=false",
+    "readTextFile": true,
+    "writeTextFile": false,
+    "terminal": false,
+    "allowed": ["Read"]
+  },
+  {
+    "label": "fs=read terminal=true",
+    "readTextFile": true,
+    "writeTextFile": false,
+    "terminal": true,
+    "allowed": ["Read", "Bash"]
+  },
+  {
+    "label": "fs=write terminal=false",
+    "readTextFile": false,
+    "writeTextFile": true,
+    "terminal": false,
+    "allowed": []
+  },
+  {
+    "label": "fs=write terminal=true",
+    "readTextFile": false,
+    "writeTextFile": true,
+    "terminal": true,
+    "allowed": ["Bash"]
+  },
+  {
+    "label": "fs=read+write terminal=false",
+    "readTextFile": true,
+    "writeTextFile": true,
+    "terminal": false,
+    "allowed": ["Read", "Write", "Edit", "ApplyPatch"]
+  },
+  {
+    "label": "fs=read+write terminal=true",
+    "readTextFile": true,
+    "writeTextFile": true,
+    "terminal": true,
+    "allowed": ["Read", "Write", "Edit", "ApplyPatch", "Bash"]
+  }
+]

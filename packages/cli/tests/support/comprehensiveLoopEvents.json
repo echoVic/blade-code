@@ -1,0 +1,655 @@
+[
+  {
+    "kind": "turn_start",
+    "turn": 1,
+    "maxTurns": 4
+  },
+  {
+    "kind": "content_delta",
+    "delta": "answer"
+  },
+  {
+    "kind": "thinking_delta",
+    "delta": "reasoning"
+  },
+  {
+    "kind": "stream_end"
+  },
+  {
+    "kind": "tool_start",
+    "toolCall": {
+      "id": "Grep",
+      "type": "function",
+      "function": {
+        "name": "Grep",
+        "arguments": "{\"pattern\":\"needle\",\"path\":\"src\"}"
+      }
+    },
+    "toolKind": "readonly"
+  },
+  {
+    "kind": "tool_progress",
+    "toolCall": {
+      "id": "Grep",
+      "type": "function",
+      "function": {
+        "name": "Grep",
+        "arguments": "{\"pattern\":\"needle\"}"
+      }
+    },
+    "update": {
+      "message": "searching",
+      "progress": 1,
+      "total": 2,
+      "admission": {
+        "kind": "readonly",
+        "scope": "session",
+        "queuePosition": 1,
+        "inFlight": 1,
+        "limit": 2
+      }
+    }
+  },
+  {
+    "kind": "tool_result",
+    "toolCall": {
+      "id": "Grep",
+      "type": "function",
+      "function": {
+        "name": "Grep",
+        "arguments": "{\"pattern\":\"needle\"}"
+      }
+    },
+    "result": {
+      "success": true,
+      "llmContent": "match",
+      "metadata": {
+        "summary": "Found match"
+      }
+    }
+  },
+  {
+    "kind": "tool_start",
+    "toolCall": {
+      "id": "Task",
+      "type": "function",
+      "function": {
+        "name": "Task",
+        "arguments": "{\"subagent_type\":\"explorer\",\"resume_from\":\"child-1\"}"
+      }
+    },
+    "toolKind": "readonly"
+  },
+  {
+    "kind": "tool_start",
+    "toolCall": {
+      "id": "Task",
+      "type": "function",
+      "function": {
+        "name": "Task",
+        "arguments": "{invalid"
+      }
+    }
+  },
+  {
+    "kind": "tool_result",
+    "toolCall": {
+      "id": "Edit",
+      "type": "function",
+      "function": {
+        "name": "Edit",
+        "arguments": "{\"file_path\":\"src/demo.ts\"}"
+      }
+    },
+    "result": {
+      "success": true,
+      "llmContent": "edited",
+      "metadata": {
+        "kind": "edit",
+        "file_path": "src/demo.ts",
+        "oldContent": "old",
+        "newContent": "new"
+      }
+    }
+  },
+  {
+    "kind": "tool_result",
+    "toolCall": {
+      "id": "patch",
+      "type": "function",
+      "function": {
+        "name": "ApplyPatch",
+        "arguments": "{}"
+      }
+    },
+    "result": {
+      "success": true,
+      "llmContent": "patched",
+      "metadata": {
+        "kind": "patch",
+        "changes": [
+          null,
+          {
+            "path": "src/a.ts",
+            "oldContent": "a",
+            "newContent": "b"
+          },
+          {
+            "path": 42
+          }
+        ]
+      }
+    }
+  },
+  {
+    "kind": "tool_result",
+    "toolCall": {
+      "id": "verify",
+      "type": "function",
+      "function": {
+        "name": "Task",
+        "arguments": "{}"
+      }
+    },
+    "result": {
+      "success": false,
+      "llmContent": "partial",
+      "error": {
+        "type": "execution_error",
+        "message": "incomplete"
+      },
+      "metadata": {
+        "verificationVerdict": "partial"
+      }
+    }
+  },
+  {
+    "kind": "token_usage",
+    "usage": {
+      "scope": "auxiliary",
+      "inputTokens": 10,
+      "outputTokens": 5,
+      "totalTokens": 15,
+      "maxContextTokens": 100,
+      "cacheReadTokens": 2,
+      "cacheWriteTokens": 1,
+      "costUsd": 0.01
+    }
+  },
+  {
+    "kind": "compaction",
+    "phase": "end",
+    "reason": "threshold",
+    "strategy": "snip",
+    "outcome": "compacted",
+    "preTokens": 90,
+    "preTokenSource": "provider",
+    "estimatedPendingTokens": 12,
+    "postTokens": 40,
+    "sampleAttempts": 2,
+    "inputReductions": 1,
+    "messagesOmitted": 3,
+    "filesOmitted": 1,
+    "imagesOmitted": 1,
+    "fallbackTargetTokens": 30,
+    "fallbackMessagesOmitted": 2,
+    "fallbackMessagesTruncated": 1,
+    "memory": {
+      "attempted": true,
+      "status": "saved",
+      "reason": "compaction",
+      "topic": "testing"
+    }
+  },
+  {
+    "kind": "task_update",
+    "tasks": [
+      {
+        "id": "task-1",
+        "subject": "Verify output",
+        "description": "Exercise the event contract",
+        "status": "in_progress",
+        "priority": "high",
+        "blocks": [],
+        "blockedBy": [],
+        "createdAt": "2026-09-16T00:00:00.000Z"
+      }
+    ]
+  },
+  {
+    "kind": "goal_frontier_updated",
+    "goal": {
+      "version": 1,
+      "sessionId": "headless-session",
+      "goalId": "goal-1",
+      "objective": "Exercise every projection",
+      "status": "active",
+      "tokensUsed": 10,
+      "timeUsedSeconds": 1,
+      "continuationCount": 0,
+      "createdAt": "2026-09-16T00:00:00.000Z",
+      "updatedAt": "2026-09-16T00:00:01.000Z",
+      "frontierStall": {
+        "category": "no_progress",
+        "consecutiveCount": 2,
+        "updatedAt": "2026-09-16T00:00:01.000Z"
+      }
+    },
+    "frontier": {
+      "version": 1,
+      "taskListId": "goal:goal-1",
+      "total": 1,
+      "completed": 0,
+      "inProgress": 1,
+      "pending": 0,
+      "blocked": 0,
+      "nextTask": {
+        "id": "task-1",
+        "subject": "Verify output",
+        "description": "Exercise the event contract",
+        "status": "in_progress",
+        "priority": "high",
+        "blocks": [],
+        "blockedBy": [],
+        "createdAt": "2026-09-16T00:00:00.000Z"
+      },
+      "digestSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "observedAt": "2026-09-16T00:00:01.000Z"
+    },
+    "tasks": [
+      {
+        "id": "task-1",
+        "subject": "Verify output",
+        "description": "Exercise the event contract",
+        "status": "in_progress",
+        "priority": "high",
+        "blocks": [],
+        "blockedBy": [],
+        "createdAt": "2026-09-16T00:00:00.000Z"
+      }
+    ]
+  },
+  {
+    "kind": "turn_recovery",
+    "assessment": {
+      "state": "completed",
+      "turnId": "turn-1",
+      "inputMessageCount": 1
+    }
+  },
+  {
+    "kind": "structured_output",
+    "output": {
+      "status": "ok"
+    },
+    "schemaDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  {
+    "kind": "mcp_catalog_changed",
+    "revision": 1,
+    "serverName": "docs",
+    "reason": "refresh",
+    "added": ["ReadDocs"],
+    "removed": [],
+    "updated": []
+  },
+  {
+    "kind": "mcp_content_changed",
+    "revision": 2,
+    "serverName": "docs",
+    "contentKind": "resourceTemplates",
+    "reason": "refresh",
+    "added": ["docs://{id}"],
+    "removed": [],
+    "updated": []
+  },
+  {
+    "kind": "mcp_resource_updated",
+    "revision": 3,
+    "serverName": "docs",
+    "uri": "docs://guide"
+  },
+  {
+    "kind": "mcp_connection_changed",
+    "revision": 4,
+    "serverName": "docs",
+    "phase": "reconnecting",
+    "reason": "closed",
+    "attempt": 1,
+    "maxAttempts": 3,
+    "nextRetryAt": 2000,
+    "error": "connection closed"
+  },
+  {
+    "kind": "mcp_log",
+    "revision": 5,
+    "serverName": "docs",
+    "level": "warning",
+    "logger": "remote",
+    "message": "slow",
+    "projectedBytes": 4,
+    "dataSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "truncated": false,
+    "detailsOmitted": true,
+    "timestamp": 1000
+  },
+  {
+    "kind": "mcp_instructions_changed",
+    "revision": 6,
+    "serverName": "docs",
+    "action": "added",
+    "reason": "connection",
+    "text": "Use docs",
+    "sourceBytes": 8,
+    "projectedBytes": 8,
+    "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "truncated": false,
+    "detailsOmitted": false
+  },
+  {
+    "kind": "mcp_task_changed",
+    "revision": 7,
+    "taskId": "mcp-task",
+    "serverName": "docs",
+    "toolName": "ReadDocs",
+    "status": "completed",
+    "statusMessage": "done",
+    "createdAt": 1,
+    "updatedAt": 2,
+    "completedAt": 2,
+    "hasResult": true
+  },
+  {
+    "kind": "project_rules_loaded",
+    "files": [
+      {
+        "id": "rule-1",
+        "relativePath": "AGENTS.md",
+        "source": "project",
+        "conditional": false,
+        "contentSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    ],
+    "triggerPaths": ["src/demo.ts"],
+    "blockedWrite": true
+  },
+  {
+    "kind": "steering_applied",
+    "messageIds": ["follow-up-1"],
+    "count": 1,
+    "recovered": 0,
+    "delivery": "current_turn",
+    "messages": [],
+    "queue": {
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "pending": 1,
+      "mutable": 1,
+      "locked": 0,
+      "internal": 0,
+      "items": [
+        {
+          "id": "follow-up-1",
+          "position": 0,
+          "queuedAt": "2026-09-16T00:00:00.000Z",
+          "kind": "user",
+          "state": "pending",
+          "delivery": "current_turn",
+          "mutable": true,
+          "preview": "continue",
+          "previewTruncated": false,
+          "attachmentCount": 0
+        }
+      ]
+    }
+  },
+  {
+    "kind": "follow_up_queue_changed",
+    "queue": {
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "pending": 1,
+      "mutable": 1,
+      "locked": 0,
+      "internal": 0,
+      "items": [
+        {
+          "id": "follow-up-1",
+          "position": 0,
+          "queuedAt": "2026-09-16T00:00:00.000Z",
+          "kind": "user",
+          "state": "pending",
+          "delivery": "current_turn",
+          "mutable": true,
+          "preview": "continue",
+          "previewTruncated": false,
+          "attachmentCount": 0
+        }
+      ]
+    }
+  },
+  {
+    "kind": "follow_up_started",
+    "queued": 2,
+    "recovered": 2,
+    "messages": [
+      {
+        "id": "recovered-1",
+        "content": "recovered guidance",
+        "queuedAt": 1,
+        "recovered": true,
+        "persisted": false
+      },
+      {
+        "id": "persisted-1",
+        "content": "already visible",
+        "queuedAt": 2,
+        "recovered": true,
+        "persisted": true
+      }
+    ],
+    "queue": {
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "pending": 1,
+      "mutable": 1,
+      "locked": 0,
+      "internal": 0,
+      "items": [
+        {
+          "id": "follow-up-1",
+          "position": 0,
+          "queuedAt": "2026-09-16T00:00:00.000Z",
+          "kind": "user",
+          "state": "pending",
+          "delivery": "current_turn",
+          "mutable": true,
+          "preview": "continue",
+          "previewTruncated": false,
+          "attachmentCount": 0
+        }
+      ]
+    }
+  },
+  {
+    "kind": "goal_updated",
+    "goal": {
+      "version": 1,
+      "sessionId": "headless-session",
+      "goalId": "goal-1",
+      "objective": "Exercise every projection",
+      "status": "paused",
+      "tokensUsed": 10,
+      "timeUsedSeconds": 1,
+      "continuationCount": 0,
+      "createdAt": "2026-09-16T00:00:00.000Z",
+      "updatedAt": "2026-09-16T00:00:01.000Z",
+      "executionHostFailure": {
+        "category": "tool_timeout",
+        "consecutiveCount": 1,
+        "updatedAt": "2026-09-16T00:00:01.000Z"
+      },
+      "turnLineage": {
+        "goalId": "goal-1",
+        "rootTurnId": "turn-1",
+        "currentTurnId": "turn-2"
+      }
+    }
+  },
+  {
+    "kind": "goal_continuation_started",
+    "goal": {
+      "version": 1,
+      "sessionId": "headless-session",
+      "goalId": "goal-1",
+      "objective": "Exercise every projection",
+      "status": "active",
+      "tokensUsed": 10,
+      "timeUsedSeconds": 1,
+      "continuationCount": 0,
+      "createdAt": "2026-09-16T00:00:00.000Z",
+      "updatedAt": "2026-09-16T00:00:01.000Z",
+      "executionHostFailure": {
+        "category": "tool_timeout",
+        "consecutiveCount": 1,
+        "updatedAt": "2026-09-16T00:00:01.000Z"
+      },
+      "turnLineage": {
+        "goalId": "goal-1",
+        "rootTurnId": "turn-1",
+        "currentTurnId": "turn-2"
+      }
+    },
+    "continuation": 2,
+    "prematureStopPattern": "handoff",
+    "prematureStopCount": 1
+  },
+  {
+    "kind": "subagent_spawned",
+    "sessionId": "child-1",
+    "type": "explorer",
+    "prompt": "inspect",
+    "rootAgentId": "root-1",
+    "resumeDepth": 0
+  },
+  {
+    "kind": "subagent_completed",
+    "sessionId": "child-1",
+    "type": "explorer",
+    "success": true,
+    "summary": "done",
+    "verificationVerdict": "pass",
+    "rootAgentId": "root-1",
+    "resumeDepth": 0
+  },
+  {
+    "kind": "model_fallback",
+    "from": {
+      "provider": "primary",
+      "model": "one"
+    },
+    "to": {
+      "provider": "backup",
+      "model": "two"
+    },
+    "candidate": 1,
+    "candidateCount": 1,
+    "trigger": {
+      "source": "retry",
+      "reason": "server_error",
+      "statusCode": 503
+    }
+  },
+  {
+    "kind": "provider_admission",
+    "phase": "queued",
+    "requestClass": "foreground",
+    "resource": "stream",
+    "scope": "global",
+    "reason": "capacity",
+    "queuePosition": 1,
+    "queueDepth": 2,
+    "inFlight": 1,
+    "limit": 1,
+    "waitMs": 10,
+    "maxWaitMs": 100
+  },
+  {
+    "kind": "provider_retry",
+    "phase": "scheduled",
+    "attempt": 1,
+    "maxRetries": 2,
+    "reason": "server_error",
+    "statusCode": 503,
+    "delayMs": 10,
+    "nextRetryAt": 20
+  },
+  {
+    "kind": "provider_circuit",
+    "phase": "waiting",
+    "reason": "server_error",
+    "statusCode": 503,
+    "retryAfterMs": 20,
+    "nextProbeAt": 30,
+    "openDurationMs": 20,
+    "sampleCount": 2,
+    "failureCount": 2
+  },
+  {
+    "kind": "provider_stall",
+    "phase": "detected",
+    "stallCount": 1,
+    "durationMs": 100,
+    "warningAfterMs": 50,
+    "timeoutMs": 1000,
+    "outputStarted": false
+  },
+  {
+    "kind": "provider_recovery",
+    "recovery": {
+      "version": 1,
+      "generation": "recovery-1",
+      "revision": 1,
+      "snapshot": {
+        "activity": "retry_wait",
+        "reason": "server_error",
+        "updatedAt": 1,
+        "nextActionAt": 2
+      }
+    }
+  },
+  {
+    "kind": "turn_activity",
+    "activity": {
+      "version": 1,
+      "generation": "activity-1",
+      "revision": 1,
+      "snapshot": {
+        "phase": "executing_tools",
+        "startedAt": 1,
+        "updatedAt": 2,
+        "turn": 1,
+        "maxTurns": 4,
+        "outputStarted": true,
+        "toolCallsStarted": 1,
+        "toolCallsCompleted": 0,
+        "activeTools": [
+          {
+            "name": "Grep",
+            "kind": "readonly",
+            "startedAt": 1,
+            "progress": 1,
+            "total": 2
+          }
+        ],
+        "activeToolOverflow": 0
+      }
+    }
+  },
+  {
+    "kind": "action_stationarity",
+    "phase": "warning",
+    "toolName": "Read",
+    "runLength": 8,
+    "nudgeThreshold": 8,
+    "haltThreshold": 16,
+    "progressAware": false
+  }
+]

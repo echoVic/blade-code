@@ -1,6 +1,4 @@
-/**
- * /tasks Slash Command 单元测试
- */
+/** /tasks Slash Command 单元测试 */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

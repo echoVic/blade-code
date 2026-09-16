@@ -1,7 +1,4 @@
-/**
- * 权限模式行为测试
- * 验证 DEFAULT、AUTO_EDIT、YOLO 模式的正确行为
- */
+/** 权限模式行为测试 验证 DEFAULT、AUTO_EDIT、YOLO 模式的正确行为 */
 
 import { describe, expect, it } from 'vitest';
 import {

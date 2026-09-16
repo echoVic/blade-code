@@ -1,6 +1,4 @@
-/**
- * 内置 Slash Commands 测试
- */
+/** 内置 Slash Commands 测试 */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { builtinCommands } from '../../../../src/slash-commands/builtinCommands.js';
