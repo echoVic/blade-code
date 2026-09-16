@@ -6,6 +6,7 @@ import { materializeRealApiEnvironment } from '../../scripts/real-api-credential
 import {
   buildRealApiRuntimeConfig,
   resolveForkQualificationModels,
+  type TestModelConfig,
 } from '../integration/real-api/testConfig.js';
 
 const execFileAsync = promisify(execFile);
@@ -18,18 +19,28 @@ export interface RealApiGuiFixtureContext {
   workspace: string;
   storage: string;
   port: number;
+  model: TestModelConfig;
   runtimeConfig: RuntimeConfig;
+}
+
+interface CommittedRealApiGuiFixtureContext extends RealApiGuiFixtureContext {
+  canonicalWorkspace: string;
 }
 
 interface RealApiGuiFixtureOptions {
   scriptName: string;
   defaultPort: number;
-  readme: string;
+  readme?: string;
   workspaceName?: string;
+  environment?: Readonly<Record<string, string>>;
   configure(context: RealApiGuiFixtureContext): {
     config: Record<string, unknown>;
     metadata?: Record<string, unknown>;
   };
+  setup?(context: RealApiGuiFixtureContext): Promise<void>;
+  afterCommit?(
+    context: CommittedRealApiGuiFixtureContext
+  ): Promise<Record<string, unknown> | undefined>;
 }
 
 export async function launchRealApiGuiFixture(
@@ -52,6 +63,7 @@ export async function launchRealApiGuiFixture(
   process.env.REAL_API_TEST = '1';
   process.env.HOME = home;
   process.env.BLADE_STORAGE_ROOT = storage;
+  Object.assign(process.env, options.environment);
 
   const model = resolveForkQualificationModels(process.env).find(
     (candidate) =>
@@ -59,29 +71,30 @@ export async function launchRealApiGuiFixture(
   );
   if (!model) throw new Error('DeepSeek Flash qualification model is unavailable');
   const runtimeConfig = buildRealApiRuntimeConfig(model);
-  const context = { root, home, workspace, storage, port, runtimeConfig };
+  const context = { root, home, workspace, storage, port, model, runtimeConfig };
   const fixture = options.configure(context);
 
   await Promise.all([
     mkdir(path.join(home, '.blade'), { recursive: true }),
     mkdir(workspace, { recursive: true }),
   ]);
-  await Promise.all([
-    writeFile(
-      path.join(home, '.blade', 'config.json'),
-      `${JSON.stringify(
-        {
-          currentModelId: runtimeConfig.currentModelId,
-          models: runtimeConfig.models,
-          modelProviders: runtimeConfig.modelProviders,
-          ...fixture.config,
-        },
-        null,
-        2
-      )}\n`
-    ),
-    writeFile(path.join(workspace, 'README.md'), options.readme),
-  ]);
+  await writeFile(
+    path.join(home, '.blade', 'config.json'),
+    `${JSON.stringify(
+      {
+        currentModelId: runtimeConfig.currentModelId,
+        models: runtimeConfig.models,
+        modelProviders: runtimeConfig.modelProviders,
+        ...fixture.config,
+      },
+      null,
+      2
+    )}\n`
+  );
+  if (options.readme !== undefined) {
+    await writeFile(path.join(workspace, 'README.md'), options.readme);
+  }
+  await options.setup?.(context);
   await execFileAsync('git', ['init', '-q', '-b', 'main'], { cwd: workspace });
   await execFileAsync('git', ['config', 'user.email', 'blade@example.test'], {
     cwd: workspace,
@@ -93,6 +106,10 @@ export async function launchRealApiGuiFixture(
   await execFileAsync('git', ['commit', '-qm', 'fixture'], { cwd: workspace });
 
   const canonicalWorkspace = await realpath(workspace);
+  const committedMetadata = await options.afterCommit?.({
+    ...context,
+    canonicalWorkspace,
+  });
   const bladeEntry = path.resolve(import.meta.dirname, '../../dist/blade.js');
   const child = spawn(process.execPath, [bladeEntry, 'serve', '--port', String(port)], {
     cwd: canonicalWorkspace,
@@ -108,6 +125,7 @@ export async function launchRealApiGuiFixture(
       storage,
       port,
       ...fixture.metadata,
+      ...committedMetadata,
     })}\n`
   );
 
