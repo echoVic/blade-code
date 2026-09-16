@@ -798,14 +798,12 @@ describe('executeLoopGenerator', () => {
       llmContent: { task: { id: '1' } },
     });
 
-    const { result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Create a shared task.',
-        createMockContext({ taskListId: 'agent-team-shared' }),
-        { stream: false },
-        undefined
-      )
+    const { result } = await runLoop(
+      deps,
+      'Create a shared task.',
+      { stream: false },
+      createMockContext({ taskListId: 'agent-team-shared' }),
+      null
     );
 
     expect(result.success).toBe(true);
@@ -848,20 +846,18 @@ describe('executeLoopGenerator', () => {
         finishReason: 'stop',
       });
 
-    const { result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Read package.json.',
-        createMockContext(),
-        {
-          stream: false,
-          turnFinalization: {
-            turnId: 'host-turn-non-streaming',
-            getInputMessageIds: async () => [],
-          },
+    const { result } = await runLoop(
+      deps,
+      'Read package.json.',
+      {
+        stream: false,
+        turnFinalization: {
+          turnId: 'host-turn-non-streaming',
+          getInputMessageIds: async () => [],
         },
-        undefined
-      )
+      },
+      createMockContext(),
+      null
     );
 
     expect(result.success).toBe(true);
@@ -882,20 +878,18 @@ describe('executeLoopGenerator', () => {
       } satisfies StreamChunk;
     });
 
-    const { result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Stream the result.',
-        createMockContext(),
-        {
-          stream: true,
-          turnFinalization: {
-            turnId: 'host-turn-streaming',
-            getInputMessageIds: async () => [],
-          },
+    const { result } = await runLoop(
+      deps,
+      'Stream the result.',
+      {
+        stream: true,
+        turnFinalization: {
+          turnId: 'host-turn-streaming',
+          getInputMessageIds: async () => [],
         },
-        undefined
-      )
+      },
+      createMockContext(),
+      null
     );
 
     expect(result.success).toBe(true);
@@ -934,14 +928,12 @@ describe('executeLoopGenerator', () => {
       llmContent: { task: { id: '1' } },
     });
 
-    const { result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Create a goal task.',
-        createMockContext({ goalTaskListId: 'goal:test-session:goal-1' }),
-        { stream: false },
-        undefined
-      )
+    const { result } = await runLoop(
+      deps,
+      'Create a goal task.',
+      { stream: false },
+      createMockContext({ goalTaskListId: 'goal:test-session:goal-1' }),
+      null
     );
 
     expect(result.success).toBe(true);
@@ -1017,24 +1009,22 @@ describe('executeLoopGenerator', () => {
       tasks: [{ id: '1', status: 'completed' }],
     });
 
-    const { events, result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Complete the Goal task.',
-        createMockContext({ goalTaskListId: 'goal:test-session:goal-1' }),
-        {
-          stream: false,
-          goalLifecycle: {
-            snapshot: goal,
-            getSnapshot: vi.fn().mockResolvedValue(goal),
-            recordVerification: vi.fn(),
-            invalidateVerification: vi.fn(),
-            finalizeCompletion: vi.fn(),
-            refreshFrontier,
-          },
+    const { events, result } = await runLoop(
+      deps,
+      'Complete the Goal task.',
+      {
+        stream: false,
+        goalLifecycle: {
+          snapshot: goal,
+          getSnapshot: vi.fn().mockResolvedValue(goal),
+          recordVerification: vi.fn(),
+          invalidateVerification: vi.fn(),
+          finalizeCompletion: vi.fn(),
+          refreshFrontier,
         },
-        undefined
-      )
+      },
+      createMockContext({ goalTaskListId: 'goal:test-session:goal-1' }),
+      null
     );
 
     expect(result.success).toBe(true);
@@ -1087,25 +1077,23 @@ describe('executeLoopGenerator', () => {
     const getSnapshot = vi.fn().mockResolvedValue(null);
     const clearFrontierStall = vi.fn().mockResolvedValue(null);
 
-    const { events, result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Write result.txt.',
-        createMockContext(),
-        {
-          stream: false,
-          builtinVerification: false,
-          goalLifecycle: {
-            snapshot: null,
-            getSnapshot,
-            recordVerification: vi.fn(),
-            invalidateVerification: vi.fn(),
-            finalizeCompletion: vi.fn(),
-            clearFrontierStall,
-          },
+    const { events, result } = await runLoop(
+      deps,
+      'Write result.txt.',
+      {
+        stream: false,
+        builtinVerification: false,
+        goalLifecycle: {
+          snapshot: null,
+          getSnapshot,
+          recordVerification: vi.fn(),
+          invalidateVerification: vi.fn(),
+          finalizeCompletion: vi.fn(),
+          clearFrontierStall,
         },
-        undefined
-      )
+      },
+      createMockContext(),
+      null
     );
 
     expect(result).toMatchObject({ success: true, finalMessage: 'Done.' });
@@ -1124,14 +1112,12 @@ describe('executeLoopGenerator', () => {
         } as any,
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'continue the coding task',
-          createMockContext(),
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'continue the coding task',
+        { stream: false },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -1170,14 +1156,12 @@ describe('executeLoopGenerator', () => {
         },
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'review this change',
-          context,
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'review this change',
+        { stream: false },
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -1230,14 +1214,12 @@ describe('executeLoopGenerator', () => {
         const chat = vi
           .mocked(deps.chatService.chat)
           .mockResolvedValue(finalResponse(100, 'done'));
-        const { result } = await drainGenerator(
-          executeLoopGenerator(
-            deps,
-            'Inspect the allowed tools.',
-            createMockContext({ permissionMode }),
-            { stream: false },
-            'ROOT_SYSTEM_PROMPT'
-          )
+        const { result } = await runLoop(
+          deps,
+          'Inspect the allowed tools.',
+          { stream: false },
+          createMockContext({ permissionMode }),
+          'ROOT_SYSTEM_PROMPT'
         );
         expect(result.success, JSON.stringify(result)).toBe(true);
         const names = chat.mock.calls[0]?.[1]?.map((tool) => tool.name);
@@ -1308,14 +1290,12 @@ describe('executeLoopGenerator', () => {
         });
       }
       chat.mockResolvedValueOnce(finalResponse(100, 'done'));
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Perform the inspection.',
-          createMockContext(),
-          { stream: false },
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Perform the inspection.',
+        { stream: false },
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
       expect(result.success, JSON.stringify(result)).toBe(true);
       expect(chat.mock.calls.map((call) => call[1]?.map((tool) => tool.name))).toEqual([
@@ -1369,14 +1349,12 @@ describe('executeLoopGenerator', () => {
         required: ['answer'],
         additionalProperties: false,
       };
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Return a structured answer.',
-          createMockContext(),
-          { stream: false, outputSchema },
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Return a structured answer.',
+        { stream: false, outputSchema },
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
       expect(result).toMatchObject({
         success: true,
@@ -1432,19 +1410,17 @@ describe('executeLoopGenerator', () => {
         }
         chat.mockResolvedValueOnce(finalResponse(1_000, 'done'));
         if (mode === 'turn-limit') deps.runtimeOptions.maxTurns = 1;
-        const { result } = await drainGenerator(
-          executeLoopGenerator(
-            deps,
-            'Read then finish.',
-            createMockContext(),
-            {
-              stream: false,
-              ...(mode === 'turn-limit'
-                ? { onTurnLimitReached: async () => ({ continue: true }) }
-                : {}),
-            },
-            undefined
-          )
+        const { result } = await runLoop(
+          deps,
+          'Read then finish.',
+          {
+            stream: false,
+            ...(mode === 'turn-limit'
+              ? { onTurnLimitReached: async () => ({ continue: true }) }
+              : {}),
+          },
+          createMockContext(),
+          null
         );
         expect(result.success).toBe(true);
         const calls =
@@ -1481,20 +1457,18 @@ describe('executeLoopGenerator', () => {
           vi.mocked(CompactionService.compact).mockImplementationOnce(cancelCompaction);
         }
         if (mode === 'turn-limit') deps.runtimeOptions.maxTurns = 1;
-        const { events, result } = await drainGenerator(
-          executeLoopGenerator(
-            deps,
-            'Read then finish.',
-            context,
-            {
-              stream: false,
-              signal: controller.signal,
-              ...(mode === 'turn-limit'
-                ? { onTurnLimitReached: async () => ({ continue: true }) }
-                : {}),
-            },
-            undefined
-          )
+        const { events, result } = await runLoop(
+          deps,
+          'Read then finish.',
+          {
+            stream: false,
+            signal: controller.signal,
+            ...(mode === 'turn-limit'
+              ? { onTurnLimitReached: async () => ({ continue: true }) }
+              : {}),
+          },
+          context,
+          null
         );
         const counts = events.flatMap((event) =>
           event.kind === 'token_usage' ? [event.usage.totalTokens] : []
@@ -1576,20 +1550,18 @@ describe('executeLoopGenerator', () => {
           vi.mocked(CompactionService.compact).mockResolvedValueOnce(compacted);
         }
         if (mode === 'turn-limit') deps.runtimeOptions.maxTurns = 1;
-        const { events, result } = await drainGenerator(
-          executeLoopGenerator(
-            deps,
-            'Read then finish.',
-            createMockContext(),
-            {
-              stream: false,
-              signal: controller.signal,
-              ...(mode === 'turn-limit'
-                ? { onTurnLimitReached: async () => ({ continue: true }) }
-                : {}),
-            },
-            undefined
-          )
+        const { events, result } = await runLoop(
+          deps,
+          'Read then finish.',
+          {
+            stream: false,
+            signal: controller.signal,
+            ...(mode === 'turn-limit'
+              ? { onTurnLimitReached: async () => ({ continue: true }) }
+              : {}),
+          },
+          createMockContext(),
+          null
         );
         const counts = events.flatMap((event) =>
           event.kind === 'token_usage' ? [event.usage.totalTokens] : []
@@ -1637,14 +1609,12 @@ describe('executeLoopGenerator', () => {
           llmContent: 'done',
           metadata: { shouldExitLoop: true },
         });
-      const { result, events } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read and finish.',
-          createMockContext(),
-          { stream: false },
-          undefined
-        )
+      const { result, events } = await runLoop(
+        deps,
+        'Read and finish.',
+        { stream: false },
+        createMockContext(),
+        null
       );
       const tokens = events.reduce(
         (sum, event) =>
@@ -1661,14 +1631,12 @@ describe('executeLoopGenerator', () => {
         ...finalResponse(100, 'done'),
         usage: { promptTokens: 100, completionTokens: 20, totalTokens: 0 },
       });
-      const { result, events } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Answer.',
-          createMockContext(),
-          { stream: false },
-          undefined
-        )
+      const { result, events } = await runLoop(
+        deps,
+        'Answer.',
+        { stream: false },
+        createMockContext(),
+        null
       );
       expect(result.metadata?.tokensUsed).toBe(120);
       expect(events).toContainEqual(
@@ -2048,14 +2016,12 @@ describe('executeLoopGenerator', () => {
       });
 
       const context = createMockContext();
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read package.json before continuing.',
-          context,
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read package.json before continuing.',
+        { stream: false },
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2086,14 +2052,12 @@ describe('executeLoopGenerator', () => {
         messages: [marker],
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue with restored context.',
-          context,
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Continue with restored context.',
+        { stream: false },
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2114,14 +2078,12 @@ describe('executeLoopGenerator', () => {
         .mockResolvedValueOnce(toolResponse(70_000))
         .mockResolvedValueOnce(finalResponse(75_000, 'done in handoff band'));
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue after persistence error.',
-          createMockContext(),
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Continue after persistence error.',
+        { stream: false },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2158,14 +2120,12 @@ describe('executeLoopGenerator', () => {
         .mockResolvedValueOnce(toolResponse(70_000))
         .mockResolvedValueOnce(finalResponse(75_000, 'done'));
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue without leaking diagnostics.',
-          createMockContext(),
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Continue without leaking diagnostics.',
+        { stream: false },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2188,14 +2148,12 @@ describe('executeLoopGenerator', () => {
         .mockResolvedValueOnce(toolResponse(70_000))
         .mockResolvedValueOnce(finalResponse(75_000, 'suppressed handoff continues'));
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue after suppressed handoff.',
-          createMockContext(),
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Continue after suppressed handoff.',
+        { stream: false },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2231,14 +2189,12 @@ describe('executeLoopGenerator', () => {
         .mockResolvedValueOnce(toolResponse(72_000))
         .mockResolvedValueOnce(finalResponse(75_000, 'done'));
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue across model switch.',
-          createMockContext(),
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Continue across model switch.',
+        { stream: false },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2279,14 +2235,12 @@ describe('executeLoopGenerator', () => {
         .mockResolvedValueOnce(toolResponse(70_000))
         .mockResolvedValueOnce(finalResponse(75_000, 'fallback'));
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Stream then fallback.',
-          createMockContext(),
-          { stream: true },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Stream then fallback.',
+        { stream: true },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2355,14 +2309,12 @@ describe('executeLoopGenerator', () => {
           } satisfies StreamChunk;
         });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue across a Provider retry.',
-          createMockContext(),
-          { stream: true },
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Continue across a Provider retry.',
+        { stream: true },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2430,14 +2382,12 @@ describe('executeLoopGenerator', () => {
         };
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read package.json before continuing.',
-          createMockContext(),
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read package.json before continuing.',
+        { stream: false },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2472,14 +2422,12 @@ describe('executeLoopGenerator', () => {
         new Error('compact failed')
       );
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read package.json before continuing.',
-          context,
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read package.json before continuing.',
+        { stream: false },
+        context,
+        null
       );
 
       expect(result.success).toBe(false);
@@ -2511,14 +2459,12 @@ describe('executeLoopGenerator', () => {
         'saveCompaction'
       ).mockRejectedValueOnce(new Error('checkpoint failed'));
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Compact then checkpoint.',
-          createMockContext(),
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Compact then checkpoint.',
+        { stream: false },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(false);
@@ -2557,14 +2503,12 @@ describe('executeLoopGenerator', () => {
       );
 
       const context = createMockContext();
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue after memory failure.',
-          context,
-          { stream: false },
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Continue after memory failure.',
+        { stream: false },
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2679,14 +2623,12 @@ describe('executeLoopGenerator', () => {
         },
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Review the current diff.',
-          context,
-          { stream: false },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Review the current diff.',
+        { stream: false },
+        context,
+        null
       );
 
       expect(result).toMatchObject({
@@ -2706,14 +2648,12 @@ describe('executeLoopGenerator', () => {
       });
       const context = createMockContext();
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Durable initial request.',
-          context,
-          { stream: false, inputMessageId: 'initial-input-1' },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Durable initial request.',
+        { stream: false, inputMessageId: 'initial-input-1' },
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2782,22 +2722,20 @@ describe('executeLoopGenerator', () => {
         inlineBytes: 31_000,
       };
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Bounded prompt artifact preview.',
-          context,
-          {
-            stream: false,
-            inputMessageId: 'offloaded-input-1',
-            inputPersistenceMetadata: {
-              userPromptArtifact: reference,
-            },
-            policyUserMessage:
-              'Implement the requested change and run npm test before finishing.',
+      const { result } = await runLoop(
+        deps,
+        'Bounded prompt artifact preview.',
+        {
+          stream: false,
+          inputMessageId: 'offloaded-input-1',
+          inputPersistenceMetadata: {
+            userPromptArtifact: reference,
           },
-          undefined
-        )
+          policyUserMessage:
+            'Implement the requested change and run npm test before finishing.',
+        },
+        context,
+        null
       );
 
       expect(result.success, JSON.stringify(result)).toBe(true);
@@ -2835,14 +2773,12 @@ describe('executeLoopGenerator', () => {
       });
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          '<goal-state>Continue the persisted objective.</goal-state>',
-          context,
-          { stream: false, transientInput: 'goal_continuation' },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        '<goal-state>Continue the persisted objective.</goal-state>',
+        { stream: false, transientInput: 'goal_continuation' },
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -2871,14 +2807,12 @@ describe('executeLoopGenerator', () => {
       });
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Do not lose this request.',
-          createMockContext(),
-          { stream: false, inputMessageId: 'initial-input-failure' },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Do not lose this request.',
+        { stream: false, inputMessageId: 'initial-input-failure' },
+        createMockContext(),
+        null
       );
 
       expect(result).toMatchObject({
@@ -2905,14 +2839,12 @@ describe('executeLoopGenerator', () => {
         finishReason: 'stop',
       });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Return a final response.',
-          context,
-          { stream: false },
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Return a final response.',
+        { stream: false },
+        context,
+        null
       );
 
       expect(chatMock).toHaveBeenCalledTimes(1);
@@ -2943,20 +2875,18 @@ describe('executeLoopGenerator', () => {
         finishReason: 'stop',
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Return a final response.',
-          createMockContext(),
-          {
-            stream: false,
-            turnFinalization: {
-              turnId: 'turn-final',
-              getInputMessageIds,
-            },
+      const { result } = await runLoop(
+        deps,
+        'Return a final response.',
+        {
+          stream: false,
+          turnFinalization: {
+            turnId: 'turn-final',
+            getInputMessageIds,
           },
-          undefined
-        )
+        },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -3019,14 +2949,12 @@ describe('executeLoopGenerator', () => {
         getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
       };
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Use the initial requirement.',
-          context,
-          { stream: false, turnSteering } as LoopOptions,
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Use the initial requirement.',
+        { stream: false, turnSteering } as LoopOptions,
+        context,
+        null
       );
 
       expect(result).toMatchObject({
@@ -3127,14 +3055,12 @@ describe('executeLoopGenerator', () => {
         ]);
       let result: LoopResult;
       try {
-        ({ result } = await drainGenerator(
-          executeLoopGenerator(
-            deps,
-            'Initial request.',
-            context,
-            { stream: false, turnSteering },
-            undefined
-          )
+        ({ result } = await runLoop(
+          deps,
+          'Initial request.',
+          { stream: false, turnSteering },
+          context,
+          null
         ));
       } finally {
         durableReload.mockRestore();
@@ -3178,14 +3104,12 @@ describe('executeLoopGenerator', () => {
         getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
       };
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          '',
-          createMockContext(),
-          { stream: false, pendingInputOnly: true, turnSteering },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        '',
+        { stream: false, pendingInputOnly: true, turnSteering },
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -3233,14 +3157,12 @@ describe('executeLoopGenerator', () => {
         getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
       };
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          '',
-          createMockContext(),
-          { stream: false, pendingInputOnly: true, turnSteering },
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        '',
+        { stream: false, pendingInputOnly: true, turnSteering },
+        createMockContext(),
+        null
       );
 
       expect(result).toMatchObject({
@@ -3314,14 +3236,12 @@ describe('executeLoopGenerator', () => {
         getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
       };
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          '',
-          context,
-          { stream: false, pendingInputOnly: true, turnSteering },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        '',
+        { stream: false, pendingInputOnly: true, turnSteering },
+        context,
+        null
       );
 
       expect(result).toMatchObject({ success: true, finalMessage: 'resumed' });
@@ -3395,14 +3315,12 @@ describe('executeLoopGenerator', () => {
       llmContent: 'file content',
     });
 
-    const { result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Read the file',
-        context,
-        { stream: false } as LoopOptions,
-        undefined
-      )
+    const { result } = await runLoop(
+      deps,
+      'Read the file',
+      { stream: false } as LoopOptions,
+      context,
+      null
     );
 
     expect(result.success).toBe(false);
@@ -3448,14 +3366,12 @@ describe('executeLoopGenerator', () => {
       },
     });
 
-    const { events, result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Monitor the background task without wasting turns.',
-        createMockContext(),
-        { stream: false },
-        undefined
-      )
+    const { events, result } = await runLoop(
+      deps,
+      'Monitor the background task without wasting turns.',
+      { stream: false },
+      createMockContext(),
+      null
     );
 
     expect(result.success).toBe(true);
@@ -3513,14 +3429,12 @@ describe('executeLoopGenerator', () => {
       llmContent: 'unchanged file',
     });
 
-    const { events, result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Inspect the implementation.',
-        createMockContext(),
-        { stream: false },
-        undefined
-      )
+    const { events, result } = await runLoop(
+      deps,
+      'Inspect the implementation.',
+      { stream: false },
+      createMockContext(),
+      null
     );
 
     expect(result).toMatchObject({
@@ -3562,14 +3476,12 @@ describe('executeLoopGenerator', () => {
       finishReason: 'stop',
     });
 
-    const { result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Run all applicable test, lint, type-check, and build checks.',
-        context,
-        { stream: false } as LoopOptions,
-        undefined
-      )
+    const { result } = await runLoop(
+      deps,
+      'Run all applicable test, lint, type-check, and build checks.',
+      { stream: false } as LoopOptions,
+      context,
+      null
     );
 
     expect(result.success).toBe(true);
@@ -3606,14 +3518,12 @@ describe('executeLoopGenerator', () => {
       llmContent: 'blocked',
     });
 
-    const { result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Run the command once.',
-        context,
-        { stream: false } as LoopOptions,
-        undefined
-      )
+    const { result } = await runLoop(
+      deps,
+      'Run the command once.',
+      { stream: false } as LoopOptions,
+      context,
+      null
     );
 
     expect(result.success).toBe(false);
@@ -3687,8 +3597,12 @@ describe('executeLoopGenerator', () => {
               ? 'Delegate the implementation inspection to a subagent.'
               : 'Inspect the file.';
         const context = createMockContext();
-        const { events, result } = await drainGenerator(
-          executeLoopGenerator(deps, request, context, options, 'ROOT_SYSTEM_PROMPT')
+        const { events, result } = await runLoop(
+          deps,
+          request,
+          options,
+          context,
+          'ROOT_SYSTEM_PROMPT'
         );
         expect(result).toMatchObject({
           success: false,
@@ -3728,14 +3642,12 @@ describe('executeLoopGenerator', () => {
         .mockResolvedValueOnce(toolResponse(100))
         .mockResolvedValueOnce(finalResponse(120, ''))
         .mockResolvedValue(finalResponse(140, 'Unexpected third response.'));
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read the file and summarize it.',
-          createMockContext(),
-          { stream: false },
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read the file and summarize it.',
+        { stream: false },
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
       expect(result).toMatchObject({
         success: false,
@@ -3753,14 +3665,12 @@ describe('executeLoopGenerator', () => {
         .mocked(deps.chatService.chat)
         .mockResolvedValue(finalResponse(100, 'Final answer.'));
       const onTurnLimitReached = vi.fn(async () => ({ continue: false }));
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Explain the implementation.',
-          createMockContext(),
-          { stream: false, onTurnLimitReached },
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Explain the implementation.',
+        { stream: false, onTurnLimitReached },
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
       expect(result).toMatchObject({
         success: true,
@@ -3782,14 +3692,12 @@ describe('executeLoopGenerator', () => {
         continue: false,
         reason: 'User stopped at the limit.',
       }));
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Inspect the file.',
-          createMockContext(),
-          { stream: false, onTurnLimitReached },
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Inspect the file.',
+        { stream: false, onTurnLimitReached },
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
       expect(onTurnLimitReached).toHaveBeenCalledExactlyOnceWith({ turnsCount: 1 });
       expect(result).toMatchObject({
@@ -3816,14 +3724,12 @@ describe('executeLoopGenerator', () => {
           controller.abort();
           return { continue: continueAfterLimit };
         });
-        const { events, result } = await drainGenerator(
-          executeLoopGenerator(
-            deps,
-            'Inspect the file.',
-            createMockContext(),
-            { stream: false, signal: controller.signal, onTurnLimitReached },
-            'ROOT_SYSTEM_PROMPT'
-          )
+        const { events, result } = await runLoop(
+          deps,
+          'Inspect the file.',
+          { stream: false, signal: controller.signal, onTurnLimitReached },
+          createMockContext(),
+          'ROOT_SYSTEM_PROMPT'
         );
         expect(result).toMatchObject({
           success: false,
@@ -3850,14 +3756,12 @@ describe('executeLoopGenerator', () => {
       const chat = vi
         .mocked(deps.chatService.chat)
         .mockResolvedValue(finalResponse(100, 'Final answer.'));
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Inspect the file.',
-          createMockContext(),
-          { stream: false },
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Inspect the file.',
+        { stream: false },
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
       expect(result).toMatchObject({
         success: false,
@@ -3893,14 +3797,12 @@ describe('executeLoopGenerator', () => {
         inputQueued = true;
         return { success: true, llmContent: 'File contents' };
       });
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read the file.',
-          createMockContext(),
-          { stream: false, turnSteering },
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Read the file.',
+        { stream: false, turnSteering },
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
       expect(result.error?.type).toBe('max_turns_exceeded');
       expect(inputQueued).toBe(true);
@@ -3935,14 +3837,12 @@ describe('executeLoopGenerator', () => {
         drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
         getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
       };
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Inspect the file.',
-          createMockContext(),
-          { stream: false, turnSteering },
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Inspect the file.',
+        { stream: false, turnSteering },
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
       expect(result.error?.type).toBe('max_turns_exceeded');
       expect(chat).toHaveBeenCalledOnce();
@@ -3976,14 +3876,12 @@ describe('executeLoopGenerator', () => {
         summaryMessage: { role: 'user', content: 'Continue inspecting the file' },
       } satisfies CompactionResult);
       const onTurnLimitReached = vi.fn(async () => ({ continue: true }));
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Inspect the file.',
-          createMockContext(),
-          { stream: false, onTurnLimitReached },
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Inspect the file.',
+        { stream: false, onTurnLimitReached },
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
       expect(onTurnLimitReached).toHaveBeenCalledExactlyOnceWith({ turnsCount: 1 });
       expect(saveCompaction).toHaveBeenCalledOnce();
@@ -4075,17 +3973,15 @@ describe('executeLoopGenerator', () => {
       },
     } satisfies CompactionResult);
 
-    const { events, result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Inspect the frontier.',
-        context,
-        {
-          stream: false,
-          onTurnLimitReached: async () => ({ continue: true }),
-        },
-        undefined
-      )
+    const { events, result } = await runLoop(
+      deps,
+      'Inspect the frontier.',
+      {
+        stream: false,
+        onTurnLimitReached: async () => ({ continue: true }),
+      },
+      context,
+      null
     );
 
     expect(result.success, JSON.stringify(result)).toBe(true);
@@ -4158,17 +4054,15 @@ describe('executeLoopGenerator', () => {
       new Error('policy denied compaction')
     );
 
-    const { result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Inspect the frontier.',
-        context,
-        {
-          stream: false,
-          onTurnLimitReached: async () => ({ continue: true }),
-        },
-        undefined
-      )
+    const { result } = await runLoop(
+      deps,
+      'Inspect the frontier.',
+      {
+        stream: false,
+        onTurnLimitReached: async () => ({ continue: true }),
+      },
+      context,
+      null
     );
 
     expect(result.success).toBe(false);
@@ -4201,14 +4095,12 @@ describe('executeLoopGenerator', () => {
       llmContent: 'blocked',
     });
 
-    const { result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Run the command once.',
-        context,
-        { stream: false },
-        undefined
-      )
+    const { result } = await runLoop(
+      deps,
+      'Run the command once.',
+      { stream: false },
+      context,
+      null
     );
 
     expect(result.success).toBe(false);
@@ -4246,14 +4138,12 @@ describe('executeLoopGenerator', () => {
         metadata: { execution_host_failure: 'spawn' },
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Run the required command.',
-          createMockContext(),
-          { stream: false } satisfies LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Run the required command.',
+        { stream: false } satisfies LoopOptions,
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
 
       expect(result).toMatchObject({
@@ -4290,14 +4180,12 @@ describe('executeLoopGenerator', () => {
         })
         .mockResolvedValueOnce({ success: true, llmContent: 'ok' });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Recover the command.',
-          createMockContext(),
-          { stream: false } satisfies LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Recover the command.',
+        { stream: false } satisfies LoopOptions,
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
 
       expect(result.success).toBe(true);
@@ -4330,14 +4218,12 @@ describe('executeLoopGenerator', () => {
         })
         .mockResolvedValueOnce({ success: true, llmContent: 'read' });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Try Bash, then inspect the file.',
-          createMockContext(),
-          { stream: false } satisfies LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Try Bash, then inspect the file.',
+        { stream: false } satisfies LoopOptions,
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
 
       expect(result.metadata).toMatchObject({
@@ -4375,14 +4261,12 @@ describe('executeLoopGenerator', () => {
         provenanceSha256: 'b'.repeat(64),
       };
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Start',
-          createMockContext(),
-          { stream: false } as LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Start',
+        { stream: false } as LoopOptions,
+        createMockContext(),
+        'ROOT_SYSTEM_PROMPT'
       );
 
       expect(result.success).toBe(true);
@@ -4455,14 +4339,12 @@ describe('executeLoopGenerator', () => {
         llmContent: 'handler source',
       });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Inspect the handler',
-          context,
-          { stream: false } as LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Inspect the handler',
+        { stream: false } as LoopOptions,
+        context,
+        'ROOT_SYSTEM_PROMPT'
       );
 
       expect(result.success).toBe(true);
@@ -4542,14 +4424,12 @@ describe('executeLoopGenerator', () => {
           finishReason: 'stop',
         });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Update the handler',
-          context,
-          { stream: false } as LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Update the handler',
+        { stream: false } as LoopOptions,
+        context,
+        'ROOT_SYSTEM_PROMPT'
       );
 
       expect(result.success).toBe(true);
@@ -4586,14 +4466,12 @@ describe('executeLoopGenerator', () => {
         ],
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue',
-          context,
-          { stream: false } as LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Continue',
+        { stream: false } as LoopOptions,
+        context,
+        'ROOT_SYSTEM_PROMPT'
       );
 
       expect(result.success).toBe(true);
@@ -5557,14 +5435,12 @@ describe('executeLoopGenerator', () => {
         llmContent: 'read-result',
       });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read the bounded batch',
-          context,
-          { stream: false } as LoopOptions,
-          'Use the requested tools.'
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Read the bounded batch',
+        { stream: false } as LoopOptions,
+        context,
+        'Use the requested tools.'
       );
 
       expect(result.success).toBe(true);
@@ -5632,14 +5508,12 @@ describe('executeLoopGenerator', () => {
         llmContent: 'read-result',
       });
 
-      const run = drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read both files',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const run = runLoop(
+        deps,
+        'Read both files',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
       await vi.waitFor(() => {
         expect(saveToolUse).toHaveBeenCalledTimes(1);
@@ -5710,14 +5584,12 @@ describe('executeLoopGenerator', () => {
         }
       );
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'run progress tool',
-          createMockContext(),
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'run progress tool',
+        { stream: false } as LoopOptions,
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(true);
@@ -5956,14 +5828,12 @@ describe('executeLoopGenerator', () => {
           },
         });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Implement the requested production feature.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Implement the requested production feature.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -6032,14 +5902,12 @@ describe('executeLoopGenerator', () => {
         },
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Implement the requested production feature.',
-          context,
-          { stream: false, builtinVerification: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Implement the requested production feature.',
+        { stream: false, builtinVerification: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result).toMatchObject({
@@ -6230,29 +6098,25 @@ describe('executeLoopGenerator', () => {
           },
         });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue the persisted goal.',
-          context,
-          {
-            stream: false,
-            goalLifecycle: {
-              snapshot: activeGoal,
-              getSnapshot,
-              recordVerification,
-              invalidateVerification,
-              finalizeCompletion,
-            },
-            turnFinalization: {
-              turnId: 'turn-goal-finalization',
-              getInputMessageIds: vi
-                .fn()
-                .mockResolvedValue(['input-goal-finalization']),
-            },
-          } as LoopOptions,
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Continue the persisted goal.',
+        {
+          stream: false,
+          goalLifecycle: {
+            snapshot: activeGoal,
+            getSnapshot,
+            recordVerification,
+            invalidateVerification,
+            finalizeCompletion,
+          },
+          turnFinalization: {
+            turnId: 'turn-goal-finalization',
+            getInputMessageIds: vi.fn().mockResolvedValue(['input-goal-finalization']),
+          },
+        } as LoopOptions,
+        context,
+        null
       );
 
       expect(result).toMatchObject({
@@ -6434,23 +6298,21 @@ describe('executeLoopGenerator', () => {
       });
       const finalizeCompletion = vi.fn();
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue the persisted goal.',
-          context,
-          {
-            stream: false,
-            goalLifecycle: {
-              snapshot: goal,
-              getSnapshot: vi.fn().mockResolvedValue(verifyingGoal),
-              recordVerification: vi.fn(),
-              invalidateVerification: vi.fn().mockResolvedValue(verifyingGoal),
-              finalizeCompletion,
-            },
-          } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Continue the persisted goal.',
+        {
+          stream: false,
+          goalLifecycle: {
+            snapshot: goal,
+            getSnapshot: vi.fn().mockResolvedValue(verifyingGoal),
+            recordVerification: vi.fn(),
+            invalidateVerification: vi.fn().mockResolvedValue(verifyingGoal),
+            finalizeCompletion,
+          },
+        } as LoopOptions,
+        context,
+        null
       );
 
       expect(result).toMatchObject({
@@ -6554,14 +6416,12 @@ describe('executeLoopGenerator', () => {
         })
         .mockResolvedValueOnce(passResult);
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Implement and verify the production feature.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Implement and verify the production feature.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -6611,14 +6471,12 @@ describe('executeLoopGenerator', () => {
         },
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Implement the production feature.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Implement the production feature.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result).toMatchObject({
@@ -6660,14 +6518,12 @@ describe('executeLoopGenerator', () => {
         llmContent: 'No findings.',
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Delegate this review with the Task tool.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Delegate this review with the Task tool.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -6740,14 +6596,12 @@ describe('executeLoopGenerator', () => {
           metadata: { command: 'npm run type-check', exit_code: 0 },
         });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Run npm run type-check and npm test; finish only after both pass.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Run npm run type-check and npm test; finish only after both pass.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -6802,14 +6656,12 @@ describe('executeLoopGenerator', () => {
         },
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Delegate this repair to channel-specialist with the Task tool.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Delegate this repair to channel-specialist with the Task tool.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -6866,14 +6718,12 @@ describe('executeLoopGenerator', () => {
         llmContent: 'Subagent repaired the project.',
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Repair the project.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Repair the project.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -6938,14 +6788,12 @@ describe('executeLoopGenerator', () => {
         llmContent: 'Subagent repaired the project.',
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Repair the project.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Repair the project.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -7022,14 +6870,12 @@ describe('executeLoopGenerator', () => {
         },
       });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Complete the recovery.',
-          createMockContext(),
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Complete the recovery.',
+        { stream: false } as LoopOptions,
+        createMockContext(),
+        null
       );
 
       expect(result.success, JSON.stringify(result)).toBe(true);
@@ -7104,14 +6950,12 @@ describe('executeLoopGenerator', () => {
         .mockReturnValueOnce(true)
         .mockReturnValue(false);
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Complete the recovery.',
-          createMockContext(),
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Complete the recovery.',
+        { stream: false } as LoopOptions,
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(false);
@@ -7127,14 +6971,12 @@ describe('executeLoopGenerator', () => {
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock.mockRejectedValueOnce(error);
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Do not replay partial output.',
-          createMockContext(),
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Do not replay partial output.',
+        { stream: false } as LoopOptions,
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(false);
@@ -7162,14 +7004,12 @@ describe('executeLoopGenerator', () => {
         messages: context.messages,
       });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Keep the durable marker.',
-          context,
-          { stream: false },
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Keep the durable marker.',
+        { stream: false },
+        context,
+        null
       );
 
       expect(result.success).toBe(false);
@@ -7221,14 +7061,12 @@ describe('executeLoopGenerator', () => {
         },
       });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Complete the recovery.',
-          createMockContext(),
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Complete the recovery.',
+        { stream: false } as LoopOptions,
+        createMockContext(),
+        null
       );
 
       expect(result.success).toBe(false);
@@ -7299,14 +7137,12 @@ describe('executeLoopGenerator', () => {
         },
       });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Delegate this repair to channel-specialist with the Task tool.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Delegate this repair to channel-specialist with the Task tool.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -7376,14 +7212,12 @@ describe('executeLoopGenerator', () => {
       });
       const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Continue after the restored delegation and return the final answer.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Continue after the restored delegation and return the final answer.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -7458,14 +7292,12 @@ describe('executeLoopGenerator', () => {
           llmContent: 'Subagent repaired the project.',
         });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Delegate this repair with the Task tool.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Delegate this repair with the Task tool.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(false);
@@ -7530,14 +7362,12 @@ describe('executeLoopGenerator', () => {
         llmContent: 'Review completed.',
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Review both areas exactly once.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Review both areas exactly once.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -7556,14 +7386,12 @@ describe('executeLoopGenerator', () => {
         finishReason: 'stop',
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Work inside the existing worktree, then leave the worktree managed by the task.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Work inside the existing worktree, then leave the worktree managed by the task.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -7630,14 +7458,12 @@ describe('executeLoopGenerator', () => {
           metadata: { command: 'pwd', exit_code: 0 },
         });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Create and use a worktree.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Create and use a worktree.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -7757,14 +7583,12 @@ describe('executeLoopGenerator', () => {
           },
         });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Use a worktree to fix the bug, run npm test, then exit the worktree.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Use a worktree to fix the bug, run npm test, then exit the worktree.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -7853,14 +7677,12 @@ describe('executeLoopGenerator', () => {
           metadata: { command: 'npm test', exit_code: 0 },
         });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Fix the bug and run npm test before finishing.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Fix the bug and run npm test before finishing.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -7879,14 +7701,12 @@ describe('executeLoopGenerator', () => {
         finishReason: 'stop',
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Fix the bug and run npm test before finishing.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Fix the bug and run npm test before finishing.',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(chatMock.mock.calls.length).toBeGreaterThan(MAX_VERIFICATION_RETRIES);
@@ -8012,14 +7832,12 @@ describe('executeLoopGenerator', () => {
         };
       });
 
-      const { result, events } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Run the foreground command',
-          context,
-          { signal: controller.signal, stream: false } as LoopOptions,
-          'You are a helpful assistant.'
-        )
+      const { result, events } = await runLoop(
+        deps,
+        'Run the foreground command',
+        { signal: controller.signal, stream: false } as LoopOptions,
+        context,
+        'You are a helpful assistant.'
       );
 
       expect(result.success).toBe(false);
@@ -8153,14 +7971,12 @@ describe('executeLoopGenerator', () => {
         }
       );
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Edit the file',
-          context,
-          { signal: controller.signal, stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Edit the file',
+        { signal: controller.signal, stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result).toMatchObject({
@@ -8210,14 +8026,12 @@ describe('executeLoopGenerator', () => {
         metadata: { summary: 'Edited demo.ts' },
       });
 
-      const { result, events } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Edit the file',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result, events } = await runLoop(
+        deps,
+        'Edit the file',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(deps.toolExecutor.execute).toHaveBeenCalledTimes(1);
@@ -8375,14 +8189,12 @@ describe('executeLoopGenerator', () => {
       });
       const context = createMockContext();
 
-      const { events } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Hi',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { events } = await runLoop(
+        deps,
+        'Hi',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       // delta 应存在
@@ -8417,14 +8229,12 @@ describe('executeLoopGenerator', () => {
       });
       const context = createMockContext();
 
-      const { events } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Hi',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { events } = await runLoop(
+        deps,
+        'Hi',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(events.filter((e) => e.kind === 'content_delta')).toHaveLength(0);
@@ -8441,14 +8251,12 @@ describe('executeLoopGenerator', () => {
       });
       const context = createMockContext();
 
-      const { events } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Hi',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { events } = await runLoop(
+        deps,
+        'Hi',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       const kinds = events.map((e) => e.kind);
@@ -8486,14 +8294,12 @@ describe('executeLoopGenerator', () => {
       });
 
       const context = createMockContext();
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Fix the bug',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Fix the bug',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -8545,14 +8351,12 @@ describe('executeLoopGenerator', () => {
       });
 
       const context = createMockContext();
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Do the work',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Do the work',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -8595,14 +8399,12 @@ describe('executeLoopGenerator', () => {
         workspaceKind: 'acp-remote' as const,
       };
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Finish the remote task',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Finish the remote task',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -8634,14 +8436,12 @@ describe('executeLoopGenerator', () => {
         });
 
       const context = createMockContext();
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Fix the bug',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Fix the bug',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -8714,14 +8514,12 @@ describe('executeLoopGenerator', () => {
         });
 
       const context = createMockContext();
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Do the work',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Do the work',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -8789,14 +8587,12 @@ describe('executeLoopGenerator', () => {
         });
 
       const context = createMockContext();
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Write the answer',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Write the answer',
+        { stream: false } as LoopOptions,
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -8900,14 +8696,12 @@ describe('executeLoopGenerator', () => {
       return { success: true, llmContent: `${name} complete` };
     });
 
-    const { result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Use semantic code intelligence.',
-        createMockContext(),
-        { stream: false } as LoopOptions,
-        undefined
-      )
+    const { result } = await runLoop(
+      deps,
+      'Use semantic code intelligence.',
+      { stream: false } as LoopOptions,
+      createMockContext(),
+      null
     );
 
     expect(result.success).toBe(true);
@@ -8935,14 +8729,12 @@ describe('executeLoopGenerator', () => {
     const client = new AbortController();
     const context = createMockContext();
     let result: LoopResult | undefined;
-    const running = drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Cancel before requesting the model',
-        context,
-        { stream: false, signal: client.signal },
-        undefined
-      )
+    const running = runLoop(
+      deps,
+      'Cancel before requesting the model',
+      { stream: false, signal: client.signal },
+      context,
+      null
     ).then((completion) => {
       result = completion.result;
     });
@@ -9060,14 +8852,12 @@ describe('executeLoopGenerator', () => {
       return { success: true, llmContent: `${name} complete` };
     });
 
-    const { events, result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Use the dynamically added MCP tool.',
-        createMockContext(),
-        { stream: false } as LoopOptions,
-        undefined
-      )
+    const { events, result } = await runLoop(
+      deps,
+      'Use the dynamically added MCP tool.',
+      { stream: false } as LoopOptions,
+      createMockContext(),
+      null
     );
 
     expect(result.success).toBe(true);
@@ -9175,14 +8965,12 @@ describe('executeLoopGenerator', () => {
       },
     ]);
 
-    const { events, result } = await drainGenerator(
-      executeLoopGenerator(
-        deps,
-        'Use current MCP context.',
-        createMockContext(),
-        { stream: false } as LoopOptions,
-        undefined
-      )
+    const { events, result } = await runLoop(
+      deps,
+      'Use current MCP context.',
+      { stream: false } as LoopOptions,
+      createMockContext(),
+      null
     );
 
     expect(result.success).toBe(true);
@@ -9311,14 +9099,12 @@ describe('executeLoopGenerator', () => {
           finishReason: 'stop',
         });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Return a structured answer.',
-          createMockContext(),
-          { stream: false, outputSchema },
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Return a structured answer.',
+        { stream: false, outputSchema },
+        createMockContext(),
+        null
       );
 
       const declarations = chat.mock.calls[0]?.[1] as Array<Record<string, unknown>>;
@@ -9350,14 +9136,12 @@ describe('executeLoopGenerator', () => {
           finishReason: 'stop',
         });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Return a structured answer.',
-          createMockContext(),
-          { stream: false, outputSchema },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Return a structured answer.',
+        { stream: false, outputSchema },
+        createMockContext(),
+        null
       );
 
       expect(chat).toHaveBeenCalledTimes(2);
@@ -9400,21 +9184,19 @@ describe('executeLoopGenerator', () => {
       }
 
       try {
-        const { events, result } = await drainGenerator(
-          executeLoopGenerator(
-            deps,
-            'Return a structured answer.',
-            createMockContext(),
-            {
-              stream: false,
-              outputSchema,
-              turnFinalization: {
-                turnId: `turn-${id}`,
-                getInputMessageIds: async () => [`input-${id}`],
-              },
-            } satisfies LoopOptions,
-            undefined
-          )
+        const { events, result } = await runLoop(
+          deps,
+          'Return a structured answer.',
+          {
+            stream: false,
+            outputSchema,
+            turnFinalization: {
+              turnId: `turn-${id}`,
+              getInputMessageIds: async () => [`input-${id}`],
+            },
+          } satisfies LoopOptions,
+          createMockContext(),
+          null
         );
 
         expect(chat).toHaveBeenCalledTimes(2);
@@ -9503,14 +9285,12 @@ describe('executeLoopGenerator', () => {
         execute.mockResolvedValueOnce(toolResult);
 
         try {
-          const { result } = await drainGenerator(
-            executeLoopGenerator(
-              deps,
-              prompt,
-              createMockContext(),
-              { stream: false, outputSchema } satisfies LoopOptions,
-              undefined
-            )
+          const { result } = await runLoop(
+            deps,
+            prompt,
+            { stream: false, outputSchema } satisfies LoopOptions,
+            createMockContext(),
+            null
           );
 
           expect(chat).toHaveBeenCalledTimes(4);
@@ -9573,14 +9353,12 @@ describe('executeLoopGenerator', () => {
           .mockImplementationOnce(() => streamChunk(exhaustedOutputChunk()));
 
         try {
-          const { events, result } = await drainGenerator(
-            executeLoopGenerator(
-              deps,
-              'Return a structured answer.',
-              createMockContext(),
-              { stream: true, outputSchema } satisfies LoopOptions,
-              undefined
-            )
+          const { events, result } = await runLoop(
+            deps,
+            'Return a structured answer.',
+            { stream: true, outputSchema } satisfies LoopOptions,
+            createMockContext(),
+            null
           );
 
           expect(streamChat).toHaveBeenCalledTimes(2);
@@ -9617,14 +9395,12 @@ describe('executeLoopGenerator', () => {
           finishReason: 'stop',
         });
 
-      const { events, result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Return a structured answer.',
-          createMockContext(),
-          { stream: false, outputSchema },
-          undefined
-        )
+      const { events, result } = await runLoop(
+        deps,
+        'Return a structured answer.',
+        { stream: false, outputSchema },
+        createMockContext(),
+        null
       );
 
       expect(events.some((event) => event.kind === 'structured_output')).toBe(false);
@@ -9657,14 +9433,12 @@ describe('executeLoopGenerator', () => {
         chat.mockResolvedValueOnce(response);
       }
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Return a structured answer.',
-          createMockContext(),
-          { stream: false, outputSchema },
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Return a structured answer.',
+        { stream: false, outputSchema },
+        createMockContext(),
+        null
       );
 
       expect(chat).toHaveBeenCalledTimes(3);
