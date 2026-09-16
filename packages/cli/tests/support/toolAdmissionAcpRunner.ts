@@ -1,11 +1,10 @@
-import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { findSessionTranscript } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
-import { waitForCondition as waitFor, waitForChildExit } from './asyncTestUtils.js';
+import { createBladeAcpChildHarness } from './acp/createBladeAcpChildHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   driveToolAdmissionFixture,
   TOOL_ADMISSION_CALL_IDS,
@@ -29,17 +28,6 @@ function loadInput(): RunnerInput {
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
 }
 
-function childEnvironment(input: RunnerInput): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    HOME: input.home,
-    BLADE_STORAGE_ROOT: input.storageRoot,
-    BLADE_AUTO_MEMORY: '0',
-    BLADE_TELEMETRY_DISABLED: '1',
-    TERM: 'xterm-256color',
-  };
-}
-
 async function releaseAll(stateDir: string): Promise<void> {
   const releaseDir = path.join(stateDir, 'release');
   await mkdir(releaseDir, { recursive: true });
@@ -51,27 +39,13 @@ async function releaseAll(stateDir: string): Promise<void> {
 }
 
 async function run(input: RunnerInput) {
-  const child = spawn(process.execPath, [input.cliEntry, '--acp'], {
-    cwd: input.workspace,
-    env: childEnvironment(input),
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  if (!child.stdin || !child.stdout) {
-    child.kill('SIGKILL');
-    throw new Error('ACP child stdio was unavailable');
-  }
-  let stderr = '';
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    stderr = `${stderr}${chunk.toString()}`.slice(-32_000);
-  });
   const client = new ChildBackedRecordingAcpClient();
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(
-      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
-    )
-  );
+  const harness = createBladeAcpChildHarness({
+    ...input,
+    client,
+    stderrLimit: 32_000,
+  });
+  const { connection } = harness;
   let sessionId = '';
   try {
     await connection.initialize({
@@ -133,12 +107,10 @@ async function run(input: RunnerInput) {
       throw new Error('ACP admission traffic contained provider credentials');
     }
 
-    child.kill('SIGTERM');
-    const exit = await waitForChildExit(child);
-    await connection.closed.catch(() => undefined);
+    const exit = await harness.shutdown();
     if (exit.signal || exit.code !== 0) {
       throw new Error(
-        `ACP graceful exit was ${exit.code ?? exit.signal}: ${stderr.replaceAll(
+        `ACP graceful exit was ${exit.code ?? exit.signal}: ${harness.stderr.replaceAll(
           input.secret,
           '[redacted]'
         )}`
@@ -151,8 +123,7 @@ async function run(input: RunnerInput) {
     };
   } finally {
     await releaseAll(input.stateDir).catch(() => undefined);
-    await client.close().catch(() => undefined);
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await harness.close();
   }
 }
 

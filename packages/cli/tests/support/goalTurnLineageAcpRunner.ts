@@ -1,8 +1,7 @@
-import { type ChildProcess, spawn } from 'node:child_process';
-import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
-import { waitForCondition as waitFor, waitForChildExit } from './asyncTestUtils.js';
+import { createBladeAcpChildHarness } from './acp/createBladeAcpChildHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -34,36 +33,17 @@ function metadata(
 
 async function main(): Promise<void> {
   const input = loadInput();
-  const child = spawn(process.execPath, [input.cliEntry, '--acp'], {
-    cwd: input.workspace,
+  const client = new ChildBackedRecordingAcpClient();
+  const harness = createBladeAcpChildHarness({
+    ...input,
+    client,
     env: {
-      ...process.env,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '0',
-      BLADE_TELEMETRY_DISABLED: '1',
       BLADE_VERSION: '999.0.0',
       BLADE_API_KEY: input.secret,
-      TERM: 'xterm-256color',
     },
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdioError: 'Goal turn lineage ACP stdio is unavailable',
   });
-  if (!child.stdin || !child.stdout) {
-    child.kill('SIGKILL');
-    throw new Error('Goal turn lineage ACP stdio is unavailable');
-  }
-  let stderr = '';
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    stderr = `${stderr}${chunk.toString()}`.slice(-64_000);
-  });
-  const client = new ChildBackedRecordingAcpClient();
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(
-      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
-    )
-  );
+  const { child, connection } = harness;
 
   try {
     await connection.initialize({
@@ -102,15 +82,12 @@ async function main(): Promise<void> {
       throw new Error('ACP Goal turn lineage projection leaked a credential');
     }
 
-    child.kill('SIGTERM');
-    const exit = await waitForChildExit(child, 10_000);
-    await connection.closed.catch(() => undefined);
+    const exit = await harness.shutdown('SIGTERM', 10_000);
     if (exit.signal || exit.code !== 0) {
       throw new Error(
-        `Goal turn lineage ACP exited ${exit.code ?? exit.signal}: ${stderr.replaceAll(
-          input.secret,
-          '[redacted]'
-        )}`
+        `Goal turn lineage ACP exited ${
+          exit.code ?? exit.signal
+        }: ${harness.stderr.replaceAll(input.secret, '[redacted]')}`
       );
     }
     process.stdout.write(
@@ -132,8 +109,7 @@ async function main(): Promise<void> {
     );
     process.exitCode = 1;
   } finally {
-    await client.close().catch(() => undefined);
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await harness.close();
   }
 }
 

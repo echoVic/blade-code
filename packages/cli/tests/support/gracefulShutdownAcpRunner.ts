@@ -1,9 +1,7 @@
-import { type ChildProcess, spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
-import { waitForChildExit } from './asyncTestUtils.js';
+import { createBladeAcpChildHarness } from './acp/createBladeAcpChildHarness.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -28,17 +26,6 @@ function loadInput(): RunnerInput {
   const encoded = process.env.BLADE_GRACEFUL_ACP_INPUT;
   if (!encoded) throw new Error('Missing BLADE_GRACEFUL_ACP_INPUT');
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-function childEnvironment(input: RunnerInput): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    HOME: input.home,
-    BLADE_STORAGE_ROOT: input.storageRoot,
-    BLADE_AUTO_MEMORY: '0',
-    BLADE_TELEMETRY_DISABLED: '1',
-    TERM: 'xterm-256color',
-  };
 }
 
 async function waitForRootPid(filePath: string): Promise<number> {
@@ -76,31 +63,14 @@ function updateShape(
 }
 
 async function run(input: RunnerInput): Promise<RunnerEvidence> {
-  const child = spawn(process.execPath, [input.cliEntry, '--acp'], {
-    cwd: input.workspace,
-    env: childEnvironment(input),
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  if (!child.stdin || !child.stdout) {
-    child.kill('SIGKILL');
-    throw new Error('ACP child stdio was unavailable');
-  }
-  let stdout = '';
-  child.stdout.on('data', (chunk: Buffer | string) => {
-    stdout = `${stdout}${chunk.toString()}`.slice(-256_000);
-  });
-  let stderr = '';
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    stderr = `${stderr}${chunk.toString()}`.slice(-16_000);
-  });
   const client = new ChildBackedRecordingAcpClient();
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(
-      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
-    )
-  );
+  const harness = createBladeAcpChildHarness({
+    ...input,
+    client,
+    stderrLimit: 16_000,
+    stdoutLimit: 256_000,
+  });
+  const { connection } = harness;
   let sessionId = '';
   try {
     await connection.initialize({
@@ -133,32 +103,30 @@ async function run(input: RunnerInput): Promise<RunnerEvidence> {
               error instanceof Error ? error.message : String(error)
             }; updates=${JSON.stringify(
               updateShape(client.sessionUpdates)
-            )}; stderr=${stderr.replaceAll(input.secret, '[redacted]')}`
+            )}; stderr=${harness.stderr.replaceAll(input.secret, '[redacted]')}`
           );
         }
       ),
     ]);
     const commandStartedAt = Date.now();
-    child.kill(input.signal);
-    const exit = await waitForChildExit(child);
+    const exit = await harness.shutdown(input.signal);
     await prompt.catch(() => undefined);
-    await connection.closed.catch(() => undefined);
     if (exit.signal || exit.code !== 0) {
       throw new Error(
-        `ACP graceful exit was ${exit.code ?? exit.signal}: ${stderr.replaceAll(
+        `ACP graceful exit was ${exit.code ?? exit.signal}: ${harness.stderr.replaceAll(
           input.secret,
           '[redacted]'
         )}`
       );
     }
-    if (stdout.includes('\u001b')) {
+    if (harness.stdout.includes('\u001b')) {
       throw new Error('ACP shutdown stdout contained terminal control sequences');
     }
-    for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
+    for (const line of harness.stdout.split(/\r?\n/).filter(Boolean)) {
       JSON.parse(line);
     }
     const serializedUpdates = JSON.stringify(client.sessionUpdates);
-    if ((stdout + serializedUpdates + stderr).includes(input.secret)) {
+    if ((harness.stdout + serializedUpdates + harness.stderr).includes(input.secret)) {
       throw new Error('ACP shutdown traffic contained provider credentials');
     }
     return {
@@ -169,8 +137,7 @@ async function run(input: RunnerInput): Promise<RunnerEvidence> {
       commandStartedAt,
     };
   } finally {
-    await client.close().catch(() => undefined);
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await harness.close();
   }
 }
 

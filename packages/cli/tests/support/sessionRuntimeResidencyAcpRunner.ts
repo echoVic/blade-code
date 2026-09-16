@@ -1,13 +1,12 @@
-import { type ChildProcess, spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
-import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import {
   findSessionTranscript,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
-import { waitForCondition as waitFor, waitForChildExit } from './asyncTestUtils.js';
+import { createBladeAcpChildHarness } from './acp/createBladeAcpChildHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -91,34 +90,13 @@ async function createSession(
 }
 
 async function run(input: RunnerInput) {
-  const child = spawn(process.execPath, [input.cliEntry, '--acp'], {
-    cwd: input.workspace,
-    env: {
-      ...process.env,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '0',
-      BLADE_TELEMETRY_DISABLED: '1',
-      TERM: 'xterm-256color',
-    },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  if (!child.stdin || !child.stdout) {
-    child.kill('SIGKILL');
-    throw new Error('Session residency ACP stdio was unavailable');
-  }
-  let stderr = '';
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    stderr = `${stderr}${chunk.toString()}`.slice(-64_000);
-  });
   const client = new ChildBackedRecordingAcpClient();
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(
-      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
-    )
-  );
+  const harness = createBladeAcpChildHarness({
+    ...input,
+    client,
+    stdioError: 'Session residency ACP stdio was unavailable',
+  });
+  const { connection } = harness;
   let primarySessionId = '';
   let secondarySessionId = '';
   try {
@@ -271,14 +249,12 @@ async function run(input: RunnerInput) {
       throw new Error('Session residency ACP evidence exposed credentials');
     }
 
-    child.kill('SIGTERM');
-    const exit = await waitForChildExit(child);
-    await connection.closed.catch(() => undefined);
+    const exit = await harness.shutdown();
     if (exit.signal || exit.code !== 0) {
       throw new Error(
         `Session residency ACP exited ${
           exit.code ?? exit.signal
-        }: ${stderr.replaceAll(input.secret, '[redacted]')}`
+        }: ${harness.stderr.replaceAll(input.secret, '[redacted]')}`
       );
     }
     return {
@@ -291,11 +267,7 @@ async function run(input: RunnerInput) {
       processes: client.releasedProcesses,
     };
   } finally {
-    await client.close().catch(() => undefined);
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGKILL');
-      await waitForChildExit(child, 10_000).catch(() => undefined);
-    }
+    await harness.close();
   }
 }
 

@@ -1,6 +1,4 @@
-import { type ChildProcess, spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import {
   finalAssistantText,
@@ -8,7 +6,8 @@ import {
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
-import { waitForCondition as waitFor, waitForChildExit } from './asyncTestUtils.js';
+import { createBladeAcpChildHarness } from './acp/createBladeAcpChildHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -34,35 +33,16 @@ function loadInput(): RunnerInput {
 }
 
 async function run(input: RunnerInput) {
-  const child = spawn(process.execPath, [input.cliEntry, '--acp'], {
-    cwd: input.workspace,
-    env: {
-      ...process.env,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '0',
-      BLADE_TELEMETRY_DISABLED: '1',
-      BLADE_API_KEY: input.secret,
-      TERM: 'xterm-256color',
-    },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  if (!child.stdin || !child.stdout) {
-    child.kill('SIGKILL');
-    throw new Error('ACP Provider recovery stdio was unavailable');
-  }
-  let stderr = '';
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    stderr = `${stderr}${chunk.toString()}`.slice(-64_000);
-  });
   const client = new ChildBackedRecordingAcpClient();
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(
-      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
-    )
-  );
+  const harness = createBladeAcpChildHarness({
+    ...input,
+    client,
+    env: {
+      BLADE_API_KEY: input.secret,
+    },
+    stdioError: 'ACP Provider recovery stdio was unavailable',
+  });
+  const { connection } = harness;
   let sessionId = '';
   try {
     await connection.initialize({
@@ -233,14 +213,12 @@ async function run(input: RunnerInput) {
       throw new Error('ACP Provider recovery left an active terminal');
     }
 
-    child.kill('SIGTERM');
-    const exit = await waitForChildExit(child);
-    await connection.closed.catch(() => undefined);
+    const exit = await harness.shutdown();
     if (exit.signal || exit.code !== 0) {
       throw new Error(
         `ACP Provider recovery exited ${
           exit.code ?? exit.signal
-        }: ${stderr.replaceAll(input.secret, '[redacted]')}`
+        }: ${harness.stderr.replaceAll(input.secret, '[redacted]')}`
       );
     }
     return {
@@ -269,7 +247,7 @@ async function run(input: RunnerInput) {
     const diagnostic =
       `${error instanceof Error ? error.message : String(error)}; ` +
       `updates=${JSON.stringify(client.sessionUpdates).slice(-16_000)}; ` +
-      `stderr=${stderr.slice(-8_000)}`;
+      `stderr=${harness.stderr.slice(-8_000)}`;
     throw new Error(
       diagnostic
         .replaceAll(input.secret, '[redacted]')
@@ -279,10 +257,7 @@ async function run(input: RunnerInput) {
         )
     );
   } finally {
-    await client.close().catch(() => undefined);
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGKILL');
-    }
+    await harness.close();
   }
 }
 
