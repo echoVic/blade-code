@@ -7,13 +7,12 @@ import type {
 } from '@api/schemas';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createStore } from 'zustand/vanilla';
-import { createUiSlice } from '../../../src/store/session/slices/uiSlice';
-
 import type { Message as ServiceMessage, StreamEvent } from '../../../src/services';
 import { useAppStore } from '../../../src/store/AppStore';
 import { useBrowserActivityStore } from '../../../src/store/BrowserActivityStore';
 import { createEventDispatcher } from '../../../src/store/session/handlers/eventHandlers';
 import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer';
+import { createUiSlice } from '../../../src/store/session/slices/uiSlice';
 import type {
   Message,
   SessionStoreState,
@@ -436,6 +435,24 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
   return state;
 }
 
+function createDispatcherHarness(state: SessionStoreState, applyUpdates = false) {
+  const set = vi.fn(
+    (
+      update:
+        | Partial<SessionStoreState>
+        | ((current: SessionStoreState) => Partial<SessionStoreState>)
+    ) => {
+      if (applyUpdates) {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    }
+  );
+  return {
+    set,
+    dispatch: createEventDispatcher(() => state, set),
+  };
+}
+
 describe('eventHandlers', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -556,8 +573,7 @@ describe('eventHandlers', () => {
         },
       },
     });
-    const set = vi.fn();
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state);
 
     dispatch({
       type: 'review.completed',
@@ -733,16 +749,7 @@ describe('eventHandlers', () => {
         },
       ],
     });
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'review.completed',
@@ -796,9 +803,7 @@ describe('eventHandlers', () => {
 
   test('creates stable fallback tool ids for repeated tool.start events with the same payload', () => {
     const state = createState();
-    const get = () => state;
-    const set = vi.fn();
-    const dispatch = createEventDispatcher(get, set);
+    const { dispatch } = createDispatcherHarness(state);
     const payload = {
       sessionId: 'session-1',
       messageId: 'assistant-1',
@@ -931,9 +936,7 @@ describe('eventHandlers', () => {
 
   test('creates stable fallback subagent ids for repeated Task tool.start events with the same payload', () => {
     const state = createState();
-    const get = () => state;
-    const set = vi.fn();
-    const dispatch = createEventDispatcher(get, set);
+    const { dispatch } = createDispatcherHarness(state);
     const payload = {
       sessionId: 'session-1',
       messageId: 'assistant-1',
@@ -1012,16 +1015,7 @@ describe('eventHandlers', () => {
 
   test('preserves resumed subagent lineage across start and completion events', () => {
     const state = createState();
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'subagent.start',
@@ -1843,16 +1837,7 @@ describe('eventHandlers', () => {
       updatedAt: '2026-08-28T00:00:00.000Z',
     };
     const state = createState({ goal });
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'goal.frontier.updated',
@@ -1919,11 +1904,7 @@ describe('eventHandlers', () => {
       currentRunId: 'run-active',
       pendingSteeringCount: 2,
     });
-    const set = vi.fn((partial) => {
-      const update = typeof partial === 'function' ? partial(state) : partial;
-      Object.assign(state, update);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'session.rewound',
@@ -1973,8 +1954,7 @@ describe('eventHandlers', () => {
 
   test('ignores connected and heartbeat events that do not carry the active projectPath', () => {
     const state = createState();
-    const set = vi.fn();
-    const dispatch = createEventDispatcher(() => state, set);
+    const { set, dispatch } = createDispatcherHarness(state);
 
     dispatch({
       type: 'connected',
@@ -2087,8 +2067,7 @@ describe('eventHandlers', () => {
   test('tracks compaction and model fallback phases', () => {
     const recovery = createProviderRecovery('fallback-generation', 1);
     const state = createState({ providerRecovery: recovery });
-    const set = vi.fn();
-    const dispatch = createEventDispatcher(() => state, set);
+    const { set, dispatch } = createDispatcherHarness(state);
 
     dispatch({
       type: 'compaction.started',
@@ -2139,11 +2118,7 @@ describe('eventHandlers', () => {
 
   test('accepts only bounded memory consolidation metadata for the active session', () => {
     const state = createState();
-    const set = vi.fn((partial) => {
-      if (typeof partial === 'function') Object.assign(state, partial(state));
-      else Object.assign(state, partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'compaction.completed',
@@ -2189,11 +2164,7 @@ describe('eventHandlers', () => {
     const state = createState();
     state.agentPhase = 'running';
     state.isStreaming = true;
-    const set = vi.fn((partial) => {
-      if (typeof partial === 'function') Object.assign(state, partial(state));
-      else Object.assign(state, partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'provider.retry',
@@ -2270,10 +2241,7 @@ describe('eventHandlers', () => {
 
   test('accepts only newer live Provider recovery revisions', () => {
     const state = createState();
-    const set = vi.fn((partial) => {
-      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'provider.recovery',
@@ -2339,10 +2307,7 @@ describe('eventHandlers', () => {
 
   test('does not revive Provider recovery from an unanchored late live revision', () => {
     const state = createState({ providerRecovery: null });
-    const set = vi.fn((partial) => {
-      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { set, dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'provider.recovery',
@@ -2361,10 +2326,7 @@ describe('eventHandlers', () => {
     const state = createState({
       providerRecovery: createProviderRecovery('old-generation', 9),
     });
-    const set = vi.fn((partial) => {
-      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'provider.recovery',
@@ -2391,10 +2353,7 @@ describe('eventHandlers', () => {
 
   test('fences live turn activity and lets reconnect replace or clear it', () => {
     const state = createState();
-    const set = vi.fn((partial) => {
-      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'turn.activity',
@@ -2461,10 +2420,7 @@ describe('eventHandlers', () => {
       state.currentAssistantMessageId = id;
       state.isStreaming = true;
     });
-    const set = vi.fn((partial) => {
-      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'turn.activity',
@@ -2498,8 +2454,7 @@ describe('eventHandlers', () => {
 
   test('rejects malformed Provider recovery projections', () => {
     const state = createState();
-    const set = vi.fn();
-    const dispatch = createEventDispatcher(() => state, set);
+    const { set, dispatch } = createDispatcherHarness(state);
 
     dispatch({
       type: 'provider.recovery',
@@ -2519,10 +2474,7 @@ describe('eventHandlers', () => {
 
   test('projects pending resume only for the exact active session identity', () => {
     const state = createState();
-    const set = vi.fn((partial) => {
-      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
     const scheduled = {
       type: 'pending.resume',
       properties: {
@@ -2573,10 +2525,7 @@ describe('eventHandlers', () => {
           maxAttempts: 4,
         },
       });
-      const set = vi.fn((partial) => {
-        Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
-      });
-      const dispatch = createEventDispatcher(() => state, set);
+      const { dispatch } = createDispatcherHarness(state, true);
 
       dispatch({
         type: 'pending.resume',
@@ -2607,10 +2556,7 @@ describe('eventHandlers', () => {
         maxAttempts: 4,
       },
     });
-    const set = vi.fn((partial) => {
-      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'message.created',
@@ -2635,10 +2581,7 @@ describe('eventHandlers', () => {
       maxAttempts: 4,
     };
     state.pendingResume = pendingResume;
-    const set = vi.fn((partial) => {
-      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
     const identity = { sessionId: 'session-1', projectPath: '/workspace/a' };
 
     dispatch({
@@ -2694,10 +2637,7 @@ describe('eventHandlers', () => {
     };
     const state = createState();
     Object.assign(state, { pendingResume: existing });
-    const set = vi.fn((partial) => {
-      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'pending.resume',
@@ -2720,11 +2660,7 @@ describe('eventHandlers', () => {
   test('retains turn recovery attention until an explicit turn starts', () => {
     const state = createState();
     state.isStreaming = true;
-    const set = vi.fn((partial) => {
-      if (typeof partial === 'function') Object.assign(state, partial(state));
-      else Object.assign(state, partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'turn.recovery',
@@ -2778,11 +2714,7 @@ describe('eventHandlers', () => {
     const state = createState();
     state.agentPhase = 'running';
     state.isStreaming = true;
-    const set = vi.fn((partial) => {
-      if (typeof partial === 'function') Object.assign(state, partial(state));
-      else Object.assign(state, partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'provider.admission',
@@ -2861,11 +2793,7 @@ describe('eventHandlers', () => {
     const state = createState();
     state.agentPhase = 'running';
     state.isStreaming = true;
-    const set = vi.fn((partial) => {
-      if (typeof partial === 'function') Object.assign(state, partial(state));
-      else Object.assign(state, partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'provider.circuit',
@@ -2924,11 +2852,7 @@ describe('eventHandlers', () => {
     const state = createState();
     state.agentPhase = 'running';
     state.isStreaming = true;
-    const set = vi.fn((partial) => {
-      if (typeof partial === 'function') Object.assign(state, partial(state));
-      else Object.assign(state, partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'provider.stall',
@@ -2971,11 +2895,7 @@ describe('eventHandlers', () => {
 
   test('tracks action stationarity detection and recovery', () => {
     const state = createState();
-    const set = vi.fn((partial) => {
-      if (typeof partial === 'function') Object.assign(state, partial(state));
-      else Object.assign(state, partial);
-    });
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'action.stationarity',
@@ -3015,16 +2935,7 @@ describe('eventHandlers', () => {
 
   test('tracks queued and applied steering depth from SSE events', () => {
     const state = createState();
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { set, dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'steering.queued',
@@ -3145,16 +3056,7 @@ describe('eventHandlers', () => {
 
   test('replaces the follow-up queue from connected and mutation events', () => {
     const state = createState();
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
     const connectedQueue = createFollowUpQueue('a'.repeat(64));
     const changedQueue = createFollowUpQueue('b'.repeat(64));
 
@@ -3204,8 +3106,7 @@ describe('eventHandlers', () => {
 
   test('restores the complete active run snapshot from session status', () => {
     const state = createState();
-    const set = vi.fn();
-    const dispatch = createEventDispatcher(() => state, set);
+    const { set, dispatch } = createDispatcherHarness(state);
 
     dispatch({
       type: 'session.status',
@@ -3312,8 +3213,7 @@ describe('eventHandlers', () => {
         },
       ],
     });
-    const set = vi.fn();
-    const dispatch = createEventDispatcher(() => state, set);
+    const { set, dispatch } = createDispatcherHarness(state);
 
     expect(state.messages[0]?.agentContent?.confirmation?.status).toBe('pending');
 
@@ -3345,16 +3245,7 @@ describe('eventHandlers', () => {
 
   test('scopes a run failure to the exact active session', () => {
     const state = createState();
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'session.error',
@@ -3409,16 +3300,7 @@ describe('eventHandlers', () => {
         },
       ],
     });
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'interaction.resolved',
@@ -3438,16 +3320,7 @@ describe('eventHandlers', () => {
       messages: [],
       currentAssistantMessageId: null,
     });
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'permission.asked',
@@ -3498,16 +3371,7 @@ describe('eventHandlers', () => {
         },
       ],
     });
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'permission.asked',
@@ -3722,16 +3586,7 @@ describe('eventHandlers', () => {
       messages: [],
       currentAssistantMessageId: null,
     });
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'structured.output',
@@ -3765,16 +3620,7 @@ describe('eventHandlers', () => {
       state.isStopping = false;
       state.agentPhase = 'idle';
     });
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
     const properties = {
       sessionId: 'session-1',
       projectPath: '/workspace/a',
@@ -3871,16 +3717,7 @@ describe('eventHandlers', () => {
 
   test('projects user shell lifecycle as a user-owned command card', () => {
     const state = createState({ messages: [] });
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
     const base = {
       sessionId: 'session-1',
       projectPath: '/workspace/a',
@@ -3942,16 +3779,7 @@ describe('eventHandlers', () => {
 
   test('refreshes the team projection after every team lifecycle event', async () => {
     const state = createState();
-    const set = vi.fn(
-      (
-        update:
-          | Partial<SessionStoreState>
-          | ((current: SessionStoreState) => Partial<SessionStoreState>)
-      ) => {
-        Object.assign(state, typeof update === 'function' ? update(state) : update);
-      }
-    );
-    const dispatch = createEventDispatcher(() => state, set);
+    const { dispatch } = createDispatcherHarness(state, true);
 
     dispatch({
       type: 'team.message.received',
