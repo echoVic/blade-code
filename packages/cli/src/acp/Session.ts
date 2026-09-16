@@ -77,6 +77,7 @@ import type {
   McpElicitationField,
 } from '../mcp/McpElicitation.js';
 import { Bus } from '../server/bus.js';
+import { projectSessionLoopEvent } from '../server/routes/sessionLoopEventProjection.js';
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
 import { CodeReviewService, renderCodeReview } from '../services/CodeReviewService.js';
 import { isClientVisibleMessage } from '../services/clientMessageVisibility.js';
@@ -1736,102 +1737,18 @@ export class AcpSession {
               break;
             case 'provider_admission':
               providerAdmissionVisible = event.phase !== 'admitted';
-              this.sendUpdate({
-                sessionUpdate: 'session_info_update',
-                updatedAt: new Date().toISOString(),
-                _meta: {
-                  'blade/providerAdmission':
-                    event.phase !== 'admitted'
-                      ? {
-                          phase: event.phase,
-                          requestClass: event.requestClass,
-                          resource: event.resource,
-                          scope: event.scope,
-                          ...(event.reason !== undefined
-                            ? { reason: event.reason }
-                            : {}),
-                          queuePosition: event.queuePosition,
-                          queueDepth: event.queueDepth,
-                          inFlight: event.inFlight,
-                          limit: event.limit,
-                          waitMs: event.waitMs,
-                          maxWaitMs: event.maxWaitMs,
-                          ...(event.recoveryRemainingMs !== undefined
-                            ? {
-                                recoveryRemainingMs: event.recoveryRemainingMs,
-                              }
-                            : {}),
-                        }
-                      : null,
-                },
-              });
+              this.sendSessionMetadata(
+                'blade/providerAdmission',
+                event.phase === 'admitted'
+                  ? null
+                  : projectSessionLoopEvent(event, { omitUndefined: true })?.properties
+              );
               break;
             case 'provider_circuit':
-              this.sendUpdate({
-                sessionUpdate: 'session_info_update',
-                updatedAt: new Date().toISOString(),
-                _meta: {
-                  'blade/providerCircuit': {
-                    phase: event.phase,
-                    reason: event.reason,
-                    ...(event.statusCode !== undefined
-                      ? { statusCode: event.statusCode }
-                      : {}),
-                    ...(event.retryAfterMs !== undefined
-                      ? { retryAfterMs: event.retryAfterMs }
-                      : {}),
-                    ...(event.nextProbeAt !== undefined
-                      ? { nextProbeAt: event.nextProbeAt }
-                      : {}),
-                    openDurationMs: event.openDurationMs,
-                    ...(event.sampleCount !== undefined
-                      ? { sampleCount: event.sampleCount }
-                      : {}),
-                    ...(event.failureCount !== undefined
-                      ? { failureCount: event.failureCount }
-                      : {}),
-                    ...(event.recoveryRemainingMs !== undefined
-                      ? {
-                          recoveryRemainingMs: event.recoveryRemainingMs,
-                        }
-                      : {}),
-                  },
-                },
-              });
+              this.sendProjectedLoopMetadata('blade/providerCircuit', event);
               break;
             case 'provider_retry':
-              this.sendUpdate({
-                sessionUpdate: 'session_info_update',
-                updatedAt: new Date().toISOString(),
-                _meta: {
-                  'blade/providerRetry': {
-                    phase: event.phase,
-                    attempt: event.attempt,
-                    maxRetries: event.maxRetries,
-                    reason: event.reason,
-                    ...(event.statusCode !== undefined
-                      ? { statusCode: event.statusCode }
-                      : {}),
-                    ...(event.delayMs !== undefined ? { delayMs: event.delayMs } : {}),
-                    ...(event.nextRetryAt !== undefined
-                      ? { nextRetryAt: event.nextRetryAt }
-                      : {}),
-                    ...(event.mode !== undefined ? { mode: event.mode } : {}),
-                    ...(event.recoveryBudgetMs !== undefined
-                      ? { recoveryBudgetMs: event.recoveryBudgetMs }
-                      : {}),
-                    ...(event.recoveryElapsedMs !== undefined
-                      ? { recoveryElapsedMs: event.recoveryElapsedMs }
-                      : {}),
-                    ...(event.recoveryRemainingMs !== undefined
-                      ? { recoveryRemainingMs: event.recoveryRemainingMs }
-                      : {}),
-                    ...(event.exhaustedBy !== undefined
-                      ? { exhaustedBy: event.exhaustedBy }
-                      : {}),
-                  },
-                },
-              });
+              this.sendProjectedLoopMetadata('blade/providerRetry', event);
               break;
             case 'turn_recovery':
               this.sendUpdate({
@@ -1843,20 +1760,7 @@ export class AcpSession {
               });
               break;
             case 'provider_stall':
-              this.sendUpdate({
-                sessionUpdate: 'session_info_update',
-                updatedAt: new Date().toISOString(),
-                _meta: {
-                  'blade/providerStall': {
-                    phase: event.phase,
-                    stallCount: event.stallCount,
-                    durationMs: event.durationMs,
-                    warningAfterMs: event.warningAfterMs,
-                    timeoutMs: event.timeoutMs,
-                    outputStarted: event.outputStarted,
-                  },
-                },
-              });
+              this.sendProjectedLoopMetadata('blade/providerStall', event);
               break;
             case 'provider_recovery':
               // SessionRuntime publishes this event on the Session Bus. Sending it
@@ -1882,20 +1786,7 @@ export class AcpSession {
               });
               break;
             case 'action_stationarity':
-              this.sendUpdate({
-                sessionUpdate: 'session_info_update',
-                updatedAt: new Date().toISOString(),
-                _meta: {
-                  'blade/actionStationarity': {
-                    phase: event.phase,
-                    toolName: event.toolName,
-                    runLength: event.runLength,
-                    nudgeThreshold: event.nudgeThreshold,
-                    haltThreshold: event.haltThreshold,
-                    progressAware: event.progressAware,
-                  },
-                },
-              });
+              this.sendProjectedLoopMetadata('blade/actionStationarity', event);
               break;
 
             // --- 业务事件 ---
@@ -3168,25 +3059,13 @@ export class AcpSession {
   private sendFollowUpQueueSnapshot(snapshot: unknown): void {
     const parsed = FollowUpQueueSnapshotSchema.safeParse(snapshot);
     if (!parsed.success) return;
-    this.sendUpdate({
-      sessionUpdate: 'session_info_update',
-      updatedAt: new Date().toISOString(),
-      _meta: {
-        'blade/followUpQueue': followUpQueueMetadata(parsed.data),
-      },
-    });
+    this.sendSessionMetadata('blade/followUpQueue', followUpQueueMetadata(parsed.data));
   }
 
   private sendProviderRecoveryProjection(snapshot: unknown): void {
     const parsed = ProviderRecoveryProjectionSchema.safeParse(snapshot);
     if (!parsed.success) return;
-    this.sendUpdate({
-      sessionUpdate: 'session_info_update',
-      updatedAt: new Date().toISOString(),
-      _meta: {
-        'blade/providerRecovery': parsed.data,
-      },
-    });
+    this.sendSessionMetadata('blade/providerRecovery', parsed.data);
   }
 
   private sendTurnActivityProjection(snapshot: unknown): void {
@@ -3200,12 +3079,19 @@ export class AcpSession {
     }
     this.lastTurnActivityGeneration = parsed.data.generation;
     this.lastTurnActivityRevision = parsed.data.revision;
+    this.sendSessionMetadata('blade/turnActivity', parsed.data);
+  }
+
+  private sendProjectedLoopMetadata(key: string, event: LoopEvent): void {
+    const projection = projectSessionLoopEvent(event, { omitUndefined: true });
+    if (projection) this.sendSessionMetadata(key, projection.properties);
+  }
+
+  private sendSessionMetadata(key: string, value: unknown): void {
     this.sendUpdate({
       sessionUpdate: 'session_info_update',
       updatedAt: new Date().toISOString(),
-      _meta: {
-        'blade/turnActivity': parsed.data,
-      },
+      _meta: { [key]: value },
     });
   }
 

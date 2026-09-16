@@ -78,6 +78,30 @@ describe('projectSessionLoopEvent', () => {
     });
   });
 
+  it('omits undefined allowlisted fields for transports that preserve object shape', () => {
+    const projection = projectSessionLoopEvent(
+      {
+        kind: 'provider_retry',
+        phase: 'waiting',
+        attempt: 2,
+        maxRetries: 3,
+        reason: 'rate_limit',
+      },
+      { omitUndefined: true }
+    );
+    expect(projection).toEqual({
+      type: 'provider.retry',
+      messageScoped: false,
+      properties: {
+        phase: 'waiting',
+        attempt: 2,
+        maxRetries: 3,
+        reason: 'rate_limit',
+      },
+    });
+    expect(projection?.properties).not.toHaveProperty('statusCode');
+  });
+
   it('leaves surface-specific stream events to their consumers', () => {
     expect(
       projectSessionLoopEvent({ kind: 'content_delta', delta: 'partial' })

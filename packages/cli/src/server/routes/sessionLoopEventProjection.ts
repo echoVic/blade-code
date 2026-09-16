@@ -33,7 +33,7 @@ const project = <Event extends object, Key extends keyof Event>(
   properties: projectProperties(event, keys),
 });
 
-export function projectSessionLoopEvent(
+function projectRawSessionLoopEvent(
   event: LoopEvent
 ): SessionLoopEventProjection | undefined {
   switch (event.kind) {
@@ -247,4 +247,18 @@ export function projectSessionLoopEvent(
     default:
       return undefined;
   }
+}
+
+export function projectSessionLoopEvent(
+  event: LoopEvent,
+  options: { omitUndefined?: boolean } = {}
+): SessionLoopEventProjection | undefined {
+  const projection = projectRawSessionLoopEvent(event);
+  if (!projection || !options.omitUndefined) return projection;
+  return {
+    ...projection,
+    properties: Object.fromEntries(
+      Object.entries(projection.properties).filter(([, value]) => value !== undefined)
+    ),
+  };
 }
