@@ -68,16 +68,6 @@ import {
   UserShellCommandRequestSchema,
 } from '../../api/schemas.js';
 import {
-  MAX_BROWSER_DIAGNOSTIC_RESULT_ENTRIES,
-  MAX_BROWSER_ID_BYTES,
-  MAX_BROWSER_ORIGIN_BYTES,
-  MAX_BROWSER_PROJECTED_URL_BYTES,
-  MAX_BROWSER_REF_BYTES,
-  MAX_BROWSER_SCREENSHOT_BYTES,
-  MAX_BROWSER_TITLE_BYTES,
-} from '../../browser/constants.js';
-import { isBrowserToolName } from '../../browser/types.js';
-import {
   DEFAULT_MAX_RESIDENT_SESSION_PROJECTIONS,
   DEFAULT_SESSION_PROJECTION_IDLE_MS,
   SESSION_PROJECTION_DRAIN_MS,
@@ -199,6 +189,10 @@ import {
 } from '../sessionRef.js';
 import { WebBrowserSessionRegistry } from '../WebBrowserSessionRegistry.js';
 import { BrowserRoutes } from './browser.js';
+import { projectSessionLoopEvent } from './sessionLoopEventProjection.js';
+import { sanitizeToolMetadata } from './sessionToolMetadata.js';
+
+export { sanitizeToolMetadata } from './sessionToolMetadata.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 const WEB_PENDING_RESUME_DEADLINE_ABORT =
@@ -598,399 +592,6 @@ type Variables = {
   requestSignal: AbortSignal;
 };
 
-function sanitizeToolAdmissionMetadata(
-  value: unknown
-): Record<string, unknown> | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const admission = value as Record<string, unknown>;
-  const code = admission.code;
-  const reason = admission.reason;
-  const scope = admission.scope;
-  const kind = admission.kind;
-  const limit = admission.limit;
-  if (
-    (code !== 'tool_busy' && code !== 'tool_batch_full') ||
-    (reason !== 'queue_full' && reason !== 'wait_timeout' && reason !== 'turn_limit') ||
-    (scope !== 'global' && scope !== 'session') ||
-    typeof admission.retryable !== 'boolean' ||
-    !Number.isSafeInteger(limit) ||
-    (limit as number) <= 0 ||
-    (kind !== undefined &&
-      kind !== 'readonly' &&
-      kind !== 'write' &&
-      kind !== 'execute')
-  ) {
-    return undefined;
-  }
-  return {
-    code,
-    reason,
-    scope,
-    retryable: admission.retryable,
-    ...(kind === undefined ? {} : { kind }),
-    limit,
-  };
-}
-
-export const sanitizeToolMetadata = (
-  toolName: string,
-  metadata: ToolResultMetadata | undefined
-) => {
-  if (!metadata || typeof metadata !== 'object') return metadata;
-  const sanitized = { ...(metadata as Record<string, unknown>) };
-  const toolAdmission = sanitizeToolAdmissionMetadata(sanitized.tool_admission);
-  if (toolAdmission) sanitized.tool_admission = toolAdmission;
-  else delete sanitized.tool_admission;
-  if (isBrowserToolName(toolName)) {
-    const source =
-      sanitized.browser &&
-      typeof sanitized.browser === 'object' &&
-      !Array.isArray(sanitized.browser)
-        ? (sanitized.browser as Record<string, unknown>)
-        : {};
-    const projected: Record<string, unknown> = {};
-    const boundedString = (key: string, maximum: number, pattern?: RegExp): void => {
-      const value = source[key];
-      if (
-        typeof value === 'string' &&
-        Buffer.byteLength(value) <= maximum &&
-        (!pattern || pattern.test(value))
-      ) {
-        projected[key] = value;
-      }
-    };
-    boundedString('action', 64);
-    boundedString('status', 16, /^(?:ok|warning|error)$/);
-    boundedString('pageId', MAX_BROWSER_ID_BYTES, /^browser_page_[a-f0-9-]+$/);
-    boundedString('snapshotId', MAX_BROWSER_ID_BYTES, /^browser_snapshot_[a-f0-9-]+$/);
-    boundedString('origin', MAX_BROWSER_ORIGIN_BYTES);
-    boundedString('candidateOrigin', MAX_BROWSER_ORIGIN_BYTES);
-    boundedString('url', MAX_BROWSER_PROJECTED_URL_BYTES);
-    boundedString('title', MAX_BROWSER_TITLE_BYTES);
-    boundedString('errorCode', 64, /^browser_[a-z_]+$/);
-    if (typeof source.truncated === 'boolean') {
-      projected.truncated = source.truncated;
-    }
-    if (
-      typeof source.actionApplied === 'boolean' ||
-      source.actionApplied === 'unknown'
-    ) {
-      projected.actionApplied = source.actionApplied;
-    }
-    if (typeof source.sideEffectsUncertain === 'boolean') {
-      projected.sideEffectsUncertain = source.sideEffectsUncertain;
-    }
-    if (
-      typeof source.diagnosticCount === 'number' &&
-      Number.isSafeInteger(source.diagnosticCount) &&
-      source.diagnosticCount >= 0 &&
-      source.diagnosticCount <= MAX_BROWSER_DIAGNOSTIC_RESULT_ENTRIES
-    ) {
-      projected.diagnosticCount = source.diagnosticCount;
-    }
-    if (
-      source.interaction &&
-      typeof source.interaction === 'object' &&
-      !Array.isArray(source.interaction)
-    ) {
-      const interaction = source.interaction as Record<string, unknown>;
-      const allowedActions = new Set([
-        'click',
-        'hover',
-        'fill',
-        'type',
-        'press',
-        'select',
-        'check',
-        'uncheck',
-        'scroll',
-      ]);
-      if (
-        typeof interaction.action === 'string' &&
-        allowedActions.has(interaction.action)
-      ) {
-        const projectedInteraction: Record<string, unknown> = {
-          action: interaction.action,
-        };
-        if (
-          typeof interaction.ref === 'string' &&
-          Buffer.byteLength(interaction.ref) <= MAX_BROWSER_REF_BYTES &&
-          /^[a-z][a-z0-9]*$/.test(interaction.ref)
-        ) {
-          projectedInteraction.ref = interaction.ref;
-        }
-        const boundedNumber = (
-          value: unknown,
-          minimum: number,
-          maximum: number
-        ): value is number =>
-          typeof value === 'number' &&
-          Number.isFinite(value) &&
-          value >= minimum &&
-          value <= maximum;
-        if (
-          interaction.viewport &&
-          typeof interaction.viewport === 'object' &&
-          !Array.isArray(interaction.viewport)
-        ) {
-          const viewport = interaction.viewport as Record<string, unknown>;
-          if (
-            boundedNumber(viewport.width, 1, 16_384) &&
-            boundedNumber(viewport.height, 1, 16_384)
-          ) {
-            projectedInteraction.viewport = {
-              width: viewport.width,
-              height: viewport.height,
-            };
-          }
-        }
-        if (
-          interaction.targetBox &&
-          typeof interaction.targetBox === 'object' &&
-          !Array.isArray(interaction.targetBox)
-        ) {
-          const targetBox = interaction.targetBox as Record<string, unknown>;
-          if (
-            boundedNumber(targetBox.x, -16_384, 32_768) &&
-            boundedNumber(targetBox.y, -16_384, 32_768) &&
-            boundedNumber(targetBox.width, 0, 16_384) &&
-            boundedNumber(targetBox.height, 0, 16_384)
-          ) {
-            projectedInteraction.targetBox = {
-              x: targetBox.x,
-              y: targetBox.y,
-              width: targetBox.width,
-              height: targetBox.height,
-            };
-          }
-        }
-        projected.interaction = projectedInteraction;
-      }
-    }
-    if (
-      source.artifact &&
-      typeof source.artifact === 'object' &&
-      !Array.isArray(source.artifact)
-    ) {
-      const artifact = source.artifact as Record<string, unknown>;
-      if (
-        typeof artifact.id === 'string' &&
-        /^[a-f0-9]{64}$/.test(artifact.id) &&
-        artifact.sha256 === artifact.id &&
-        artifact.kind === 'image' &&
-        artifact.mimeType === 'image/png' &&
-        typeof artifact.size === 'number' &&
-        Number.isSafeInteger(artifact.size) &&
-        artifact.size >= 0 &&
-        artifact.size <= MAX_BROWSER_SCREENSHOT_BYTES &&
-        artifact.persisted === true
-      ) {
-        projected.artifact = {
-          id: artifact.id,
-          sha256: artifact.sha256,
-          kind: artifact.kind,
-          mimeType: artifact.mimeType,
-          size: artifact.size,
-          persisted: true,
-          ...(typeof artifact.path === 'string' &&
-          Buffer.byteLength(artifact.path) <= 8_192
-            ? { path: artifact.path }
-            : {}),
-        };
-      }
-    }
-    return {
-      ...(typeof sanitized.summary === 'string'
-        ? { summary: sanitized.summary.slice(0, 512) }
-        : {}),
-      browser: projected,
-      ...(toolAdmission ? { tool_admission: toolAdmission } : {}),
-    } as ToolResultMetadata;
-  }
-  if (toolName === 'Bash') {
-    const projected: Record<string, unknown> = {};
-    const stringFields = ['message', 'signal', 'status', 'summary'] as const;
-    const booleanFields = [
-      'aborted',
-      'acp_mode',
-      'admission_failed',
-      'auto_backgrounded',
-      'background',
-      'capture_truncated',
-      'finalization_failed',
-      'has_stderr',
-      'output_accounting_complete',
-      'output_truncated',
-      'projection_truncated',
-      'sandbox_required',
-      'sandboxed',
-      'stderr_projection_truncated',
-      'stdout_projection_truncated',
-      'terminal_output_merged',
-      'timeout',
-    ] as const;
-    const numberFields = [
-      'execution_time',
-      'foreground_budget_ms',
-      'pid',
-      'raw_output_bytes',
-      'stderr_length',
-      'stderr_omitted_bytes',
-      'stderr_retained_bytes',
-      'stderr_total_bytes',
-      'stdout_length',
-      'stdout_omitted_bytes',
-      'stdout_retained_bytes',
-      'stdout_total_bytes',
-    ] as const;
-    for (const field of stringFields) {
-      const value = sanitized[field];
-      if (typeof value === 'string') projected[field] = value.slice(0, 8_192);
-    }
-    for (const field of booleanFields) {
-      const value = sanitized[field];
-      if (typeof value === 'boolean') projected[field] = value;
-    }
-    for (const field of numberFields) {
-      const value = sanitized[field];
-      if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
-        projected[field] = value;
-      }
-    }
-    if (
-      sanitized.exit_code === null ||
-      (typeof sanitized.exit_code === 'number' &&
-        Number.isSafeInteger(sanitized.exit_code))
-    ) {
-      projected.exit_code = sanitized.exit_code;
-    }
-    if (
-      sanitized.terminal_transport === 'local' ||
-      sanitized.terminal_transport === 'acp' ||
-      sanitized.terminal_transport === 'local_fallback'
-    ) {
-      projected.terminal_transport = sanitized.terminal_transport;
-    }
-    if (
-      sanitized.background_reason === 'explicit' ||
-      sanitized.background_reason === 'foreground_budget'
-    ) {
-      projected.background_reason = sanitized.background_reason;
-    }
-    for (const field of ['bash_id', 'shell_id'] as const) {
-      const value = sanitized[field];
-      if (
-        typeof value === 'string' &&
-        value.length <= 128 &&
-        /^bash_[A-Za-z0-9-]+$/.test(value)
-      ) {
-        projected[field] = value;
-      }
-    }
-    if (toolAdmission) projected.tool_admission = toolAdmission;
-    const backgroundAdmission = sanitized.background_shell_admission;
-    if (
-      backgroundAdmission &&
-      typeof backgroundAdmission === 'object' &&
-      !Array.isArray(backgroundAdmission)
-    ) {
-      const value = backgroundAdmission as Record<string, unknown>;
-      if (
-        value.code === 'background_shell_busy' &&
-        (value.scope === 'session' || value.scope === 'global') &&
-        value.retryable === true &&
-        Number.isSafeInteger(value.limit) &&
-        (value.limit as number) > 0
-      ) {
-        projected.background_shell_admission = {
-          code: value.code,
-          scope: value.scope,
-          retryable: value.retryable,
-          limit: value.limit,
-        };
-      }
-    }
-    return projected as ToolResultMetadata;
-  }
-  const MAX_INLINE_CONTENT = 200000;
-  const safeInteger = (value: unknown, maximum: number): number =>
-    typeof value === 'number' &&
-    Number.isSafeInteger(value) &&
-    value >= 0 &&
-    value <= maximum
-      ? value
-      : 0;
-  if (
-    typeof sanitized.oldContent === 'string' &&
-    sanitized.oldContent.length > MAX_INLINE_CONTENT
-  ) {
-    delete sanitized.oldContent;
-  }
-  if (
-    typeof sanitized.newContent === 'string' &&
-    sanitized.newContent.length > MAX_INLINE_CONTENT
-  ) {
-    delete sanitized.newContent;
-  }
-  if (
-    sanitized.mcpResult &&
-    typeof sanitized.mcpResult === 'object' &&
-    !Array.isArray(sanitized.mcpResult)
-  ) {
-    const result = sanitized.mcpResult as Record<string, unknown>;
-    const artifacts = Array.isArray(result.artifacts)
-      ? result.artifacts.slice(0, 64).flatMap((value) => {
-          if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-          const artifact = value as Record<string, unknown>;
-          const artifactKinds = new Set(['text', 'image', 'audio', 'resource']);
-          if (
-            typeof artifact.id !== 'string' ||
-            !/^[a-f0-9]{64}$/.test(artifact.id) ||
-            typeof artifact.sha256 !== 'string' ||
-            artifact.sha256 !== artifact.id ||
-            typeof artifact.kind !== 'string' ||
-            !artifactKinds.has(artifact.kind) ||
-            safeInteger(artifact.size, 64 * 1024 * 1024) !== artifact.size ||
-            typeof artifact.persisted !== 'boolean'
-          ) {
-            return [];
-          }
-          return [
-            {
-              id: artifact.id.slice(0, 128),
-              sha256: artifact.sha256.slice(0, 128),
-              kind: artifact.kind,
-              size: artifact.size,
-              persisted: artifact.persisted,
-              ...(typeof artifact.mimeType === 'string'
-                ? { mimeType: artifact.mimeType.slice(0, 256) }
-                : {}),
-              ...(typeof artifact.sourceUri === 'string'
-                ? { sourceUri: artifact.sourceUri.slice(0, 8_192) }
-                : {}),
-              ...(typeof artifact.path === 'string'
-                ? { path: artifact.path.slice(0, 8_192) }
-                : {}),
-            },
-          ];
-        })
-      : [];
-    sanitized.mcpResult = {
-      isError: result.isError === true,
-      contentCount: safeInteger(result.contentCount, 64),
-      textBytes: safeInteger(result.textBytes, 4 * 1024 * 1024),
-      structuredBytes: safeInteger(result.structuredBytes, 4 * 1024 * 1024),
-      artifactCount: safeInteger(result.artifactCount, 64),
-      truncated: result.truncated === true,
-      binaryOmitted: result.binaryOmitted === true,
-      artifacts,
-    };
-  } else {
-    delete sanitized.mcpResult;
-  }
-  return sanitized as ToolResultMetadata;
-};
-
 export function projectCommittedSessionEvent(event: SessionEvent):
   | {
       type: string;
@@ -1073,53 +674,21 @@ function publishSubagentLoopEvent(
   subagentSessionId: string,
   event: LoopEvent
 ): void {
+  const projection = projectSessionLoopEvent(event);
+  if (projection) {
+    if (projection.type === 'tool.start') {
+      Bus.publish(ref, 'subagent.update', {
+        subagentSessionId,
+        toolName: projection.toolName,
+      });
+    }
+    Bus.publish(ref, `subagent.${projection.type}`, {
+      subagentSessionId,
+      ...projection.properties,
+    });
+    return;
+  }
   switch (event.kind) {
-    case 'tool_start':
-      if ('function' in event.toolCall) {
-        Bus.publish(ref, 'subagent.update', {
-          subagentSessionId,
-          toolName: event.toolCall.function.name,
-        });
-        Bus.publish(ref, 'subagent.tool.start', {
-          subagentSessionId,
-          toolCallId: event.toolCall.id,
-          toolName: event.toolCall.function.name,
-          arguments: event.toolCall.function.arguments,
-          toolKind: event.toolKind,
-        });
-      }
-      break;
-    case 'tool_result':
-      if ('function' in event.toolCall) {
-        Bus.publish(ref, 'subagent.tool.result', {
-          subagentSessionId,
-          toolCallId: event.toolCall.id,
-          toolName: event.toolCall.function.name,
-          success: event.result.success,
-          summary: event.result.metadata?.summary,
-          output: renderToolDisplayToString(
-            fitToolDisplayForSurface(
-              formatToolDisplay(event.toolCall.function.name, event.result),
-              SERVER_TOOL_DETAIL_MAX_CHARS
-            )
-          ),
-          metadata: sanitizeToolMetadata(
-            event.toolCall.function.name,
-            event.result.metadata
-          ),
-        });
-      }
-      break;
-    case 'tool_progress':
-      if ('function' in event.toolCall) {
-        Bus.publish(ref, 'subagent.tool.progress', {
-          subagentSessionId,
-          toolCallId: event.toolCall.id,
-          toolName: event.toolCall.function.name,
-          ...event.update,
-        });
-      }
-      break;
     case 'content_delta':
       Bus.publish(ref, 'subagent.delta', {
         subagentSessionId,
@@ -1134,173 +703,6 @@ function publishSubagentLoopEvent(
       break;
     case 'stream_end':
       Bus.publish(ref, 'subagent.stream.end', { subagentSessionId });
-      break;
-    case 'provider_admission':
-      Bus.publish(ref, 'subagent.provider.admission', {
-        subagentSessionId,
-        phase: event.phase,
-        requestClass: event.requestClass,
-        resource: event.resource,
-        scope: event.scope,
-        reason: event.reason,
-        queuePosition: event.queuePosition,
-        queueDepth: event.queueDepth,
-        inFlight: event.inFlight,
-        limit: event.limit,
-        waitMs: event.waitMs,
-        maxWaitMs: event.maxWaitMs,
-        recoveryRemainingMs: event.recoveryRemainingMs,
-      });
-      break;
-    case 'provider_circuit':
-      Bus.publish(ref, 'subagent.provider.circuit', {
-        subagentSessionId,
-        phase: event.phase,
-        reason: event.reason,
-        statusCode: event.statusCode,
-        retryAfterMs: event.retryAfterMs,
-        nextProbeAt: event.nextProbeAt,
-        openDurationMs: event.openDurationMs,
-        sampleCount: event.sampleCount,
-        failureCount: event.failureCount,
-        recoveryRemainingMs: event.recoveryRemainingMs,
-      });
-      break;
-    case 'provider_retry':
-      Bus.publish(ref, 'subagent.provider.retry', {
-        subagentSessionId,
-        phase: event.phase,
-        attempt: event.attempt,
-        maxRetries: event.maxRetries,
-        reason: event.reason,
-        statusCode: event.statusCode,
-        delayMs: event.delayMs,
-        nextRetryAt: event.nextRetryAt,
-        mode: event.mode,
-        recoveryBudgetMs: event.recoveryBudgetMs,
-        recoveryElapsedMs: event.recoveryElapsedMs,
-        recoveryRemainingMs: event.recoveryRemainingMs,
-        exhaustedBy: event.exhaustedBy,
-      });
-      break;
-    case 'provider_stall':
-      Bus.publish(ref, 'subagent.provider.stall', {
-        subagentSessionId,
-        phase: event.phase,
-        stallCount: event.stallCount,
-        durationMs: event.durationMs,
-        warningAfterMs: event.warningAfterMs,
-        timeoutMs: event.timeoutMs,
-        outputStarted: event.outputStarted,
-      });
-      break;
-    case 'action_stationarity':
-      Bus.publish(ref, 'subagent.action.stationarity', {
-        subagentSessionId,
-        phase: event.phase,
-        toolName: event.toolName,
-        runLength: event.runLength,
-        nudgeThreshold: event.nudgeThreshold,
-        haltThreshold: event.haltThreshold,
-        progressAware: event.progressAware,
-      });
-      break;
-    case 'mcp_catalog_changed':
-      Bus.publish(ref, 'subagent.mcp.catalog.changed', {
-        subagentSessionId,
-        revision: event.revision,
-        serverName: event.serverName,
-        added: event.added,
-        removed: event.removed,
-        updated: event.updated,
-      });
-      break;
-    case 'mcp_content_changed':
-      Bus.publish(ref, 'subagent.mcp.content.changed', {
-        subagentSessionId,
-        revision: event.revision,
-        serverName: event.serverName,
-        contentKind: event.contentKind,
-        added: event.added,
-        removed: event.removed,
-        updated: event.updated,
-      });
-      break;
-    case 'mcp_resource_updated':
-      Bus.publish(ref, 'subagent.mcp.resource.updated', {
-        subagentSessionId,
-        revision: event.revision,
-        serverName: event.serverName,
-        uri: event.uri,
-      });
-      break;
-    case 'mcp_connection_changed':
-      Bus.publish(ref, 'subagent.mcp.connection.changed', {
-        subagentSessionId,
-        revision: event.revision,
-        serverName: event.serverName,
-        phase: event.phase,
-        reason: event.reason,
-        attempt: event.attempt,
-        maxAttempts: event.maxAttempts,
-        nextRetryAt: event.nextRetryAt,
-        error: event.error,
-      });
-      break;
-    case 'mcp_log':
-      Bus.publish(ref, 'subagent.mcp.log', {
-        subagentSessionId,
-        revision: event.revision,
-        serverName: event.serverName,
-        level: event.level,
-        logger: event.logger,
-        message: event.message,
-        projectedBytes: event.projectedBytes,
-        dataSha256: event.dataSha256,
-        truncated: event.truncated,
-        detailsOmitted: event.detailsOmitted,
-        timestamp: event.timestamp,
-        synthetic: event.synthetic,
-      });
-      break;
-    case 'mcp_instructions_changed':
-      Bus.publish(ref, 'subagent.mcp.instructions.changed', {
-        subagentSessionId,
-        revision: event.revision,
-        serverName: event.serverName,
-        action: event.action,
-        reason: event.reason,
-        text: event.text,
-        sourceBytes: event.sourceBytes,
-        projectedBytes: event.projectedBytes,
-        sha256: event.sha256,
-        truncated: event.truncated,
-        detailsOmitted: event.detailsOmitted,
-      });
-      break;
-    case 'mcp_task_changed':
-      Bus.publish(ref, 'subagent.mcp.task.changed', {
-        subagentSessionId,
-        revision: event.revision,
-        taskId: event.taskId,
-        serverName: event.serverName,
-        toolName: event.toolName,
-        status: event.status,
-        statusMessage: event.statusMessage,
-        createdAt: event.createdAt,
-        updatedAt: event.updatedAt,
-        completedAt: event.completedAt,
-        hasResult: event.hasResult,
-        error: event.error,
-      });
-      break;
-    case 'project_rules_loaded':
-      Bus.publish(ref, 'subagent.project.rules.loaded', {
-        subagentSessionId,
-        files: event.files,
-        triggerPaths: event.triggerPaths,
-        blockedWrite: event.blockedWrite,
-      });
       break;
     default:
       break;
@@ -6195,6 +5597,22 @@ async function executeRunAsync(
     // message.complete 只在整个 run 结束时发一次（run-level 语义）
     // stream_end 不外发给客户端（内部 per-turn 信号）
     const handleLoopEvent = async (event: LoopEvent) => {
+      if (
+        event.kind === 'tool_start' ||
+        event.kind === 'tool_progress' ||
+        event.kind === 'tool_result'
+      ) {
+        toolExecutionStarted = true;
+      }
+      const projection = projectSessionLoopEvent(event);
+      if (projection) {
+        if (projection.toolName === STRUCTURED_OUTPUT_TOOL_NAME) return;
+        emit(projection.type, {
+          ...(projection.messageScoped ? { messageId: ensureAssistantMessage() } : {}),
+          ...projection.properties,
+        });
+        return;
+      }
       switch (event.kind) {
         // --- 流式增量 ---
         case 'content_delta':
@@ -6221,56 +5639,6 @@ async function executeRunAsync(
           });
           break;
 
-        // --- 工具事件 ---
-        case 'tool_start':
-          toolExecutionStarted = true;
-          if ('function' in event.toolCall) {
-            if (event.toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
-            emit('tool.start', {
-              messageId: ensureAssistantMessage(),
-              toolName: event.toolCall.function.name,
-              toolCallId: event.toolCall.id,
-              arguments: event.toolCall.function.arguments,
-              toolKind: event.toolKind,
-            });
-          }
-          break;
-        case 'tool_result':
-          toolExecutionStarted = true;
-          if ('function' in event.toolCall) {
-            if (event.toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
-            emit('tool.result', {
-              messageId: ensureAssistantMessage(),
-              toolName: event.toolCall.function.name,
-              toolCallId: event.toolCall.id,
-              success: event.result.success,
-              summary: event.result.metadata?.summary,
-              output: renderToolDisplayToString(
-                fitToolDisplayForSurface(
-                  formatToolDisplay(event.toolCall.function.name, event.result),
-                  SERVER_TOOL_DETAIL_MAX_CHARS
-                )
-              ),
-              metadata: sanitizeToolMetadata(
-                event.toolCall.function.name,
-                event.result.metadata
-              ),
-            });
-          }
-          break;
-        case 'tool_progress':
-          toolExecutionStarted = true;
-          if ('function' in event.toolCall) {
-            if (event.toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
-            emit('tool.progress', {
-              messageId: ensureAssistantMessage(),
-              toolName: event.toolCall.function.name,
-              toolCallId: event.toolCall.id,
-              ...event.update,
-            });
-          }
-          break;
-
         // --- Token 使用 ---
         case 'token_usage':
           emit('token.usage', { ...event.usage });
@@ -6281,61 +5649,6 @@ async function executeRunAsync(
         case 'turn_recovery':
           emit('turn.recovery', { assessment: event.assessment });
           break;
-        case 'provider_admission':
-          emit('provider.admission', {
-            phase: event.phase,
-            requestClass: event.requestClass,
-            resource: event.resource,
-            scope: event.scope,
-            reason: event.reason,
-            queuePosition: event.queuePosition,
-            queueDepth: event.queueDepth,
-            inFlight: event.inFlight,
-            limit: event.limit,
-            waitMs: event.waitMs,
-            maxWaitMs: event.maxWaitMs,
-            recoveryRemainingMs: event.recoveryRemainingMs,
-          });
-          break;
-        case 'provider_circuit':
-          emit('provider.circuit', {
-            phase: event.phase,
-            reason: event.reason,
-            statusCode: event.statusCode,
-            retryAfterMs: event.retryAfterMs,
-            nextProbeAt: event.nextProbeAt,
-            openDurationMs: event.openDurationMs,
-            sampleCount: event.sampleCount,
-            failureCount: event.failureCount,
-            recoveryRemainingMs: event.recoveryRemainingMs,
-          });
-          break;
-        case 'provider_retry':
-          emit('provider.retry', {
-            phase: event.phase,
-            attempt: event.attempt,
-            maxRetries: event.maxRetries,
-            reason: event.reason,
-            statusCode: event.statusCode,
-            delayMs: event.delayMs,
-            nextRetryAt: event.nextRetryAt,
-            mode: event.mode,
-            recoveryBudgetMs: event.recoveryBudgetMs,
-            recoveryElapsedMs: event.recoveryElapsedMs,
-            recoveryRemainingMs: event.recoveryRemainingMs,
-            exhaustedBy: event.exhaustedBy,
-          });
-          break;
-        case 'provider_stall':
-          emit('provider.stall', {
-            phase: event.phase,
-            stallCount: event.stallCount,
-            durationMs: event.durationMs,
-            warningAfterMs: event.warningAfterMs,
-            timeoutMs: event.timeoutMs,
-            outputStarted: event.outputStarted,
-          });
-          break;
         case 'provider_recovery':
           // SessionRuntime already publishes the authoritative projection on the
           // Session Bus. Do not emit a duplicate from this direct consumer.
@@ -6343,113 +5656,6 @@ async function executeRunAsync(
         case 'turn_activity':
           // SessionRuntime already publishes the authoritative projection on the
           // Session Bus. Do not emit a duplicate from this direct consumer.
-          break;
-        case 'action_stationarity':
-          emit('action.stationarity', {
-            phase: event.phase,
-            toolName: event.toolName,
-            runLength: event.runLength,
-            nudgeThreshold: event.nudgeThreshold,
-            haltThreshold: event.haltThreshold,
-            progressAware: event.progressAware,
-          });
-          break;
-        case 'mcp_catalog_changed':
-          emit('mcp.catalog.changed', {
-            messageId: ensureAssistantMessage(),
-            revision: event.revision,
-            serverName: event.serverName,
-            added: event.added,
-            removed: event.removed,
-            updated: event.updated,
-          });
-          break;
-        case 'mcp_content_changed':
-          emit('mcp.content.changed', {
-            messageId: ensureAssistantMessage(),
-            revision: event.revision,
-            serverName: event.serverName,
-            contentKind: event.contentKind,
-            added: event.added,
-            removed: event.removed,
-            updated: event.updated,
-          });
-          break;
-        case 'mcp_resource_updated':
-          emit('mcp.resource.updated', {
-            messageId: ensureAssistantMessage(),
-            revision: event.revision,
-            serverName: event.serverName,
-            uri: event.uri,
-          });
-          break;
-        case 'mcp_connection_changed':
-          emit('mcp.connection.changed', {
-            messageId: ensureAssistantMessage(),
-            revision: event.revision,
-            serverName: event.serverName,
-            phase: event.phase,
-            reason: event.reason,
-            attempt: event.attempt,
-            maxAttempts: event.maxAttempts,
-            nextRetryAt: event.nextRetryAt,
-            error: event.error,
-          });
-          break;
-        case 'mcp_log':
-          emit('mcp.log', {
-            messageId: ensureAssistantMessage(),
-            revision: event.revision,
-            serverName: event.serverName,
-            level: event.level,
-            logger: event.logger,
-            message: event.message,
-            projectedBytes: event.projectedBytes,
-            dataSha256: event.dataSha256,
-            truncated: event.truncated,
-            detailsOmitted: event.detailsOmitted,
-            timestamp: event.timestamp,
-            synthetic: event.synthetic,
-          });
-          break;
-        case 'mcp_instructions_changed':
-          emit('mcp.instructions.changed', {
-            messageId: ensureAssistantMessage(),
-            revision: event.revision,
-            serverName: event.serverName,
-            action: event.action,
-            reason: event.reason,
-            text: event.text,
-            sourceBytes: event.sourceBytes,
-            projectedBytes: event.projectedBytes,
-            sha256: event.sha256,
-            truncated: event.truncated,
-            detailsOmitted: event.detailsOmitted,
-          });
-          break;
-        case 'mcp_task_changed':
-          emit('mcp.task.changed', {
-            messageId: ensureAssistantMessage(),
-            revision: event.revision,
-            taskId: event.taskId,
-            serverName: event.serverName,
-            toolName: event.toolName,
-            status: event.status,
-            statusMessage: event.statusMessage,
-            createdAt: event.createdAt,
-            updatedAt: event.updatedAt,
-            completedAt: event.completedAt,
-            hasResult: event.hasResult,
-            error: event.error,
-          });
-          break;
-        case 'project_rules_loaded':
-          emit('project.rules.loaded', {
-            messageId: ensureAssistantMessage(),
-            files: event.files,
-            triggerPaths: event.triggerPaths,
-            blockedWrite: event.blockedWrite,
-          });
           break;
         case 'steering_applied':
           for (const message of event.messages) {
