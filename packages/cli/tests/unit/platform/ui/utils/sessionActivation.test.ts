@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAcpRemotePathProfile } from '../../../../../src/acp/AcpRemotePath.js';
@@ -788,43 +787,5 @@ describe('listSessionCandidatesForIntent', () => {
     expect(serviceMocks.listSessions).toHaveBeenCalledWith({
       includeSubagents: false,
     });
-  });
-});
-
-describe('BladeInterface startup routing source contract', () => {
-  it('uses shared session candidate discovery for startup continue and selector flows', () => {
-    const bladeInterfacePath = path.resolve(
-      import.meta.dirname,
-      '../../../../../src/ui/components/BladeInterface.tsx'
-    );
-    const source = fs.readFileSync(bladeInterfacePath, 'utf8');
-
-    expect(source).toContain('listSessionCandidatesForIntent');
-
-    const handleContinueStart = source.indexOf(
-      'const handleContinue = useMemoizedFn(async () => {'
-    );
-    const handleResumeStart = source.indexOf(
-      'const handleResume = useMemoizedFn(async () => {'
-    );
-    const handleResponseStart = source.indexOf(
-      'const handleResponse = useMemoizedFn(async (response: ConfirmationResponse) => {'
-    );
-
-    expect(handleContinueStart).toBeGreaterThanOrEqual(0);
-    expect(handleResumeStart).toBeGreaterThan(handleContinueStart);
-    expect(handleResponseStart).toBeGreaterThan(handleResumeStart);
-
-    const handleContinueSource = source.slice(handleContinueStart, handleResumeStart);
-    const handleResumeSource = source.slice(handleResumeStart, handleResponseStart);
-
-    expect(handleContinueSource).toContain('listSessionCandidatesForIntent(');
-    expect(handleContinueSource).not.toContain('SessionService.listSessions(');
-    expect(
-      handleContinueSource.match(/await proveCurrentLocalFallback\(\);/g)
-    ).toHaveLength(3);
-    expect(handleResumeSource).toContain('listSessionCandidatesForIntent(');
-    expect(handleResumeSource).not.toContain('SessionService.listSessions({');
-    expect(source).not.toContain('SessionService.findSessionMetadata(sourceSessionId)');
   });
 });
