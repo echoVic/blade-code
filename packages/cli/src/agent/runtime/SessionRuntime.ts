@@ -2927,11 +2927,6 @@ export class SessionRuntime {
     });
   }
 
-  /** @deprecated Use createToolExecutor() for new code. */
-  createExecutionPipeline(options: AgentOptions = {}): ToolExecutor {
-    return this.createToolExecutor(options);
-  }
-
   async dispose(): Promise<void> {
     if (this.disposePromise) {
       return this.disposePromise;

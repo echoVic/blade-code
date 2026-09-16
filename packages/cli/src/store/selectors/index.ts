@@ -59,18 +59,6 @@ export const usePromptCacheHitRate = () =>
     }).hitRate;
   });
 
-export const useProviderCircuit = () =>
-  useBladeStore((state) => state.session.providerCircuit);
-
-export const useProviderAdmission = () =>
-  useBladeStore((state) => state.session.providerAdmission);
-
-export const useProviderRetry = () =>
-  useBladeStore((state) => state.session.providerRetry);
-
-export const useProviderStall = () =>
-  useBladeStore((state) => state.session.providerStall);
-
 export const useProviderRecovery = () =>
   useBladeStore((state) => state.session.providerRecovery);
 

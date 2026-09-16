@@ -220,9 +220,6 @@ ${generateAvailableCommandsDescription(registry)}`,
   });
 }
 
-/** @deprecated Use createSlashCommandTool(registry). */
-export const slashCommandTool = createSlashCommandTool();
-
 /**
  * 构建完整的命令指令
  */

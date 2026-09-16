@@ -65,10 +65,6 @@ export function setOriginalCwd(newCwd: string): void {
   getState().originalCwd = newCwd.normalize('NFC');
 }
 
-export function getProjectRoot(): string {
-  return getState().projectRoot;
-}
-
 export function setProjectRoot(root: string): void {
   getState().projectRoot = root.normalize('NFC');
 }

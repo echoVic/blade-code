@@ -24,7 +24,6 @@ import type {
  */
 export class ContextManager {
   private readonly persistent: PersistentStore;
-  private readonly options: ContextManagerOptions;
 
   /**
    * 获取持久化存储实例（供外部直接调用 JSONL 操作）
@@ -34,31 +33,11 @@ export class ContextManager {
   }
 
   constructor(options: Partial<ContextManagerOptions> = {}) {
-    this.options = {
-      projectPath: options.projectPath || getCwd(),
-      ...(options.stateStorage ? { stateStorage: options.stateStorage } : {}),
-      storage: {
-        maxMemorySize: 1000,
-        persistentPath: '',
-        cacheSize: 100,
-        compressionEnabled: true,
-        ...options.storage,
-      },
-      defaultFilter: {
-        maxTokens: 32000,
-        maxMessages: 50,
-        timeWindow: 24 * 60 * 60 * 1000,
-        ...options.defaultFilter,
-      },
-      compressionThreshold: options.compressionThreshold || 6000,
-      enableVectorSearch: options.enableVectorSearch || false,
-    };
-
     this.persistent = new PersistentStore(
-      this.options.projectPath,
+      options.projectPath ?? getCwd(),
       100,
       undefined,
-      this.options.stateStorage
+      options.stateStorage
     );
   }
 

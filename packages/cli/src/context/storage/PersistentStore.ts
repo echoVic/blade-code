@@ -23,14 +23,12 @@ import {
   type ValidTokenBudgetHandoffEvent,
 } from '../TokenBudgetHandoff.js';
 import {
-  type ConversationContext,
   MAX_TURN_INPUT_MESSAGE_ID_CHARS,
   MAX_TURN_INPUT_MESSAGE_IDS,
   type MessageInfo,
   type MessagePersistenceMetadata,
   type PartInfo,
   parseTurnInputMessageIds,
-  type SessionContext,
   type SessionEvent,
   type SessionGoalFinalizationInfo,
   type SessionInfo,
@@ -2133,77 +2131,6 @@ export class PersistentStore {
     try {
       const entries = await this.log(sessionId).readAll();
       return entries.length > 0 ? materializeSessionEvents(entries) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * 加载会话上下文（从 JSONL 重建）
-   */
-  async loadSession(sessionId: string): Promise<SessionContext | null> {
-    try {
-      const entries = materializeSessionEvents(await this.log(sessionId).readAll());
-      if (entries.length === 0) return null;
-      const firstEntry = entries.find((entry) => entry.type === 'session_created');
-
-      return {
-        sessionId,
-        userId: undefined,
-        preferences: {},
-        configuration: {},
-        startTime: new Date(firstEntry?.timestamp ?? entries[0].timestamp).getTime(),
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * 加载对话上下文（从 JSONL 重建）
-   */
-  async loadConversation(sessionId: string): Promise<ConversationContext | null> {
-    try {
-      const entries = materializeSessionEvents(await this.log(sessionId).readAll());
-      if (entries.length === 0) return null;
-      const messageMap = new Map<
-        string,
-        { id: string; role: MessageRole; content: string; timestamp: number }
-      >();
-      for (const entry of entries) {
-        if (entry.type === 'message_created') {
-          messageMap.set(entry.data.messageId, {
-            id: entry.data.messageId,
-            role: entry.data.role,
-            content: '',
-            timestamp: new Date(entry.timestamp).getTime(),
-          });
-        }
-        if (entry.type === 'part_created' && entry.data.partType === 'text') {
-          const message = messageMap.get(entry.data.messageId);
-          if (message) {
-            const payload = entry.data.payload as { text?: string };
-            message.content = payload.text ?? '';
-          }
-        }
-        if (entry.type === 'part_created' && entry.data.partType === 'image') {
-          const message = messageMap.get(entry.data.messageId);
-          if (message) {
-            message.content = message.content
-              ? `${message.content}\n[Image]`
-              : '[Image]';
-          }
-        }
-      }
-      const messages = Array.from(messageMap.values());
-      const lastEntry = entries[entries.length - 1];
-      const lastActivity = new Date(lastEntry.timestamp).getTime();
-
-      return {
-        messages,
-        topics: [],
-        lastActivity,
-      };
     } catch {
       return null;
     }

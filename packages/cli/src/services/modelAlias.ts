@@ -43,17 +43,3 @@ export function resolveModelAlias(nameOrAlias: string): string {
   const lower = nameOrAlias.toLowerCase().trim();
   return MODEL_ALIASES[lower] ?? nameOrAlias;
 }
-
-/**
- * Check if a string is a known alias.
- */
-export function isModelAlias(name: string): boolean {
-  return name.toLowerCase().trim() in MODEL_ALIASES;
-}
-
-/**
- * Get all available aliases for display.
- */
-export function getModelAliases(): Array<{ alias: string; model: string }> {
-  return Object.entries(MODEL_ALIASES).map(([alias, model]) => ({ alias, model }));
-}

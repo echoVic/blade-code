@@ -911,7 +911,7 @@ describe('durable turn lifecycle', () => {
       await appendRawTurnAbort(workspaceRoot, sessionId, turnId, receipt);
 
       await expect(store.recoverInterruptedTurn(sessionId)).resolves.toBeUndefined();
-      await expect(store.loadSession(sessionId)).resolves.toMatchObject({ sessionId });
+      await expect(store.loadEvents(sessionId)).resolves.not.toBeNull();
     }
   );
 

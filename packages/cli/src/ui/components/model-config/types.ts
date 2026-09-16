@@ -16,19 +16,6 @@ export interface ModelConfigWizardProps {
   onCancel: () => void;
 }
 
-export const PROVIDER_ICONS: Record<string, string> = {
-  anthropic: '',
-  openai: '',
-  google: '',
-  deepseek: '',
-  groq: '',
-  openrouter: '',
-  'azure-openai-responses': '',
-  mistral: '',
-  xai: '',
-  default: '',
-};
-
 export const PROVIDER_HEADERS: Record<string, Record<string, string>> = {
   openrouter: {
     'HTTP-Referer': 'https://github.com/echoVic/blade-code',

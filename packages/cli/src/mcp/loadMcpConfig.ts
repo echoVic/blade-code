@@ -13,7 +13,6 @@ import path from 'path';
 import { getOriginalCwd } from '../bootstrap/state.js';
 import type { McpServerConfig } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import { getMcpServers, getState } from '../store/vanilla.js';
 
 const logger = createLogger(LogCategory.GENERAL);
 
@@ -75,18 +74,4 @@ export async function resolveMcpConfigFromCli(
     }
   }
   return servers;
-}
-
-/**
- * 从 CLI --mcp-config 参数加载 MCP 配置
- * 支持多种格式：
- * - JSON 文件路径: "./mcp-config.json"
- * - JSON 字符串 (单个服务器): '{"name": "xxx", "type": "stdio", "command": "xxx"}'
- * - JSON 字符串 (多个服务器): '{"server1": {...}, "server2": {...}}'
- *
- * @param mcpConfigs - CLI 参数数组
- */
-export async function loadMcpConfigFromCli(mcpConfigs: string[]): Promise<void> {
-  const updatedServers = await resolveMcpConfigFromCli(mcpConfigs, getMcpServers());
-  getState().config.actions.updateConfig({ mcpServers: updatedServers });
 }

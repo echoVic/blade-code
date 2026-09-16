@@ -534,7 +534,7 @@ export class AcpSession {
     const mcpServers = this.options.mcpServers
       ? toMcpServers(this.options.mcpServers)
       : undefined;
-    const terminalService = AcpServiceContext.getInstance().getTerminalService(this.id);
+    const terminalService = AcpServiceContext.getTerminalService(this.id);
     const workspace: SessionWorkspace | undefined =
       this.roots.kind === 'acp-remote'
         ? {

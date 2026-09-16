@@ -1,4 +1,3 @@
-export const SIDE_CONVERSATION_COMMAND = 'btw';
 export const MAX_SIDE_QUESTION_CHARS = 16 * 1024;
 
 export interface ParsedSideConversationCommand {

@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
 import type { JSONSchema7 } from 'json-schema';
-import type { Message } from './ChatServiceInterface.js';
 import type { JsonObject, JsonValue } from '../store/types.js';
 import type { FunctionDeclaration } from '../tools/types/index.js';
+import type { Message } from './ChatServiceInterface.js';
 
 export const STRUCTURED_OUTPUT_TOOL_NAME = 'StructuredOutput';
 export const MAX_STRUCTURED_OUTPUT_SCHEMA_BYTES = 64 * 1024;
@@ -183,15 +183,6 @@ export function createStructuredOutputContract(
       return { success: true, output };
     },
   };
-}
-
-export function isStructuredOutputSchema(value: unknown): value is JsonObject {
-  try {
-    createStructuredOutputContract(value);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function outputFromMetadata(

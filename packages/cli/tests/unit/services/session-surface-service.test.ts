@@ -459,8 +459,8 @@ describe('SessionSurfaceService', () => {
     const hookGet = vi.spyOn(HookManager, 'getInstance');
     const pluginGet = vi.spyOn(PluginRegistry, 'getInstance');
     const skillGet = vi.spyOn(SkillRegistry, 'getInstance');
-    const fileSystemGet = vi.spyOn(AcpServiceContext.prototype, 'getFileSystemService');
-    const terminalGet = vi.spyOn(AcpServiceContext.prototype, 'getTerminalService');
+    const fileSystemGet = vi.spyOn(AcpServiceContext, 'getFileSystemService');
+    const terminalGet = vi.spyOn(AcpServiceContext, 'getTerminalService');
     const localRead = vi.spyOn(LocalFileSystemService.prototype, 'readTextFile');
     const gitBranch = vi.spyOn(storagePaths, 'detectGitBranch');
 

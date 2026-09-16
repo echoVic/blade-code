@@ -99,21 +99,3 @@ export async function parsePluginManifest(
   // No manifest found in any directory
   return null;
 }
-
-/**
- * Check if a directory is a valid plugin directory
- *
- * A valid plugin directory must contain a plugin.json in either
- * .blade-plugin/ or .claude-plugin/ subdirectory.
- *
- * @param dirPath - Path to check
- * @returns True if the directory is a valid plugin
- */
-export async function isValidPluginDir(dirPath: string): Promise<boolean> {
-  try {
-    const result = await parsePluginManifest(dirPath);
-    return result !== null;
-  } catch {
-    return false;
-  }
-}

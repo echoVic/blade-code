@@ -133,7 +133,3 @@ export function assertPluginSourceAllowed(
     `Marketplace "${source.marketplace}"`
   );
 }
-
-export function isFullPluginGitSha(value: string | undefined): boolean {
-  return value !== undefined && FULL_GIT_SHA_PATTERN.test(value);
-}

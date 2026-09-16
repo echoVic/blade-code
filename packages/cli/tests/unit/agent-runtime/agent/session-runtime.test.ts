@@ -5407,15 +5407,6 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
-  it('keeps the deprecated execution pipeline factory source-compatible', () => {
-    const runtime = new SessionRuntime({ permissions: {} } as any, {
-      sessionId: 'session-1',
-    });
-
-    expect(runtime.createExecutionPipeline()).toBeInstanceOf(ToolExecutor);
-    expect(runtime.createToolExecutor()).toBeInstanceOf(ToolExecutor);
-  });
-
   it('publishes and clears its ephemeral Provider recovery projection', () => {
     const runtime = new SessionRuntime(DEFAULT_CONFIG, {
       sessionId: 'provider-recovery-runtime',

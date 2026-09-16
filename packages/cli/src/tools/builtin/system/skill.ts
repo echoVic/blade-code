@@ -119,9 +119,6 @@ ${availableSkills}
   });
 }
 
-/** @deprecated Use createSkillTool(registry). */
-export const skillTool = createSkillTool();
-
 /**
  * 构建完整的 Skill 指令
  */

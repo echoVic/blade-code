@@ -273,10 +273,3 @@ export function clearRawRenderer(): void {
 export function isRawRendererActive(): boolean {
   return state.active;
 }
-
-/**
- * 获取当前 raw 区域占用的行数
- */
-export function getRawRendererLineCount(): number {
-  return state.renderedLineCount;
-}

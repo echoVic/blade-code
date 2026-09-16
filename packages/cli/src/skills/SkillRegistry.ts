@@ -465,13 +465,3 @@ export class SkillRegistry {
 export function getSkillRegistry(config?: SkillRegistryConfig): SkillRegistry {
   return SkillRegistry.getInstance(config);
 }
-
-/**
- * 初始化并获取所有 skills
- */
-export async function discoverSkills(
-  config?: SkillRegistryConfig
-): Promise<SkillDiscoveryResult> {
-  const registry = getSkillRegistry(config);
-  return registry.initialize();
-}

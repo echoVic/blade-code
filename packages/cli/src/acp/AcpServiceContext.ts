@@ -9,9 +9,6 @@ import type {
   AgentSideConnection,
   ClientCapabilities,
   SessionNotification,
-  ToolCallContent,
-  ToolCallStatus,
-  ToolKind,
 } from '@agentclientprotocol/sdk';
 import {
   type ForegroundProcessOwnership,
@@ -778,18 +775,6 @@ export class AcpServiceContext {
   private static sessionRegistrationGeneration = 0n;
   private static currentSessionId: string | null = null;
 
-  private constructor() {
-    // 私有构造函数，使用静态方法
-  }
-
-  /**
-   * 获取单例实例（兼容旧 API）
-   * @deprecated 使用 getForSession(sessionId) 代替
-   */
-  static getInstance(): AcpServiceContext {
-    return new AcpServiceContext();
-  }
-
   /**
    * 初始化会话的 ACP 服务
    *
@@ -954,6 +939,35 @@ export class AcpServiceContext {
     return AcpServiceContext.sessions.get(sessionId)?.remoteFileSystem ?? false;
   }
 
+  static isAcpMode(): boolean {
+    return AcpServiceContext.currentSessionId !== null;
+  }
+
+  static getFileSystemService(sessionId?: string): FileSystemService {
+    if (sessionId !== undefined) {
+      return (
+        AcpServiceContext.sessions.get(sessionId)?.fileSystemService ??
+        new UnavailableFileSystemService()
+      );
+    }
+    const currentSessionId = AcpServiceContext.currentSessionId;
+    if (currentSessionId) {
+      const services = AcpServiceContext.sessions.get(currentSessionId);
+      if (services) return services.fileSystemService;
+    }
+    return new LocalFileSystemService();
+  }
+
+  static getTerminalService(sessionId?: string): TerminalService {
+    const targetSessionId = sessionId ?? AcpServiceContext.currentSessionId;
+    if (targetSessionId) {
+      const services = AcpServiceContext.sessions.get(targetSessionId);
+      if (services) return services.terminalService;
+      if (sessionId) return new UnavailableTerminalService();
+    }
+    return new LocalTerminalService();
+  }
+
   static getRemoteSurfaceOwnerSnapshot(
     sessionId: string,
     descriptor: AcpRemoteWorkspaceDescriptorV1
@@ -983,150 +997,17 @@ export class AcpServiceContext {
       terminal: binding.terminal,
     };
   }
-
-  // ==================== 兼容旧 API（实例方法）====================
-
-  /**
-   * 初始化 ACP 服务（兼容旧 API）
-   * @deprecated 使用 AcpServiceContext.initializeSession() 代替
-   */
-  initialize(
-    connection: AgentSideConnection,
-    sessionId: string,
-    clientCapabilities: ClientCapabilities | undefined,
-    cwd?: string
-  ): void {
-    AcpServiceContext.initializeSession(
-      connection,
-      sessionId,
-      clientCapabilities,
-      cwd || getCwd()
-    );
-  }
-
-  /**
-   * 重置服务（兼容旧 API）
-   * @deprecated 使用 AcpServiceContext.destroySession(sessionId) 代替
-   */
-  reset(): void {
-    // 只重置当前会话，而不是所有会话
-    if (AcpServiceContext.currentSessionId) {
-      AcpServiceContext.destroySession(AcpServiceContext.currentSessionId);
-    }
-  }
-
-  /**
-   * 检查是否在 ACP 模式下运行
-   */
-  isAcpMode(): boolean {
-    return AcpServiceContext.currentSessionId !== null;
-  }
-
-  /**
-   * 获取文件系统服务（当前会话）
-   */
-  getFileSystemService(sessionId?: string): FileSystemService {
-    if (sessionId !== undefined) {
-      return (
-        AcpServiceContext.sessions.get(sessionId)?.fileSystemService ??
-        new UnavailableFileSystemService()
-      );
-    }
-    const targetSessionId = sessionId ?? AcpServiceContext.currentSessionId;
-    if (targetSessionId) {
-      const services = AcpServiceContext.sessions.get(targetSessionId);
-      if (services) return services.fileSystemService;
-    }
-    return new LocalFileSystemService();
-  }
-
-  /**
-   * 获取终端服务（当前会话）
-   */
-  getTerminalService(sessionId?: string): TerminalService {
-    const targetSessionId = sessionId ?? AcpServiceContext.currentSessionId;
-    if (targetSessionId) {
-      const services = AcpServiceContext.sessions.get(targetSessionId);
-      if (services) return services.terminalService;
-      if (sessionId) return new UnavailableTerminalService();
-    }
-    return new LocalTerminalService();
-  }
-
-  /**
-   * 获取 ACP 连接（当前会话）
-   */
-  getConnection(): AgentSideConnection | null {
-    if (AcpServiceContext.currentSessionId) {
-      const services = AcpServiceContext.sessions.get(
-        AcpServiceContext.currentSessionId
-      );
-      if (services) return services.connection;
-    }
-    return null;
-  }
-
-  /**
-   * 获取当前会话 ID
-   */
-  getSessionId(): string | null {
-    return AcpServiceContext.currentSessionId;
-  }
-
-  /**
-   * 获取客户端能力（当前会话）
-   */
-  getClientCapabilities(): ClientCapabilities | null {
-    if (AcpServiceContext.currentSessionId) {
-      const services = AcpServiceContext.sessions.get(
-        AcpServiceContext.currentSessionId
-      );
-      if (services) return services.clientCapabilities;
-    }
-    return null;
-  }
-
-  /**
-   * 发送工具调用状态更新
-   */
-  async sendToolUpdate(
-    toolCallId: string,
-    status: ToolCallStatus,
-    title: string,
-    content?: ToolCallContent[],
-    kind?: ToolKind
-  ): Promise<void> {
-    const sessionId = AcpServiceContext.currentSessionId;
-    if (!sessionId) return;
-
-    const services = AcpServiceContext.sessions.get(sessionId);
-    if (!services) return;
-
-    if (!services.sendUpdate) return;
-    try {
-      await services.sendUpdate({
-        sessionUpdate: 'tool_call',
-        toolCallId,
-        status,
-        title,
-        content: content || [],
-        kind: kind || 'other',
-      });
-    } catch (error) {
-      logger.warn('[AcpServiceContext] Failed to send tool update:', error);
-    }
-  }
 }
 
 /**
  * 便捷函数：获取终端服务
  */
 export function getAcpFileSystemService(sessionId?: string): FileSystemService {
-  return AcpServiceContext.getInstance().getFileSystemService(sessionId);
+  return AcpServiceContext.getFileSystemService(sessionId);
 }
 
 export function getTerminalService(sessionId?: string): TerminalService {
-  return AcpServiceContext.getInstance().getTerminalService(sessionId);
+  return AcpServiceContext.getTerminalService(sessionId);
 }
 
 /**
@@ -1135,7 +1016,7 @@ export function getTerminalService(sessionId?: string): TerminalService {
 export function isAcpMode(sessionId?: string): boolean {
   return sessionId
     ? AcpServiceContext.getSessionServices(sessionId) !== null
-    : AcpServiceContext.getInstance().isAcpMode();
+    : AcpServiceContext.isAcpMode();
 }
 
 export function isAcpRemoteFileSystem(sessionId?: string): boolean {

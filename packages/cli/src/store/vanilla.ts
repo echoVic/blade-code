@@ -188,10 +188,6 @@ export const getMcpServers = () => getState().config.config?.mcpServers ?? {};
  * 获取 Thinking 模式是否启用
  */
 export const getThinkingModeEnabled = () => getState().app.reasoningEffort !== 'off';
-export const getReasoningEffort = () => getState().app.reasoningEffort;
-export const getServiceTier = () => getState().app.serviceTier;
-export const getResponseVerbosity = () => getState().app.responseVerbosity;
-export const getCommunicationStyle = () => getState().app.communicationStyle;
 
 // ==================== Config Actions（带持久化）====================
 
