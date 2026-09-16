@@ -8,6 +8,7 @@ import {
   MAX_SESSION_SURFACE_FROZEN_SNAPSHOT_BYTES,
   SessionSurfaceCursorRegistry,
   SessionSurfaceCursorRegistryError,
+  type SessionSurfaceCursorRegistryErrorCode,
 } from '../../../src/services/SessionSurfaceCursorRegistry.js';
 
 function createClock(start = 0) {
@@ -48,25 +49,65 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
+const ERROR_EXPECTATIONS = {
+  session_surface_cursor_invalid: {
+    retryable: false,
+    message: 'session surface cursor is invalid',
+  },
+  session_surface_snapshot_changed: {
+    retryable: false,
+    message: 'session surface snapshot changed',
+  },
+  session_surface_capacity: {
+    retryable: true,
+    message: 'session surface cursor capacity exceeded',
+  },
+  session_surface_unavailable: {
+    retryable: true,
+    message: 'session surface cursor registry is unavailable',
+  },
+} satisfies Record<
+  SessionSurfaceCursorRegistryErrorCode,
+  { retryable: boolean; message: string }
+>;
+
 function expectRegistryError(
   error: unknown,
-  expected: {
-    code:
-      | 'session_surface_cursor_invalid'
-      | 'session_surface_snapshot_changed'
-      | 'session_surface_capacity'
-      | 'session_surface_unavailable';
-    retryable: boolean;
-    message: string;
-  }
-) {
+  code: SessionSurfaceCursorRegistryErrorCode
+): SessionSurfaceCursorRegistryError {
   expect(error).toBeInstanceOf(SessionSurfaceCursorRegistryError);
   if (!(error instanceof SessionSurfaceCursorRegistryError)) {
     throw new Error('expected SessionSurfaceCursorRegistryError');
   }
-  expect(error.code).toBe(expected.code);
-  expect(error.retryable).toBe(expected.retryable);
-  expect(error.message).toBe(expected.message);
+  expect(error).toMatchObject({ code, ...ERROR_EXPECTATIONS[code] });
+  return error;
+}
+
+async function expectRegistryRejection(
+  promise: Promise<unknown>,
+  code: SessionSurfaceCursorRegistryErrorCode,
+  inspect?: (error: SessionSurfaceCursorRegistryError) => void
+): Promise<void> {
+  await expect(promise).rejects.toSatisfy((error: unknown) => {
+    const registryError = expectRegistryError(error, code);
+    inspect?.(registryError);
+    return true;
+  });
+}
+
+function expectRegistryThrow(
+  action: () => unknown,
+  code: SessionSurfaceCursorRegistryErrorCode,
+  inspect?: (error: SessionSurfaceCursorRegistryError) => void
+): void {
+  try {
+    action();
+  } catch (error) {
+    const registryError = expectRegistryError(error, code);
+    inspect?.(registryError);
+    return;
+  }
+  throw new Error(`expected ${code}`);
 }
 
 describe('SessionSurfaceCursorRegistry', () => {
@@ -140,63 +181,40 @@ describe('SessionSurfaceCursorRegistry', () => {
       request: { limit: 1 },
     });
 
-    const fixedMessage = 'session surface cursor is invalid';
-
-    await expect(
-      registry.redeemCatalogCursor({
-        token: 'not-a-session-surface-token',
-        scopeKey: 'scope-a',
-        epoch: 'epoch-1',
-        revision: 'revision-1',
-        request: { limit: 1 },
-        loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: fixedMessage,
-      });
-      return true;
-    });
-
-    await expect(
-      registry.redeemHistoryCursor({
-        token,
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        request: { limit: 1 },
-        loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: fixedMessage,
-      });
-      return true;
-    });
-
-    await expect(
-      registry.redeemCatalogCursor({
-        token: 'session-surface-catalog:missing',
-        scopeKey: 'scope-a',
-        epoch: 'epoch-1',
-        revision: 'revision-1',
-        request: { limit: 1 },
-        loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: fixedMessage,
-      });
-      return true;
-    });
+    const invalidRedemptions = [
+      () =>
+        registry.redeemCatalogCursor({
+          token: 'not-a-session-surface-token',
+          scopeKey: 'scope-a',
+          epoch: 'epoch-1',
+          revision: 'revision-1',
+          request: { limit: 1 },
+          loader: async () => ({ page: [] }),
+        }),
+      () =>
+        registry.redeemHistoryCursor({
+          token,
+          locatorDigest: 'locator-a',
+          transcriptFingerprint: 'fingerprint-a',
+          request: { limit: 1 },
+          loader: async () => ({ page: [] }),
+        }),
+      () =>
+        registry.redeemCatalogCursor({
+          token: 'session-surface-catalog:missing',
+          scopeKey: 'scope-a',
+          epoch: 'epoch-1',
+          revision: 'revision-1',
+          request: { limit: 1 },
+          loader: async () => ({ page: [] }),
+        }),
+    ];
+    for (const redeem of invalidRedemptions) {
+      await expectRegistryRejection(redeem(), 'session_surface_cursor_invalid');
+    }
 
     clock.advance(51);
-    await expect(
+    await expectRegistryRejection(
       registry.redeemCatalogCursor({
         token,
         scopeKey: 'scope-a',
@@ -204,15 +222,9 @@ describe('SessionSurfaceCursorRegistry', () => {
         revision: 'revision-1',
         request: { limit: 1 },
         loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: fixedMessage,
-      });
-      return true;
-    });
+      }),
+      'session_surface_cursor_invalid'
+    );
   });
 
   it('replays catalog pages idempotently, single-flights concurrent redemption, refreshes TTL on access, and passes stored catalog state to the loader', async () => {
@@ -372,14 +384,10 @@ describe('SessionSurfaceCursorRegistry', () => {
       page: ['this-cached-page-is-intentionally-too-large-for-the-budget'],
     });
 
-    await expect(Promise.all([first, second])).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_capacity',
-        retryable: true,
-        message: 'session surface cursor capacity exceeded',
-      });
-      return true;
-    });
+    await expectRegistryRejection(
+      Promise.all([first, second]),
+      'session_surface_capacity'
+    );
     expect(registry.stats().frozenSnapshotBytes).toBe(0);
 
     const recovered = await registry.redeemCatalogCursor({
@@ -505,77 +513,38 @@ describe('SessionSurfaceCursorRegistry', () => {
       request: { limit: 2 },
     });
 
-    await expect(
-      registry.redeemCatalogCursor({
-        token,
-        scopeKey: 'scope-b',
-        epoch: 'epoch-1',
-        revision: 'revision-1',
-        request: { limit: 2 },
-        loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
+    const mismatchCases = [
+      {
+        overrides: { scopeKey: 'scope-b' },
         code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      return true;
-    });
-
-    await expect(
-      registry.redeemCatalogCursor({
-        token,
-        scopeKey: 'scope-a',
-        epoch: 'epoch-2',
-        revision: 'revision-1',
-        request: { limit: 2 },
-        loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
+      },
+      {
+        overrides: { epoch: 'epoch-2' },
         code: 'session_surface_snapshot_changed',
-        retryable: false,
-        message: 'session surface snapshot changed',
-      });
-      return true;
-    });
-
-    await expect(
-      registry.redeemCatalogCursor({
-        token,
-        scopeKey: 'scope-a',
-        epoch: 'epoch-1',
-        revision: 'revision-2',
-        request: { limit: 2 },
-        loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
+      },
+      {
+        overrides: { revision: 'revision-2' },
         code: 'session_surface_snapshot_changed',
-        retryable: false,
-        message: 'session surface snapshot changed',
-      });
-      return true;
-    });
-
-    await expect(
-      registry.redeemCatalogCursor({
-        token,
-        scopeKey: 'scope-a',
-        epoch: 'epoch-1',
-        revision: 'revision-1',
-        request: { limit: 3 },
-        loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
+      },
+      {
+        overrides: { request: { limit: 3 } },
         code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      return true;
-    });
+      },
+    ] as const;
+    for (const { overrides, code } of mismatchCases) {
+      await expectRegistryRejection(
+        registry.redeemCatalogCursor({
+          token,
+          scopeKey: 'scope-a',
+          epoch: 'epoch-1',
+          revision: 'revision-1',
+          request: { limit: 2 },
+          loader: async () => ({ page: [] }),
+          ...overrides,
+        }),
+        code
+      );
+    }
   });
 
   it('binds history cursors to real snapshot entries and passes stored history state to the loader', async () => {
@@ -638,71 +607,42 @@ describe('SessionSurfaceCursorRegistry', () => {
       })
     ).resolves.toEqual({ items: ['h1', 'h2'] });
 
-    await expect(
+    await expectRegistryRejection(
       registry.assertSnapshotToken({
         token: snapshotToken,
         locatorDigest: 'locator-b',
         transcriptFingerprint: 'fingerprint-a',
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      return true;
-    });
+      }),
+      'session_surface_cursor_invalid'
+    );
 
-    await expect(
-      registry.redeemHistoryCursor({
-        token: historyToken,
-        locatorDigest: 'locator-b',
-        transcriptFingerprint: 'fingerprint-a',
-        request: { direction: 'forward', limit: 2 },
-        loader: async () => ({ items: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
+    const mismatchCases = [
+      {
+        overrides: { locatorDigest: 'locator-b' },
         code: 'session_surface_snapshot_changed',
-        retryable: false,
-        message: 'session surface snapshot changed',
-      });
-      return true;
-    });
-
-    await expect(
-      registry.redeemHistoryCursor({
-        token: historyToken,
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-b',
-        request: { direction: 'forward', limit: 2 },
-        loader: async () => ({ items: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
+      },
+      {
+        overrides: { transcriptFingerprint: 'fingerprint-b' },
         code: 'session_surface_snapshot_changed',
-        retryable: false,
-        message: 'session surface snapshot changed',
-      });
-      return true;
-    });
-
-    await expect(
-      registry.redeemHistoryCursor({
-        token: historyToken,
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        request: { direction: 'forward', limit: 1 },
-        loader: async () => ({ items: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
+      },
+      {
+        overrides: { request: { direction: 'forward', limit: 1 } },
         code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      return true;
-    });
+      },
+    ] as const;
+    for (const { overrides, code } of mismatchCases) {
+      await expectRegistryRejection(
+        registry.redeemHistoryCursor({
+          token: historyToken,
+          locatorDigest: 'locator-a',
+          transcriptFingerprint: 'fingerprint-a',
+          request: { direction: 'forward', limit: 2 },
+          loader: async () => ({ items: [] }),
+          ...overrides,
+        }),
+        code
+      );
+    }
 
     const noFrozenSnapshotToken = registry.issueSnapshotToken({
       chainId: 'chain-a',
@@ -798,33 +738,19 @@ describe('SessionSurfaceCursorRegistry', () => {
       input: unknown
     ) => Promise<unknown>;
 
-    expect(() =>
-      issueCatalogCursorUnsafe.call(registry, {
-        chainId: 'chain-a',
-        scopeKey: 'scope-a',
-        epoch: 'epoch-1',
-        revision: 'revision-1',
-        boundary: new Map([['after', 'message-1']]),
-        request: { limit: 1 },
-      })
-    ).toThrowError(SessionSurfaceCursorRegistryError);
-    try {
-      issueCatalogCursorUnsafe.call(registry, {
-        chainId: 'chain-a',
-        scopeKey: 'scope-a',
-        epoch: 'epoch-1',
-        revision: 'revision-1',
-        boundary: new Map([['after', 'message-1']]),
-        request: { limit: 1 },
-      });
-    } catch (error) {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      expect(String(error)).not.toContain('Map');
-    }
+    expectRegistryThrow(
+      () =>
+        issueCatalogCursorUnsafe.call(registry, {
+          chainId: 'chain-a',
+          scopeKey: 'scope-a',
+          epoch: 'epoch-1',
+          revision: 'revision-1',
+          boundary: new Map([['after', 'message-1']]),
+          request: { limit: 1 },
+        }),
+      'session_surface_cursor_invalid',
+      (error) => expect(String(error)).not.toContain('Map')
+    );
 
     const catalogToken = registry.issueCatalogCursor({
       chainId: 'chain-b',
@@ -837,7 +763,7 @@ describe('SessionSurfaceCursorRegistry', () => {
     const circularRequest: { self?: unknown } = {};
     circularRequest.self = circularRequest;
 
-    await expect(
+    await expectRegistryRejection(
       redeemCatalogCursorUnsafe.call(registry, {
         token: catalogToken,
         scopeKey: 'scope-a',
@@ -845,41 +771,25 @@ describe('SessionSurfaceCursorRegistry', () => {
         revision: 'revision-1',
         request: circularRequest,
         loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      expect(String(error)).not.toContain('self');
-      return true;
-    });
+      }),
+      'session_surface_cursor_invalid',
+      (error) => expect(String(error)).not.toContain('self')
+    );
 
-    expect(() =>
-      issueSnapshotTokenUnsafe.call(registry, {
-        chainId: 'chain-c',
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        frozenSnapshot: { count: 1n },
-      })
-    ).toThrowError(SessionSurfaceCursorRegistryError);
-    try {
-      issueSnapshotTokenUnsafe.call(registry, {
-        chainId: 'chain-c',
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        frozenSnapshot: { count: 1n },
-      });
-    } catch (error) {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      expect(String(error)).not.toContain('count');
-      expect(String(error)).not.toContain('1n');
-    }
+    expectRegistryThrow(
+      () =>
+        issueSnapshotTokenUnsafe.call(registry, {
+          chainId: 'chain-c',
+          locatorDigest: 'locator-a',
+          transcriptFingerprint: 'fingerprint-a',
+          frozenSnapshot: { count: 1n },
+        }),
+      'session_surface_cursor_invalid',
+      (error) => {
+        expect(String(error)).not.toContain('count');
+        expect(String(error)).not.toContain('1n');
+      }
+    );
 
     const snapshotToken = registry.issueSnapshotToken({
       chainId: 'chain-d',
@@ -896,23 +806,17 @@ describe('SessionSurfaceCursorRegistry', () => {
       request: { direction: 'forward', limit: 2 },
     });
 
-    await expect(
+    await expectRegistryRejection(
       redeemHistoryCursorUnsafe.call(registry, {
         token: historyToken,
         locatorDigest: 'locator-d',
         transcriptFingerprint: 'fingerprint-d',
         request: { direction: 'forward', limit: 2 },
         loader: async () => new Map([['items', ['h1']]]),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      expect(String(error)).not.toContain('Map');
-      return true;
-    });
+      }),
+      'session_surface_cursor_invalid',
+      (error) => expect(String(error)).not.toContain('Map')
+    );
 
     await expect(
       registry.redeemHistoryCursor({
@@ -951,32 +855,18 @@ describe('SessionSurfaceCursorRegistry', () => {
     const entryCountBeforeExpiredIssue = registry.stats().entryCount;
     clock.advance(11);
 
-    expect(() =>
-      registry.issueHistoryCursor({
-        chainId: 'chain-expired',
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        nextSequence: 9,
-        snapshotToken: expiringSnapshotToken,
-        request: { direction: 'forward' },
-      })
-    ).toThrowError(SessionSurfaceCursorRegistryError);
-    try {
-      registry.issueHistoryCursor({
-        chainId: 'chain-expired',
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        nextSequence: 9,
-        snapshotToken: expiringSnapshotToken,
-        request: { direction: 'forward' },
-      });
-    } catch (error) {
-      expectRegistryError(error, {
-        code: 'session_surface_snapshot_changed',
-        retryable: false,
-        message: 'session surface snapshot changed',
-      });
-    }
+    expectRegistryThrow(
+      () =>
+        registry.issueHistoryCursor({
+          chainId: 'chain-expired',
+          locatorDigest: 'locator-a',
+          transcriptFingerprint: 'fingerprint-a',
+          nextSequence: 9,
+          snapshotToken: expiringSnapshotToken,
+          request: { direction: 'forward' },
+        }),
+      'session_surface_snapshot_changed'
+    );
     expect(registry.stats().entryCount).toBe(entryCountBeforeExpiredIssue - 1);
 
     const wrongKindToken = registry.issueCatalogCursor({
@@ -989,62 +879,34 @@ describe('SessionSurfaceCursorRegistry', () => {
     });
     const entryCountBeforeWrongKindIssue = registry.stats().entryCount;
 
-    expect(() =>
-      registry.issueHistoryCursor({
-        chainId: 'chain-wrong-kind',
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        nextSequence: 3,
-        snapshotToken: wrongKindToken,
-        request: { direction: 'forward' },
-      })
-    ).toThrowError(SessionSurfaceCursorRegistryError);
-    try {
-      registry.issueHistoryCursor({
-        chainId: 'chain-wrong-kind',
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        nextSequence: 3,
-        snapshotToken: wrongKindToken,
-        request: { direction: 'forward' },
-      });
-    } catch (error) {
-      expectRegistryError(error, {
-        code: 'session_surface_snapshot_changed',
-        retryable: false,
-        message: 'session surface snapshot changed',
-      });
-    }
+    expectRegistryThrow(
+      () =>
+        registry.issueHistoryCursor({
+          chainId: 'chain-wrong-kind',
+          locatorDigest: 'locator-a',
+          transcriptFingerprint: 'fingerprint-a',
+          nextSequence: 3,
+          snapshotToken: wrongKindToken,
+          request: { direction: 'forward' },
+        }),
+      'session_surface_snapshot_changed'
+    );
     expect(registry.stats().entryCount).toBe(entryCountBeforeWrongKindIssue);
 
     const entryCountBeforeMissingIssue = registry.stats().entryCount;
 
-    expect(() =>
-      registry.issueHistoryCursor({
-        chainId: 'chain-missing',
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        nextSequence: 4,
-        snapshotToken: 'session-surface-snapshot:missing',
-        request: { direction: 'forward' },
-      })
-    ).toThrowError(SessionSurfaceCursorRegistryError);
-    try {
-      registry.issueHistoryCursor({
-        chainId: 'chain-missing',
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        nextSequence: 4,
-        snapshotToken: 'session-surface-snapshot:missing',
-        request: { direction: 'forward' },
-      });
-    } catch (error) {
-      expectRegistryError(error, {
-        code: 'session_surface_snapshot_changed',
-        retryable: false,
-        message: 'session surface snapshot changed',
-      });
-    }
+    expectRegistryThrow(
+      () =>
+        registry.issueHistoryCursor({
+          chainId: 'chain-missing',
+          locatorDigest: 'locator-a',
+          transcriptFingerprint: 'fingerprint-a',
+          nextSequence: 4,
+          snapshotToken: 'session-surface-snapshot:missing',
+          request: { direction: 'forward' },
+        }),
+      'session_surface_snapshot_changed'
+    );
     expect(registry.stats().entryCount).toBe(entryCountBeforeMissingIssue);
 
     const mismatchedSnapshotToken = registry.issueSnapshotToken({
@@ -1055,32 +917,18 @@ describe('SessionSurfaceCursorRegistry', () => {
     });
     const entryCountBeforeMismatchIssue = registry.stats().entryCount;
 
-    expect(() =>
-      registry.issueHistoryCursor({
-        chainId: 'chain-history',
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        nextSequence: 5,
-        snapshotToken: mismatchedSnapshotToken,
-        request: { direction: 'forward' },
-      })
-    ).toThrowError(SessionSurfaceCursorRegistryError);
-    try {
-      registry.issueHistoryCursor({
-        chainId: 'chain-history',
-        locatorDigest: 'locator-a',
-        transcriptFingerprint: 'fingerprint-a',
-        nextSequence: 5,
-        snapshotToken: mismatchedSnapshotToken,
-        request: { direction: 'forward' },
-      });
-    } catch (error) {
-      expectRegistryError(error, {
-        code: 'session_surface_snapshot_changed',
-        retryable: false,
-        message: 'session surface snapshot changed',
-      });
-    }
+    expectRegistryThrow(
+      () =>
+        registry.issueHistoryCursor({
+          chainId: 'chain-history',
+          locatorDigest: 'locator-a',
+          transcriptFingerprint: 'fingerprint-a',
+          nextSequence: 5,
+          snapshotToken: mismatchedSnapshotToken,
+          request: { direction: 'forward' },
+        }),
+      'session_surface_snapshot_changed'
+    );
     expect(registry.stats().entryCount).toBe(entryCountBeforeMismatchIssue);
   });
 
@@ -1220,42 +1068,22 @@ describe('SessionSurfaceCursorRegistry', () => {
         revision: 'revision-1',
         request: { limit: 1 },
         loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      return true;
-    });
+      }),
+      'session_surface_cursor_invalid'
+    );
 
-    expect(() =>
-      registry.issueCatalogCursor({
-        chainId: 'chain-d',
-        scopeKey: 'scope-d',
-        epoch: 'epoch-1',
-        revision: 'revision-1',
-        boundary: null,
-        request: { limit: 1 },
-      })
-    ).toThrowError(SessionSurfaceCursorRegistryError);
-    try {
-      registry.issueCatalogCursor({
-        chainId: 'chain-d',
-        scopeKey: 'scope-d',
-        epoch: 'epoch-1',
-        revision: 'revision-1',
-        boundary: null,
-        request: { limit: 1 },
-      });
-    } catch (error) {
-      expectRegistryError(error, {
-        code: 'session_surface_capacity',
-        retryable: true,
-        message: 'session surface cursor capacity exceeded',
-      });
-    }
+    expectRegistryThrow(
+      () =>
+        registry.issueCatalogCursor({
+          chainId: 'chain-d',
+          scopeKey: 'scope-d',
+          epoch: 'epoch-1',
+          revision: 'revision-1',
+          boundary: null,
+          request: { limit: 1 },
+        }),
+      'session_surface_capacity'
+    );
   });
 
   it('reclaims frozen snapshot bytes from completed chains before failing capacity', async () => {
@@ -1287,20 +1115,14 @@ describe('SessionSurfaceCursorRegistry', () => {
       Buffer.byteLength(JSON.stringify({ values: [2] }), 'utf8')
     );
 
-    await expect(
+    await expectRegistryRejection(
       registry.assertSnapshotToken({
         token: firstToken,
         locatorDigest: 'locator-a',
         transcriptFingerprint: 'fingerprint-a',
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      return true;
-    });
+      }),
+      'session_surface_cursor_invalid'
+    );
 
     expect(() =>
       registry.issueSnapshotToken({
@@ -1358,29 +1180,17 @@ describe('SessionSurfaceCursorRegistry', () => {
       this: SessionSurfaceCursorRegistry,
       input: unknown
     ) => string;
-    expect(() =>
-      issueSnapshotTokenUnsafe.call(registry, {
-        chainId: 'chain-b',
-        locatorDigest: 'locator-b',
-        transcriptFingerprint: 'fingerprint-b',
-        frozenSnapshot: circular,
-      })
-    ).toThrowError(SessionSurfaceCursorRegistryError);
-    try {
-      issueSnapshotTokenUnsafe.call(registry, {
-        chainId: 'chain-b',
-        locatorDigest: 'locator-b',
-        transcriptFingerprint: 'fingerprint-b',
-        frozenSnapshot: circular,
-      });
-    } catch (error) {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      expect(String(error)).not.toContain('circular');
-    }
+    expectRegistryThrow(
+      () =>
+        issueSnapshotTokenUnsafe.call(registry, {
+          chainId: 'chain-b',
+          locatorDigest: 'locator-b',
+          transcriptFingerprint: 'fingerprint-b',
+          frozenSnapshot: circular,
+        }),
+      'session_surface_cursor_invalid',
+      (error) => expect(String(error)).not.toContain('circular')
+    );
   });
 
   it('retries token collisions finitely and reports capacity when the source never yields a unique token', async () => {
@@ -1450,7 +1260,7 @@ describe('SessionSurfaceCursorRegistry', () => {
     const closing = registry.close('/private/state/closing-reason');
 
     await aborted.promise;
-    await expect(
+    await expectRegistryRejection(
       registry.redeemCatalogCursor({
         token,
         scopeKey: 'scope-a',
@@ -1458,25 +1268,13 @@ describe('SessionSurfaceCursorRegistry', () => {
         revision: 'revision-1',
         request: { limit: 1 },
         loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_unavailable',
-        retryable: true,
-        message: 'session surface cursor registry is unavailable',
-      });
-      return true;
-    });
+      }),
+      'session_surface_unavailable'
+    );
 
-    await expect(redemption).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_unavailable',
-        retryable: true,
-        message: 'session surface cursor registry is unavailable',
-      });
-      expect(String(error)).not.toContain('/private/state/closing-reason');
-      return true;
-    });
+    await expectRegistryRejection(redemption, 'session_surface_unavailable', (error) =>
+      expect(String(error)).not.toContain('/private/state/closing-reason')
+    );
     await expect(closing).resolves.toBeUndefined();
     await expect(registry.close('ignored')).resolves.toBeUndefined();
     expect(observedAbortReason).not.toContain('/private/state/closing-reason');
@@ -1503,7 +1301,7 @@ describe('SessionSurfaceCursorRegistry', () => {
     });
     const second = new SessionSurfaceCursorRegistry();
 
-    await expect(
+    await expectRegistryRejection(
       second.redeemCatalogCursor({
         token,
         scopeKey: 'scope-a',
@@ -1511,14 +1309,8 @@ describe('SessionSurfaceCursorRegistry', () => {
         revision: 'revision-1',
         request: { limit: 1 },
         loader: async () => ({ page: [] }),
-      })
-    ).rejects.toSatisfy((error: unknown) => {
-      expectRegistryError(error, {
-        code: 'session_surface_cursor_invalid',
-        retryable: false,
-        message: 'session surface cursor is invalid',
-      });
-      return true;
-    });
+      }),
+      'session_surface_cursor_invalid'
+    );
   });
 });

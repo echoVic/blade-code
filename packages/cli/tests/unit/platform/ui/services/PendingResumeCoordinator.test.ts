@@ -7,6 +7,7 @@ import {
 import { taskFailureForCode } from '../../../../../src/context/taskFailure.js';
 import {
   PendingResumeCoordinator,
+  type PendingResumeCoordinatorOptions,
   type PendingResumeRunResult,
 } from '../../../../../src/ui/services/PendingResumeCoordinator.js';
 
@@ -65,6 +66,33 @@ async function settleAsyncWork(): Promise<void> {
   await Promise.resolve();
 }
 
+function createCoordinatorHarness(
+  options: Partial<PendingResumeCoordinatorOptions> = {}
+) {
+  const callbacks: Array<() => void> = [];
+  const terminalFailures = vi.fn();
+  const run = options.run ?? vi.fn(async () => completed());
+  const coordinator = new PendingResumeCoordinator({
+    ...options,
+    canRun: options.canRun ?? (() => true),
+    run,
+    onTerminalFailure: options.onTerminalFailure ?? terminalFailures,
+    scheduleMicrotask:
+      options.scheduleMicrotask ?? ((callback) => callbacks.push(callback)),
+  });
+  return { callbacks, coordinator, run, terminalFailures };
+}
+
+function requestRun(
+  harness: Pick<
+    ReturnType<typeof createCoordinatorHarness>,
+    'callbacks' | 'coordinator'
+  >
+): void {
+  harness.coordinator.request();
+  runNextMicrotask(harness.callbacks);
+}
+
 describe('PendingResumeCoordinator', () => {
   beforeEach(() => {
     vi.useFakeTimers({ now: 10_000 });
@@ -76,14 +104,9 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('coalesces requests while a run is scheduled or in flight', async () => {
-    const callbacks: Array<() => void> = [];
     const completion = deferred<PendingResumeRunResult>();
     const run = vi.fn(() => completion.promise);
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
-      run,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
-    });
+    const { callbacks, coordinator } = createCoordinatorHarness({ run });
 
     coordinator.request();
     coordinator.request();
@@ -103,13 +126,11 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('retains a request that cannot start until the owner becomes idle', () => {
-    const callbacks: Array<() => void> = [];
     let idle = false;
     const run = vi.fn(async () => completed());
-    const coordinator = new PendingResumeCoordinator({
+    const { callbacks, coordinator } = createCoordinatorHarness({
       canRun: () => idle,
       run,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
     coordinator.request();
@@ -125,16 +146,10 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('waits for a new idle edge instead of self-scheduling deferred work', async () => {
-    const callbacks: Array<() => void> = [];
     const run = vi.fn(async () => deferredResult());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
-      run,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
-    });
+    const { callbacks, coordinator } = createCoordinatorHarness({ run });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
 
     expect(run).toHaveBeenCalledOnce();
@@ -147,20 +162,14 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('retains exactly one idle edge delivered during an in-flight deferred run', async () => {
-    const callbacks: Array<() => void> = [];
     const firstRun = deferred<PendingResumeRunResult>();
     const run = vi
       .fn<() => Promise<PendingResumeRunResult>>()
       .mockImplementationOnce(() => firstRun.promise)
       .mockResolvedValueOnce(completed());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
-      run,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
-    });
+    const { callbacks, coordinator } = createCoordinatorHarness({ run });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     coordinator.notifyIdle();
     coordinator.notifyIdle();
     firstRun.resolve(deferredResult());
@@ -175,7 +184,6 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('turns a rejected run into one canonical terminal failure and starts a fresh episode', async () => {
-    const callbacks: Array<() => void> = [];
     const terminalFailures = vi.fn(() => {
       throw new Error('opaque terminal UI projection failure');
     });
@@ -187,16 +195,13 @@ describe('PendingResumeCoordinator', () => {
         })
       )
       .mockResolvedValueOnce(completed());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator } = createCoordinatorHarness({
       run,
       sessionIdentity: 'rejected-run-session',
       onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
 
     expect(terminalFailures).toHaveBeenCalledOnce();
@@ -219,7 +224,6 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('isolates a throwing terminal callback at the deadline and starts a fresh episode', async () => {
-    const callbacks: Array<() => void> = [];
     const firstRun = deferred<PendingResumeRunResult>();
     const run = vi
       .fn<() => Promise<PendingResumeRunResult>>()
@@ -228,16 +232,13 @@ describe('PendingResumeCoordinator', () => {
     const terminalFailures = vi.fn(() => {
       throw new Error('opaque terminal UI projection failure');
     });
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator } = createCoordinatorHarness({
       run,
       sessionIdentity: 'throwing-terminal-deadline-session',
       onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
 
     expect(terminalFailures).toHaveBeenCalledOnce();
@@ -258,8 +259,6 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('fails closed when result and evidence report different failures', async () => {
-    const callbacks: Array<() => void> = [];
-    const terminalFailures = vi.fn();
     const taskFailure = taskFailureForCode('authentication');
     const run = vi.fn(
       async (): Promise<PendingResumeRunResult> => ({
@@ -275,16 +274,12 @@ describe('PendingResumeCoordinator', () => {
         },
       })
     );
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator, terminalFailures } = createCoordinatorHarness({
       run,
       sessionIdentity: 'contradictory-failure-session',
-      onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
 
     expect(terminalFailures).toHaveBeenCalledOnce();
@@ -298,8 +293,6 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('fails closed when result and evidence capacity resources differ', async () => {
-    const callbacks: Array<() => void> = [];
-    const terminalFailures = vi.fn();
     const taskFailure = {
       ...taskFailureForCode('capacity'),
       resource: 'pending_count' as const,
@@ -321,16 +314,12 @@ describe('PendingResumeCoordinator', () => {
         },
       })
     );
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator, terminalFailures } = createCoordinatorHarness({
       run,
       sessionIdentity: 'contradictory-resource-session',
-      onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
 
     expect(terminalFailures).toHaveBeenCalledWith({
@@ -343,13 +332,10 @@ describe('PendingResumeCoordinator', () => {
 
   it('clears a scheduled token when the microtask scheduler throws', async () => {
     const callbacks: Array<() => void> = [];
-    const terminalFailures = vi.fn();
     let schedulingCalls = 0;
     const run = vi.fn(async () => completed());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { coordinator, terminalFailures } = createCoordinatorHarness({
       run,
-      onTerminalFailure: terminalFailures,
       scheduleMicrotask: (callback) => {
         schedulingCalls++;
         if (schedulingCalls === 1) {
@@ -378,15 +364,10 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('clears a partial episode when deadline timer creation throws', async () => {
-    const callbacks: Array<() => void> = [];
-    const terminalFailures = vi.fn();
     let timerCalls = 0;
     const run = vi.fn(async () => completed());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator, terminalFailures } = createCoordinatorHarness({
       run,
-      onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
       setTimer: (callback, delayMs) => {
         timerCalls++;
         if (timerCalls === 1) {
@@ -396,8 +377,7 @@ describe('PendingResumeCoordinator', () => {
       },
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
 
     expect(run).not.toHaveBeenCalled();
@@ -409,8 +389,7 @@ describe('PendingResumeCoordinator', () => {
     });
     expect(vi.getTimerCount()).toBe(0);
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
     expect(run).toHaveBeenCalledOnce();
     expect(terminalFailures).toHaveBeenCalledOnce();
@@ -418,19 +397,14 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('clears deadline and backoff state when retry timer creation throws', async () => {
-    const callbacks: Array<() => void> = [];
-    const terminalFailures = vi.fn();
     let timerCalls = 0;
     const run = vi
       .fn<() => Promise<PendingResumeRunResult>>()
       .mockResolvedValueOnce(replaySafeFailure())
       .mockResolvedValueOnce(completed());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator, terminalFailures } = createCoordinatorHarness({
       run,
       sessionIdentity: 'retry-timer-failure-session',
-      onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
       setTimer: (callback, delayMs) => {
         timerCalls++;
         if (timerCalls === 2) {
@@ -440,8 +414,7 @@ describe('PendingResumeCoordinator', () => {
       },
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
 
     expect(run).toHaveBeenCalledOnce();
@@ -453,8 +426,7 @@ describe('PendingResumeCoordinator', () => {
     });
     expect(vi.getTimerCount()).toBe(0);
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
     expect(run).toHaveBeenCalledTimes(2);
     expect(terminalFailures).toHaveBeenCalledOnce();
@@ -464,20 +436,16 @@ describe('PendingResumeCoordinator', () => {
   it('waits for the exact shared-policy delay before retrying', async () => {
     const sessionIdentity = JSON.stringify(['/workspace', 'session']);
     const retryDelayMs = stablePendingResumeRetryDelay(sessionIdentity, 1);
-    const callbacks: Array<() => void> = [];
     const run = vi
       .fn<() => Promise<PendingResumeRunResult>>()
       .mockResolvedValueOnce(replaySafeFailure())
       .mockResolvedValueOnce(completed());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator } = createCoordinatorHarness({
       run,
       sessionIdentity,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
 
     await vi.advanceTimersByTimeAsync(retryDelayMs - 1);
@@ -495,25 +463,21 @@ describe('PendingResumeCoordinator', () => {
   it('keeps one backoff timer and one episode across repeated wakeups', async () => {
     const sessionIdentity = 'stable-session';
     const retryDelayMs = stablePendingResumeRetryDelay(sessionIdentity, 1);
-    const callbacks: Array<() => void> = [];
     const timerDelays: number[] = [];
     const run = vi
       .fn<() => Promise<PendingResumeRunResult>>()
       .mockResolvedValueOnce(replaySafeFailure())
       .mockResolvedValueOnce(completed());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator } = createCoordinatorHarness({
       run,
       sessionIdentity,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
       setTimer: (callback, delayMs) => {
         timerDelays.push(delayMs);
         return setTimeout(callback, delayMs);
       },
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
     expect(timerDelays).toEqual([PENDING_RESUME_RECOVERY_BUDGET_MS, retryDelayMs]);
 
@@ -534,21 +498,18 @@ describe('PendingResumeCoordinator', () => {
   it('waits for an idle edge when the retry timer expires while busy', async () => {
     const sessionIdentity = 'busy-session';
     const retryDelayMs = stablePendingResumeRetryDelay(sessionIdentity, 1);
-    const callbacks: Array<() => void> = [];
     let idle = true;
     const run = vi
       .fn<() => Promise<PendingResumeRunResult>>()
       .mockResolvedValueOnce(replaySafeFailure())
       .mockResolvedValueOnce(completed());
-    const coordinator = new PendingResumeCoordinator({
+    const { callbacks, coordinator } = createCoordinatorHarness({
       canRun: () => idle,
       run,
       sessionIdentity,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
 
     idle = false;
@@ -569,15 +530,10 @@ describe('PendingResumeCoordinator', () => {
 
   it('terminates exactly once after four replay-safe failures', async () => {
     const sessionIdentity = 'exhausted-session';
-    const callbacks: Array<() => void> = [];
-    const terminalFailures = vi.fn();
     const run = vi.fn(async () => replaySafeFailure());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator, terminalFailures } = createCoordinatorHarness({
       run,
       sessionIdentity,
-      onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
     coordinator.request();
@@ -606,29 +562,23 @@ describe('PendingResumeCoordinator', () => {
   it('does not install a retry timer when the remaining deadline is insufficient', async () => {
     const sessionIdentity = 'budget-session';
     const retryDelayMs = stablePendingResumeRetryDelay(sessionIdentity, 1);
-    const callbacks: Array<() => void> = [];
     const timerDelays: number[] = [];
-    const terminalFailures = vi.fn();
     let currentTime = 1_000;
     const run = vi.fn(async () => {
       currentTime += PENDING_RESUME_RECOVERY_BUDGET_MS - retryDelayMs + 1;
       return replaySafeFailure();
     });
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator, terminalFailures } = createCoordinatorHarness({
       run,
       sessionIdentity,
-      onTerminalFailure: terminalFailures,
       now: () => currentTime,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
       setTimer: (callback, delayMs) => {
         timerDelays.push(delayMs);
         return setTimeout(callback, delayMs);
       },
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
 
     expect(timerDelays).toEqual([PENDING_RESUME_RECOVERY_BUDGET_MS]);
@@ -643,7 +593,6 @@ describe('PendingResumeCoordinator', () => {
   it.each(['resolve', 'reject'] as const)(
     'waits for timed-out attempt cleanup before a new wake when the old run will %s',
     async (outcome) => {
-      const callbacks: Array<() => void> = [];
       let finish!: () => void;
       const first = new Promise<PendingResumeRunResult>((resolve, reject) => {
         finish = () =>
@@ -657,17 +606,16 @@ describe('PendingResumeCoordinator', () => {
         signals.push(signal);
         return signals.length === 1 ? first : second.promise;
       });
-      const failures = vi.fn();
-      const coordinator = new PendingResumeCoordinator({
-        canRun: () => true,
+      const {
+        callbacks,
+        coordinator,
+        terminalFailures: failures,
+      } = createCoordinatorHarness({
         run,
         sessionIdentity: 'cleanup-before-new-episode',
-        onTerminalFailure: failures,
-        scheduleMicrotask: (callback) => callbacks.push(callback),
       });
       try {
-        coordinator.request();
-        runNextMicrotask(callbacks);
+        requestRun({ callbacks, coordinator });
         await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
         expect(signals[0]?.aborted).toBe(true);
         expect(failures).toHaveBeenCalledOnce();
@@ -697,19 +645,17 @@ describe('PendingResumeCoordinator', () => {
   );
 
   it('does not restart an exhausted attempt without a new wake', async () => {
-    const callbacks: Array<() => void> = [];
     const first = deferred<PendingResumeRunResult>();
     const run = vi.fn(() => first.promise);
-    const failures = vi.fn();
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const {
+      callbacks,
+      coordinator,
+      terminalFailures: failures,
+    } = createCoordinatorHarness({
       run,
-      onTerminalFailure: failures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
     try {
-      coordinator.request();
-      runNextMicrotask(callbacks);
+      requestRun({ callbacks, coordinator });
       await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
       coordinator.notifyIdle();
       first.resolve(replaySafeFailure());
@@ -725,18 +671,16 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('discards a retained wake when disposed during exhausted attempt cleanup', async () => {
-    const callbacks: Array<() => void> = [];
     const first = deferred<PendingResumeRunResult>();
     const run = vi.fn(() => first.promise);
-    const failures = vi.fn();
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const {
+      callbacks,
+      coordinator,
+      terminalFailures: failures,
+    } = createCoordinatorHarness({
       run,
-      onTerminalFailure: failures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
     coordinator.request();
     coordinator.dispose();
@@ -751,21 +695,18 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('waits for the foreground owner after exhausted attempt cleanup releases', async () => {
-    const callbacks: Array<() => void> = [];
     const first = deferred<PendingResumeRunResult>();
     let idle = true;
     const run = vi
       .fn<() => Promise<PendingResumeRunResult>>()
       .mockReturnValueOnce(first.promise)
       .mockResolvedValueOnce(completed());
-    const coordinator = new PendingResumeCoordinator({
+    const { callbacks, coordinator } = createCoordinatorHarness({
       canRun: () => idle,
       run,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
     try {
-      coordinator.request();
-      runNextMicrotask(callbacks);
+      requestRun({ callbacks, coordinator });
       await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
       coordinator.request();
       idle = false;
@@ -787,21 +728,17 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('retains a wake requested synchronously by the deadline callback until cleanup', async () => {
-    const callbacks: Array<() => void> = [];
     const first = deferred<PendingResumeRunResult>();
     const run = vi
       .fn<() => Promise<PendingResumeRunResult>>()
       .mockReturnValueOnce(first.promise)
       .mockResolvedValueOnce(completed());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator } = createCoordinatorHarness({
       run,
       onTerminalFailure: () => coordinator.request(),
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
     try {
-      coordinator.request();
-      runNextMicrotask(callbacks);
+      requestRun({ callbacks, coordinator });
       await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
       expect(callbacks).toHaveLength(0);
       await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
@@ -820,7 +757,6 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('aborts at the absolute deadline and ignores the late result by attempt token', async () => {
-    const callbacks: Array<() => void> = [];
     const firstRun = deferred<PendingResumeRunResult>();
     const secondRun = deferred<PendingResumeRunResult>();
     const signals: AbortSignal[] = [];
@@ -829,16 +765,13 @@ describe('PendingResumeCoordinator', () => {
       signals.push(signal);
       return signals.length === 1 ? firstRun.promise : secondRun.promise;
     });
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator } = createCoordinatorHarness({
       run,
       sessionIdentity: 'deadline-session',
       onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await vi.advanceTimersByTimeAsync(PENDING_RESUME_RECOVERY_BUDGET_MS);
 
     expect(signals[0]?.aborted).toBe(true);
@@ -866,24 +799,18 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('clears backoff and deadline timers and makes their callbacks inert on dispose', async () => {
-    const callbacks: Array<() => void> = [];
     const timerCallbacks: Array<() => void> = [];
-    const terminalFailures = vi.fn();
     const run = vi.fn(async () => replaySafeFailure());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator, terminalFailures } = createCoordinatorHarness({
       run,
       sessionIdentity: 'disposed-session',
-      onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
       setTimer: (callback, delayMs) => {
         timerCallbacks.push(callback);
         return setTimeout(callback, delayMs);
       },
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     await settleAsyncWork();
     expect(timerCallbacks).toHaveLength(2);
 
@@ -898,22 +825,16 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('aborts an in-flight run on dispose and ignores its late completion', async () => {
-    const callbacks: Array<() => void> = [];
     const completion = deferred<PendingResumeRunResult>();
     let runSignal: AbortSignal | undefined;
-    const terminalFailures = vi.fn();
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator, terminalFailures } = createCoordinatorHarness({
       run: (signal) => {
         runSignal = signal;
         return completion.promise;
       },
-      onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     expect(runSignal?.aborted).toBe(false);
 
     coordinator.dispose();
@@ -927,23 +848,17 @@ describe('PendingResumeCoordinator', () => {
   });
 
   it('starts a fresh episode for a wake received during a successful run', async () => {
-    const callbacks: Array<() => void> = [];
     const firstRun = deferred<PendingResumeRunResult>();
-    const terminalFailures = vi.fn();
     const run = vi
       .fn<() => Promise<PendingResumeRunResult>>()
       .mockImplementationOnce(() => firstRun.promise)
       .mockResolvedValueOnce(terminalFailure());
-    const coordinator = new PendingResumeCoordinator({
-      canRun: () => true,
+    const { callbacks, coordinator, terminalFailures } = createCoordinatorHarness({
       run,
       sessionIdentity: 'new-episode-session',
-      onTerminalFailure: terminalFailures,
-      scheduleMicrotask: (callback) => callbacks.push(callback),
     });
 
-    coordinator.request();
-    runNextMicrotask(callbacks);
+    requestRun({ callbacks, coordinator });
     coordinator.request();
     firstRun.resolve(completed());
     await settleAsyncWork();
@@ -962,19 +877,13 @@ describe('PendingResumeCoordinator', () => {
   it.each(['goal', 'preflight'] as const)(
     'fails %s work once without entering pending-input retry policy',
     async (workKind) => {
-      const callbacks: Array<() => void> = [];
-      const terminalFailures = vi.fn();
       const run = vi.fn(async () => terminalFailure(workKind));
-      const coordinator = new PendingResumeCoordinator({
-        canRun: () => true,
+      const { callbacks, coordinator, terminalFailures } = createCoordinatorHarness({
         run,
         sessionIdentity: 'non-pending-session',
-        onTerminalFailure: terminalFailures,
-        scheduleMicrotask: (callback) => callbacks.push(callback),
       });
 
-      coordinator.request();
-      runNextMicrotask(callbacks);
+      requestRun({ callbacks, coordinator });
       await settleAsyncWork();
 
       expect(run).toHaveBeenCalledOnce();
