@@ -1,5 +1,4 @@
 import { stripVTControlCharacters } from 'node:util';
-import { spawn } from 'bun-pty';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
@@ -12,6 +11,7 @@ import {
   TUI_COMPOSER_MARKER,
   writeBracketedPaste,
 } from './ptyInput.js';
+import { createTuiPtyHarness } from './tuiPtyHarness.js';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -89,11 +89,10 @@ async function main(): Promise<void> {
   const secret = process.env.BLADE_ROOT_RESUME_PTY_SECRET ?? '';
   const childEnv = createTuiPtyEnvironment();
   childEnv.BLADE_VERSION = '999.0.0';
-  const terminal = spawn(
-    '/usr/bin/env',
-    [
-      'node',
-      cliEntry,
+  const pty = createTuiPtyHarness({
+    cliEntry,
+    workspace,
+    args: [
       '--trust-workspace',
       '--permission-mode',
       'yolo',
@@ -102,25 +101,15 @@ async function main(): Promise<void> {
       '--resume',
       sessionId,
     ],
-    {
-      name: 'xterm-256color',
-      cwd: workspace,
-      cols: 120,
-      rows: 40,
-      env: childEnv,
-    }
-  );
+    env: childEnv,
+    signal: (terminal, signal) =>
+      signalTerminalTree(terminal.pid, signal, () => terminal.kill(signal)),
+  });
+  const { terminal } = pty;
   let output = '';
   let plainOutput = '';
   let sawAttention = false;
   let sawExpected = false;
-  let exited = false;
-  const exitPromise = new Promise<void>((resolve) => {
-    terminal.onExit(() => {
-      exited = true;
-      resolve();
-    });
-  });
   terminal.onData((chunk) => {
     output = appendBoundedPtyEvidence(output, chunk);
     plainOutput = appendBoundedPtyEvidence(
@@ -185,21 +174,7 @@ async function main(): Promise<void> {
     );
     process.exitCode = 1;
   } finally {
-    terminal.write('\u0004');
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 500)),
-    ]);
-    if (!exited) {
-      signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
-    }
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-    ]);
-    if (!exited) {
-      signalTerminalTree(terminal.pid, 'SIGKILL', () => terminal.kill('SIGKILL'));
-    }
+    await pty.close();
   }
 }
 

@@ -1,4 +1,3 @@
-import { spawn } from 'bun-pty';
 import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
@@ -6,6 +5,7 @@ import {
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
+import { createTuiPtyHarness } from './tuiPtyHarness.js';
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -23,11 +23,10 @@ async function main(): Promise<void> {
   const sessionId = required('BLADE_BOUNDED_PTY_SESSION_ID');
   const secret = process.env.BLADE_BOUNDED_PTY_SECRET ?? '';
   const handshake = createTuiPtyComposerReadyHandshake();
-  const terminal = spawn(
-    '/usr/bin/env',
-    [
-      'node',
-      cliEntry,
+  const pty = createTuiPtyHarness({
+    cliEntry,
+    workspace,
+    args: [
       '--trust-workspace',
       '--permission-mode',
       'yolo',
@@ -36,22 +35,10 @@ async function main(): Promise<void> {
       '--session-id',
       sessionId,
     ],
-    {
-      name: 'xterm-256color',
-      cwd: workspace,
-      cols: 120,
-      rows: 40,
-      env: handshake.env,
-    }
-  );
-  let output = '';
-  let exited = false;
-  const exitPromise = new Promise<void>((resolve) => {
-    terminal.onExit(() => {
-      exited = true;
-      resolve();
-    });
+    env: handshake.env,
   });
+  const { terminal } = pty;
+  let output = '';
   let readerPaused = false;
   let pauseInjected = false;
   let receivedAfterResume = false;
@@ -137,17 +124,7 @@ async function main(): Promise<void> {
     );
     process.exitCode = 1;
   } finally {
-    terminal.write('\u0004');
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 500)),
-    ]);
-    if (!exited) terminal.kill('SIGTERM');
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-    ]);
-    if (!exited) terminal.kill('SIGKILL');
+    await pty.close();
   }
 }
 

@@ -52,6 +52,17 @@ const promptInputRunners = [
   'tuiPtyRunner.ts',
 ] as const satisfies readonly (typeof runnerInventory)[number][];
 
+const sharedHarnessRunners = [
+  'backgroundSubagentCompletionPtyRunner.ts',
+  'browserToolPtyRunner.ts',
+  'foregroundBoundedOutputPtyRunner.ts',
+  'goalFinalizationPtyRunner.ts',
+  'promptCacheStatusPtyRunner.ts',
+  'rootTurnAutoResumePtyRunner.ts',
+  'subagentResultAdoptionPtyRunner.ts',
+  'weightedProviderAdmissionPtyRunner.ts',
+] as const satisfies readonly (typeof runnerInventory)[number][];
+
 function readRunner(fileName: (typeof runnerInventory)[number]): string {
   return readFileSync(path.join(supportDir, fileName), 'utf8');
 }
@@ -141,6 +152,19 @@ describe('raw PTY marker latching source contract', () => {
       ).toBe(true);
     }
   );
+
+  it('centralizes the standard PTY child lifecycle', () => {
+    const source = readFileSync(path.join(supportDir, 'tuiPtyHarness.ts'), 'utf8');
+
+    expect(source).toContain("spawn('/usr/bin/env', ['node', options.cliEntry");
+    expect(source).toContain("terminal.write('\\u0004')");
+    expect(source).toContain("signal('SIGTERM')");
+    expect(source).toContain("signal('SIGKILL')");
+  });
+
+  it.each(sharedHarnessRunners)('%s uses the shared PTY harness', (fileName) => {
+    expect(readRunner(fileName)).toContain('createTuiPtyHarness');
+  });
 
   it('latches Goal execution-host failure states across raw PTY redraws', () => {
     const source = readRunner('goalExecutionHostFailurePtyRunner.ts');

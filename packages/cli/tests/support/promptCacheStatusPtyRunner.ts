@@ -1,8 +1,8 @@
 import { stripVTControlCharacters } from 'node:util';
-import { spawn } from 'bun-pty';
 import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import { latchPtyMarker } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyEnvironment } from './ptyInput.js';
+import { createTuiPtyHarness } from './tuiPtyHarness.js';
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -15,11 +15,10 @@ async function main(): Promise<void> {
   const workspace = required('BLADE_CACHE_PTY_WORKSPACE');
   const sessionId = required('BLADE_CACHE_PTY_SESSION_ID');
   const childEnv = createTuiPtyEnvironment();
-  const terminal = spawn(
-    '/usr/bin/env',
-    [
-      'node',
-      cliEntry,
+  const pty = createTuiPtyHarness({
+    cliEntry,
+    workspace,
+    args: [
       '--trust-workspace',
       '--permission-mode',
       'yolo',
@@ -28,23 +27,11 @@ async function main(): Promise<void> {
       '--session-id',
       sessionId,
     ],
-    {
-      name: 'xterm-256color',
-      cwd: workspace,
-      cols: 120,
-      rows: 40,
-      env: childEnv,
-    }
-  );
+    env: childEnv,
+  });
+  const { terminal } = pty;
   let output = '';
   let sawCacheUnavailable = false;
-  let exited = false;
-  const exitPromise = new Promise<void>((resolve) => {
-    terminal.onExit(() => {
-      exited = true;
-      resolve();
-    });
-  });
   terminal.onData((chunk) => {
     output = `${output}${chunk}`.slice(-32_000);
     sawCacheUnavailable = latchPtyMarker(
@@ -78,17 +65,7 @@ async function main(): Promise<void> {
     );
     process.exitCode = 1;
   } finally {
-    terminal.write('\u0004');
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 500)),
-    ]);
-    if (!exited) terminal.kill('SIGTERM');
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-    ]);
-    if (!exited) terminal.kill('SIGKILL');
+    await pty.close();
   }
 }
 

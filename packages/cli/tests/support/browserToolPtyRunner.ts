@@ -1,4 +1,3 @@
-import { spawn } from 'bun-pty';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
@@ -7,6 +6,7 @@ import {
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyComposerReadyHandshake, writeBracketedPaste } from './ptyInput.js';
+import { createTuiPtyHarness } from './tuiPtyHarness.js';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -49,11 +49,10 @@ const expected = required('BLADE_BROWSER_TOOL_PTY_EXPECTED');
 const sessionId = required('BLADE_BROWSER_TOOL_PTY_SESSION_ID');
 const secret = process.env.BLADE_BROWSER_TOOL_PTY_SECRET ?? '';
 const handshake = createTuiPtyComposerReadyHandshake();
-const terminal = spawn(
-  '/usr/bin/env',
-  [
-    'node',
-    cliEntry,
+const pty = createTuiPtyHarness({
+  cliEntry,
+  workspace,
+  args: [
     '--trust-workspace',
     '--permission-mode',
     'yolo',
@@ -62,23 +61,11 @@ const terminal = spawn(
     '--session-id',
     sessionId,
   ],
-  {
-    name: 'xterm-256color',
-    cwd: workspace,
-    cols: 120,
-    rows: 40,
-    env: handshake.env,
-  }
-);
+  env: handshake.env,
+});
+const { terminal } = pty;
 let output = '';
 let sawExpected = false;
-let exited = false;
-const exitPromise = new Promise<void>((resolve) => {
-  terminal.onExit(() => {
-    exited = true;
-    resolve();
-  });
-});
 terminal.onData((chunk) => {
   output = appendBoundedPtyEvidence(output, chunk);
   sawExpected = latchPtyMarker(sawExpected, output, expected);
@@ -112,15 +99,5 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  terminal.write('\u0004');
-  await Promise.race([
-    exitPromise,
-    new Promise<void>((resolve) => setTimeout(resolve, 500)),
-  ]);
-  if (!exited) terminal.kill('SIGTERM');
-  await Promise.race([
-    exitPromise,
-    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-  ]);
-  if (!exited) terminal.kill('SIGKILL');
+  await pty.close();
 }
