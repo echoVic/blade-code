@@ -30,6 +30,7 @@ import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { abortableSleep } from '../../../src/utils/abort.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
 import {
   buildRealApiRuntimeConfig,
   expandDeepSeekModelMatrix,
@@ -113,182 +114,50 @@ function upstreamUrl(baseUrl: string, requestUrl: string | undefined): URL {
 }
 
 async function startTransientProxy(baseUrl: string) {
-  let requestCount = 0;
-  let injectedFailures = 0;
   const privateBodyMarker = 'PRIVATE_PROVIDER_RETRY_BODY_MUST_NOT_SURFACE';
-  const server = createServer((request, response) => {
-    void (async () => {
-      const body = await readRequestBody(request);
-      requestCount++;
-      if (injectedFailures === 0) {
-        injectedFailures++;
-        response.writeHead(503, {
-          'content-type': 'application/json',
-          'retry-after': '0',
-        });
-        response.end(
-          JSON.stringify({
-            error: { type: 'server_error', message: privateBodyMarker },
-          })
-        );
-        return;
-      }
-
-      const headers = new Headers();
-      for (const [name, value] of Object.entries(request.headers)) {
-        if (!value || name === 'host' || name === 'content-length') continue;
-        headers.set(name, Array.isArray(value) ? value.join(', ') : value);
-      }
-      const upstream = await fetch(upstreamUrl(baseUrl, request.url), {
-        method: request.method ?? 'POST',
-        headers,
-        body: request.method === 'GET' || request.method === 'HEAD' ? undefined : body,
-        redirect: 'manual',
-      });
-      const responseHeaders: Record<string, string> = {};
-      upstream.headers.forEach((value, name) => {
-        if (
-          ![
-            'connection',
-            'content-encoding',
-            'content-length',
-            'transfer-encoding',
-          ].includes(name)
-        ) {
-          responseHeaders[name] = value;
-        }
-      });
-      response.writeHead(upstream.status, responseHeaders);
-      if (upstream.body) {
-        const reader = upstream.body.getReader();
-        for (;;) {
-          const chunk = await reader.read();
-          if (chunk.done) break;
-          response.write(Buffer.from(chunk.value));
-        }
-      }
-      response.end();
-    })().catch((error: unknown) => {
-      if (response.headersSent) {
-        response.destroy(error instanceof Error ? error : undefined);
-        return;
-      }
-      response.writeHead(502, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: { type: 'proxy_error' } }));
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', reject);
-      resolve();
-    });
-  });
-  const address = server.address() as AddressInfo;
-  return {
-    baseURL: `http://127.0.0.1:${address.port}`,
-    privateBodyMarker,
-    requestCount: () => requestCount,
-    injectedFailures: () => injectedFailures,
-    close: async () => {
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
+  const proxy = await startRecordingProviderProxy(baseUrl, {
+    injectFailureOnce: {
+      path: '/v1/chat/completions',
+      retryAfterMs: 0,
+      body: {
+        error: { type: 'server_error', message: privateBodyMarker },
+      },
     },
+  });
+  return {
+    baseURL: proxy.baseUrl,
+    privateBodyMarker,
+    requestCount: () => proxy.requestBodies.length,
+    injectedFailures: () => proxy.injectedRequestNumbers.length,
+    close: () => proxy.close(),
   };
 }
 
 async function startContextLimitProxy(baseUrl: string) {
-  let requestCount = 0;
-  let injectedFailures = 0;
-  const forwardedBodies: string[] = [];
   const privateBodyMarker = 'PRIVATE_CONTEXT_LIMIT_BODY_MUST_NOT_SURFACE';
-  const server = createServer((request, response) => {
-    void (async () => {
-      const body = await readRequestBody(request);
-      requestCount++;
-      if (injectedFailures === 0) {
-        injectedFailures++;
-        response.writeHead(413, { 'content-type': 'application/json' });
-        response.end(
-          JSON.stringify({
-            error: {
-              type: 'invalid_request_error',
-              code: 'context_length_exceeded',
-              message: `context_length_exceeded ${privateBodyMarker}`,
-            },
-          })
-        );
-        return;
-      }
-      forwardedBodies.push(body.toString('utf-8'));
-
-      const headers = new Headers();
-      for (const [name, value] of Object.entries(request.headers)) {
-        if (!value || name === 'host' || name === 'content-length') continue;
-        headers.set(name, Array.isArray(value) ? value.join(', ') : value);
-      }
-      const upstream = await fetch(upstreamUrl(baseUrl, request.url), {
-        method: request.method ?? 'POST',
-        headers,
-        body: request.method === 'GET' || request.method === 'HEAD' ? undefined : body,
-        redirect: 'manual',
-      });
-      const responseHeaders: Record<string, string> = {};
-      upstream.headers.forEach((value, name) => {
-        if (
-          ![
-            'connection',
-            'content-encoding',
-            'content-length',
-            'transfer-encoding',
-          ].includes(name)
-        ) {
-          responseHeaders[name] = value;
-        }
-      });
-      response.writeHead(upstream.status, responseHeaders);
-      if (upstream.body) {
-        const reader = upstream.body.getReader();
-        for (;;) {
-          const chunk = await reader.read();
-          if (chunk.done) break;
-          response.write(Buffer.from(chunk.value));
-        }
-      }
-      response.end();
-    })().catch((error: unknown) => {
-      if (response.headersSent) {
-        response.destroy(error instanceof Error ? error : undefined);
-        return;
-      }
-      response.writeHead(502, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: { type: 'proxy_error' } }));
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', reject);
-      resolve();
-    });
-  });
-  const address = server.address() as AddressInfo;
-  return {
-    baseURL: `http://127.0.0.1:${address.port}`,
-    privateBodyMarker,
-    requestCount: () => requestCount,
-    injectedFailures: () => injectedFailures,
-    forwardedBodies: () => [...forwardedBodies],
-    close: async () => {
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
+  const proxy = await startRecordingProviderProxy(baseUrl, {
+    injectFailureOnce: {
+      path: '/v1/chat/completions',
+      status: 413,
+      body: {
+        error: {
+          type: 'invalid_request_error',
+          code: 'context_length_exceeded',
+          message: `context_length_exceeded ${privateBodyMarker}`,
+        },
+      },
     },
+  });
+  return {
+    baseURL: proxy.baseUrl,
+    privateBodyMarker,
+    requestCount: () => proxy.requestBodies.length,
+    injectedFailures: () => proxy.injectedRequestNumbers.length,
+    forwardedBodies: () =>
+      proxy.forwardedRequestNumbers.map(
+        (requestNumber) => proxy.requestBodies[requestNumber - 1] ?? ''
+      ),
+    close: () => proxy.close(),
   };
 }
 

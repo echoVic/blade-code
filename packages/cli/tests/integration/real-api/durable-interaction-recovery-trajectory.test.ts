@@ -2826,7 +2826,10 @@ describe
       const splitInstruction =
         createDurableInteractionRecoveryPtyFinalInstruction(finalMarker);
       const proxy = await startRecordingProviderProxy(deepseekFlash.baseURL, {
-        inject503Once: { path: '/v1/chat/completions', retryAfterMs: 60_000 },
+        injectFailureOnce: {
+          path: '/v1/chat/completions',
+          retryAfterMs: 60_000,
+        },
         holdRequestNumber: 2,
         holdMs: 10_000,
       });
@@ -3474,7 +3477,10 @@ describe
         const storageRoot = path.join(root, 'storage');
         const target = path.join(workspace, 'acp-selected-channel.txt');
         proxy = await startRecordingProviderProxy(deepseekFlash.baseURL, {
-          inject503Once: { path: '/v1/chat/completions', retryAfterMs: 60_000 },
+          injectFailureOnce: {
+            path: '/v1/chat/completions',
+            retryAfterMs: 60_000,
+          },
         });
         const config = buildDurableInteractionRecoveryConfig(
           buildRealApiRuntimeConfig({
@@ -3576,7 +3582,7 @@ describe
         const storageRoot = path.join(root, 'storage');
         const target = path.join(workspace, 'pty-selected-channel.txt');
         proxy = await startRecordingProviderProxy(deepseekFlash.baseURL, {
-          inject503Once: { path: '/v1/chat/completions', retryAfterMs: 0 },
+          injectFailureOnce: { path: '/v1/chat/completions', retryAfterMs: 0 },
         });
         const recoveryConfig = buildDurableInteractionRecoveryConfig(
           buildRealApiRuntimeConfig({

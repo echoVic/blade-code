@@ -183,7 +183,7 @@ describe('OpenAI response summary collection', () => {
 describe('recording Provider proxy one-shot failure injection', () => {
   it('injects one fixed 503 before forwarding the next exact-path request', async () => {
     const { proxy, requestCount } = await createProxy({
-      inject503Once: { path: '/v1/chat/completions', retryAfterMs: 25 },
+      injectFailureOnce: { path: '/v1/chat/completions', retryAfterMs: 25 },
     });
 
     const first = await fetch(`${proxy.baseUrl}/chat/completions`, {
@@ -219,7 +219,7 @@ describe('recording Provider proxy one-shot failure injection', () => {
 
   it('does not consume injection on another path and ignores query for matching', async () => {
     const { proxy, requestCount } = await createProxy({
-      inject503Once: { path: '/v1/chat/completions' },
+      injectFailureOnce: { path: '/v1/chat/completions' },
     });
 
     expect((await fetch(`${proxy.baseUrl}/models?token=query-secret`)).status).toBe(
@@ -234,6 +234,23 @@ describe('recording Provider proxy one-shot failure injection', () => {
     expect(proxy.forwardedRequestNumbers).toEqual([1]);
     expect(proxy.injectedRequestNumbers).toEqual([2]);
     expect(JSON.stringify(proxy.requestPaths)).not.toContain('query-secret');
+  });
+
+  it('supports a custom failure status and body', async () => {
+    const { proxy } = await createProxy({
+      injectFailureOnce: {
+        path: '/v1/chat/completions',
+        status: 413,
+        body: { error: { code: 'context_length_exceeded' } },
+      },
+    });
+
+    const response = await fetch(`${proxy.baseUrl}/chat/completions`);
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({
+      error: { code: 'context_length_exceeded' },
+    });
   });
 
   it('forwards every request by default', async () => {
@@ -557,7 +574,7 @@ describe('recording Provider proxy one-shot failure injection', () => {
 
   it('injects exactly once when matching requests arrive concurrently', async () => {
     const { proxy, requestCount } = await createProxy({
-      inject503Once: { path: '/v1/chat/completions' },
+      injectFailureOnce: { path: '/v1/chat/completions' },
     });
 
     const responses = await Promise.all(
@@ -579,9 +596,12 @@ describe('recording Provider proxy one-shot failure injection', () => {
     { path: '/v1/chat/completions', retryAfterMs: -1 },
     { path: '/v1/chat/completions', retryAfterMs: Number.NaN },
     { path: '/v1/chat/completions', retryAfterMs: 1.5 },
-  ])('fails closed for invalid injection options: %j', async (inject503Once) => {
+    { path: '/v1/chat/completions', status: 399 },
+    { path: '/v1/chat/completions', status: 600 },
+    { path: '/v1/chat/completions', status: 503.5 },
+  ])('fails closed for invalid injection options: %j', async (injectFailureOnce) => {
     await expect(
-      startRecordingProviderProxy('http://127.0.0.1:1/v1', { inject503Once })
+      startRecordingProviderProxy('http://127.0.0.1:1/v1', { injectFailureOnce })
     ).rejects.toThrow('Invalid one-shot Provider failure injection');
   });
 });
