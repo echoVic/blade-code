@@ -366,7 +366,8 @@ const VALID_STRUCTURED_OUTPUT = '{"answer":"validated"}';
 function namedToolResponse(
   name: string,
   argumentsJson: string,
-  id = `tool-call-${name}`
+  id = `tool-call-${name}`,
+  promptTokens?: number
 ): ChatResponse {
   return {
     content: '',
@@ -377,6 +378,15 @@ function namedToolResponse(
         function: { name, arguments: argumentsJson },
       },
     ],
+    ...(promptTokens === undefined
+      ? {}
+      : {
+          usage: {
+            promptTokens,
+            completionTokens: 20,
+            totalTokens: promptTokens + 20,
+          },
+        }),
     finishReason: 'tool_calls',
   };
 }
@@ -614,20 +624,22 @@ function createTextualToolHarness() {
 const TEXTUAL_READ_CALL =
   '{"tool_calls":[{"name":"Read","arguments":{"path":"package.json"}}]}';
 
+const runLoop = (
+  deps: LoopDependencies,
+  prompt: string,
+  options: LoopOptions = { stream: false },
+  context = createMockContext(),
+  systemPrompt: string | null = 'ROOT_SYSTEM_PROMPT'
+) =>
+  drainGenerator(
+    executeLoopGenerator(deps, prompt, context, options, systemPrompt ?? undefined)
+  );
+
 const runTextualToolLoop = (
   deps: LoopDependencies,
   options: LoopOptions = { stream: false },
   prompt = 'Call Read with path package.json.'
-) =>
-  drainGenerator(
-    executeLoopGenerator(
-      deps,
-      prompt,
-      createMockContext(),
-      options,
-      'ROOT_SYSTEM_PROMPT'
-    )
-  );
+) => runLoop(deps, prompt, options);
 
 function createHandoffPersistenceHarness(options?: {
   rejectAssistantMessage?: boolean;
@@ -4978,16 +4990,12 @@ describe('executeLoopGenerator', () => {
             finishReason: 'stop',
           } satisfies StreamChunk;
         });
-        const { result } = await drainGenerator(
-          executeLoopGenerator(
-            deps,
-            failedTool
-              ? 'Read the file and report the outcome.'
-              : 'Explain this briefly without tools.',
-            createMockContext(),
-            { stream },
-            'ROOT_SYSTEM_PROMPT'
-          )
+        const { result } = await runLoop(
+          deps,
+          failedTool
+            ? 'Read the file and report the outcome.'
+            : 'Explain this briefly without tools.',
+          { stream }
         );
         expect(result).toMatchObject({
           success: false,
@@ -5023,14 +5031,9 @@ describe('executeLoopGenerator', () => {
         .mockResolvedValueOnce(finalResponse(120, ''))
         .mockResolvedValueOnce(finalResponse(140, 'Durable final response'));
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read the file and finish with a non-empty response.',
-          createMockContext(),
-          { stream: false } as LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read the file and finish with a non-empty response.'
       );
 
       expect(result).toMatchObject({
@@ -5060,35 +5063,27 @@ describe('executeLoopGenerator', () => {
       }));
       let recoveredInputDrained = false;
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          '',
-          createMockContext(),
-          {
-            stream: false,
-            pendingInputOnly: true,
-            turnSteering: {
-              drain: async () => {
-                if (recoveredInputDrained) return [];
-                recoveredInputDrained = true;
-                return [
-                  {
-                    id: 'recovered-input',
-                    content: 'Finish the recovered task.',
-                    queuedAt: 1,
-                    recovered: true,
-                  },
-                ];
+      const { result } = await runLoop(deps, '', {
+        stream: false,
+        pendingInputOnly: true,
+        turnSteering: {
+          drain: async () => {
+            if (recoveredInputDrained) return [];
+            recoveredInputDrained = true;
+            return [
+              {
+                id: 'recovered-input',
+                content: 'Finish the recovered task.',
+                queuedAt: 1,
+                recovered: true,
               },
-              drainOrSeal: async () => ({ messages: [], sealed: true }),
-              getSnapshot: async () => emptyFollowUpQueue(),
-            },
-            getRecoveredEmptyFinalState,
-          } satisfies LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
-      );
+            ];
+          },
+          drainOrSeal: async () => ({ messages: [], sealed: true }),
+          getSnapshot: async () => emptyFollowUpQueue(),
+        },
+        getRecoveredEmptyFinalState,
+      });
 
       expect(result).toMatchObject({
         success: true,
@@ -5113,38 +5108,30 @@ describe('executeLoopGenerator', () => {
       chatMock.mockResolvedValueOnce(finalResponse(120, ''));
       let recoveredInputDrained = false;
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          '',
-          createMockContext(),
-          {
-            stream: false,
-            pendingInputOnly: true,
-            turnSteering: {
-              drain: async () => {
-                if (recoveredInputDrained) return [];
-                recoveredInputDrained = true;
-                return [
-                  {
-                    id: 'recovered-input',
-                    content: 'Finish the recovered task.',
-                    queuedAt: 1,
-                    recovered: true,
-                  },
-                ];
+      const { result } = await runLoop(deps, '', {
+        stream: false,
+        pendingInputOnly: true,
+        turnSteering: {
+          drain: async () => {
+            if (recoveredInputDrained) return [];
+            recoveredInputDrained = true;
+            return [
+              {
+                id: 'recovered-input',
+                content: 'Finish the recovered task.',
+                queuedAt: 1,
+                recovered: true,
               },
-              drainOrSeal: async () => ({ messages: [], sealed: true }),
-              getSnapshot: async () => emptyFollowUpQueue(),
-            },
-            getRecoveredEmptyFinalState: async () => ({
-              hadSuccessfulToolResult: true,
-              correctionSpent: true,
-            }),
-          } satisfies LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
-      );
+            ];
+          },
+          drainOrSeal: async () => ({ messages: [], sealed: true }),
+          getSnapshot: async () => emptyFollowUpQueue(),
+        },
+        getRecoveredEmptyFinalState: async () => ({
+          hadSuccessfulToolResult: true,
+          correctionSpent: true,
+        }),
+      });
 
       expect(result.success).toBe(false);
       expect(result.error).toMatchObject({ type: 'intent_fulfillment_failed' });
@@ -5198,14 +5185,10 @@ describe('executeLoopGenerator', () => {
           } satisfies StreamChunk;
         });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read the file and finish with a non-empty response.',
-          createMockContext(),
-          { stream: true },
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read the file and finish with a non-empty response.',
+        { stream: true }
       );
 
       expect(result).toMatchObject({
@@ -5227,14 +5210,9 @@ describe('executeLoopGenerator', () => {
         .mockResolvedValueOnce(finalResponse(120, ''))
         .mockResolvedValueOnce(finalResponse(140, ''));
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read the file and finish with a non-empty response.',
-          createMockContext(),
-          { stream: false } as LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read the file and finish with a non-empty response.'
       );
 
       expect(result.success).toBe(false);
@@ -5255,15 +5233,7 @@ describe('executeLoopGenerator', () => {
         })
         .mockResolvedValueOnce(finalResponse(140, 'Recovered after truncation'));
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read and return a non-empty final.',
-          createMockContext(),
-          { stream: false } satisfies LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
-      );
+      const { result } = await runLoop(deps, 'Read and return a non-empty final.');
 
       expect(result).toMatchObject({
         success: true,
@@ -5296,15 +5266,7 @@ describe('executeLoopGenerator', () => {
         .mockResolvedValueOnce(finalResponse(140, 'Unexpected corrective response'));
 
       try {
-        const { result } = await drainGenerator(
-          executeLoopGenerator(
-            deps,
-            'Read and return a non-empty final.',
-            createMockContext(),
-            { stream: false } satisfies LoopOptions,
-            'ROOT_SYSTEM_PROMPT'
-          )
-        );
+        const { result } = await runLoop(deps, 'Read and return a non-empty final.');
 
         expect(chatMock).toHaveBeenCalledTimes(2);
         expect(result).toMatchObject({
@@ -5350,14 +5312,9 @@ describe('executeLoopGenerator', () => {
           finishReason: 'length',
         });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read and return a complete final response.',
-          createMockContext(),
-          { stream: false } satisfies LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read and return a complete final response.'
       );
 
       expect(chatMock).toHaveBeenCalledTimes(6);
@@ -5401,15 +5358,7 @@ describe('executeLoopGenerator', () => {
           finishReason: 'length',
         });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Recover fully after reading the file.',
-          createMockContext(),
-          { stream: false } satisfies LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
-      );
+      const { result } = await runLoop(deps, 'Recover fully after reading the file.');
 
       expect(deps.toolExecutor.execute).toHaveBeenCalledOnce();
       expect(chatMock).toHaveBeenCalledTimes(6);
@@ -5442,14 +5391,9 @@ describe('executeLoopGenerator', () => {
         .mockResolvedValueOnce(finalResponse(160, ''))
         .mockResolvedValueOnce(finalResponse(180, ''));
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read both files and finish with a non-empty response.',
-          createMockContext(),
-          { stream: false } as LoopOptions,
-          'ROOT_SYSTEM_PROMPT'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read both files and finish with a non-empty response.'
       );
 
       expect(result.success).toBe(false);
@@ -5469,41 +5413,26 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-double-encoded',
-              type: 'function',
-              function: {
-                name: 'Read',
-                arguments: JSON.stringify(JSON.stringify({ path: 'foo' })),
-              },
-            },
-          ],
-          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: 'Read completed.',
-          toolCalls: undefined,
-          usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
-          finishReason: 'stop',
-        });
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Read',
+            JSON.stringify(JSON.stringify({ path: 'foo' })),
+            'tc-double-encoded'
+          )
+        )
+        .mockResolvedValueOnce(finalResponse(120, 'Read completed.'));
       const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockResolvedValueOnce({
         success: true,
         llmContent: 'file content',
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read the file',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read the file',
+        { stream: false },
+        context,
+        undefined
       );
 
       expect(result.success).toBe(true);
@@ -5518,31 +5447,13 @@ describe('executeLoopGenerator', () => {
       const { deps, saveToolResult } = createTypedPersistenceHarness();
       const context = createMockContext();
 
-      // First LLM call: returns a tool call
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc1',
-              type: 'function',
-              function: { name: 'Read', arguments: '{"path":"foo"}' },
-            },
-          ],
-          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-          finishReason: 'tool_calls',
-        })
-        // Second LLM call: final text response
-        // NOTE: avoid content ending with '...' as that triggers incomplete-intent retry
-        .mockResolvedValueOnce({
-          content: 'Based on the file, here is the answer.',
-          toolCalls: undefined,
-          usage: { promptTokens: 200, completionTokens: 60, totalTokens: 260 },
-          finishReason: 'stop',
-        });
+        .mockResolvedValueOnce(namedToolResponse('Read', '{"path":"foo"}', 'tc1', 100))
+        .mockResolvedValueOnce(
+          finalResponse(200, 'Based on the file, here is the answer.')
+        );
 
-      // Tool execution result
       const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockResolvedValueOnce({
         success: true,
@@ -5550,23 +5461,19 @@ describe('executeLoopGenerator', () => {
         metadata: undefined,
       });
 
-      const gen = executeLoopGenerator(
+      const { result, events } = await runLoop(
         deps,
         'Read the file foo',
-        context,
         { stream: false } as LoopOptions,
+        context,
         'You are a helpful assistant.'
       );
 
-      const { result, events } = await drainGenerator(gen);
-
-      // Verify turn_start events (two turns)
       const turnStartEvents = events.filter((e) => e.kind === 'turn_start');
       expect(turnStartEvents.length).toBe(2);
       expect(turnStartEvents[0]).toMatchObject({ kind: 'turn_start', turn: 1 });
       expect(turnStartEvents[1]).toMatchObject({ kind: 'turn_start', turn: 2 });
 
-      // Verify tool_start event
       const toolStartEvents = events.filter((e) => e.kind === 'tool_start');
       expect(toolStartEvents.length).toBe(1);
       if (
@@ -5576,7 +5483,6 @@ describe('executeLoopGenerator', () => {
         expect(toolStartEvents[0].toolCall.function.name).toBe('Read');
       }
 
-      // Verify tool_result event
       const toolResultEvents = events.filter((e) => e.kind === 'tool_result');
       expect(toolResultEvents.length).toBe(1);
       if (toolResultEvents[0].kind === 'tool_result') {
@@ -5584,20 +5490,16 @@ describe('executeLoopGenerator', () => {
         expect(toolResultEvents[0].result.llmContent).toBe('file content');
       }
 
-      // Verify token_usage events (one per turn)
       const tokenUsageEvents = events.filter((e) => e.kind === 'token_usage');
       expect(tokenUsageEvents.length).toBe(2);
 
-      // Verify final result
       expect(result.success).toBe(true);
       expect(result.finalMessage).toBe('Based on the file, here is the answer.');
       expect(result.metadata?.turnsCount).toBe(2);
       expect(result.metadata?.toolCallsCount).toBe(1);
 
-      // Verify chat was called twice
       expect(chatMock).toHaveBeenCalledTimes(2);
 
-      // Verify tool was executed
       expect(executeMock).toHaveBeenCalledTimes(1);
       expect(executeMock).toHaveBeenCalledWith(
         'Read',
@@ -5845,37 +5747,19 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc1',
-              type: 'function',
-              function: { name: 'Read', arguments: '{"path":"foo"}' },
-            },
-          ],
-          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: 'Done.',
-          toolCalls: undefined,
-          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-          finishReason: 'stop',
-        });
+        .mockResolvedValueOnce(namedToolResponse('Read', '{"path":"foo"}', 'tc1'))
+        .mockResolvedValueOnce(finalResponse(100, 'Done.'));
       (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         success: true,
         llmContent: 'file content',
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read the file',
-          context,
-          { stream: false } as LoopOptions,
-          'You are a helpful assistant.'
-        )
+      const { result } = await runLoop(
+        deps,
+        'Read the file',
+        { stream: false },
+        context,
+        'You are a helpful assistant.'
       );
 
       expect(result).toMatchObject({
@@ -5893,35 +5777,15 @@ describe('executeLoopGenerator', () => {
       const { deps, saveToolResult } = createTypedPersistenceHarness();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'provider-tool-id',
-              type: 'function',
-              function: { name: 'Read', arguments: '{"path":"foo"}' },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: 'Handled.',
-          toolCalls: undefined,
-          finishReason: 'stop',
-        });
+        .mockResolvedValueOnce(
+          namedToolResponse('Read', '{"path":"foo"}', 'provider-tool-id')
+        )
+        .mockResolvedValueOnce(finalResponse(100, 'Handled.'));
       (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error('read failed')
       );
 
-      await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Read the file',
-          createMockContext(),
-          { stream: false } as LoopOptions,
-          undefined
-        )
-      );
+      await runLoop(deps, 'Read the file', { stream: false }, undefined, null);
 
       expect(saveToolResult).toHaveBeenCalledWith(
         'test-session',
@@ -5942,33 +5806,13 @@ describe('executeLoopGenerator', () => {
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
 
       chatMock
-        .mockResolvedValueOnce({
-          content: 'The source change is complete.',
-          toolCalls: undefined,
-          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-          finishReason: 'stop',
-        })
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-verify',
-              type: 'function',
-              function: {
-                name: 'Bash',
-                arguments: '{"command":"npm test"}',
-              },
-            },
-          ],
-          usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: 'Tests pass and the fix is complete.',
-          toolCalls: undefined,
-          usage: { promptTokens: 160, completionTokens: 20, totalTokens: 180 },
-          finishReason: 'stop',
-        });
+        .mockResolvedValueOnce(finalResponse(100, 'The source change is complete.'))
+        .mockResolvedValueOnce(
+          namedToolResponse('Bash', '{"command":"npm test"}', 'tc-verify')
+        )
+        .mockResolvedValueOnce(
+          finalResponse(160, 'Tests pass and the fix is complete.')
+        );
 
       const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock.mockResolvedValueOnce({
@@ -5980,14 +5824,12 @@ describe('executeLoopGenerator', () => {
         },
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Fix the bug and run npm test before finishing.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Fix the bug and run npm test before finishing.',
+        { stream: false },
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
@@ -6009,26 +5851,16 @@ describe('executeLoopGenerator', () => {
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
-        .mockResolvedValueOnce({
-          content: '',
-          toolCalls: [
-            {
-              id: 'tc-delegate',
-              type: 'function',
-              function: {
-                name: 'Task',
-                arguments:
-                  '{"subagent_type":"reviewer","description":"fix","prompt":"fix and test"}',
-              },
-            },
-          ],
-          finishReason: 'tool_calls',
-        })
-        .mockResolvedValueOnce({
-          content: 'The delegated fix and verification are complete.',
-          toolCalls: undefined,
-          finishReason: 'stop',
-        });
+        .mockResolvedValueOnce(
+          namedToolResponse(
+            'Task',
+            '{"subagent_type":"reviewer","description":"fix","prompt":"fix and test"}',
+            'tc-delegate'
+          )
+        )
+        .mockResolvedValueOnce(
+          finalResponse(100, 'The delegated fix and verification are complete.')
+        );
       (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         success: true,
         llmContent: 'Subagent completed the change.',
@@ -6038,14 +5870,12 @@ describe('executeLoopGenerator', () => {
         },
       });
 
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Delegate the bug fix and run npm test before finishing.',
-          context,
-          { stream: false } as LoopOptions,
-          undefined
-        )
+      const { result } = await runLoop(
+        deps,
+        'Delegate the bug fix and run npm test before finishing.',
+        { stream: false },
+        context,
+        null
       );
 
       expect(result.success).toBe(true);
