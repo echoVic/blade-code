@@ -1,19 +1,7 @@
-import { observeBrowserFaults } from './webTestUtils.js';
-import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import path from 'node:path';
-import { chromium, type Page } from 'playwright';
-import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
-import {
-  reserveLoopbackPort as reservePort,
-  waitForInboxRemoval,
-  waitForHttp,
-} from './asyncTestUtils.js';
-import {
-  captureForegroundGuiLauncherIdentity,
-  stopForegroundGuiLauncher,
-} from './foregroundBoundedOutputWebDriver.js';
+import { waitForInboxRemoval } from './asyncTestUtils.js';
+import { withBladeWebTest } from './bladeWebTestHarness.js';
 
 export interface BackgroundSubagentCompletionWebEvidence {
   childSessionId: string;
@@ -26,10 +14,6 @@ export interface BackgroundSubagentCompletionWebEvidence {
   browserFaults: [];
 }
 
-function appendTail(current: string, chunk: Buffer | string): string {
-  return `${current}${chunk.toString()}`.slice(-16_384);
-}
-
 export async function runBackgroundSubagentCompletionWebDriver(input: {
   workspace: string;
   storageRoot: string;
@@ -40,149 +24,108 @@ export async function runBackgroundSubagentCompletionWebDriver(input: {
   timeoutMs?: number;
 }): Promise<BackgroundSubagentCompletionWebEvidence> {
   const timeoutMs = input.timeoutMs ?? 180_000;
-  const port = await reservePort();
-  const cliEntry = path.resolve(import.meta.dirname, '../../dist/blade.js');
-  const env = Object.fromEntries(
-    Object.entries({
-      ...process.env,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '0',
-      BLADE_TELEMETRY_DISABLED: '1',
-    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-  );
-  const child = spawn(
-    process.execPath,
-    [cliEntry, '--trust-workspace', 'serve', '--port', String(port)],
-    {
-      cwd: input.workspace,
-      env,
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }
-  );
-  let identity: ProcessIdentity | undefined;
-  let serverOutput = '';
-  child.stdout?.on('data', (chunk: Buffer | string) => {
-    serverOutput = appendTail(serverOutput, chunk);
-  });
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    serverOutput = appendTail(serverOutput, chunk);
-  });
+  return withBladeWebTest(
+    input,
+    {},
+    async ({ server, origin, page, faults, state }) => {
+      try {
+        const navigation = new URL(origin);
+        navigation.searchParams.set('session', input.sessionId);
+        navigation.searchParams.set('project', input.workspace);
+        await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
+        await page
+          .locator('textarea[data-blade-composer]')
+          .waitFor({ state: 'visible', timeout: 30_000 });
+        await page.getByText('Capacity queue', { exact: false }).waitFor({
+          state: 'visible',
+          timeout: 60_000,
+        });
+        const childCard = page.locator('[data-subagent-session-id]').last();
+        const parentMessage = page
+          .locator('[data-chat-role="assistant"]')
+          .filter({ hasText: `BACKGROUND_PARENT_FINAL:${input.childMarker}` })
+          .last();
+        await parentMessage.waitFor({ state: 'visible', timeout: timeoutMs });
+        await childCard.waitFor({ state: 'visible', timeout: 30_000 });
+        const childSessionId = await childCard.getAttribute('data-subagent-session-id');
+        if (!childSessionId) {
+          throw new Error('Background completion Web card has no durable child ID');
+        }
+        const liveChildText = (await childCard.textContent()) ?? '';
+        await waitForInboxRemoval(input.workspace, input.sessionId, 10_000);
+        if (
+          (await page
+            .locator('[data-chat-role="user"]')
+            .filter({ hasText: input.childMarker })
+            .count()) !== 0
+        ) {
+          throw new Error('Web rendered the hidden completion as a user message');
+        }
+        if ((await page.locator('body').textContent())?.includes(input.secret)) {
+          throw new Error('Provider credential reached the background completion DOM');
+        }
+        const sidecarPath = path.join(
+          input.storageRoot,
+          'agents',
+          'sessions',
+          `${childSessionId}.json`
+        );
+        const sidecarBeforeReload = await readFile(sidecarPath, 'utf8');
 
-  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
-  let page: Page | undefined;
-  let closing = false;
-  let refreshing = false;
-  const faults: string[] = [];
-  try {
-    if (!child.pid) throw new Error('Background completion server has no PID');
-    identity = await captureForegroundGuiLauncherIdentity(child.pid);
-    const origin = `http://127.0.0.1:${port}`;
-    await waitForHttp(origin, 20_000);
-    browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext();
-    page = await context.newPage();
-    observeBrowserFaults(page, faults, () => ({ refreshing, closing }));
-
-    const navigation = new URL(origin);
-    navigation.searchParams.set('session', input.sessionId);
-    navigation.searchParams.set('project', input.workspace);
-    await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
-    await page
-      .locator('textarea[data-blade-composer]')
-      .waitFor({ state: 'visible', timeout: 30_000 });
-    await page.getByText('Capacity queue', { exact: false }).waitFor({
-      state: 'visible',
-      timeout: 60_000,
-    });
-    const childCard = page.locator('[data-subagent-session-id]').last();
-    const parentMessage = page
-      .locator('[data-chat-role="assistant"]')
-      .filter({ hasText: `BACKGROUND_PARENT_FINAL:${input.childMarker}` })
-      .last();
-    await parentMessage.waitFor({ state: 'visible', timeout: timeoutMs });
-    await childCard.waitFor({ state: 'visible', timeout: 30_000 });
-    const childSessionId = await childCard.getAttribute('data-subagent-session-id');
-    if (!childSessionId) {
-      throw new Error('Background completion Web card has no durable child ID');
-    }
-    const liveChildText = (await childCard.textContent()) ?? '';
-    await waitForInboxRemoval(input.workspace, input.sessionId, 10_000);
-    if (
-      (await page
-        .locator('[data-chat-role="user"]')
-        .filter({ hasText: input.childMarker })
-        .count()) !== 0
-    ) {
-      throw new Error('Web rendered the hidden completion as a user message');
-    }
-    if ((await page.locator('body').textContent())?.includes(input.secret)) {
-      throw new Error('Provider credential reached the background completion DOM');
-    }
-    const sidecarPath = path.join(
-      input.storageRoot,
-      'agents',
-      'sessions',
-      `${childSessionId}.json`
-    );
-    const sidecarBeforeReload = await readFile(sidecarPath, 'utf8');
-
-    refreshing = true;
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    refreshing = false;
-    await page
-      .locator('textarea[data-blade-composer]')
-      .waitFor({ state: 'visible', timeout: 30_000 });
-    const reloadedChildCard = page.locator(
-      `[data-subagent-session-id="${childSessionId}"]`
-    );
-    await reloadedChildCard.waitFor({ state: 'visible', timeout: 30_000 });
-    const reloadedChildText = (await reloadedChildCard.textContent()) ?? '';
-    await parentMessage.waitFor({ state: 'visible', timeout: 30_000 });
-    if ((await page.locator('body').textContent())?.includes('Capacity queue')) {
-      throw new Error('Web reload restored transient Provider admission state');
-    }
-    const sidecarAfterReload = await readFile(sidecarPath, 'utf8');
-    if (sidecarAfterReload !== sidecarBeforeReload) {
-      throw new Error('Web reload mutated the terminal child sidecar');
-    }
-    if (
-      !liveChildText.includes(input.childMarker) ||
-      !/(completed|success)/i.test(liveChildText)
-    ) {
-      throw new Error(
-        `Live child card was not terminal: ${JSON.stringify(liveChildText.slice(0, 1_000))}`
-      );
-    }
-    if (
-      !reloadedChildText.includes(input.childMarker) ||
-      !/(completed|success)/i.test(reloadedChildText)
-    ) {
-      throw new Error(
-        `Reloaded child card was not terminal: ${JSON.stringify(
-          reloadedChildText.slice(0, 1_000)
-        )}`
-      );
-    }
-    await page.waitForTimeout(500);
-    if (faults.length > 0) {
-      throw new Error(`Browser faults: ${JSON.stringify(faults)}`);
-    }
-    return {
-      childSessionId,
-      childVisible: true,
-      parentVisible: true,
-      noFakeUserMessage: true,
-      providerAdmissionVisible: true,
-      visibleAfterReload: true,
-      sidecarStableAcrossReload: true,
-      browserFaults: [],
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const browserState = page
-      ? await page
+        state.refreshing = true;
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        state.refreshing = false;
+        await page
+          .locator('textarea[data-blade-composer]')
+          .waitFor({ state: 'visible', timeout: 30_000 });
+        const reloadedChildCard = page.locator(
+          `[data-subagent-session-id="${childSessionId}"]`
+        );
+        await reloadedChildCard.waitFor({ state: 'visible', timeout: 30_000 });
+        const reloadedChildText = (await reloadedChildCard.textContent()) ?? '';
+        await parentMessage.waitFor({ state: 'visible', timeout: 30_000 });
+        if ((await page.locator('body').textContent())?.includes('Capacity queue')) {
+          throw new Error('Web reload restored transient Provider admission state');
+        }
+        const sidecarAfterReload = await readFile(sidecarPath, 'utf8');
+        if (sidecarAfterReload !== sidecarBeforeReload) {
+          throw new Error('Web reload mutated the terminal child sidecar');
+        }
+        if (
+          !liveChildText.includes(input.childMarker) ||
+          !/(completed|success)/i.test(liveChildText)
+        ) {
+          throw new Error(
+            `Live child card was not terminal: ${JSON.stringify(liveChildText.slice(0, 1_000))}`
+          );
+        }
+        if (
+          !reloadedChildText.includes(input.childMarker) ||
+          !/(completed|success)/i.test(reloadedChildText)
+        ) {
+          throw new Error(
+            `Reloaded child card was not terminal: ${JSON.stringify(
+              reloadedChildText.slice(0, 1_000)
+            )}`
+          );
+        }
+        await page.waitForTimeout(500);
+        if (faults.length > 0) {
+          throw new Error(`Browser faults: ${JSON.stringify(faults)}`);
+        }
+        return {
+          childSessionId,
+          childVisible: true,
+          parentVisible: true,
+          noFakeUserMessage: true,
+          providerAdmissionVisible: true,
+          visibleAfterReload: true,
+          sidecarStableAcrossReload: true,
+          browserFaults: [],
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const browserState = await page
           .evaluate(
             ({ marker }) => ({
               url: window.location.href,
@@ -200,20 +143,17 @@ export async function runBackgroundSubagentCompletionWebDriver(input: {
           .catch((stateError) => ({
             stateError:
               stateError instanceof Error ? stateError.message : String(stateError),
-          }))
-      : { page: 'unavailable' };
-    throw new Error(
-      `${message.replaceAll(input.secret, '[REDACTED]')}; browser=${JSON.stringify(
-        browserState
-      )
-        .replaceAll(input.secret, '[REDACTED]')
-        .slice(-8_000)}; server=${serverOutput
-        .replaceAll(input.secret, '[REDACTED]')
-        .slice(-2_000)}`
-    );
-  } finally {
-    closing = true;
-    await browser?.close().catch(() => undefined);
-    await stopForegroundGuiLauncher(child, identity);
-  }
+          }));
+        throw new Error(
+          `${message.replaceAll(input.secret, '[REDACTED]')}; browser=${JSON.stringify(
+            browserState
+          )
+            .replaceAll(input.secret, '[REDACTED]')
+            .slice(-8_000)}; server=${server.output
+            .replaceAll(input.secret, '[REDACTED]')
+            .slice(-2_000)}`
+        );
+      }
+    }
+  );
 }

@@ -557,8 +557,7 @@ describe('production qualification contract', () => {
     expect(trajectory).toContain('modelMaxRetries: 0');
     expect(trajectory).toContain("['web', 'tui', 'acp']");
     expect(deterministic).toContain('access(cliEntry)');
-    expect(webDriver).toContain('../../dist/blade.js');
-    expect(webDriver).toContain('await chromium.launch({ headless: true })');
+    expect(webDriver).toContain('withBladeWebTest');
     expect(ptyDriver).toContain('FOLLOW_UP_QUEUE_PTY_USES_PRODUCTION_DIST');
     expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
     expect(acpRunner).toContain("[input.cliEntry, '--acp']");

@@ -1,18 +1,6 @@
-import { observeBrowserFaults } from './webTestUtils.js';
-import { type ChildProcess, spawn } from 'node:child_process';
-import { createServer } from 'node:net';
-import path from 'node:path';
-import { chromium, type Page } from 'playwright';
-import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
-import {
-  reserveLoopbackPort as reservePort,
-  waitForInboxRemoval,
-  waitForHttp,
-} from './asyncTestUtils.js';
-import {
-  captureForegroundGuiLauncherIdentity,
-  stopForegroundGuiLauncher,
-} from './foregroundBoundedOutputWebDriver.js';
+import type { Page } from 'playwright';
+import { waitForInboxRemoval } from './asyncTestUtils.js';
+import { withBladeWebTest } from './bladeWebTestHarness.js';
 
 export interface RootTurnAutoResumeWebEvidence {
   attentionVisible: true;
@@ -58,17 +46,6 @@ async function waitForExpectedAssistantText(
   );
 }
 
-function appendTail(current: string, chunk: Buffer | string): string {
-  return `${current}${chunk.toString()}`.slice(-16_384);
-}
-
-async function stopServer(
-  child: ChildProcess,
-  identity: ProcessIdentity | undefined
-): Promise<void> {
-  await stopForegroundGuiLauncher(child, identity);
-}
-
 export async function runRootTurnAutoResumeWebDriver(input: {
   workspace: string;
   storageRoot: string;
@@ -79,116 +56,75 @@ export async function runRootTurnAutoResumeWebDriver(input: {
   timeoutMs?: number;
 }): Promise<RootTurnAutoResumeWebEvidence> {
   const timeoutMs = input.timeoutMs ?? 180_000;
-  const port = await reservePort();
-  const cliEntry = path.resolve(import.meta.dirname, '../../dist/blade.js');
-  const env = Object.fromEntries(
-    Object.entries({
-      ...process.env,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '0',
-      BLADE_TELEMETRY_DISABLED: '1',
-    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+  return withBladeWebTest(
+    input,
+    {},
+    async ({ server, origin, page, faults, state }) => {
+      try {
+        const navigation = new URL(origin);
+        navigation.searchParams.set('session', input.sessionId);
+        navigation.searchParams.set('project', input.workspace);
+        await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
+        await page.locator('textarea[data-blade-composer]').waitFor({
+          state: 'visible',
+          timeout: 30_000,
+        });
+        const attention = page.getByText(/Recovery needs review|恢复前需要检查/);
+        await attention.waitFor({ state: 'visible', timeout: 30_000 });
+        if (
+          (await page
+            .locator('[data-chat-role="assistant"]')
+            .filter({ hasText: input.expected })
+            .count()) > 0
+        ) {
+          throw new Error('Root-turn Web recovery replayed before explicit input');
+        }
+        state.refreshing = true;
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        state.refreshing = false;
+        const composer = page.locator('textarea[data-blade-composer]');
+        await composer.waitFor({ state: 'visible', timeout: 30_000 });
+        await attention.waitFor({ state: 'visible', timeout: 30_000 });
+        await composer.fill(
+          'I inspected the workspace and external state. Continue safely without ' +
+            'repeating any write or other side effect.'
+        );
+        await composer.press('Enter');
+        await waitForExpectedAssistantText(page, input.expected, timeoutMs);
+        await attention.waitFor({ state: 'hidden', timeout: 30_000 });
+        await waitForInboxRemoval(input.workspace, input.sessionId, 10_000);
+        if ((await page.locator('body').textContent())?.includes(input.secret)) {
+          throw new Error('Provider credential reached the browser DOM');
+        }
+
+        state.refreshing = true;
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        state.refreshing = false;
+        await page.locator('textarea[data-blade-composer]').waitFor({
+          state: 'visible',
+          timeout: 30_000,
+        });
+        await waitForExpectedAssistantText(page, input.expected, 30_000);
+        await page.waitForTimeout(500);
+        if (faults.length > 0) {
+          throw new Error(`Browser faults: ${JSON.stringify(faults)}`);
+        }
+        return {
+          attentionVisible: true,
+          attentionVisibleAfterReload: true,
+          markerVisible: true,
+          markerVisibleAfterReload: true,
+          composerVisible: true,
+          browserFaults: [],
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `${message.replaceAll(input.secret, '[REDACTED]')}; server=${server.output
+            .replaceAll(input.secret, '[REDACTED]')
+            .slice(-2_000)}`
+        );
+      }
+    }
   );
-  const child = spawn(
-    process.execPath,
-    [cliEntry, '--trust-workspace', 'serve', '--port', String(port)],
-    {
-      cwd: input.workspace,
-      env,
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }
-  );
-  let identity: ProcessIdentity | undefined;
-  let serverOutput = '';
-  child.stdout?.on('data', (chunk: Buffer | string) => {
-    serverOutput = appendTail(serverOutput, chunk);
-  });
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    serverOutput = appendTail(serverOutput, chunk);
-  });
-
-  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
-  let closing = false;
-  let refreshing = false;
-  const faults: string[] = [];
-  try {
-    if (!child.pid) throw new Error('Root-turn Web server has no process ID');
-    identity = await captureForegroundGuiLauncherIdentity(child.pid);
-    const origin = `http://127.0.0.1:${port}`;
-    await waitForHttp(origin, 20_000);
-    browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext();
-    const page = await context.newPage();
-    observeBrowserFaults(page, faults, () => ({ refreshing, closing }));
-
-    const navigation = new URL(origin);
-    navigation.searchParams.set('session', input.sessionId);
-    navigation.searchParams.set('project', input.workspace);
-    await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
-    await page.locator('textarea[data-blade-composer]').waitFor({
-      state: 'visible',
-      timeout: 30_000,
-    });
-    const attention = page.getByText(/Recovery needs review|恢复前需要检查/);
-    await attention.waitFor({ state: 'visible', timeout: 30_000 });
-    if (
-      (await page
-        .locator('[data-chat-role="assistant"]')
-        .filter({ hasText: input.expected })
-        .count()) > 0
-    ) {
-      throw new Error('Root-turn Web recovery replayed before explicit input');
-    }
-    refreshing = true;
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    refreshing = false;
-    const composer = page.locator('textarea[data-blade-composer]');
-    await composer.waitFor({ state: 'visible', timeout: 30_000 });
-    await attention.waitFor({ state: 'visible', timeout: 30_000 });
-    await composer.fill(
-      'I inspected the workspace and external state. Continue safely without ' +
-        'repeating any write or other side effect.'
-    );
-    await composer.press('Enter');
-    await waitForExpectedAssistantText(page, input.expected, timeoutMs);
-    await attention.waitFor({ state: 'hidden', timeout: 30_000 });
-    await waitForInboxRemoval(input.workspace, input.sessionId, 10_000);
-    if ((await page.locator('body').textContent())?.includes(input.secret)) {
-      throw new Error('Provider credential reached the browser DOM');
-    }
-
-    refreshing = true;
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    refreshing = false;
-    await page.locator('textarea[data-blade-composer]').waitFor({
-      state: 'visible',
-      timeout: 30_000,
-    });
-    await waitForExpectedAssistantText(page, input.expected, 30_000);
-    await page.waitForTimeout(500);
-    if (faults.length > 0) {
-      throw new Error(`Browser faults: ${JSON.stringify(faults)}`);
-    }
-    return {
-      attentionVisible: true,
-      attentionVisibleAfterReload: true,
-      markerVisible: true,
-      markerVisibleAfterReload: true,
-      composerVisible: true,
-      browserFaults: [],
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `${message.replaceAll(input.secret, '[REDACTED]')}; server=${serverOutput
-        .replaceAll(input.secret, '[REDACTED]')
-        .slice(-2_000)}`
-    );
-  } finally {
-    closing = true;
-    await browser?.close().catch(() => undefined);
-    await stopServer(child, identity);
-  }
 }
