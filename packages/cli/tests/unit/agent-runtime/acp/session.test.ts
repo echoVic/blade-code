@@ -73,6 +73,12 @@ const TEST_SESSION_REF = {
   projectPath: '/tmp/test',
 } as const;
 
+const promptText = (session: AcpSession, text: string) =>
+  session.prompt({
+    sessionId: TEST_SESSION_REF.sessionId,
+    prompt: [{ type: 'text', text }],
+  });
+
 function publishSubagentCompletion(childSessionId: string): void {
   Bus.publish(TEST_SESSION_REF, 'subagent.completion.queued', {
     childSessionId,
@@ -1988,10 +1994,7 @@ describe('AcpSession', () => {
       });
       mockAgent.chatStream = chatStream as typeof mockAgent.chatStream;
 
-      const sideConversation = session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: '/btw inspect current state' }],
-      });
+      const sideConversation = promptText(session, '/btw inspect current state');
       await vi.waitFor(() => expect(executeSlashCommand).toHaveBeenCalledTimes(1));
 
       runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
@@ -2043,10 +2046,7 @@ describe('AcpSession', () => {
         }) as typeof mockAgent.chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
 
-        const foregroundPrompt = session.prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'foreground prompt' }],
-        });
+        const foregroundPrompt = promptText(session, 'foreground prompt');
         await foregroundStarted;
         expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
 
@@ -2687,10 +2687,7 @@ describe('AcpSession', () => {
           yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
           return { success: true, finalMessage: 'history prepared' };
         };
-        await session.prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'prepare replay history' }],
-        });
+        await promptText(session, 'prepare replay history');
         mockConnection.sessionUpdates = [];
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
 
@@ -2865,10 +2862,7 @@ describe('AcpSession', () => {
       );
       await session.initialize();
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'What marker did I ask you to remember?' }],
-      });
+      await promptText(session, 'What marker did I ask you to remember?');
 
       const call = getMockAgent().getLastCall();
       expect(call?.context.messages).toEqual(history);
@@ -2965,15 +2959,7 @@ describe('AcpSession', () => {
 
     it('rejects ACP prompts above the durable character limit before Agent use', async () => {
       await expect(
-        session.prompt({
-          sessionId: 'test-session-id',
-          prompt: [
-            {
-              type: 'text',
-              text: 'x'.repeat(MAX_USER_MESSAGE_TEXT_CHARS + 1),
-            },
-          ],
-        })
+        promptText(session, 'x'.repeat(MAX_USER_MESSAGE_TEXT_CHARS + 1))
       ).rejects.toThrow(
         `ACP prompt text exceeds ${MAX_USER_MESSAGE_TEXT_CHARS} characters`
       );
@@ -3013,15 +2999,10 @@ describe('AcpSession', () => {
       }) as typeof mockAgent.chatStream;
 
       let promptSettled = false;
-      const prompt = session
-        .prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'stream slowly' }],
-        })
-        .then((result) => {
-          promptSettled = true;
-          return result;
-        });
+      const prompt = promptText(session, 'stream slowly').then((result) => {
+        promptSettled = true;
+        return result;
+      });
 
       await vi.waitFor(() => expect(mockConnection.sessionUpdates).toHaveLength(1));
       expect(produced).toBe(1);
@@ -3057,10 +3038,7 @@ describe('AcpSession', () => {
           return { success: true, finalMessage: 'blocked' };
         }) as typeof mockAgent.chatStream;
 
-        const prompt = session.prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'write slowly' }],
-        });
+        const prompt = promptText(session, 'write slowly');
         await vi.advanceTimersByTimeAsync(0);
         expect(mockConnection.sessionUpdate).toHaveBeenCalledTimes(1);
 
@@ -3104,10 +3082,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'cancelled' };
       }) as typeof mockAgent.chatStream;
 
-      const prompt = session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'keep the turn active' }],
-      });
+      const prompt = promptText(session, 'keep the turn active');
       await vi.waitFor(() => expect(promptSignal).toBeDefined());
 
       for (let index = 0; index < 257; index += 1) {
@@ -3168,10 +3143,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'admitted' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'wait for provider capacity' }],
-      });
+      await promptText(session, 'wait for provider capacity');
 
       expect(mockConnection.sessionUpdates).toEqual(
         expect.arrayContaining([
@@ -3233,10 +3205,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'rejected-control' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'saturate retained request bytes' }],
-      });
+      await promptText(session, 'saturate retained request bytes');
 
       const metadata = mockConnection.sessionUpdates
         .filter((entry) => entry.update.sessionUpdate === 'session_info_update')
@@ -3279,10 +3248,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'recovered safely' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'inspect recovery' }],
-      });
+      await promptText(session, 'inspect recovery');
 
       expect(mockConnection.sessionUpdates).toEqual(
         expect.arrayContaining([
@@ -3354,10 +3320,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'recovered' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'recover the provider' }],
-      });
+      await promptText(session, 'recover the provider');
 
       expect(mockConnection.sessionUpdates).toEqual(
         expect.arrayContaining([
@@ -3457,10 +3420,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'fallback recovered' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'recover through fallback' }],
-      });
+      await promptText(session, 'recover through fallback');
 
       expect(mockConnection.sessionUpdates).toEqual(
         expect.arrayContaining([
@@ -3509,10 +3469,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'done' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'show progress' }],
-      });
+      await promptText(session, 'show progress');
 
       const updates = mockConnection.sessionUpdates.filter(
         ({ update }) => update._meta?.['blade/turnActivity'] !== undefined
@@ -3553,10 +3510,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'done' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'show progress' }],
-      });
+      await promptText(session, 'show progress');
 
       expect(
         mockConnection.sessionUpdates.filter(
@@ -3603,10 +3557,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'circuit recovered' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'wait for shared recovery' }],
-      });
+      await promptText(session, 'wait for shared recovery');
 
       expect(mockConnection.sessionUpdates).toEqual(
         expect.arrayContaining([
@@ -3684,10 +3635,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'recovered' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'wait for the provider' }],
-      });
+      await promptText(session, 'wait for the provider');
 
       expect(mockConnection.sessionUpdates).toEqual(
         expect.arrayContaining([
@@ -3803,10 +3751,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'continuing' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'continue the goal' }],
-      });
+      await promptText(session, 'continue the goal');
 
       expect(mockConnection.sessionUpdates).toContainEqual({
         sessionId: 'test-session-id',
@@ -3911,10 +3856,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'continuing' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'continue the goal' }],
-      });
+      await promptText(session, 'continue the goal');
 
       const frontierIndex = mockConnection.sessionUpdates.findIndex(
         (item) =>
@@ -3978,10 +3920,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'recovered' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'recover context' }],
-      });
+      await promptText(session, 'recover context');
 
       expect(mockConnection.sessionUpdates).toEqual(
         expect.arrayContaining([
@@ -4047,12 +3986,7 @@ describe('AcpSession', () => {
         };
       }) as typeof mockAgent.chatStream;
 
-      await expect(
-        session.prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'complete the task' }],
-        })
-      ).rejects.toMatchObject({
+      await expect(promptText(session, 'complete the task')).rejects.toMatchObject({
         name: 'RequestError',
         code: -32603,
         message: 'Internal error: Agent turn failed (intent_fulfillment_failed)',
@@ -4096,12 +4030,7 @@ describe('AcpSession', () => {
           } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
 
-        await expect(
-          session.prompt({
-            sessionId: 'test-session-id',
-            prompt: [{ type: 'text', text: 'complete the task' }],
-          })
-        ).rejects.toMatchObject({
+        await expect(promptText(session, 'complete the task')).rejects.toMatchObject({
           name: 'RequestError',
           code: -32603,
           data: {
@@ -4140,15 +4069,10 @@ describe('AcpSession', () => {
         } satisfies LoopResult;
       }) as typeof mockAgent.chatStream;
 
-      const failure = await session
-        .prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'complete the task' }],
-        })
-        .then(
-          () => new Error('expected ACP prompt failure'),
-          (error: unknown) => error
-        );
+      const failure = await promptText(session, 'complete the task').then(
+        () => new Error('expected ACP prompt failure'),
+        (error: unknown) => error
+      );
 
       expect(failure).toMatchObject({
         name: 'RequestError',
@@ -4183,15 +4107,10 @@ describe('AcpSession', () => {
         } satisfies LoopResult;
       }) as typeof mockAgent.chatStream;
 
-      const failure = await session
-        .prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'complete the task' }],
-        })
-        .then(
-          () => new Error('expected ACP prompt failure'),
-          (error: unknown) => error
-        );
+      const failure = await promptText(session, 'complete the task').then(
+        () => new Error('expected ACP prompt failure'),
+        (error: unknown) => error
+      );
 
       expect(failure).toMatchObject({
         name: 'RequestError',
@@ -4225,15 +4144,10 @@ describe('AcpSession', () => {
         };
       }) as typeof mockAgent.chatStream;
 
-      const failure = await session
-        .prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'complete the task' }],
-        })
-        .then(
-          () => new Error('expected ACP prompt failure'),
-          (error: unknown) => error
-        );
+      const failure = await promptText(session, 'complete the task').then(
+        () => new Error('expected ACP prompt failure'),
+        (error: unknown) => error
+      );
 
       expect(failure).toMatchObject({
         name: 'RequestError',
@@ -4280,10 +4194,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'done' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'run fixture' }],
-      });
+      await promptText(session, 'run fixture');
 
       const notification = mockConnection.sessionUpdates.find(
         (entry) =>
@@ -4342,10 +4253,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'done' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'apply patch' }],
-      });
+      await promptText(session, 'apply patch');
 
       expect(mockConnection.sessionUpdates).toContainEqual(
         expect.objectContaining({
@@ -4405,10 +4313,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'done' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'verify implementation' }],
-      });
+      await promptText(session, 'verify implementation');
 
       expect(mockConnection.sessionUpdates).toContainEqual(
         expect.objectContaining({
@@ -4463,10 +4368,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'done' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'run progress tool' }],
-      });
+      await promptText(session, 'run progress tool');
 
       expect(mockConnection.sessionUpdates).toContainEqual(
         expect.objectContaining({
@@ -4500,10 +4402,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'done' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'refresh catalog' }],
-      });
+      await promptText(session, 'refresh catalog');
 
       expect(mockConnection.sessionUpdates).toContainEqual(
         expect.objectContaining({
@@ -4599,10 +4498,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'done' };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'refresh content' }],
-      });
+      await promptText(session, 'refresh content');
 
       expect(mockConnection.sessionUpdates).toContainEqual(
         expect.objectContaining({
@@ -4761,10 +4657,7 @@ describe('AcpSession', () => {
         queue: queued,
       });
 
-      const result = await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'Use the updated requirement.' }],
-      });
+      const result = await promptText(session, 'Use the updated requirement.');
 
       expect(result.stopReason).toBe('end_turn');
       expect(activeController.signal.aborted).toBe(false);
@@ -4819,10 +4712,7 @@ describe('AcpSession', () => {
         { kind: 'follow_up_queue_changed', queue: empty },
       ];
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'continue' }],
-      });
+      await promptText(session, 'continue');
 
       await vi.waitFor(() =>
         expect(followUpQueueUpdates(mockConnection)).toHaveLength(2)
@@ -4898,10 +4788,7 @@ describe('AcpSession', () => {
         }
       );
 
-      const response = await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: '/BTW What is running?' }],
-      });
+      const response = await promptText(session, '/BTW What is running?');
 
       expect(response.stopReason).toBe('end_turn');
       expect(runtimeState.runtime.askSideQuestion).toHaveBeenCalledWith(
@@ -5129,10 +5016,7 @@ describe('AcpSession', () => {
         }
       );
 
-      const response = await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: '/review uncommitted' }],
-      });
+      const response = await promptText(session, '/review uncommitted');
 
       expect(response.stopReason).toBe('end_turn');
       expect(codeReviewState.start).toHaveBeenCalledWith(
@@ -5160,10 +5044,7 @@ describe('AcpSession', () => {
           return { success: true };
         }
       );
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: '/compact' }],
-      });
+      await promptText(session, '/compact');
       expect(ownedConfig).toEqual({
         provider: 'session-channel',
         model: 'session-model',
@@ -5185,15 +5066,9 @@ describe('AcpSession', () => {
         message: 'compact_completed',
         data: { compactedMessages },
       });
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: '/compact' }],
-      });
+      await promptText(session, '/compact');
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'continue after compact' }],
-      });
+      await promptText(session, 'continue after compact');
 
       expect(getMockAgent().getLastCall()?.context.messages).toEqual(compactedMessages);
     });
@@ -5243,10 +5118,7 @@ describe('AcpSession', () => {
         }
       );
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: '/rewind user-2' }],
-      });
+      await promptText(session, '/rewind user-2');
 
       expect(runtimeState.runtime.listRewindCheckpoints).toHaveBeenCalledOnce();
       expect(runtimeState.runtime.rewindSession).toHaveBeenCalledWith({
@@ -5257,10 +5129,7 @@ describe('AcpSession', () => {
       const { Agent } = await import('../../../../src/agent/Agent.js');
       expect(Agent.createWithRuntime).toHaveBeenCalledTimes(2);
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'continue after rewind' }],
-      });
+      await promptText(session, 'continue after rewind');
       expect(getMockAgent().getLastCall()?.context.messages).toEqual(rewoundMessages);
     });
 
@@ -5305,15 +5174,7 @@ describe('AcpSession', () => {
         }
       );
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [
-          {
-            type: 'text',
-            text: '/tasks resume agent-source Check the follow-up',
-          },
-        ],
-      });
+      await promptText(session, '/tasks resume agent-source Check the follow-up');
 
       expect(runtimeState.runtime.listSubagents).toHaveBeenCalledOnce();
       expect(runtimeState.runtime.resumeSubagent).toHaveBeenCalledWith(
@@ -5376,15 +5237,7 @@ describe('AcpSession', () => {
         }
       );
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [
-          {
-            type: 'text',
-            text: '/tasks resume agent-unrecoverable Continue',
-          },
-        ],
-      });
+      await promptText(session, '/tasks resume agent-unrecoverable Continue');
 
       expect(runtimeState.runtime.resumeSubagent).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -5443,10 +5296,7 @@ describe('AcpSession', () => {
         };
       }) as typeof mockAgent.chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'continue' }],
-      });
+      await promptText(session, 'continue');
 
       expect(
         mockConnection.sessionUpdates.some(
@@ -5521,17 +5371,11 @@ describe('AcpSession', () => {
         };
       }) as AgentMockInstance['chatStream'];
 
-      const active = session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'keep working' }],
-      });
+      const active = promptText(session, 'keep working');
       await activeStarted;
-      await expect(
-        session.prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'retain this follow-up' }],
-        })
-      ).resolves.toEqual({ stopReason: 'end_turn' });
+      await expect(promptText(session, 'retain this follow-up')).resolves.toEqual({
+        stopReason: 'end_turn',
+      });
 
       session.cancel();
 
@@ -5599,10 +5443,7 @@ describe('AcpSession', () => {
     });
 
     it('projects remote shell lifecycle as one ACP execute tool call', async () => {
-      const result = await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: '! pwd' }],
-      });
+      const result = await promptText(session, '! pwd');
 
       expect(result).toEqual({ stopReason: 'end_turn' });
       expect(runtimeState.runtime.executeUserShellCommand).toHaveBeenCalledWith(
@@ -5663,10 +5504,7 @@ describe('AcpSession', () => {
       }) as typeof mockAgent.chatStream;
       mockAgent.chatStream = chatStream;
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: '! pwd' }],
-      });
+      await promptText(session, '! pwd');
 
       await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1));
       expect(chatStream).toHaveBeenCalledWith(
@@ -6216,10 +6054,7 @@ describe('AcpSession', () => {
           return { success: true, finalMessage: '' };
         };
 
-        const prompt = session.prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'start deferred stream' }],
-        });
+        const prompt = promptText(session, 'start deferred stream');
         await started;
         let destroySettled = false;
         const destroy = session.destroy(destroyOptions).then(() => {
@@ -6526,10 +6361,7 @@ describe('AcpSession', () => {
         },
       });
 
-      const response = await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'Continue the goal' }],
-      });
+      const response = await promptText(session, 'Continue the goal');
 
       expect(response).toEqual({
         stopReason: 'end_turn',
@@ -6711,10 +6543,7 @@ describe('AcpSession', () => {
         return { success: true, finalMessage: 'Parallel work started.' };
       };
 
-      await session.prompt({
-        sessionId: 'test-session-id',
-        prompt: [{ type: 'text', text: 'Run both checks.' }],
-      });
+      await promptText(session, 'Run both checks.');
 
       expect(
         mockConnection.sessionUpdates
