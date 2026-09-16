@@ -68,6 +68,22 @@ function followUpQueueUpdates(connection: {
   });
 }
 
+const TEST_SESSION_REF = {
+  sessionId: 'test-session-id',
+  projectPath: '/tmp/test',
+} as const;
+
+function publishSubagentCompletion(childSessionId: string): void {
+  Bus.publish(TEST_SESSION_REF, 'subagent.completion.queued', {
+    childSessionId,
+    inboxMessageId: `background-subagent-completion:${childSessionId}`,
+    status: 'completed',
+    type: 'Explore',
+    queued: 1,
+    delivery: 'next_turn',
+  });
+}
+
 const agentMockState = vi.hoisted((): { current: AgentMockInstance | null } => ({
   current: null,
 }));
@@ -909,18 +925,7 @@ describe('AcpSession', () => {
           } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'retry-child',
-            inboxMessageId: 'background-subagent-completion:retry-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('retry-child');
 
         vi.runAllTicks();
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
@@ -976,19 +981,7 @@ describe('AcpSession', () => {
         ).toBe(true);
         expect(session.isIdleForResidency()).toBe(false);
 
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'wake-during-recovered-egress',
-            inboxMessageId:
-              'background-subagent-completion:wake-during-recovered-egress',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('wake-during-recovered-egress');
         vi.runAllTicks();
         await Promise.resolve();
         expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
@@ -1079,18 +1072,7 @@ describe('AcpSession', () => {
           return { success: true, finalMessage: 'recovered' } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'destroy-recovered-child',
-            inboxMessageId: 'background-subagent-completion:destroy-recovered-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('destroy-recovered-child');
 
         vi.runAllTicks();
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1));
@@ -1099,18 +1081,7 @@ describe('AcpSession', () => {
         expect(recoveredRecorded).toBe(true);
         expect(session.isIdleForResidency()).toBe(false);
 
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'wake-before-destroy',
-            inboxMessageId: 'background-subagent-completion:wake-before-destroy',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('wake-before-destroy');
         vi.runAllTicks();
         await Promise.resolve();
         expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
@@ -1171,18 +1142,7 @@ describe('AcpSession', () => {
           return { success: true, finalMessage: 'recovered' } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'reject-recovered-child',
-            inboxMessageId: 'background-subagent-completion:reject-recovered-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('reject-recovered-child');
 
         vi.runAllTicks();
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1));
@@ -1191,19 +1151,7 @@ describe('AcpSession', () => {
         rejectRecovered(new Error('writer rejected recovered metadata'));
         await vi.waitFor(() => expect(session.isIdleForResidency()).toBe(true));
 
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'wake-after-recovered-rejection',
-            inboxMessageId:
-              'background-subagent-completion:wake-after-recovered-rejection',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('wake-after-recovered-rejection');
         vi.runAllTicks();
         await Promise.resolve();
 
@@ -1273,19 +1221,7 @@ describe('AcpSession', () => {
         }) as typeof mockAgent.chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
 
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'cancel-during-recovered-write',
-            inboxMessageId:
-              'background-subagent-completion:cancel-during-recovered-write',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('cancel-during-recovered-write');
 
         vi.runAllTicks();
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
@@ -1328,19 +1264,7 @@ describe('AcpSession', () => {
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(2));
         await recoveredEntered;
 
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'wake-before-cancel-during-recovered-write',
-            inboxMessageId:
-              'background-subagent-completion:wake-before-cancel-during-recovered-write',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('wake-before-cancel-during-recovered-write');
         vi.runAllTicks();
         await Promise.resolve();
         expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
@@ -1406,18 +1330,7 @@ describe('AcpSession', () => {
             },
           } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'preflight-retry-child',
-            inboxMessageId: 'background-subagent-completion:preflight-retry-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('preflight-retry-child');
 
         vi.runAllTicks();
         await vi.waitFor(
@@ -1473,18 +1386,7 @@ describe('AcpSession', () => {
           } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'exhaust-child',
-            inboxMessageId: 'background-subagent-completion:exhaust-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('exhaust-child');
 
         vi.runAllTicks();
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
@@ -1545,18 +1447,7 @@ describe('AcpSession', () => {
           } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'budget-child',
-            inboxMessageId: 'background-subagent-completion:budget-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('budget-child');
 
         vi.runAllTicks();
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
@@ -1616,18 +1507,7 @@ describe('AcpSession', () => {
           } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'deadline-child',
-            inboxMessageId: 'background-subagent-completion:deadline-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('deadline-child');
 
         vi.runAllTicks();
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
@@ -1807,18 +1687,7 @@ describe('AcpSession', () => {
           runtimeState.runtime.getPendingSteeringCount
             .mockReturnValueOnce(1)
             .mockReturnValue(pendingAfterFailure);
-          Bus.publish(
-            { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-            'subagent.completion.queued',
-            {
-              childSessionId: `terminal-child-${code}`,
-              inboxMessageId: `background-subagent-completion:terminal-child-${code}`,
-              status: 'completed',
-              type: 'Explore',
-              queued: 1,
-              delivery: 'next_turn',
-            }
-          );
+          publishSubagentCompletion(`terminal-child-${code}`);
 
           vi.runAllTicks();
           await vi.waitFor(
@@ -1879,18 +1748,7 @@ describe('AcpSession', () => {
             },
           } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'goal-child',
-            inboxMessageId: 'background-subagent-completion:goal-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('goal-child');
 
         vi.runAllTicks();
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
@@ -1962,24 +1820,11 @@ describe('AcpSession', () => {
         } satisfies LoopResult;
       });
       mockAgent.chatStream = chatStream as typeof mockAgent.chatStream;
-      const publishWake = (childSessionId: string) =>
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId,
-            inboxMessageId: `background-subagent-completion:${childSessionId}`,
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
 
-      publishWake('goal-wake');
+      publishSubagentCompletion('goal-wake');
       await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1));
       runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-      publishWake('pending-after-goal-failure');
+      publishSubagentCompletion('pending-after-goal-failure');
       releaseGoalAttempt();
 
       await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(2));
@@ -2069,28 +1914,15 @@ describe('AcpSession', () => {
           } satisfies LoopResult;
         });
         mockAgent.chatStream = chatStream as typeof mockAgent.chatStream;
-        const publishWake = (childSessionId: string) =>
-          Bus.publish(
-            { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-            'subagent.completion.queued',
-            {
-              childSessionId,
-              inboxMessageId: `background-subagent-completion:${childSessionId}`,
-              status: 'completed',
-              type: 'Explore',
-              queued: 1,
-              delivery: 'next_turn',
-            }
-          );
 
-        publishWake('goal-deadline-wake');
+        publishSubagentCompletion('goal-deadline-wake');
         vi.runAllTicks();
         await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1), {
           timeout: 500,
           interval: 1,
         });
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        publishWake('pending-after-goal-deadline');
+        publishSubagentCompletion('pending-after-goal-deadline');
         await vi.advanceTimersByTimeAsync(120_000);
 
         await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(2), {
@@ -2163,18 +1995,7 @@ describe('AcpSession', () => {
       await vi.waitFor(() => expect(executeSlashCommand).toHaveBeenCalledTimes(1));
 
       runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-      Bus.publish(
-        { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-        'subagent.completion.queued',
-        {
-          childSessionId: 'side-conversation-child',
-          inboxMessageId: 'background-subagent-completion:side-conversation-child',
-          status: 'completed',
-          type: 'Explore',
-          queued: 1,
-          delivery: 'next_turn',
-        }
-      );
+      publishSubagentCompletion('side-conversation-child');
       await Promise.resolve();
       expect(chatStream).not.toHaveBeenCalled();
 
@@ -2229,18 +2050,7 @@ describe('AcpSession', () => {
         await foregroundStarted;
         expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
 
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'busy-spin-child',
-            inboxMessageId: 'background-subagent-completion:busy-spin-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('busy-spin-child');
         expect(scheduledMicrotasks).toHaveLength(1);
         scheduledMicrotasks.shift()?.();
         await Promise.resolve();
@@ -2274,18 +2084,7 @@ describe('AcpSession', () => {
         await session.initialize();
         const chatStream = vi.spyOn(getMockAgent(), 'chatStream');
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'cancel-child',
-            inboxMessageId: 'background-subagent-completion:cancel-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('cancel-child');
 
         session.cancel();
         await vi.runAllTimersAsync();
@@ -2324,18 +2123,7 @@ describe('AcpSession', () => {
           } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'cancel-in-flight-child',
-            inboxMessageId: 'background-subagent-completion:cancel-in-flight-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('cancel-in-flight-child');
 
         vi.runAllTicks();
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
@@ -2383,18 +2171,7 @@ describe('AcpSession', () => {
           } satisfies LoopResult;
         }) as typeof mockAgent.chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId: 'cancel-retry-child',
-            inboxMessageId: 'background-subagent-completion:cancel-retry-child',
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
+        publishSubagentCompletion('cancel-retry-child');
 
         vi.runAllTicks();
         await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
@@ -2434,25 +2211,8 @@ describe('AcpSession', () => {
         }) as typeof mockAgent.chatStream;
         mockAgent.chatStream = chatStream;
         runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-        const event = {
-          childSessionId: 'coalesced-child',
-          inboxMessageId: 'background-subagent-completion:coalesced-child',
-          status: 'completed',
-          type: 'Explore',
-          queued: 1,
-          delivery: 'next_turn',
-        };
-
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          event
-        );
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          event
-        );
+        publishSubagentCompletion('coalesced-child');
+        publishSubagentCompletion('coalesced-child');
         vi.runAllTicks();
         await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1), {
           timeout: 500,
@@ -2490,26 +2250,13 @@ describe('AcpSession', () => {
         } satisfies LoopResult;
       }) as typeof mockAgent.chatStream;
       mockAgent.chatStream = chatStream;
-      const publishWake = (childSessionId: string) =>
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId,
-            inboxMessageId: `background-subagent-completion:${childSessionId}`,
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
 
-      publishWake('preflight-child');
+      publishSubagentCompletion('preflight-child');
       await vi.waitFor(() => {
         expect(runtimeState.runtime.getGoal).toHaveBeenCalledTimes(1);
       });
       runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-      publishWake('late-child');
+      publishSubagentCompletion('late-child');
       releaseGoalRead();
 
       await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1));
@@ -2537,26 +2284,13 @@ describe('AcpSession', () => {
         } satisfies LoopResult;
       });
       mockAgent.chatStream = chatStream as typeof mockAgent.chatStream;
-      const publishWake = (childSessionId: string) =>
-        Bus.publish(
-          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-          'subagent.completion.queued',
-          {
-            childSessionId,
-            inboxMessageId: `background-subagent-completion:${childSessionId}`,
-            status: 'completed',
-            type: 'Explore',
-            queued: 1,
-            delivery: 'next_turn',
-          }
-        );
 
-      publishWake('failing-preflight-child');
+      publishSubagentCompletion('failing-preflight-child');
       await vi.waitFor(() => {
         expect(runtimeState.runtime.getGoal).toHaveBeenCalledTimes(1);
       });
       runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-      publishWake('pending-after-preflight-failure');
+      publishSubagentCompletion('pending-after-preflight-failure');
       rejectGoalRead(new Error('Provider authentication failed.'));
 
       await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1));
@@ -2572,18 +2306,7 @@ describe('AcpSession', () => {
       mockConnection.sessionUpdates = [];
       runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
 
-      Bus.publish(
-        { sessionId: 'test-session-id', projectPath: '/tmp/test' },
-        'subagent.completion.queued',
-        {
-          childSessionId: 'agent-background-child',
-          inboxMessageId: 'background-subagent-completion:agent-background-child',
-          status: 'completed',
-          type: 'Explore',
-          queued: 1,
-          delivery: 'next_turn',
-        }
-      );
+      publishSubagentCompletion('agent-background-child');
 
       await vi.waitFor(() => {
         expect(getMockAgent().calls[0]).toMatchObject({
