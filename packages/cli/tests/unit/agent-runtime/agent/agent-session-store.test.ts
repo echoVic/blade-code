@@ -266,7 +266,7 @@ describe('AgentSessionStore', () => {
     });
   });
 
-  it('lists newest sessions first and cleans only expired terminal runs', () => {
+  it('lists newest sessions first', () => {
     store.saveSession(
       makeSession('agent-old', {
         status: 'completed',
@@ -292,9 +292,6 @@ describe('AgentSessionStore', () => {
       'agent-old',
       'agent-running',
     ]);
-    expect(store.cleanupExpiredSessions(1_000)).toBe(1);
-    expect(store.loadSession('agent-old')).toBeUndefined();
-    expect(store.loadSession('agent-running')).toBeDefined();
   });
 
   it('bounds terminal session cache entries and reloads evicted data from disk', () => {

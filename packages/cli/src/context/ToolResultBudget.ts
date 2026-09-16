@@ -59,16 +59,6 @@ export class MessageBudgetTracker {
   remaining(): number {
     return Math.max(0, MAX_TOOL_RESULTS_PER_MESSAGE_CHARS - this.currentChars);
   }
-
-  /** 是否已超出预算 */
-  isExhausted(): boolean {
-    return this.currentChars >= MAX_TOOL_RESULTS_PER_MESSAGE_CHARS;
-  }
-
-  /** 每轮开始时重置 */
-  reset(): void {
-    this.currentChars = 0;
-  }
 }
 
 export interface BudgetOptions {

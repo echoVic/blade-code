@@ -397,20 +397,6 @@ export class AcpFileSystemService implements FileSystemService {
       .digest('hex')}`;
   }
 
-  async readTextFileIfExists(
-    filePath: string,
-    options?: {
-      signal?: AbortSignal;
-      deadlineAt?: number;
-      purpose?: AcpRemoteFileRequestPurpose;
-      userReadPermit?: AcpRemoteUserReadPermit;
-      lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
-    }
-  ): Promise<{ exists: false } | { exists: true; content: string }> {
-    const remotePath = this.parsePath(filePath);
-    return this.readTextFileIfExistsForParsedPath(remotePath, options);
-  }
-
   async readTextFileIfExistsForParsedPath(
     remotePath: AcpRemotePath,
     options?: {

@@ -471,7 +471,9 @@ async function executeRemoteWrite(
       (error as AcpRemoteFileBoundaryError & { requiresRead?: boolean }).requiresRead
     );
   const getOldContent = (
-    prior: Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>> | undefined
+    prior:
+      | Awaited<ReturnType<AcpFileSystemService['readTextFileIfExistsForParsedPath']>>
+      | undefined
   ): string => (prior?.exists ? prior.content : '');
   let lease: ReturnType<AcpFileSystemService['tryAcquireMutationLeaseForParsedPaths']>;
   let previous:

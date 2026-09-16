@@ -963,25 +963,6 @@ export class SessionBrowserRuntime {
     }, options.signal);
   }
 
-  stats(): {
-    pages: number;
-    pending: number;
-    active: boolean;
-    generation: number;
-    hasContext: boolean;
-    disposed: boolean;
-  } {
-    const gate = this.gate.stats();
-    return {
-      pages: this.pages.size,
-      pending: gate.pending,
-      active: gate.active,
-      generation: this.runtimeGeneration,
-      hasContext: this.context !== undefined,
-      disposed: this.disposed,
-    };
-  }
-
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;

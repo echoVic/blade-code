@@ -44,10 +44,6 @@ export class LspClient {
     private readonly onCrash: (error: Error) => void
   ) {}
 
-  get serverCapabilities(): ServerCapabilities | undefined {
-    return this.capabilities;
-  }
-
   get isInitialized(): boolean {
     return this.initialized;
   }

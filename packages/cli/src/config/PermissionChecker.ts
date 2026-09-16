@@ -543,27 +543,6 @@ export class PermissionChecker {
   }
 
   /**
-   * 检查是否允许执行 (不需要确认)
-   */
-  isAllowed(descriptor: ToolInvocationDescriptor): boolean {
-    return this.check(descriptor).result === PermissionResult.ALLOW;
-  }
-
-  /**
-   * 检查是否被拒绝
-   */
-  isDenied(descriptor: ToolInvocationDescriptor): boolean {
-    return this.check(descriptor).result === PermissionResult.DENY;
-  }
-
-  /**
-   * 检查是否需要确认
-   */
-  needsConfirmation(descriptor: ToolInvocationDescriptor): boolean {
-    return this.check(descriptor).result === PermissionResult.ASK;
-  }
-
-  /**
    * 更新权限配置
    */
   updateConfig(config: Partial<PermissionConfig>): void {
@@ -576,19 +555,5 @@ export class PermissionChecker {
     if (config.deny) {
       this.config.deny = [...this.config.deny, ...config.deny];
     }
-  }
-
-  /**
-   * 替换整个权限配置
-   */
-  replaceConfig(config: PermissionConfig): void {
-    this.config = { ...config };
-  }
-
-  /**
-   * 获取当前权限配置
-   */
-  getConfig(): PermissionConfig {
-    return { ...this.config };
   }
 }

@@ -64,15 +64,4 @@ export class IdeDetector {
       return null;
     }
   }
-
-  /**
-   * 检测是否运行在 IDE 终端中
-   */
-  static isRunningInIdeTerminal(): boolean {
-    const termProgram = process.env.TERM_PROGRAM;
-    const vscodeTerminal = process.env.VSCODE_INJECTION;
-    const vscodeIpc = process.env.VSCODE_IPC_HOOK;
-
-    return termProgram === 'vscode' || !!vscodeTerminal || !!vscodeIpc;
-  }
 }

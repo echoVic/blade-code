@@ -531,9 +531,6 @@ export class ConfigService {
   // Per-file operations retain coordination only while active or queued.
   private readonly fileLocks = new KeyedMutexRegistry<string>();
 
-  // 错误记录
-  private lastSaveError: Error | null = null;
-
   // 防抖延迟（毫秒）
   private readonly debounceDelay = 300;
 
@@ -622,22 +619,6 @@ export class ConfigService {
 
     this.pendingUpdates.clear();
     await Promise.all(promises);
-  }
-
-  /**
-   * 获取最后一次保存错误
-   *
-   * @returns 最后一次保存失败的错误，如果没有错误则返回 null
-   */
-  getLastSaveError(): Error | null {
-    return this.lastSaveError;
-  }
-
-  /**
-   * 清除最后一次保存错误
-   */
-  clearLastSaveError(): void {
-    this.lastSaveError = null;
   }
 
   /**
@@ -889,12 +870,8 @@ export class ConfigService {
 
         try {
           await this.flushTarget(filePath, pendingUpdates);
-          // 成功后清除错误记录
-          this.lastSaveError = null;
         } catch (error) {
-          // 记录错误
           const saveError = error instanceof Error ? error : new Error(String(error));
-          this.lastSaveError = saveError;
 
           // 记录日志（避免静默失败）
           logger.error(`Failed to save config to ${filePath}:`, saveError.message);

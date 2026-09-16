@@ -226,13 +226,6 @@ export class ToolRegistry extends EventEmitter {
   }
 
   /**
-   * 检查工具是否存在
-   */
-  has(name: string): boolean {
-    return this.tools.has(name) || this.mcpTools.has(name);
-  }
-
-  /**
    * 获取所有工具
    */
   getAll(): Tool[] {

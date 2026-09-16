@@ -289,18 +289,4 @@ export class Compression {
   updateModelLimit(limit: ModelLimit): void {
     this.modelLimit = limit;
   }
-
-  /**
-   * 获取当前配置
-   */
-  getConfig(): CompressionConfig {
-    return { ...this.config };
-  }
-
-  /**
-   * 获取模型限制
-   */
-  getModelLimit(): ModelLimit {
-    return { ...this.modelLimit };
-  }
 }

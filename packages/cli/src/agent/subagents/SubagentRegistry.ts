@@ -380,28 +380,6 @@ export class SubagentRegistry {
       this.subagents.delete(name);
     }
   }
-
-  /**
-   * 获取 Claude Code 配置目录路径
-   * 用于 UI 展示
-   */
-  static getClaudeCodeAgentsDir(type: 'user' | 'project'): string {
-    if (type === 'user') {
-      return path.join(os.homedir(), '.claude', 'agents');
-    }
-    return path.join(getCwd(), '.claude', 'agents');
-  }
-
-  /**
-   * 获取 Blade 配置目录路径
-   * 用于 UI 展示
-   */
-  static getBladeAgentsDir(type: 'user' | 'project'): string {
-    if (type === 'user') {
-      return path.join(os.homedir(), '.blade', 'agents');
-    }
-    return path.join(getCwd(), '.blade', 'agents');
-  }
 }
 
 /**

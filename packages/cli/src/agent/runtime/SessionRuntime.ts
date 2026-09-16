@@ -854,10 +854,6 @@ export class SessionRuntime {
     return this.config;
   }
 
-  getAvailableModels(): ModelConfig[] {
-    return this.config.models.map((model) => structuredClone(model));
-  }
-
   getModelById(modelId: string): ModelConfig | undefined {
     const model = this.config.models.find((candidate) => candidate.id === modelId);
     return model ? structuredClone(model) : undefined;

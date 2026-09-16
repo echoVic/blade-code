@@ -650,10 +650,6 @@ export class SnapshotManager {
     return this.sessionId;
   }
 
-  getTrackedFileCount(): number {
-    return this.trackedFileBackups.size;
-  }
-
   getSnapshotCount(): number {
     return this.snapshots.length;
   }

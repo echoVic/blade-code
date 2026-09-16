@@ -1,8 +1,6 @@
 import * as fsSync from 'node:fs';
-import { createReadStream } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { createInterface } from 'node:readline';
 import type { SessionEvent } from '../types.js';
 
 const TAIL_SCAN_CHUNK_SIZE = 64 * 1024;
@@ -219,48 +217,6 @@ export class JSONLStore {
       signal: options.signal,
     });
     return parseSessionJSONL(content, this.filePath);
-  }
-
-  /**
-   * 流式读取 JSONL 记录（适合大文件）
-   * @param callback 每条记录的回调函数
-   */
-  async readStream(
-    callback: (entry: SessionEvent) => void | Promise<void>
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (!fsSync.existsSync(this.filePath)) {
-        resolve();
-        return;
-      }
-
-      const fileStream = createReadStream(this.filePath, 'utf-8');
-      const rl = createInterface({
-        input: fileStream,
-        crlfDelay: Number.POSITIVE_INFINITY,
-      });
-
-      let lineOrdinal = 0;
-      rl.on('line', async (line) => {
-        const trimmed = line.trim();
-        if (trimmed.length === 0) return;
-
-        try {
-          const entry = JSON.parse(trimmed) as SessionEvent;
-          lineOrdinal += 1;
-          if (typeof entry.seq !== 'number') {
-            entry.seq = lineOrdinal;
-          }
-          await callback(entry);
-        } catch (error) {
-          console.warn(`[JSONLStore] 解析 JSON 行失败: ${trimmed}`, error);
-        }
-      });
-
-      rl.on('close', () => resolve());
-      rl.on('error', reject);
-      fileStream.on('error', reject);
-    });
   }
 
   /**

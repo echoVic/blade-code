@@ -186,10 +186,6 @@ export class Logger {
     Logger.globalDebugConfig = null;
   }
 
-  public setEnabled(enabled: boolean): void {
-    this.enabled = enabled;
-  }
-
   private parseDebugFilter(debugValue: string | boolean): {
     enabled: boolean;
     filter?: { mode: 'include' | 'exclude'; categories: string[] };

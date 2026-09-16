@@ -129,10 +129,4 @@ export class DeferredToolManager {
       '\n'
     );
   }
-
-  /** 重置（用于测试） */
-  reset(): void {
-    this.loadedTools = new Set(ALWAYS_LOADED_TOOLS);
-    this.deferredTools.clear();
-  }
 }

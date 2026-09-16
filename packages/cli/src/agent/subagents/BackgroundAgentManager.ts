@@ -1108,13 +1108,6 @@ export class BackgroundAgentManager {
   }
 
   /**
-   * 列出运行中的 Agent
-   */
-  listRunning(): AgentSession[] {
-    return this.sessionStore.listRunningSessions();
-  }
-
-  /**
    * 获取运行中 Agent 的数量
    */
   getRunningCount(): number {
@@ -1128,13 +1121,6 @@ export class BackgroundAgentManager {
     for (const [agentId] of this.runningAgents) {
       this.killAgent(agentId);
     }
-  }
-
-  /**
-   * 清理过期会话
-   */
-  cleanupExpiredSessions(maxAgeMs?: number): number {
-    return this.sessionStore.cleanupExpiredSessions(maxAgeMs);
   }
 
   cleanupExpiredSessionsForParent(

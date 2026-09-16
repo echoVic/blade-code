@@ -55,39 +55,6 @@ export class IdeInstaller {
   }
 
   /**
-   * 安装 Blade Code 扩展到 VS Code
-   */
-  static async installExtension(
-    ideId: string
-  ): Promise<{ success: boolean; message: string }> {
-    let command: string;
-
-    switch (ideId) {
-      case 'vscode':
-        command = 'code --install-extension blade-code.blade-code';
-        break;
-      case 'vscode-insiders':
-        command = 'code-insiders --install-extension blade-code.blade-code';
-        break;
-      case 'cursor':
-        command = 'cursor --install-extension blade-code.blade-code';
-        break;
-      default:
-        return { success: false, message: '不支持的 IDE: ' + ideId };
-    }
-
-    try {
-      await execAsync(command);
-      return { success: true, message: '扩展安装成功' };
-    } catch (error) {
-      return {
-        success: false,
-        message: '安装失败: ' + (error instanceof Error ? error.message : '未知错误'),
-      };
-    }
-  }
-
-  /**
    * 检测 VS Code
    */
   private static async checkVsCode(): Promise<InstalledIde | null> {

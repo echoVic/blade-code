@@ -470,41 +470,4 @@ export class AttachmentCollector {
       },
     };
   }
-
-  /**
-   * 清理过期缓存
-   */
-  clearExpiredCache(): void {
-    const now = Date.now();
-    let cleared = 0;
-
-    for (const [key, value] of this.fileCache.entries()) {
-      if (now - value.timestamp > 60000) {
-        this.fileCache.delete(key);
-        cleared++;
-      }
-    }
-
-    if (cleared > 0) {
-      logger.debug(`Cleared ${cleared} expired cache entries`);
-    }
-  }
-
-  /**
-   * 清空所有缓存
-   */
-  clearCache(): void {
-    this.fileCache.clear();
-    logger.debug('Cleared all cache');
-  }
-
-  /**
-   * 获取缓存统计
-   */
-  getCacheStats(): { size: number; keys: string[] } {
-    return {
-      size: this.fileCache.size,
-      keys: Array.from(this.fileCache.keys()),
-    };
-  }
 }

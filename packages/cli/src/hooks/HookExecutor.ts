@@ -23,7 +23,6 @@ import {
   type HookInput,
   HookType,
   type HttpHook,
-  type NotificationHookResult,
   type PermissionRequestHookResult,
   type PostToolHookResult,
   type PostToolUseFailureHookResult,
@@ -683,58 +682,6 @@ export class HookExecutor {
     return {
       additionalContext:
         additionalContexts.length > 0 ? additionalContexts.join('\n\n') : undefined,
-      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
-    };
-  }
-
-  /**
-   * 执行 Notification Hooks (串行)
-   */
-  async executeNotificationHooks(
-    hooks: Hook[],
-    input: HookInput,
-    context: HookExecutionContext
-  ): Promise<NotificationHookResult> {
-    const originalMessage = 'message' in input ? (input.message as string) : '';
-
-    if (hooks.length === 0) {
-      return { suppress: false, message: originalMessage };
-    }
-
-    const warnings: string[] = [];
-    let suppress = false;
-    let message = originalMessage;
-
-    for (const hook of hooks) {
-      try {
-        const result = await this.executeHook(hook, input, context);
-
-        if (!result.success) {
-          if (result.warning) {
-            warnings.push(result.warning);
-          }
-          continue;
-        }
-
-        // 检查是否抑制通知
-        if (result.output?.suppressOutput) {
-          suppress = true;
-          break;
-        }
-
-        // 修改消息内容（来自 stdout）
-        if (result.stdout && result.stdout.trim()) {
-          message = result.stdout.trim();
-        }
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        warnings.push(`Hook failed: ${errorMsg}`);
-      }
-    }
-
-    return {
-      suppress,
-      message,
       warning: warnings.length > 0 ? warnings.join('\n') : undefined,
     };
   }

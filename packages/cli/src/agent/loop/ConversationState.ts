@@ -111,11 +111,6 @@ export class ConversationState {
     return this._history.length;
   }
 
-  /** 获取 history 引用（用于压缩服务读取） */
-  get history(): Message[] {
-    return this._history;
-  }
-
   /** 获取 pending 引用（用于调试） */
   get pending(): ReadonlyArray<Message> {
     return this._pending;
@@ -134,21 +129,9 @@ export class ConversationState {
     return [...this.systemMessages, ...this._history, ...this._pending];
   }
 
-  /** toLLMMessages 的别名，与计划 API 保持一致 */
-  getMessagesForLLM(): Message[] {
-    return this.toLLMMessages();
-  }
-
   /** 返回 history 的副本 */
   getHistory(): Message[] {
     return this._history;
-  }
-
-  /**
-   * 追加消息到 pending（当前轮次的 assistant/tool/user 消息）
-   */
-  appendPending(msg: Message): void {
-    this._pending.push(msg);
   }
 
   /** 追加用户消息到 pending */
@@ -299,12 +282,5 @@ export class ConversationState {
   writeback(): void {
     this.commitPending();
     this.context.messages = [...this._contextualSystemMessages, ...this._history];
-  }
-
-  /**
-   * 是否有根系统提示（用于压缩重建逻辑）
-   */
-  get hasSystemPrompt(): boolean {
-    return this.systemMessages.length > 0;
   }
 }

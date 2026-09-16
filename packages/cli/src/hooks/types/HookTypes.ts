@@ -969,20 +969,6 @@ export interface PostToolUseFailureHookResult {
 }
 
 /**
- * Notification Hook 执行结果
- */
-export interface NotificationHookResult {
-  /** 是否抑制通知 */
-  suppress: boolean;
-
-  /** 修改后的消息 */
-  message: string;
-
-  /** 警告信息 */
-  warning?: string;
-}
-
-/**
  * Compaction Hook 执行结果
  */
 export interface CompactionHookResult {

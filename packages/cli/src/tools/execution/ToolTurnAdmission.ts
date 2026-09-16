@@ -39,8 +39,4 @@ export class ToolTurnAdmission {
   reset(): void {
     this.admitted = 0;
   }
-
-  get count(): number {
-    return this.admitted;
-  }
 }

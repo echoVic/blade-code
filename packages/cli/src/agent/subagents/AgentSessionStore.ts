@@ -494,20 +494,6 @@ export class AgentSessionStore {
   }
 
   /**
-   * 追加消息到会话
-   */
-  appendMessages(agentId: string, messages: Message[]): AgentSession | undefined {
-    const session = this.loadSession(agentId);
-    if (!session) {
-      return undefined;
-    }
-
-    return this.updateSession(agentId, {
-      messages: [...session.messages, ...messages],
-    });
-  }
-
-  /**
    * 标记会话完成
    */
   markCompleted(
@@ -576,41 +562,6 @@ export class AgentSessionStore {
       logger.warn('Failed to list sessions:', error);
       return [];
     }
-  }
-
-  /**
-   * 列出运行中的会话
-   */
-  listRunningSessions(): AgentSession[] {
-    return this.listSessions().filter((s) => s.status === 'running');
-  }
-
-  /**
-   * 清理过期会话
-   * @param maxAgeMs 最大保留时间（毫秒），默认 7 天
-   */
-  cleanupExpiredSessions(maxAgeMs: number = 7 * 24 * 60 * 60 * 1000): number {
-    const now = Date.now();
-    const sessions = this.listSessions();
-    let cleaned = 0;
-
-    for (const session of sessions) {
-      // 只清理已完成的会话
-      if (session.status === 'running') continue;
-
-      const age = now - session.lastActiveAt;
-      if (age > maxAgeMs) {
-        if (this.deleteSession(session.id)) {
-          cleaned++;
-        }
-      }
-    }
-
-    if (cleaned > 0) {
-      logger.info(`Cleaned up ${cleaned} expired agent sessions`);
-    }
-
-    return cleaned;
   }
 
   /**

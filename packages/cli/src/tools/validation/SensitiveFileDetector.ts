@@ -275,19 +275,6 @@ export class SensitiveFileDetector {
   }
 
   /**
-   * 批量检查文件列表
-   */
-  static checkMultiple(filePaths: string[]): Map<string, SensitiveFileCheckResult> {
-    const results = new Map<string, SensitiveFileCheckResult>();
-
-    for (const filePath of filePaths) {
-      results.set(filePath, this.check(filePath));
-    }
-
-    return results;
-  }
-
-  /**
    * 获取敏感文件列表
    */
   static filterSensitive(
@@ -339,19 +326,5 @@ export class SensitiveFileDetector {
     // 简单通配符匹配（* 匹配任意字符）
     const regexPattern = pattern.replace(/\*/g, '.*');
     return new RegExp(`^${regexPattern}$`, 'i').test(text);
-  }
-
-  /**
-   * 获取所有敏感文件模式（用于文档/调试）
-   */
-  static getSensitivePatterns(): SensitivePattern[] {
-    return [...this.SENSITIVE_PATTERNS];
-  }
-
-  /**
-   * 获取所有敏感路径模式（用于文档/调试）
-   */
-  static getSensitivePaths(): typeof SensitiveFileDetector.SENSITIVE_PATHS {
-    return [...this.SENSITIVE_PATHS];
   }
 }

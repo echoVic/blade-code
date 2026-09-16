@@ -34,8 +34,6 @@ import {
   HookType,
   type MatchContext,
   type MatcherConfig,
-  type NotificationHookResult,
-  type NotificationInput,
   type PermissionRequestHookResult,
   type PermissionRequestInput,
   type PostToolHookResult,
@@ -1080,71 +1078,6 @@ export class HookManager {
     } catch (err) {
       console.error('[HookManager] Error executing PostToolUseFailure hooks:', err);
       return {
-        warning: `Hook execution failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-  }
-
-  /**
-   * 执行 Notification Hooks
-   */
-  async executeNotificationHooks(
-    notificationType: NotificationInput['notification_type'],
-    message: string,
-    context: {
-      projectDir: string;
-      sessionId: string;
-      permissionMode: PermissionMode;
-      title?: string;
-      abortSignal?: AbortSignal;
-    }
-  ): Promise<NotificationHookResult> {
-    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
-      return { suppress: false, message };
-    }
-
-    // 构建 Hook 输入
-    const hookInput: NotificationInput = {
-      hook_event_name: HookEvent.Notification,
-      hook_execution_id: nanoid(),
-      timestamp: new Date().toISOString(),
-      project_dir: context.projectDir,
-      session_id: context.sessionId,
-      permission_mode: context.permissionMode,
-      notification_type: notificationType,
-      title: context.title,
-      message,
-    };
-
-    // 获取 hooks
-    const hooks = this.getMatchingHooks(HookEvent.Notification, {}, config);
-
-    if (hooks.length === 0) {
-      return { suppress: false, message };
-    }
-
-    // 构建执行上下文
-    const execContext: HookExecutionContext = {
-      projectDir: context.projectDir,
-      sessionId: context.sessionId,
-      permissionMode: context.permissionMode,
-      config,
-      abortSignal: context.abortSignal,
-    };
-
-    try {
-      const results = await this.executor.executeNotificationHooks(
-        hooks,
-        hookInput,
-        execContext
-      );
-      return results;
-    } catch (err) {
-      console.error('[HookManager] Error executing Notification hooks:', err);
-      return {
-        suppress: false,
-        message,
         warning: `Hook execution failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }

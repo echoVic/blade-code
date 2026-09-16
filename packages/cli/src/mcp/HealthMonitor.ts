@@ -216,13 +216,6 @@ export class HealthMonitor extends EventEmitter {
   }
 
   /**
-   * 获取当前状态
-   */
-  getStatus(): HealthStatus {
-    return this.currentStatus;
-  }
-
-  /**
    * 获取最后检查结果
    */
   getLastResult(): HealthCheckResult {
@@ -230,19 +223,6 @@ export class HealthMonitor extends EventEmitter {
       status: this.currentStatus,
       timestamp: this.lastCheckTime,
       consecutiveFailures: this.consecutiveFailures,
-    };
-  }
-
-  /**
-   * 获取统计信息
-   */
-  getStatistics() {
-    return {
-      status: this.currentStatus,
-      consecutiveFailures: this.consecutiveFailures,
-      lastCheckTime: this.lastCheckTime,
-      isChecking: this.isChecking,
-      config: this.config,
     };
   }
 
