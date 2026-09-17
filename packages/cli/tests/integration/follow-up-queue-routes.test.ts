@@ -225,4 +225,85 @@ describe('follow-up queue HTTP and SSE lifecycle', () => {
       await controller.shutdown();
     }
   });
+
+  it('owns the durable session CRUD lifecycle and validates public inputs', async () => {
+    const controller = createSessionRouteController();
+    const request = async (pathname: string, init?: RequestInit) =>
+      controller.app.request(pathname, init);
+
+    try {
+      const createdResponse = await request('/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Original title',
+          projectPath: workspace,
+        }),
+      });
+      expect(createdResponse.status).toBe(200);
+      const created = (await createdResponse.json()) as {
+        sessionId: string;
+        title: string;
+      };
+      const query = `?projectPath=${encodeURIComponent(workspace)}`;
+
+      expect(created.title).toBe('Original title');
+      await expect(request('/').then((response) => response.json())).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ sessionId: created.sessionId, isActive: true }),
+        ])
+      );
+      await expect(
+        request(`/catalog${query}`).then((response) => response.json())
+      ).resolves.toMatchObject({
+        sessions: [
+          expect.objectContaining({
+            sessionId: created.sessionId,
+            title: 'Original title',
+          }),
+        ],
+      });
+      await expect(
+        request(`/${created.sessionId}${query}`).then((response) => response.json())
+      ).resolves.toMatchObject({
+        sessionId: created.sessionId,
+        projectPath: workspace,
+      });
+
+      const renamed = await request(`/${created.sessionId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Renamed', projectPath: workspace }),
+      });
+      expect(renamed.status).toBe(200);
+      await expect(renamed.json()).resolves.toEqual({
+        success: true,
+        title: 'Renamed',
+      });
+
+      const messages = await request(`/${created.sessionId}/message${query}`);
+      expect(messages.status).toBe(200);
+      await expect(messages.json()).resolves.toEqual([]);
+
+      expect((await request('/catalog?archived=invalid')).status).toBe(400);
+      expect(
+        (
+          await request(`/${created.sessionId}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ projectPath: workspace }),
+          })
+        ).status
+      ).toBe(400);
+
+      const deleted = await request(`/${created.sessionId}${query}`, {
+        method: 'DELETE',
+      });
+      expect(deleted.status).toBe(200);
+      await expect(deleted.json()).resolves.toEqual({ success: true });
+      expect((await request(`/${created.sessionId}${query}`)).status).toBe(404);
+    } finally {
+      await controller.shutdown();
+    }
+  });
 });

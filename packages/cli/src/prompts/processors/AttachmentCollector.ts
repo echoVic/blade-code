@@ -22,9 +22,7 @@ function isFileTree(value: FileTreeEntry): value is FileTree {
   return value instanceof Map;
 }
 
-/**
- * 附件收集器
- */
+/** 附件收集器 */
 export class AttachmentCollector {
   private fileCache = new Map<string, { content: string; timestamp: number }>();
   private options: Required<CollectorOptions>;
@@ -137,9 +135,7 @@ export class AttachmentCollector {
     return await this.readFile(realPath, mention.path, mention.lineRange);
   }
 
-  /**
-   * 读取文件内容
-   */
+  /** 读取文件内容 */
   private async readFile(
     absolutePath: string,
     relativePath: string,
@@ -181,9 +177,7 @@ export class AttachmentCollector {
     return this.formatFileAttachment(relativePath, content, lineRange);
   }
 
-  /**
-   * 格式化文件附件
-   */
+  /** 格式化文件附件 */
   private formatFileAttachment(
     relativePath: string,
     content: string,
@@ -243,9 +237,7 @@ export class AttachmentCollector {
     };
   }
 
-  /**
-   * 渲染目录树结构（不读取文件内容，仅展示结构）
-   */
+  /** 渲染目录树结构（不读取文件内容，仅展示结构） */
   private async renderDirectoryTree(
     absolutePath: string,
     relativePath: string
@@ -300,9 +292,7 @@ export class AttachmentCollector {
     };
   }
 
-  /**
-   * 构建文件树结构
-   */
+  /** 构建文件树结构 */
   private buildFileTree(files: string[]): FileTree {
     const tree: FileTree = new Map<string, FileTreeEntry>();
 
@@ -330,9 +320,7 @@ export class AttachmentCollector {
     return tree;
   }
 
-  /**
-   * 打印树形结构为 ASCII 格式
-   */
+  /** 打印树形结构为 ASCII 格式 */
   private printTree(
     tree: FileTree,
     rootPath: string,
@@ -370,9 +358,7 @@ export class AttachmentCollector {
     return lines.filter((l) => l).join('\n');
   }
 
-  /**
-   * 处理 Glob 模式
-   */
+  /** 处理 Glob 模式 */
   private async processGlob(pattern: string): Promise<Attachment> {
     // 使用 fast-glob 展开模式
     const files = (await fg(pattern, {
@@ -468,43 +454,6 @@ export class AttachmentCollector {
         lines: results.reduce((sum, r) => sum + r.lines, 0),
         truncated: files.length > maxFiles || results.some((r) => r.truncated),
       },
-    };
-  }
-
-  /**
-   * 清理过期缓存
-   */
-  clearExpiredCache(): void {
-    const now = Date.now();
-    let cleared = 0;
-
-    for (const [key, value] of this.fileCache.entries()) {
-      if (now - value.timestamp > 60000) {
-        this.fileCache.delete(key);
-        cleared++;
-      }
-    }
-
-    if (cleared > 0) {
-      logger.debug(`Cleared ${cleared} expired cache entries`);
-    }
-  }
-
-  /**
-   * 清空所有缓存
-   */
-  clearCache(): void {
-    this.fileCache.clear();
-    logger.debug('Cleared all cache');
-  }
-
-  /**
-   * 获取缓存统计
-   */
-  getCacheStats(): { size: number; keys: string[] } {
-    return {
-      size: this.fileCache.size,
-      keys: Array.from(this.fileCache.keys()),
     };
   }
 }

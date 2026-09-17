@@ -3,12 +3,7 @@ import { useEffect, useRef } from 'react';
 import { getGracefulShutdown } from '../../services/GracefulShutdown.js';
 import { appActions } from '../../store/vanilla.js';
 
-/**
- * 智能 Ctrl+C 处理 Hook
- *
- * 双击退出逻辑：第一次显示提示，第二次退出应用
- * 退出时通过 GracefulShutdown 执行资源清理
- */
+/** 智能 Ctrl+C 处理 Hook 双击退出逻辑：第一次显示提示，第二次退出应用 退出时通过 GracefulShutdown 执行资源清理 */
 export const useCtrlCHandler = (
   isProcessing: boolean,
   onAbort?: () => void
@@ -26,8 +21,7 @@ export const useCtrlCHandler = (
     }, 3000);
   });
 
-  // 退出应用
-  // 通过 GracefulShutdown 执行资源清理后退出
+  // 退出应用 通过 GracefulShutdown 执行资源清理后退出
   const doExit = () => {
     getGracefulShutdown().shutdown('SIGINT', 0);
   };

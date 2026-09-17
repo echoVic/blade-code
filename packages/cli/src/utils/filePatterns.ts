@@ -301,14 +301,6 @@ export class FileFilter {
   getIgnorePatterns(): string[] {
     return this.ignorePatterns;
   }
-
-  /**
-   * 获取 negation 模式，供调试或参考使用
-   * @returns negation 模式数组
-   */
-  getNegatePatterns(): string[] {
-    return this.negatePatterns;
-  }
 }
 
 export function getExcludePatterns(customPatterns: string[] = []): string[] {

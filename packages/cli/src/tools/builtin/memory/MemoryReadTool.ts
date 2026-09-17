@@ -1,6 +1,4 @@
-/**
- * MemoryReadTool - 读取项目记忆文件
- */
+/** MemoryReadTool - 读取项目记忆文件 */
 
 import { AutoMemoryManager } from '../../../memory/AutoMemoryManager.js';
 import { Type } from '../../../schema/index.js';

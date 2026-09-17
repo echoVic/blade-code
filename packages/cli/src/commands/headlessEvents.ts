@@ -1,8 +1,7 @@
 /**
- * Stable JSONL event contract for headless CLI consumers.
- *
- * The external wire format intentionally uses snake_case so tests and sandbox
- * integrations can consume it without depending on internal TypeScript naming.
+ * Stable JSONL event contract for headless CLI consumers. <p> The external wire format
+ * intentionally uses snake_case so tests and sandbox integrations can consume it
+ * without depending on internal TypeScript naming.
  */
 
 import { MemoryConsolidationProjectionSchema } from '../api/memoryConsolidationSchemas.js';

@@ -1,15 +1,10 @@
-/**
- * 搜索缓存管理器
- * 使用 LRU + TTL 策略减少重复搜索请求
- */
+/** 搜索缓存管理器 使用 LRU + TTL 策略减少重复搜索请求 */
 
 import crypto from 'node:crypto';
 import { LRUCache } from 'lru-cache';
 import type { WebSearchResult } from './webSearch.js';
 
-/**
- * 搜索结果缓存项
- */
+/** 搜索结果缓存项 */
 interface CacheEntry {
   query: string;
   provider: string;
@@ -18,18 +13,14 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-/**
- * 缓存配置
- */
+/** 缓存配置 */
 export interface CacheConfig {
   maxSize: number; // 最大缓存条目数
   ttl: number; // 缓存生存时间（毫秒）
   enabled: boolean; // 是否启用缓存
 }
 
-/**
- * 缓存统计信息
- */
+/** 缓存统计信息 */
 export interface CacheStats {
   size: number; // 当前缓存条目数
   maxSize: number; // 最大容量
@@ -40,9 +31,7 @@ export interface CacheStats {
   hitRate: number; // 命中率
 }
 
-/**
- * 搜索缓存管理器
- */
+/** 搜索缓存管理器 */
 export class SearchCache {
   private cache: LRUCache<string, CacheEntry>;
   private config: CacheConfig;
@@ -64,10 +53,7 @@ export class SearchCache {
     });
   }
 
-  /**
-   * 生成缓存键
-   * 格式: provider:query_hash
-   */
+  /** 生成缓存键 格式: provider:query_hash */
   private generateKey(provider: string, query: string): string {
     const normalized = query.toLowerCase().trim();
     const hash = crypto
@@ -107,9 +93,7 @@ export class SearchCache {
     return entry.results;
   }
 
-  /**
-   * 设置缓存
-   */
+  /** 设置缓存 */
   set(provider: string, query: string, results: WebSearchResult[]): void {
     if (!this.config.enabled || results.length === 0) {
       return;
@@ -129,18 +113,14 @@ export class SearchCache {
     this.cache.set(key, entry);
   }
 
-  /**
-   * 清除所有缓存
-   */
+  /** 清除所有缓存 */
   clear(): void {
     this.cache.clear();
     this.hits = 0;
     this.misses = 0;
   }
 
-  /**
-   * 获取缓存统计
-   */
+  /** 获取缓存统计 */
   getStats(): CacheStats {
     const total = this.hits + this.misses;
     const hitRate = total > 0 ? (this.hits / total) * 100 : 0;
@@ -174,30 +154,22 @@ export class SearchCache {
     return removed;
   }
 
-  /**
-   * 启用缓存
-   */
+  /** 启用缓存 */
   enable(): void {
     this.config.enabled = true;
   }
 
-  /**
-   * 禁用缓存
-   */
+  /** 禁用缓存 */
   disable(): void {
     this.config.enabled = false;
   }
 
-  /**
-   * 检查缓存是否启用
-   */
+  /** 检查缓存是否启用 */
   isEnabled(): boolean {
     return this.config.enabled;
   }
 
-  /**
-   * 更新配置
-   */
+  /** 更新配置 */
   updateConfig(config: Partial<CacheConfig>): void {
     if (config.maxSize !== undefined && config.maxSize !== this.config.maxSize) {
       this.config.maxSize = config.maxSize;
@@ -228,9 +200,7 @@ export class SearchCache {
 // 全局缓存实例（模块加载时初始化）
 const globalSearchCache = new SearchCache();
 
-/**
- * 获取全局搜索缓存实例
- */
+/** 获取全局搜索缓存实例 */
 export function getSearchCache(): SearchCache {
   return globalSearchCache;
 }

@@ -1,7 +1,4 @@
-/**
- * 上下文压缩服务
- * 负责协调整个压缩流程：分析文件、生成总结、创建压缩消息
- */
+/** 上下文压缩服务 负责协调整个压缩流程：分析文件、生成总结、创建压缩消息 */
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -42,9 +39,7 @@ import { TokenCounter } from './TokenCounter.js';
 
 const logger = createLogger(LogCategory.CONTEXT);
 
-/**
- * 压缩选项
- */
+/** 压缩选项 */
 export interface CompactionOptions {
   /** 触发方式：自动或手动 */
   trigger: 'auto' | 'manual';
@@ -75,9 +70,7 @@ export interface CompactionOptions {
   workspaceAccess?: 'full' | 'none';
 }
 
-/**
- * 压缩结果
- */
+/** 压缩结果 */
 export interface CompactionResult {
   /** 是否成功 */
   success: boolean;
@@ -417,9 +410,7 @@ function reduceCompactionSampleInput(
   return nextChars < currentChars ? next : undefined;
 }
 
-/**
- * 构建面向继续执行的有界压缩 prompt。
- */
+/** 构建面向继续执行的有界压缩 prompt。 */
 export function buildCompactionPrompt(
   messages: readonly Message[],
   fileContents: readonly FileContent[],
@@ -474,9 +465,7 @@ ${messagesText}
 ${fileContents.length > 0 ? `## Important Files\n\n${filesText}\n\n` : ''}Respond with one <analysis> section followed by one <summary> section. The summary must obey the ledger contract above.`;
 }
 
-/**
- * Compaction Service - 上下文压缩服务
- */
+/** Compaction Service - 上下文压缩服务 */
 export class CompactionService {
   /** 保留比例（20%） */
   private static readonly RETAIN_PERCENT = 0.2;
@@ -519,8 +508,7 @@ export class CompactionService {
     }
     logger.debug(`[CompactionService] preTokens source: ${tokenSource}`);
 
-    // 执行 Compaction Hook（压缩前）
-    // Hook 可以阻止压缩
+    // 执行 Compaction Hook（压缩前） Hook 可以阻止压缩
     let blockReason: string | undefined;
     let completedSampleAttempts = 0;
     let completedUsage: UsageInfo | undefined;

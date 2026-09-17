@@ -20,13 +20,9 @@ import type { MatchContext, MatcherConfig } from './types/HookTypes.js';
  */
 const PARAM_PATTERN_REGEX = /^([A-Za-z0-9_|]+)\((.+)\)$/;
 
-/**
- * Hook Matcher
- */
+/** Hook Matcher */
 export class Matcher {
-  /**
-   * 检查是否匹配
-   */
+  /** 检查是否匹配 */
   matches(config: MatcherConfig | undefined, context: MatchContext): boolean {
     // 没有 matcher 配置,匹配所有
     if (!config) {
@@ -62,9 +58,7 @@ export class Matcher {
     return true;
   }
 
-  /**
-   * 匹配工具名（支持字符串和数组）
-   */
+  /** 匹配工具名（支持字符串和数组） */
   private matchTools(tools: string | string[], context: MatchContext): boolean {
     // 数组格式：任一匹配即可
     if (Array.isArray(tools)) {
@@ -74,9 +68,7 @@ export class Matcher {
     return this.matchToolWithParams(tools, context);
   }
 
-  /**
-   * 匹配文件路径（支持字符串和数组）
-   */
+  /** 匹配文件路径（支持字符串和数组） */
   private matchPaths(paths: string | string[], filePath: string): boolean {
     // 数组格式：任一匹配即可
     if (Array.isArray(paths)) {
@@ -90,9 +82,7 @@ export class Matcher {
     return isMatch(filePath);
   }
 
-  /**
-   * 匹配命令（支持字符串和数组）
-   */
+  /** 匹配命令（支持字符串和数组） */
   private matchCommands(commands: string | string[], command: string): boolean {
     // 数组格式：任一匹配即可
     if (Array.isArray(commands)) {
@@ -130,9 +120,7 @@ export class Matcher {
       return false;
     }
 
-    // 然后匹配参数
-    // 对于 Bash 工具，参数是 command
-    // 对于 Read/Edit/Write 等工具，参数是 filePath
+    // 然后匹配参数 对于 Bash 工具，参数是 command 对于 Read/Edit/Write 等工具，参数是 filePath
     const argValues = this.getArgValues(
       toolName!,
       command,
@@ -148,9 +136,7 @@ export class Matcher {
     return argValues.some((argValue) => this.matchGlobOrPattern(argValue, argPattern));
   }
 
-  /**
-   * 获取工具的参数值
-   */
+  /** 获取工具的参数值 */
   private getArgValues(
     toolName: string,
     command?: string,
@@ -171,9 +157,7 @@ export class Matcher {
     return command ? [command] : filePaths;
   }
 
-  /**
-   * 使用 glob 或简单模式匹配
-   */
+  /** 使用 glob 或简单模式匹配 */
   private matchGlobOrPattern(value: string, pattern: string): boolean {
     // 如果包含 glob 特殊字符，使用 picomatch
     if (/[*?[\]{}!]/.test(pattern)) {

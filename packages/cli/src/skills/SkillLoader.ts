@@ -1,8 +1,6 @@
 /**
- * SkillLoader - SKILL.md 文件解析器
- *
- * 负责解析 SKILL.md 文件的 YAML 前置数据和 Markdown 正文内容。
- * 支持 Progressive Disclosure：可以只加载元数据，或加载完整内容。
+ * SkillLoader - SKILL.md 文件解析器 <p> 负责解析 SKILL.md 文件的 YAML 前置数据和 Markdown 正文内容。 支持
+ * Progressive Disclosure：可以只加载元数据，或加载完整内容。
  */
 
 import * as fs from 'node:fs/promises';
@@ -19,10 +17,7 @@ const NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]?$/;
 /** 描述最大长度 */
 const MAX_DESCRIPTION_LENGTH = 1024;
 
-/**
- * 解析 SKILL.md 的 YAML 前置数据
- * 完全对齐 Claude Code Skills 规范
- */
+/** 解析 SKILL.md 的 YAML 前置数据 完全对齐 Claude Code Skills 规范 */
 interface RawFrontmatter {
   name?: string;
   description?: string;
@@ -40,9 +35,7 @@ interface RawFrontmatter {
   when_to_use?: string;
 }
 
-/**
- * 验证并规范化 allowed-tools 字段
- */
+/** 验证并规范化 allowed-tools 字段 */
 function parseAllowedTools(raw: string | string[] | undefined): string[] | undefined {
   if (!raw) return undefined;
 
@@ -61,9 +54,7 @@ function parseAllowedTools(raw: string | string[] | undefined): string[] | undef
   return undefined;
 }
 
-/**
- * 解析布尔值字段（支持 true/false 字符串）
- */
+/** 解析布尔值字段（支持 true/false 字符串） */
 function parseBoolean(value: boolean | string | undefined): boolean | undefined {
   if (value === undefined) return undefined;
   if (typeof value === 'boolean') return value;
@@ -75,9 +66,7 @@ function parseBoolean(value: boolean | string | undefined): boolean | undefined 
   return undefined;
 }
 
-/**
- * 验证 Skill 元数据
- */
+/** 验证 Skill 元数据 */
 function validateMetadata(
   frontmatter: RawFrontmatter,
   filePath: string
@@ -130,9 +119,7 @@ function validateMetadata(
   };
 }
 
-/**
- * 解析 SKILL.md 文件内容
- */
+/** 解析 SKILL.md 文件内容 */
 function parseSkillContent(
   content: string,
   filePath: string,
@@ -185,9 +172,7 @@ function parseSkillContent(
   };
 }
 
-/**
- * 从文件加载 Skill（仅元数据）
- */
+/** 从文件加载 Skill（仅元数据） */
 export async function loadSkillMetadata(
   filePath: string,
   source: 'user' | 'project' | 'builtin'
@@ -209,9 +194,7 @@ export async function loadSkillMetadata(
   }
 }
 
-/**
- * 加载完整 Skill 内容
- */
+/** 加载完整 Skill 内容 */
 export async function loadSkillContent(
   metadata: SkillMetadata
 ): Promise<SkillContent | null> {
@@ -224,9 +207,7 @@ export async function loadSkillContent(
   }
 }
 
-/**
- * 检查目录中是否存在 SKILL.md
- */
+/** 检查目录中是否存在 SKILL.md */
 export async function hasSkillFile(dirPath: string): Promise<boolean> {
   try {
     await fs.access(path.join(dirPath, 'SKILL.md'));

@@ -1,6 +1,4 @@
-/**
- * /hooks 命令 - 管理 Hook 配置
- */
+/** /hooks 命令 - 管理 Hook 配置 */
 
 import { HookManager } from '../hooks/HookManager.js';
 import { HookEvent } from '../hooks/types/HookTypes.js';
@@ -107,9 +105,7 @@ const hooksCommand: SlashCommand = {
   },
 };
 
-/**
- * 显示 hooks 状态
- */
+/** 显示 hooks 状态 */
 async function showHooksStatus(
   hookManager: HookManager,
   projectDir: string,
@@ -160,9 +156,7 @@ async function showHooksStatus(
   return { success: true, message: 'Hooks status displayed' };
 }
 
-/**
- * 列出详细的 hooks 配置
- */
+/** 列出详细的 hooks 配置 */
 async function listHooksConfig(
   hookManager: HookManager,
   projectDir: string,

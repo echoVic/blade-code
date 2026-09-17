@@ -1,9 +1,4 @@
-/**
- * 多模态输入序列化
- *
- * 构建用户消息内容，处理纯文本和图片混合输入。
- * 与 slash routing 无关，独立放置避免错误依赖方向。
- */
+/** 多模态输入序列化 构建用户消息内容，处理纯文本和图片混合输入。 与 slash routing 无关，独立放置避免错误依赖方向。 */
 
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
@@ -12,11 +7,7 @@ import {
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import type { ResolvedInput } from '../hooks/useInputBuffer.js';
 
-/**
- * 构建用户消息内容
- * 如果包含图片，则返回多模态 ContentPart[]（保留文本和图片的相对顺序）
- * 否则返回纯文本 string
- */
+/** 构建用户消息内容 如果包含图片，则返回多模态 ContentPart[]（保留文本和图片的相对顺序） 否则返回纯文本 string */
 export function buildUserMessageContent(
   resolved: ResolvedInput
 ): string | ContentPart[] {

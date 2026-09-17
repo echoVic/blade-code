@@ -1,8 +1,4 @@
-/**
- * /tasks slash command
- *
- * 列出所有后台任务（shells 和 agents）
- */
+/** /tasks slash command 列出所有后台任务（shells 和 agents） */
 
 import path from 'node:path';
 import type { AgentSessionOwner } from '../agent/subagents/AgentSessionStore.js';
@@ -15,9 +11,7 @@ import {
   type SlashCommandResult,
 } from './types.js';
 
-/**
- * 格式化时间差
- */
+/** 格式化时间差 */
 function formatDuration(ms: number): string {
   if (ms < 1000) {
     return `${ms}ms`;
@@ -34,9 +28,7 @@ function formatDuration(ms: number): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
-/**
- * 获取状态图标
- */
+/** 获取状态图标 */
 function getStatusIcon(status: string): string {
   switch (status) {
     case 'running':
@@ -55,17 +47,13 @@ function getStatusIcon(status: string): string {
   }
 }
 
-/**
- * 截断字符串
- */
+/** 截断字符串 */
 function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
   return str.slice(0, maxLen - 3) + '...';
 }
 
-/**
- * /tasks 命令处理器
- */
+/** /tasks 命令处理器 */
 async function tasksHandler(
   args: string[],
   context: SlashCommandContext
@@ -195,9 +183,7 @@ async function tasksHandler(
   };
 }
 
-/**
- * /tasks 命令定义
- */
+/** /tasks 命令定义 */
 const tasksCommand: SlashCommand = {
   name: 'tasks',
   description: '列出所有后台任务（shells 和 agents）',

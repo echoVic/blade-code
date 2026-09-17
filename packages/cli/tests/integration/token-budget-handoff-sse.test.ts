@@ -3,11 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { setImmediate as nextImmediate } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TokenBudgetHandoffRecordedV1 } from '../../src/context/TokenBudgetHandoff.js';
 import { SessionEventLog } from '../../src/context/events/SessionEventLog.js';
 import { JSONLStore } from '../../src/context/storage/JSONLStore.js';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../src/context/storage/pathUtils.js';
+import type { TokenBudgetHandoffRecordedV1 } from '../../src/context/TokenBudgetHandoff.js';
 import type {
   SessionEvent,
   TokenBudgetHandoffRecordedEvent,
@@ -252,7 +252,7 @@ describe('token-budget handoff SSE suppression', () => {
     const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
     process.env.BLADE_STORAGE_ROOT = storageRoot;
     const sessionId = 'handoff-session-feed';
-    const persistent = new PersistentStore(workspace, 100, 'test');
+    const persistent = new PersistentStore(workspace, 'test');
     const controller = createSessionRouteController();
     const log = SessionEventLog.for(sessionId, workspace);
     let feed:
@@ -407,7 +407,7 @@ describe('token-budget handoff SSE suppression', () => {
     const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
     process.env.BLADE_STORAGE_ROOT = storageRoot;
     const sessionId = 'handoff-global-feed';
-    const persistent = new PersistentStore(workspace, 100, 'test');
+    const persistent = new PersistentStore(workspace, 'test');
     const log = SessionEventLog.for(sessionId, workspace);
     let feed:
       | {

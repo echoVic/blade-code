@@ -1,6 +1,4 @@
-/**
- * Slash Command 类型定义
- */
+/** Slash Command 类型定义 */
 
 import type {
   ResumedSubagent,
@@ -105,9 +103,7 @@ export type SlashCommandAction =
   | 'select_session'
   | 'activate_session';
 
-/**
- * Slash command 返回的结构化数据
- */
+/** Slash command 返回的结构化数据 */
 export interface SlashCommandData {
   /** UI 指令（触发特定 UI 组件） */
   action?: SlashCommandAction;
@@ -137,11 +133,7 @@ export interface SlashCommandResult {
   data?: SlashCommandData;
 }
 
-/**
- * ACP 模式下的回调接口
- *
- * 当 slash command 在 ACP 模式下执行时，使用这些回调将输出发送给 IDE
- */
+/** ACP 模式下的回调接口 当 slash command 在 ACP 模式下执行时，使用这些回调将输出发送给 IDE */
 export interface AcpCallbacks {
   /** 发送文本消息给 IDE */
   sendMessage: (text: string) => void;
@@ -315,11 +307,7 @@ export interface CommandSuggestion {
 
 export type SlashCommandRegistry = Record<string, SlashCommand>;
 
-/**
- * 统一的 UI 输出接口
- *
- * 抽象了 CLI 和 ACP 两种输出模式的差异，slash command 应使用此接口发送消息。
- */
+/** 统一的 UI 输出接口 抽象了 CLI 和 ACP 两种输出模式的差异，slash command 应使用此接口发送消息。 */
 export interface SlashCommandUI {
   /** 发送消息（自动处理换行） */
   sendMessage: (text: string) => void;

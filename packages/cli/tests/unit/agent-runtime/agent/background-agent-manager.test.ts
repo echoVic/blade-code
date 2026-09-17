@@ -1,8 +1,4 @@
-/**
- * BackgroundAgentManager 单元测试
- *
- * 测试后台 agent 管理器的核心功能
- */
+/** BackgroundAgentManager 单元测试 测试后台 agent 管理器的核心功能 */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PermissionMode } from '../../../../src/config/types.js';
@@ -136,8 +132,6 @@ describe('BackgroundAgentManager', () => {
       updateSession: vi.fn(),
       markCompleted: vi.fn(),
       listSessions: vi.fn().mockReturnValue([]),
-      listRunningSessions: vi.fn().mockReturnValue([]),
-      cleanupExpiredSessions: vi.fn().mockReturnValue(0),
       deleteSession: vi.fn().mockReturnValue(true),
     };
     vi.mocked(AgentSessionStore.getInstance).mockReturnValue(mockSessionStore as any);
@@ -824,7 +818,7 @@ describe('BackgroundAgentManager', () => {
     });
   });
 
-  describe('listAll / listRunning', () => {
+  describe('session listing and cleanup', () => {
     it('应委托给 session store', () => {
       const mockSessions = [
         { id: 'agent_1', status: 'completed' },

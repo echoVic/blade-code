@@ -1,12 +1,6 @@
 /**
- * 优雅退出管理器
- *
- * 负责：
- * 1. 全局崩溃捕获 (uncaughtException/unhandledRejection)
- * 2. 信号处理 (SIGINT/SIGTERM)
- * 3. 资源清理和会话保存
- * 4. 恢复终端状态（光标等）
- * 5. 执行 SessionEnd hooks
+ * 优雅退出管理器 <p> 负责： 1. 全局崩溃捕获 (uncaughtException/unhandledRejection) 2. 信号处理
+ * (SIGINT/SIGTERM) 3. 资源清理和会话保存 4. 恢复终端状态（光标等） 5. 执行 SessionEnd hooks
  */
 
 import { PermissionMode } from '../config/types.js';
@@ -16,10 +10,7 @@ import { createLogger, LogCategory, shutdownLogger } from '../logging/Logger.js'
 import { getState } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 
-/**
- * 恢复终端状态
- * 确保退出时光标可见、终端模式和键盘协议正常
- */
+/** 恢复终端状态 确保退出时光标可见、终端模式和键盘协议正常 */
 function restoreTerminal(): void {
   if (process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
     try {
@@ -57,9 +48,7 @@ type ExitReason =
   | 'esc'
   | 'normal';
 
-/**
- * 将 ExitReason 映射到 SessionEnd hook 的 reason
- */
+/** 将 ExitReason 映射到 SessionEnd hook 的 reason */
 function mapExitReasonToHookReason(reason: ExitReason): SessionEndInput['reason'] {
   switch (reason) {
     case 'SIGINT':
@@ -76,10 +65,7 @@ function mapExitReasonToHookReason(reason: ExitReason): SessionEndInput['reason'
   }
 }
 
-/**
- * 优雅退出管理器
- * 单例模式，确保全局只有一个实例处理退出逻辑
- */
+/** 优雅退出管理器 单例模式，确保全局只有一个实例处理退出逻辑 */
 class GracefulShutdownManager {
   private static instance: GracefulShutdownManager | null = null;
 
@@ -98,10 +84,7 @@ class GracefulShutdownManager {
     return GracefulShutdownManager.instance;
   }
 
-  /**
-   * 初始化全局错误处理器
-   * 应该在应用启动时调用一次
-   */
+  /** 初始化全局错误处理器 应该在应用启动时调用一次 */
   initialize(): void {
     if (this.initialized) {
       logger.debug('[GracefulShutdown] 已初始化，跳过重复初始化');
@@ -125,8 +108,7 @@ class GracefulShutdownManager {
       this.shutdown('SIGTERM', 0);
     });
 
-    // 处理 SIGINT（Ctrl+C 或 kill -2）
-    // 在交互模式下实现双击退出逻辑，与键盘 Ctrl+C 行为一致
+    // 处理 SIGINT（Ctrl+C 或 kill -2） 在交互模式下实现双击退出逻辑，与键盘 Ctrl+C 行为一致
     process.on('SIGINT', () => {
       if (!process.stdin.isTTY || !process.stdout.isTTY) {
         void this.shutdown('SIGINT', 0);
@@ -151,10 +133,7 @@ class GracefulShutdownManager {
     logger.debug('[GracefulShutdown] 全局错误处理器已初始化');
   }
 
-  /**
-   * 注册清理函数
-   * 在退出时按注册的逆序执行（后注册的先执行）
-   */
+  /** 注册清理函数 在退出时按注册的逆序执行（后注册的先执行） */
   registerCleanup(handler: CleanupHandler): () => void {
     this.cleanupHandlers.push(handler);
     logger.debug(
@@ -173,9 +152,7 @@ class GracefulShutdownManager {
     };
   }
 
-  /**
-   * 处理致命错误
-   */
+  /** 处理致命错误 */
   private handleFatalError(type: ExitReason, error: Error): void {
     // 防止递归错误
     if (this.isShuttingDown) {
@@ -202,9 +179,7 @@ class GracefulShutdownManager {
     this.shutdown(type, 1);
   }
 
-  /**
-   * 执行优雅退出
-   */
+  /** 执行优雅退出 */
   async shutdown(reason: ExitReason, exitCode: number = 0): Promise<void> {
     if (this.isShuttingDown) {
       logger.debug('[GracefulShutdown] 已在退出过程中，跳过重复退出');
@@ -278,9 +253,7 @@ class GracefulShutdownManager {
     }, 100);
   }
 
-  /**
-   * 执行所有清理函数
-   */
+  /** 执行所有清理函数 */
   private async runCleanupHandlers(): Promise<void> {
     // 逆序执行
     const handlers = [...this.cleanupHandlers].reverse();
@@ -298,16 +271,12 @@ class GracefulShutdownManager {
     }
   }
 
-  /**
-   * 检查是否正在退出
-   */
+  /** 检查是否正在退出 */
   isExiting(): boolean {
     return this.isShuttingDown;
   }
 
-  /**
-   * 重置状态（仅用于测试）
-   */
+  /** 重置状态（仅用于测试） */
   reset(): void {
     this.isShuttingDown = false;
     this.cleanupHandlers = [];

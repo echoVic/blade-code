@@ -1,9 +1,4 @@
-/**
- * ACP 文件系统服务适配器
- *
- * 将文件操作转发给 IDE（ACP Client）执行。
- * 当 IDE 声明支持 fs 能力时，可以使用此服务替代本地文件操作。
- */
+/** ACP 文件系统服务适配器 将文件操作转发给 IDE（ACP Client）执行。 当 IDE 声明支持 fs 能力时，可以使用此服务替代本地文件操作。 */
 
 import { createHash } from 'node:crypto';
 import type {
@@ -115,11 +110,7 @@ export class AcpFileSystemService implements FileSystemService {
     this.pathProfile = cloneAcpRemotePathProfile(pathProfile);
   }
 
-  /**
-   * 读取文本文件
-   *
-   * 如果 IDE 不支持 readTextFile，则 fail-closed。
-   */
+  /** 读取文本文件 如果 IDE 不支持 readTextFile，则 fail-closed。 */
   async readTextFile(
     filePath: string,
     options?: {
@@ -197,11 +188,7 @@ export class AcpFileSystemService implements FileSystemService {
     }
   }
 
-  /**
-   * 写入文本文件
-   *
-   * 如果 IDE 不支持 writeTextFile，则 fail-closed。
-   */
+  /** 写入文本文件 如果 IDE 不支持 writeTextFile，则 fail-closed。 */
   async writeTextFile(
     filePath: string,
     content: string,
@@ -284,11 +271,7 @@ export class AcpFileSystemService implements FileSystemService {
     }
   }
 
-  /**
-   * 检查文件是否存在
-   *
-   * 只通过 ACP 远端 read 判断文件存在性；缺少 read 能力时 fail-closed。
-   */
+  /** 检查文件是否存在 只通过 ACP 远端 read 判断文件存在性；缺少 read 能力时 fail-closed。 */
   async exists(filePath: string): Promise<boolean> {
     if (!this.capabilities.readTextFile) {
       throw new AcpFileSystemCapabilityError('readTextFile');
@@ -308,31 +291,19 @@ export class AcpFileSystemService implements FileSystemService {
     }
   }
 
-  /**
-   * 读取二进制文件
-   *
-   * ACP 协议目前只支持文本文件读取，二进制文件 fail-closed。
-   */
+  /** 读取二进制文件 ACP 协议目前只支持文本文件读取，二进制文件 fail-closed。 */
   async readBinaryFile(filePath: string): Promise<Buffer> {
     void filePath;
     throw new AcpFileSystemCapabilityError('readBinaryFile');
   }
 
-  /**
-   * 获取文件统计信息
-   *
-   * ACP 协议暂不支持 stat 操作，fail-closed。
-   */
+  /** 获取文件统计信息 ACP 协议暂不支持 stat 操作，fail-closed。 */
   async stat(filePath: string): Promise<FileStat | null> {
     void filePath;
     throw new AcpFileSystemCapabilityError('stat');
   }
 
-  /**
-   * 创建目录
-   *
-   * ACP 协议暂不支持 mkdir 操作，fail-closed。
-   */
+  /** 创建目录 ACP 协议暂不支持 mkdir 操作，fail-closed。 */
   async mkdir(
     dirPath: string,
     _options?: { recursive?: boolean; mode?: number }
@@ -341,9 +312,7 @@ export class AcpFileSystemService implements FileSystemService {
     throw new AcpFileSystemCapabilityError('mkdir');
   }
 
-  /**
-   * 获取 IDE 支持的文件系统能力
-   */
+  /** 获取 IDE 支持的文件系统能力 */
   getCapabilities(): FileSystemCapabilities {
     return { ...this.capabilities };
   }
@@ -356,16 +325,12 @@ export class AcpFileSystemService implements FileSystemService {
     return parseAcpRemotePath(filePath, this.pathProfile.style);
   }
 
-  /**
-   * 检查是否支持读取文件
-   */
+  /** 检查是否支持读取文件 */
   canReadTextFile(): boolean {
     return this.capabilities.readTextFile ?? false;
   }
 
-  /**
-   * 检查是否支持写入文件
-   */
+  /** 检查是否支持写入文件 */
   canWriteTextFile(): boolean {
     return this.capabilities.writeTextFile ?? false;
   }
@@ -395,20 +360,6 @@ export class AcpFileSystemService implements FileSystemService {
       .update('\0')
       .update(remotePath.collisionIdentity)
       .digest('hex')}`;
-  }
-
-  async readTextFileIfExists(
-    filePath: string,
-    options?: {
-      signal?: AbortSignal;
-      deadlineAt?: number;
-      purpose?: AcpRemoteFileRequestPurpose;
-      userReadPermit?: AcpRemoteUserReadPermit;
-      lease?: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease;
-    }
-  ): Promise<{ exists: false } | { exists: true; content: string }> {
-    const remotePath = this.parsePath(filePath);
-    return this.readTextFileIfExistsForParsedPath(remotePath, options);
   }
 
   async readTextFileIfExistsForParsedPath(

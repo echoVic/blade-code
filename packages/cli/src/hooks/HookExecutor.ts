@@ -1,8 +1,4 @@
-/**
- * Hook Executor
- *
- * 负责执行单个或多个 Hooks
- */
+/** Hook Executor 负责执行单个或多个 Hooks */
 
 import path from 'node:path';
 import type { SessionModelResources } from '../agent/resources/WorkspaceModelResources.js';
@@ -23,7 +19,6 @@ import {
   type HookInput,
   HookType,
   type HttpHook,
-  type NotificationHookResult,
   type PermissionRequestHookResult,
   type PostToolHookResult,
   type PostToolUseFailureHookResult,
@@ -39,9 +34,7 @@ import {
 
 const promptHookLogger = createLogger(LogCategory.EXECUTION);
 
-/**
- * 事件类型对应的 hookSpecificOutput 字段说明
- */
+/** 事件类型对应的 hookSpecificOutput 字段说明 */
 const EVENT_SCHEMA_HINTS: Record<string, string> = {
   PreToolUse:
     '{ "permissionDecision": "approve" | "deny" | "ask", "permissionDecisionReason": "...", "updatedInput": { ... } }',
@@ -61,9 +54,7 @@ const EVENT_SCHEMA_HINTS: Record<string, string> = {
   Compaction: '{ "blockCompaction": true, "blockReason": "阻止压缩的原因" }',
 };
 
-/**
- * Hook 执行器
- */
+/** Hook 执行器 */
 export class HookExecutor {
   private processExecutor = new SecureProcessExecutor();
   private outputParser = new OutputParser();
@@ -121,13 +112,7 @@ export class HookExecutor {
     }
   }
 
-  /**
-   * 执行 PreToolUse Hooks (串行)
-   *
-   * 串行执行的原因:
-   * 1. 第一个 deny 需要立即中断
-   * 2. updatedInput 需要累积应用
-   */
+  /** 执行 PreToolUse Hooks (串行) 串行执行的原因: 1. 第一个 deny 需要立即中断 2. updatedInput 需要累积应用 */
   async executePreToolHooks(
     hooks: Hook[],
     input: HookInput,
@@ -233,13 +218,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 执行 PostToolUse Hooks (并行)
-   *
-   * 并行执行的原因:
-   * 1. 提高性能
-   * 2. 结果互不影响,可以合并
-   */
+  /** 执行 PostToolUse Hooks (并行) 并行执行的原因: 1. 提高性能 2. 结果互不影响,可以合并 */
   async executePostToolHooks(
     hooks: Hook[],
     input: HookInput,
@@ -290,11 +269,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 执行 Stop Hooks (串行)
-   *
-   * 任何一个 hook 返回 continue: false 就阻止停止
-   */
+  /** 执行 Stop Hooks (串行) 任何一个 hook 返回 continue: false 就阻止停止 */
   async executeStopHooks(
     hooks: Hook[],
     input: HookInput,
@@ -340,9 +315,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 执行 SubagentStop Hooks (串行)
-   */
+  /** 执行 SubagentStop Hooks (串行) */
   async executeSubagentStopHooks(
     hooks: Hook[],
     input: HookInput,
@@ -393,11 +366,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 执行 PermissionRequest Hooks (串行)
-   *
-   * 第一个 approve 或 deny 决策立即返回
-   */
+  /** 执行 PermissionRequest Hooks (串行) 第一个 approve 或 deny 决策立即返回 */
   async executePermissionRequestHooks(
     hooks: Hook[],
     input: HookInput,
@@ -495,11 +464,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 执行 UserPromptSubmit Hooks (串行)
-   *
-   * 收集 contextInjection (stdout) 和 updatedPrompt
-   */
+  /** 执行 UserPromptSubmit Hooks (串行) 收集 contextInjection (stdout) 和 updatedPrompt */
   async executeUserPromptSubmitHooks(
     hooks: Hook[],
     input: HookInput,
@@ -560,11 +525,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 执行 SessionStart Hooks (串行)
-   *
-   * 收集环境变量
-   */
+  /** 执行 SessionStart Hooks (串行) 收集环境变量 */
   async executeSessionStartHooks(
     hooks: Hook[],
     input: HookInput,
@@ -611,9 +572,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 执行 SessionEnd Hooks (并行，不阻塞)
-   */
+  /** 执行 SessionEnd Hooks (并行，不阻塞) */
   async executeSessionEndHooks(
     hooks: Hook[],
     input: HookInput,
@@ -645,9 +604,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 执行 PostToolUseFailure Hooks (并行)
-   */
+  /** 执行 PostToolUseFailure Hooks (并行) */
   async executePostToolUseFailureHooks(
     hooks: Hook[],
     input: HookInput,
@@ -687,61 +644,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 执行 Notification Hooks (串行)
-   */
-  async executeNotificationHooks(
-    hooks: Hook[],
-    input: HookInput,
-    context: HookExecutionContext
-  ): Promise<NotificationHookResult> {
-    const originalMessage = 'message' in input ? (input.message as string) : '';
-
-    if (hooks.length === 0) {
-      return { suppress: false, message: originalMessage };
-    }
-
-    const warnings: string[] = [];
-    let suppress = false;
-    let message = originalMessage;
-
-    for (const hook of hooks) {
-      try {
-        const result = await this.executeHook(hook, input, context);
-
-        if (!result.success) {
-          if (result.warning) {
-            warnings.push(result.warning);
-          }
-          continue;
-        }
-
-        // 检查是否抑制通知
-        if (result.output?.suppressOutput) {
-          suppress = true;
-          break;
-        }
-
-        // 修改消息内容（来自 stdout）
-        if (result.stdout && result.stdout.trim()) {
-          message = result.stdout.trim();
-        }
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        warnings.push(`Hook failed: ${errorMsg}`);
-      }
-    }
-
-    return {
-      suppress,
-      message,
-      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
-    };
-  }
-
-  /**
-   * 执行 Compaction Hooks (串行)
-   */
+  /** 执行 Compaction Hooks (串行) */
   async executeCompactionHooks(
     hooks: Hook[],
     input: HookInput,
@@ -784,9 +687,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 执行单个 Hook
-   */
+  /** 执行单个 Hook */
   private async executeHook(
     hook: Hook,
     input: HookInput,
@@ -834,9 +735,7 @@ export class HookExecutor {
     throw new Error(`Hook type ${(hook as Hook).type} not supported`);
   }
 
-  /**
-   * 执行命令 Hook
-   */
+  /** 执行命令 Hook */
   private async executeCommandHook(
     hook: CommandHook,
     input: HookInput,
@@ -1025,10 +924,7 @@ export class HookExecutor {
     }
   }
 
-  /**
-   * 带超时地执行 function handler。
-   * handler 本身不可被强制中止,超时后调用方立即拿到错误,handler 自行清理。
-   */
+  /** 带超时地执行 function handler。 handler 本身不可被强制中止,超时后调用方立即拿到错误,handler 自行清理。 */
   private runFunctionWithTimeout(
     handler: FunctionHook['handler'],
     input: HookInput,
@@ -1204,9 +1100,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 获取或创建 ChatService 实例（按 modelId 缓存）
-   */
+  /** 获取或创建 ChatService 实例（按 modelId 缓存） */
   private async getOrCreateChatService(
     modelId: string | undefined,
     context: HookExecutionContext
@@ -1278,9 +1172,7 @@ export class HookExecutor {
     };
   }
 
-  /**
-   * 构建 PromptHook 的系统提示
-   */
+  /** 构建 PromptHook 的系统提示 */
   private buildPromptHookSystemMessage(hook: PromptHook, eventType: string): string {
     const schemaHint =
       EVENT_SCHEMA_HINTS[eventType] || '{ ... 根据事件类型返回相应字段 }';
@@ -1302,9 +1194,7 @@ export class HookExecutor {
     );
   }
 
-  /**
-   * 从 LLM 响应中提取 JSON（去除 markdown code block 包装）
-   */
+  /** 从 LLM 响应中提取 JSON（去除 markdown code block 包装） */
   private extractJsonFromLLMResponse(text: string): string {
     const trimmed = text.trim();
 
@@ -1317,9 +1207,7 @@ export class HookExecutor {
     return trimmed;
   }
 
-  /**
-   * 并发执行多个 Hooks (带并发限制)
-   */
+  /** 并发执行多个 Hooks (带并发限制) */
   private async executeHooksConcurrently(
     hooks: Hook[],
     input: HookInput,
@@ -1362,9 +1250,7 @@ export class HookExecutor {
   }
 }
 
-/**
- * 读取 fetch Response body, 超过 maxBytes 时截断并附加警告注释
- */
+/** 读取 fetch Response body, 超过 maxBytes 时截断并附加警告注释 */
 async function readBodyWithLimit(
   response: Response,
   maxBytes: number

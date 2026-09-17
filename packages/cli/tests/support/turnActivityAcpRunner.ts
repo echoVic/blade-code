@@ -1,9 +1,9 @@
-import { type ChildProcess, spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
-import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import type { TurnActivityProjection } from '../../src/api/turnActivitySchemas.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
+import { createBladeAcpChildHarness } from './acp/createBladeAcpChildHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import { createTuiTaskAttentionRunnerEnvironment } from './tuiTaskAttentionPtyDriver.js';
 
 interface RunnerInput {
@@ -30,49 +30,6 @@ function loadInput(): RunnerInput {
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
 }
 
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 30_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Turn activity ACP child did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
-}
-
-async function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs = 120_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
-}
-
 function activityProjections(
   client: ChildBackedRecordingAcpClient
 ): TurnActivityProjection[] {
@@ -85,32 +42,6 @@ function activityProjections(
 }
 
 async function run(input: RunnerInput) {
-  const child = spawn(
-    process.execPath,
-    [input.cliEntry, ...(input.codingTask ? ['--trust-workspace'] : []), '--acp'],
-    {
-      cwd: input.workspace,
-      env: {
-        ...createTuiTaskAttentionRunnerEnvironment(process.env, {
-          HOME: input.home,
-          BLADE_STORAGE_ROOT: input.storageRoot,
-          BLADE_AUTO_MEMORY: '0',
-          BLADE_TELEMETRY_DISABLED: '1',
-          TERM: 'xterm-256color',
-        }),
-        BLADE_API_KEY: input.secret,
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }
-  );
-  if (!child.stdin || !child.stdout) {
-    child.kill('SIGKILL');
-    throw new Error('Turn activity ACP stdio was unavailable');
-  }
-  let stderr = '';
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    stderr = `${stderr}${chunk.toString()}`.slice(-64_000);
-  });
   class CleanupFailureClient extends ChildBackedRecordingAcpClient {
     failureEnabled = true;
     killAttempts = 0;
@@ -167,13 +98,15 @@ async function run(input: RunnerInput) {
     : input.cleanupFailure
       ? new CleanupFailureClient()
       : new ChildBackedRecordingAcpClient();
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(
-      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
-    )
-  );
+  const harness = createBladeAcpChildHarness({
+    ...input,
+    client,
+    args: input.codingTask ? ['--trust-workspace'] : [],
+    baseEnv: createTuiTaskAttentionRunnerEnvironment(process.env, {}),
+    env: { BLADE_API_KEY: input.secret },
+    stdioError: 'Turn activity ACP stdio was unavailable',
+  });
+  const { connection } = harness;
   try {
     await connection.initialize({
       protocolVersion: acp.PROTOCOL_VERSION,
@@ -210,9 +143,7 @@ async function run(input: RunnerInput) {
         throw new Error('ACP coding terminal was not released');
       if (JSON.stringify(client.sessionUpdates).includes(input.secret))
         throw new Error('ACP coding task leaked credentials');
-      child.kill('SIGTERM');
-      const exit = await waitForChildExit(child);
-      await connection.closed.catch(() => undefined);
+      const exit = await harness.shutdown();
       if (exit.signal || exit.code !== 0)
         throw new Error('ACP coding runner did not exit cleanly');
       return {
@@ -273,9 +204,7 @@ async function run(input: RunnerInput) {
         throw new Error('ACP did not recover from an empty final');
       if (JSON.stringify(client.sessionUpdates).includes(input.secret))
         throw new Error('ACP leaked credentials');
-      child.kill('SIGTERM');
-      const exit = await waitForChildExit(child);
-      await connection.closed.catch(() => undefined);
+      const exit = await harness.shutdown();
       if (exit.signal || exit.code !== 0)
         throw new Error('ACP empty final runner did not exit cleanly');
       return {
@@ -297,7 +226,8 @@ async function run(input: RunnerInput) {
             activity.snapshot?.phase === 'executing_tools' &&
             activity.snapshot.activeTools.some((tool) => tool.name === 'Bash')
         ),
-      'ACP did not project active Bash before release'
+      'ACP did not project active Bash before release',
+      120_000
     );
     if (client instanceof CreationCancellationClient) {
       await waitFor(
@@ -502,15 +432,12 @@ async function run(input: RunnerInput) {
       };
     }
 
-    child.kill('SIGTERM');
-    const exit = await waitForChildExit(child);
-    await connection.closed.catch(() => undefined);
+    const exit = await harness.shutdown();
     if (exit.signal || exit.code !== 0) {
       throw new Error(
-        `Turn activity ACP exited ${exit.code ?? exit.signal}: ${stderr.replaceAll(
-          input.secret,
-          '[redacted]'
-        )}`
+        `Turn activity ACP exited ${
+          exit.code ?? exit.signal
+        }: ${harness.stderr.replaceAll(input.secret, '[redacted]')}`
       );
     }
     return {
@@ -532,8 +459,7 @@ async function run(input: RunnerInput) {
   } finally {
     finishCreation();
     if (client instanceof CleanupFailureClient) client.failureEnabled = false;
-    await client.close().catch(() => undefined);
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await harness.close();
   }
 }
 

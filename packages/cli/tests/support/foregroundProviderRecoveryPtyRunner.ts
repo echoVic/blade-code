@@ -5,6 +5,7 @@ import {
   findSessionTranscript,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
@@ -34,19 +35,6 @@ function loadInput(): RunnerInput {
     throw new Error('Missing BLADE_FOREGROUND_PROVIDER_RECOVERY_PTY_INPUT');
   }
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 120_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 function signalTerminalTree(

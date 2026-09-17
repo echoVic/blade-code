@@ -1,7 +1,4 @@
-/**
- * 会话管理服务
- * 负责加载和恢复历史会话
- */
+/** 会话管理服务 负责加载和恢复历史会话 */
 
 import type { BigIntStats } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
@@ -621,6 +618,69 @@ export type RemoteSessionMetadataUpdate = Pick<
   | 'projectInstructionsDigest'
 >;
 
+type SessionUpdatedData = Extract<SessionEvent, { type: 'session_updated' }>['data'];
+
+const SHARED_METADATA_UPDATE_KEYS = [
+  'title',
+  'taskStatus',
+  'taskStatusReason',
+  'taskFailure',
+  'taskStartedAt',
+  'taskCompletedAt',
+  'taskOwnerPid',
+  'taskPromptSummary',
+  'taskPriority',
+  'taskKind',
+  'taskDueAt',
+  'taskModelId',
+  'taskQueuePosition',
+  'taskQueueDepth',
+  'taskConcurrencyLimit',
+  'selectedModelId',
+  'permissionMode',
+  'reasoningEffort',
+  'serviceTier',
+  'responseVerbosity',
+  'communicationStyle',
+  'communicationStyleDigest',
+  'projectInstructionsDigest',
+] as const satisfies readonly (keyof SessionMetadataUpdate)[];
+
+const LOCAL_METADATA_UPDATE_KEYS = [
+  'taskDispatch',
+  'taskRetriedFrom',
+  'taskDelivery',
+  'taskIsolation',
+  'taskSourceProjectPath',
+  'taskWorktree',
+  'taskDiffStat',
+] as const satisfies readonly (keyof SessionMetadataUpdate)[];
+
+function buildSessionUpdatedData(
+  sessionId: string,
+  update: SessionMetadataUpdate,
+  updatedAt: string,
+  includeLocalFields: boolean
+): SessionUpdatedData {
+  const data: SessionUpdatedData = { sessionId, updatedAt };
+  const keys: readonly (keyof SessionMetadataUpdate)[] = includeLocalFields
+    ? [...SHARED_METADATA_UPDATE_KEYS, ...LOCAL_METADATA_UPDATE_KEYS]
+    : SHARED_METADATA_UPDATE_KEYS;
+  for (const key of keys) {
+    const value = update[key];
+    if (value !== undefined) {
+      Reflect.set(
+        data,
+        key,
+        key === 'taskDueAt' && value !== null
+          ? new Date(String(value)).toISOString()
+          : value
+      );
+    }
+  }
+  return data;
+}
+
 export interface SessionPage {
   sessions: SessionMetadata[];
   nextCursor?: string;
@@ -930,13 +990,10 @@ function filterRemoteArchiveState(
   return projected.filter((session) => Boolean(session.archivedAt) === archived);
 }
 
-/**
- * 会话管理服务
- */
+/** 会话管理服务 */
 export class SessionService {
   /**
-   * 将加载到的会话消息转换为 UI 安全的 SessionMessage。
-   * 过滤掉 tool / system 等内部消息，仅从 ContentPart[] 中提取文本，
+   * 将加载到的会话消息转换为 UI 安全的 SessionMessage。 过滤掉 tool / system 等内部消息，仅从 ContentPart[] 中提取文本，
    * 避免把 </functions>、工具调用 JSON、summary 等内部内容泄露给用户或污染历史。
    */
   static toUISafeMessages(messages: Message[]): SessionMessage[] {
@@ -1026,10 +1083,7 @@ export class SessionService {
     const projected = await this.listRemoteSessionPageFromProjection(normalized);
     if (projected) return projected;
 
-    const stored = await this.scanRemoteStoredSessions(
-      normalized,
-      normalized.cursor ? 5_000 : 0
-    );
+    const stored = await this.scanRemoteStoredSessions(normalized);
     const filtered = this.toRemoteCatalogEntries(stored).sort(
       compareRemoteSessionCatalogItems
     );
@@ -1164,7 +1218,7 @@ export class SessionService {
   ): Promise<SessionPage | null> {
     resolveRemoteSessionCursorBoundary(options);
     try {
-      const sessions = await this.scanRemoteStoredSessionsFromProjection(options, 0);
+      const sessions = await this.scanRemoteStoredSessionsFromProjection(options);
       if (!sessions) return null;
       const page = paginateRemoteSessionCatalog(
         this.toRemoteCatalogEntries(sessions).sort(compareRemoteSessionCatalogItems),
@@ -1179,10 +1233,7 @@ export class SessionService {
     }
   }
 
-  /**
-   * 列出所有可用会话
-   * 扫描 ~/.blade/projects/ 目录下的所有 JSONL 文件
-   */
+  /** 列出所有可用会话 扫描 ~/.blade/projects/ 目录下的所有 JSONL 文件 */
   static async listSessions(
     options: SessionScanOptions = {}
   ): Promise<SessionMetadata[]> {
@@ -1215,7 +1266,7 @@ export class SessionService {
           }
         : options
     );
-    const stored = await this.scanRemoteStoredSessions(normalized, 0);
+    const stored = await this.scanRemoteStoredSessions(normalized);
     const seenSessions = new Set<string>();
     return this.toRemoteCatalogEntries(stored)
       .sort(compareRemoteSessionCatalogItems)
@@ -1849,155 +1900,17 @@ export class SessionService {
     const rootId = sourceCreated.data.rootId || sourceSessionId;
     const gitBranch = detectGitBranch(targetProjectPath);
     const version = getVersion();
-    const {
-      status: _sourceStatus,
-      taskStatus: _sourceTaskStatus,
-      taskStatusReason: _sourceTaskStatusReason,
-      taskFailure: _sourceTaskFailure,
-      taskStartedAt: _sourceTaskStartedAt,
-      taskCompletedAt: _sourceTaskCompletedAt,
-      taskOwnerPid: _sourceTaskOwnerPid,
-      taskPromptSummary: _sourceTaskPromptSummary,
-      taskPriority: _sourceTaskPriority,
-      taskKind: _sourceTaskKind,
-      taskDueAt: _sourceTaskDueAt,
-      taskDispatch: _sourceTaskDispatch,
-      taskModelId: _sourceTaskModelId,
-      taskRetriedFrom: _sourceTaskRetriedFrom,
-      taskDelivery: _sourceTaskDelivery,
-      taskIsolation: _sourceTaskIsolation,
-      taskSourceProjectPath: _sourceTaskSourceProjectPath,
-      taskWorktree: _sourceTaskWorktree,
-      taskDiffStat: _sourceTaskDiffStat,
-      taskQueuePosition: _sourceTaskQueuePosition,
-      taskQueueDepth: _sourceTaskQueueDepth,
-      taskConcurrencyLimit: _sourceTaskConcurrencyLimit,
-      pendingInteraction: _sourcePendingInteraction,
-      ...sourceCreatedData
-    } = sourceCreated.data;
-    const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
-      id: nanoid(),
-      sessionId: targetSessionId,
-      timestamp: now,
-      type: 'session_created',
-      cwd: targetProjectPath,
-      gitBranch,
+    const childEntries = this.buildForkChildEntries({
+      sourceEntries,
+      sourceCreated,
+      sourceSessionId,
+      targetSessionId,
+      targetProjectPath,
+      rootId,
       version,
-      data: {
-        ...sourceCreatedData,
-        sessionId: targetSessionId,
-        rootId,
-        parentId: sourceSessionId,
-        relationType: 'fork',
-        taskStatus: 'completed',
-        taskCompletedAt: now,
-        taskIsolation: 'local',
-        taskSourceProjectPath: targetProjectPath,
-        createdAt: now,
-        updatedAt: now,
-      },
-    };
-    const copiedEntries = sourceEntries
-      .filter(
-        (entry) =>
-          entry.type !== 'session_created' &&
-          entry.type !== 'token_budget_handoff_recorded' &&
-          entry.type !== 'inbox_acknowledged' &&
-          entry.type !== 'interaction_requested' &&
-          entry.type !== 'interaction_responded' &&
-          entry.type !== 'interaction_recovered' &&
-          entry.type !== 'review_started' &&
-          entry.type !== 'review_completed'
-      )
-      .map((entry): SessionEvent => {
-        const base = {
-          ...entry,
-          id: nanoid(),
-          sessionId: targetSessionId,
-          cwd: targetProjectPath,
-          gitBranch,
-          version,
-        };
-        if (entry.type === 'session_updated') {
-          const {
-            status: _status,
-            taskStatus: _taskStatus,
-            taskStatusReason: _taskStatusReason,
-            taskFailure: _taskFailure,
-            taskStartedAt: _taskStartedAt,
-            taskCompletedAt: _taskCompletedAt,
-            taskOwnerPid: _taskOwnerPid,
-            taskPromptSummary: _taskPromptSummary,
-            taskPriority: _taskPriority,
-            taskKind: _taskKind,
-            taskDueAt: _taskDueAt,
-            taskDispatch: _taskDispatch,
-            taskModelId: _taskModelId,
-            taskRetriedFrom: _taskRetriedFrom,
-            taskDelivery: _taskDelivery,
-            taskIsolation: _taskIsolation,
-            taskSourceProjectPath: _taskSourceProjectPath,
-            taskWorktree: _taskWorktree,
-            taskDiffStat: _taskDiffStat,
-            taskQueuePosition: _taskQueuePosition,
-            taskQueueDepth: _taskQueueDepth,
-            taskConcurrencyLimit: _taskConcurrencyLimit,
-            pendingInteraction: _pendingInteraction,
-            ...updatedData
-          } = entry.data;
-          return {
-            ...base,
-            type: 'session_updated',
-            data: {
-              ...updatedData,
-              sessionId: targetSessionId,
-              rootId,
-              parentId: sourceSessionId,
-              relationType: 'fork',
-            },
-          };
-        }
-        if (entry.type === 'message_created') {
-          const { inboxMessageId: _inboxMessageId, ...data } = entry.data;
-          return {
-            ...base,
-            type: 'message_created',
-            data,
-          };
-        }
-        return base as SessionEvent;
-      });
-    const forkBoundary: Extract<SessionEvent, { type: 'session_updated' }> = {
-      id: nanoid(),
-      sessionId: targetSessionId,
-      timestamp: now,
-      type: 'session_updated',
-      cwd: targetProjectPath,
-      gitBranch,
-      version,
-      data: {
-        sessionId: targetSessionId,
-        rootId,
-        parentId: sourceSessionId,
-        relationType: 'fork',
-        taskStatus: 'completed',
-        taskStatusReason: null,
-        taskFailure: null,
-        taskStartedAt: null,
-        taskCompletedAt: now,
-        taskOwnerPid: null,
-        taskIsolation: 'local',
-        taskSourceProjectPath: targetProjectPath,
-        taskWorktree: null,
-        taskDiffStat: null,
-        taskDelivery: null,
-        taskQueuePosition: null,
-        taskQueueDepth: null,
-        taskConcurrencyLimit: null,
-        updatedAt: now,
-      },
-    };
-    const childEntries: SessionEvent[] = [childCreated, ...copiedEntries, forkBoundary];
+      now,
+      target: { kind: 'local', gitBranch },
+    });
     const targetFilePath = getSessionFilePath(targetProjectPath, targetSessionId);
 
     let targetCreated = false;
@@ -2132,7 +2045,10 @@ export class SessionService {
         rootId,
         version,
         now,
-        remoteDescriptor: sourceMetadata.remoteWorkspace,
+        target: {
+          kind: 'remote',
+          descriptor: sourceMetadata.remoteWorkspace,
+        },
       });
       const targetFilePath = getAcpRemoteSessionFilePath(scope, targetSessionId);
       let targetCreated = false;
@@ -2263,7 +2179,9 @@ export class SessionService {
     rootId: string;
     version: string;
     now: string;
-    remoteDescriptor: AcpRemoteWorkspaceDescriptorV1;
+    target:
+      | { kind: 'local'; gitBranch?: string }
+      | { kind: 'remote'; descriptor: AcpRemoteWorkspaceDescriptorV1 };
   }): SessionEvent[] {
     const {
       sourceEntries,
@@ -2274,8 +2192,28 @@ export class SessionService {
       rootId,
       version,
       now,
-      remoteDescriptor,
+      target,
     } = options;
+    const eventTarget =
+      target.kind === 'remote'
+        ? { projectPath: targetProjectPath }
+        : { gitBranch: target.gitBranch };
+    const createdTarget =
+      target.kind === 'remote'
+        ? { remoteWorkspace: target.descriptor }
+        : {
+            taskIsolation: 'local' as const,
+            taskSourceProjectPath: targetProjectPath,
+          };
+    const boundaryTarget =
+      target.kind === 'remote'
+        ? {}
+        : {
+            taskIsolation: 'local' as const,
+            taskSourceProjectPath: targetProjectPath,
+            taskWorktree: null,
+            taskDiffStat: null,
+          };
     const {
       status: _sourceStatus,
       taskStatus: _sourceTaskStatus,
@@ -2306,7 +2244,7 @@ export class SessionService {
     const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
       id: nanoid(),
       sessionId: targetSessionId,
-      projectPath: targetProjectPath,
+      ...eventTarget,
       timestamp: now,
       type: 'session_created',
       cwd: targetProjectPath,
@@ -2319,7 +2257,7 @@ export class SessionService {
         relationType: 'fork',
         taskStatus: 'completed',
         taskCompletedAt: now,
-        remoteWorkspace: remoteDescriptor,
+        ...createdTarget,
         createdAt: now,
         updatedAt: now,
       },
@@ -2339,10 +2277,10 @@ export class SessionService {
       .map((entry): SessionEvent => {
         const { gitBranch: _sourceGitBranch, ...entryWithoutGitBranch } = entry;
         const base = {
-          ...entryWithoutGitBranch,
+          ...(target.kind === 'remote' ? entryWithoutGitBranch : entry),
           id: nanoid(),
           sessionId: targetSessionId,
-          projectPath: targetProjectPath,
+          ...eventTarget,
           cwd: targetProjectPath,
           version,
         };
@@ -2395,7 +2333,7 @@ export class SessionService {
     const forkBoundary: Extract<SessionEvent, { type: 'session_updated' }> = {
       id: nanoid(),
       sessionId: targetSessionId,
-      projectPath: targetProjectPath,
+      ...eventTarget,
       timestamp: now,
       type: 'session_updated',
       cwd: targetProjectPath,
@@ -2411,6 +2349,7 @@ export class SessionService {
         taskStartedAt: null,
         taskCompletedAt: now,
         taskOwnerPid: null,
+        ...boundaryTarget,
         taskDelivery: null,
         taskQueuePosition: null,
         taskQueueDepth: null,
@@ -2523,6 +2462,19 @@ export class SessionService {
     update: SessionMetadataUpdate,
     sessionId: string
   ): void {
+    if (
+      update.taskStatus !== undefined &&
+      !SESSION_TASK_STATUSES.has(update.taskStatus)
+    ) {
+      throw new Error(`Invalid session task status: ${String(update.taskStatus)}`);
+    }
+    if (
+      update.taskOwnerPid !== undefined &&
+      update.taskOwnerPid !== null &&
+      (!Number.isInteger(update.taskOwnerPid) || update.taskOwnerPid <= 0)
+    ) {
+      throw new Error('Session task owner PID must be a positive integer');
+    }
     if (
       update.taskPromptSummary !== undefined &&
       update.taskPromptSummary !== null &&
@@ -2757,62 +2709,10 @@ export class SessionService {
       gitBranch: detectGitBranch(resolvedProjectPath),
       version: getVersion(),
       data: {
+        ...buildSessionUpdatedData(sessionId, initial, now, true),
         sessionId,
         rootId: sessionId,
-        ...(initial.title !== undefined ? { title: initial.title } : {}),
         taskStatus: initial.taskStatus ?? 'queued',
-        ...(initial.taskPromptSummary !== undefined
-          ? { taskPromptSummary: initial.taskPromptSummary }
-          : {}),
-        ...(initial.taskPriority !== undefined
-          ? { taskPriority: initial.taskPriority }
-          : {}),
-        ...(initial.taskKind !== undefined ? { taskKind: initial.taskKind } : {}),
-        ...(typeof initial.taskDueAt === 'string'
-          ? { taskDueAt: new Date(initial.taskDueAt).toISOString() }
-          : {}),
-        ...(initial.taskDispatch !== undefined
-          ? { taskDispatch: initial.taskDispatch }
-          : {}),
-        ...(initial.taskModelId !== undefined
-          ? { taskModelId: initial.taskModelId }
-          : {}),
-        ...(initial.taskRetriedFrom !== undefined
-          ? { taskRetriedFrom: initial.taskRetriedFrom }
-          : {}),
-        ...(initial.taskIsolation !== undefined
-          ? { taskIsolation: initial.taskIsolation }
-          : {}),
-        ...(initial.taskSourceProjectPath !== undefined
-          ? { taskSourceProjectPath: initial.taskSourceProjectPath }
-          : {}),
-        ...(initial.taskWorktree !== undefined
-          ? { taskWorktree: initial.taskWorktree }
-          : {}),
-        ...(initial.selectedModelId !== undefined
-          ? { selectedModelId: initial.selectedModelId }
-          : {}),
-        ...(initial.permissionMode !== undefined
-          ? { permissionMode: initial.permissionMode }
-          : {}),
-        ...(initial.reasoningEffort !== undefined
-          ? { reasoningEffort: initial.reasoningEffort }
-          : {}),
-        ...(initial.serviceTier !== undefined
-          ? { serviceTier: initial.serviceTier }
-          : {}),
-        ...(initial.responseVerbosity !== undefined
-          ? { responseVerbosity: initial.responseVerbosity }
-          : {}),
-        ...(initial.communicationStyle !== undefined
-          ? { communicationStyle: initial.communicationStyle }
-          : {}),
-        ...(initial.communicationStyleDigest !== undefined
-          ? { communicationStyleDigest: initial.communicationStyleDigest }
-          : {}),
-        ...(initial.projectInstructionsDigest !== undefined
-          ? { projectInstructionsDigest: initial.projectInstructionsDigest }
-          : {}),
         createdAt: now,
         updatedAt: now,
       },
@@ -2881,48 +2781,11 @@ export class SessionService {
         cwd: hostStateRoot,
         version: getVersion(),
         data: {
+          ...buildSessionUpdatedData(sessionId, initial, now, false),
           sessionId,
           rootId: sessionId,
           remoteWorkspace: validatedDescriptor,
-          ...(initial.title !== undefined ? { title: initial.title } : {}),
           taskStatus: initial.taskStatus ?? 'queued',
-          ...(initial.taskPromptSummary !== undefined
-            ? { taskPromptSummary: initial.taskPromptSummary }
-            : {}),
-          ...(initial.taskPriority !== undefined
-            ? { taskPriority: initial.taskPriority }
-            : {}),
-          ...(initial.taskKind !== undefined ? { taskKind: initial.taskKind } : {}),
-          ...(typeof initial.taskDueAt === 'string'
-            ? { taskDueAt: new Date(initial.taskDueAt).toISOString() }
-            : {}),
-          ...(initial.taskModelId !== undefined
-            ? { taskModelId: initial.taskModelId }
-            : {}),
-          ...(initial.selectedModelId !== undefined
-            ? { selectedModelId: initial.selectedModelId }
-            : {}),
-          ...(initial.permissionMode !== undefined
-            ? { permissionMode: initial.permissionMode }
-            : {}),
-          ...(initial.reasoningEffort !== undefined
-            ? { reasoningEffort: initial.reasoningEffort }
-            : {}),
-          ...(initial.serviceTier !== undefined
-            ? { serviceTier: initial.serviceTier }
-            : {}),
-          ...(initial.responseVerbosity !== undefined
-            ? { responseVerbosity: initial.responseVerbosity }
-            : {}),
-          ...(initial.communicationStyle !== undefined
-            ? { communicationStyle: initial.communicationStyle }
-            : {}),
-          ...(initial.communicationStyleDigest !== undefined
-            ? { communicationStyleDigest: initial.communicationStyleDigest }
-            : {}),
-          ...(initial.projectInstructionsDigest !== undefined
-            ? { projectInstructionsDigest: initial.projectInstructionsDigest }
-            : {}),
           createdAt: now,
           updatedAt: now,
         },
@@ -3238,19 +3101,6 @@ export class SessionService {
   ): Promise<SessionMetadata> {
     assertValidSessionId(sessionId);
     SessionService.validateTaskMetadataUpdate(update, sessionId);
-    if (
-      update.taskStatus !== undefined &&
-      !SESSION_TASK_STATUSES.has(update.taskStatus)
-    ) {
-      throw new Error(`Invalid session task status: ${String(update.taskStatus)}`);
-    }
-    if (
-      update.taskOwnerPid !== undefined &&
-      update.taskOwnerPid !== null &&
-      (!Number.isInteger(update.taskOwnerPid) || update.taskOwnerPid <= 0)
-    ) {
-      throw new Error('Session task owner PID must be a positive integer');
-    }
     const resolvedProjectPath = SessionService.resolveCatalogWorkspace(projectPath);
     if (
       update.taskWorktree &&
@@ -3305,101 +3155,7 @@ export class SessionService {
           cwd: resolvedProjectPath,
           gitBranch: detectGitBranch(resolvedProjectPath),
           version: getVersion(),
-          data: {
-            sessionId,
-            ...(update.title !== undefined ? { title: update.title } : {}),
-            ...(update.taskStatus !== undefined
-              ? { taskStatus: update.taskStatus }
-              : {}),
-            ...(update.taskStatusReason !== undefined
-              ? { taskStatusReason: update.taskStatusReason }
-              : {}),
-            ...(update.taskFailure !== undefined
-              ? { taskFailure: update.taskFailure }
-              : {}),
-            ...(update.taskStartedAt !== undefined
-              ? { taskStartedAt: update.taskStartedAt }
-              : {}),
-            ...(update.taskCompletedAt !== undefined
-              ? { taskCompletedAt: update.taskCompletedAt }
-              : {}),
-            ...(update.taskOwnerPid !== undefined
-              ? { taskOwnerPid: update.taskOwnerPid }
-              : {}),
-            ...(update.taskPromptSummary !== undefined
-              ? { taskPromptSummary: update.taskPromptSummary }
-              : {}),
-            ...(update.taskPriority !== undefined
-              ? { taskPriority: update.taskPriority }
-              : {}),
-            ...(update.taskKind !== undefined ? { taskKind: update.taskKind } : {}),
-            ...(update.taskDueAt !== undefined
-              ? {
-                  taskDueAt:
-                    update.taskDueAt === null
-                      ? null
-                      : new Date(update.taskDueAt).toISOString(),
-                }
-              : {}),
-            ...(update.taskDispatch !== undefined
-              ? { taskDispatch: update.taskDispatch }
-              : {}),
-            ...(update.taskModelId !== undefined
-              ? { taskModelId: update.taskModelId }
-              : {}),
-            ...(update.taskRetriedFrom !== undefined
-              ? { taskRetriedFrom: update.taskRetriedFrom }
-              : {}),
-            ...(update.taskDelivery !== undefined
-              ? { taskDelivery: update.taskDelivery }
-              : {}),
-            ...(update.taskIsolation !== undefined
-              ? { taskIsolation: update.taskIsolation }
-              : {}),
-            ...(update.taskSourceProjectPath !== undefined
-              ? { taskSourceProjectPath: update.taskSourceProjectPath }
-              : {}),
-            ...(update.taskWorktree !== undefined
-              ? { taskWorktree: update.taskWorktree }
-              : {}),
-            ...(update.taskDiffStat !== undefined
-              ? { taskDiffStat: update.taskDiffStat }
-              : {}),
-            ...(update.taskQueuePosition !== undefined
-              ? { taskQueuePosition: update.taskQueuePosition }
-              : {}),
-            ...(update.taskQueueDepth !== undefined
-              ? { taskQueueDepth: update.taskQueueDepth }
-              : {}),
-            ...(update.taskConcurrencyLimit !== undefined
-              ? { taskConcurrencyLimit: update.taskConcurrencyLimit }
-              : {}),
-            ...(update.selectedModelId !== undefined
-              ? { selectedModelId: update.selectedModelId }
-              : {}),
-            ...(update.permissionMode !== undefined
-              ? { permissionMode: update.permissionMode }
-              : {}),
-            ...(update.reasoningEffort !== undefined
-              ? { reasoningEffort: update.reasoningEffort }
-              : {}),
-            ...(update.serviceTier !== undefined
-              ? { serviceTier: update.serviceTier }
-              : {}),
-            ...(update.responseVerbosity !== undefined
-              ? { responseVerbosity: update.responseVerbosity }
-              : {}),
-            ...(update.communicationStyle !== undefined
-              ? { communicationStyle: update.communicationStyle }
-              : {}),
-            ...(update.communicationStyleDigest !== undefined
-              ? { communicationStyleDigest: update.communicationStyleDigest }
-              : {}),
-            ...(update.projectInstructionsDigest !== undefined
-              ? { projectInstructionsDigest: update.projectInstructionsDigest }
-              : {}),
-            updatedAt: now,
-          },
+          data: buildSessionUpdatedData(sessionId, update, now, true),
         };
         persistedEntries = [...entries, next];
         return next;
@@ -3426,19 +3182,6 @@ export class SessionService {
   ): Promise<SessionMetadata> {
     assertValidSessionId(sessionId);
     SessionService.validateTaskMetadataUpdate(update, sessionId);
-    if (
-      update.taskStatus !== undefined &&
-      !SESSION_TASK_STATUSES.has(update.taskStatus)
-    ) {
-      throw new Error(`Invalid session task status: ${String(update.taskStatus)}`);
-    }
-    if (
-      update.taskOwnerPid !== undefined &&
-      update.taskOwnerPid !== null &&
-      (!Number.isInteger(update.taskOwnerPid) || update.taskOwnerPid <= 0)
-    ) {
-      throw new Error('Session task owner PID must be a positive integer');
-    }
 
     let descriptor: AcpRemoteWorkspaceDescriptorV1;
     try {
@@ -3491,80 +3234,7 @@ export class SessionService {
               type: 'session_updated',
               cwd: hostStateRoot,
               version: getVersion(),
-              data: {
-                sessionId,
-                ...(update.title !== undefined ? { title: update.title } : {}),
-                ...(update.taskStatus !== undefined
-                  ? { taskStatus: update.taskStatus }
-                  : {}),
-                ...(update.taskStatusReason !== undefined
-                  ? { taskStatusReason: update.taskStatusReason }
-                  : {}),
-                ...(update.taskFailure !== undefined
-                  ? { taskFailure: update.taskFailure }
-                  : {}),
-                ...(update.taskStartedAt !== undefined
-                  ? { taskStartedAt: update.taskStartedAt }
-                  : {}),
-                ...(update.taskCompletedAt !== undefined
-                  ? { taskCompletedAt: update.taskCompletedAt }
-                  : {}),
-                ...(update.taskOwnerPid !== undefined
-                  ? { taskOwnerPid: update.taskOwnerPid }
-                  : {}),
-                ...(update.taskPromptSummary !== undefined
-                  ? { taskPromptSummary: update.taskPromptSummary }
-                  : {}),
-                ...(update.taskPriority !== undefined
-                  ? { taskPriority: update.taskPriority }
-                  : {}),
-                ...(update.taskKind !== undefined ? { taskKind: update.taskKind } : {}),
-                ...(update.taskDueAt !== undefined
-                  ? {
-                      taskDueAt:
-                        update.taskDueAt === null
-                          ? null
-                          : new Date(update.taskDueAt).toISOString(),
-                    }
-                  : {}),
-                ...(update.taskModelId !== undefined
-                  ? { taskModelId: update.taskModelId }
-                  : {}),
-                ...(update.taskQueuePosition !== undefined
-                  ? { taskQueuePosition: update.taskQueuePosition }
-                  : {}),
-                ...(update.taskQueueDepth !== undefined
-                  ? { taskQueueDepth: update.taskQueueDepth }
-                  : {}),
-                ...(update.taskConcurrencyLimit !== undefined
-                  ? { taskConcurrencyLimit: update.taskConcurrencyLimit }
-                  : {}),
-                ...(update.selectedModelId !== undefined
-                  ? { selectedModelId: update.selectedModelId }
-                  : {}),
-                ...(update.permissionMode !== undefined
-                  ? { permissionMode: update.permissionMode }
-                  : {}),
-                ...(update.reasoningEffort !== undefined
-                  ? { reasoningEffort: update.reasoningEffort }
-                  : {}),
-                ...(update.serviceTier !== undefined
-                  ? { serviceTier: update.serviceTier }
-                  : {}),
-                ...(update.responseVerbosity !== undefined
-                  ? { responseVerbosity: update.responseVerbosity }
-                  : {}),
-                ...(update.communicationStyle !== undefined
-                  ? { communicationStyle: update.communicationStyle }
-                  : {}),
-                ...(update.communicationStyleDigest !== undefined
-                  ? { communicationStyleDigest: update.communicationStyleDigest }
-                  : {}),
-                ...(update.projectInstructionsDigest !== undefined
-                  ? { projectInstructionsDigest: update.projectInstructionsDigest }
-                  : {}),
-                updatedAt: now,
-              },
+              data: buildSessionUpdatedData(sessionId, update, now, false),
             };
             persistedEntries = [...entries, next];
             return next;
@@ -3681,9 +3351,7 @@ export class SessionService {
     }
   }
 
-  /**
-   * 从 JSONL 文件加载并转换消息
-   */
+  /** 从 JSONL 文件加载并转换消息 */
   private static async loadSessionFromFile(
     filePath: string,
     sessionId: string,
@@ -3770,9 +3438,7 @@ export class SessionService {
     return [...replacementMessages, ...suffix];
   }
 
-  /**
-   * 将 JSONL 条目转换为 OpenAI Message 格式
-   */
+  /** 将 JSONL 条目转换为 OpenAI Message 格式 */
   static convertJSONLToMessages(
     entries: SessionEvent[],
     options: { includeTokenBudgetHandoffs?: boolean } = {}
@@ -3979,9 +3645,7 @@ export class SessionService {
     return messages;
   }
 
-  /**
-   * 元数据聚合器（注入投影层，复用 projectMetadataFromEntries 保证与 JSONL 逐条一致）。
-   */
+  /** 元数据聚合器（注入投影层，复用 projectMetadataFromEntries 保证与 JSONL 逐条一致）。 */
   private static projectionDeriver(): MetadataDeriver {
     return (entries, sessionId, projectPath, sourceKind, actualFilePath) => {
       try {
@@ -4086,7 +3750,7 @@ export class SessionService {
     const projected = await this.scanStoredSessionsFromProjection(
       scopedProjectPath,
       includeSubagents,
-      0,
+      projectionSyncMaxAgeMs,
       archived,
       taskFilters
     );
@@ -4204,13 +3868,9 @@ export class SessionService {
   }
 
   private static async scanRemoteStoredSessions(
-    options: NormalizedRemoteSessionListOptions,
-    projectionSyncMaxAgeMs = 0
+    options: NormalizedRemoteSessionListOptions
   ): Promise<StoredSessionMetadata[]> {
-    const projected = await this.scanRemoteStoredSessionsFromProjection(
-      options,
-      projectionSyncMaxAgeMs
-    );
+    const projected = await this.scanRemoteStoredSessionsFromProjection(options);
     if (projected) return projected;
 
     const scopes = await this.listRemoteSessionScopes(options);
@@ -4264,8 +3924,7 @@ export class SessionService {
   }
 
   private static async scanRemoteStoredSessionsFromProjection(
-    options: NormalizedRemoteSessionListOptions,
-    projectionSyncMaxAgeMs = 0
+    options: NormalizedRemoteSessionListOptions
   ): Promise<StoredSessionMetadata[] | null> {
     try {
       const db = await getProjectionDb();
@@ -4669,7 +4328,6 @@ export class SessionService {
         : path.resolve(committedProjectPath);
     const remoteWorkspace = this.parseRemoteWorkspaceFromCreated(
       created,
-      sessionId,
       resolvedProjectPath
     );
     const parsedTaskWorktree = parseTaskWorktree(durable.taskWorktree);
@@ -4851,7 +4509,6 @@ export class SessionService {
 
   private static parseRemoteWorkspaceFromCreated(
     created: Extract<SessionEvent, { type: 'session_created' }>,
-    sessionId: string,
     resolvedProjectPath: string
   ): AcpRemoteWorkspaceDescriptorV1 | undefined {
     if (!Object.hasOwn(created.data, 'remoteWorkspace')) {
@@ -4971,9 +4628,7 @@ export class SessionService {
     return publicSession;
   }
 
-  /**
-   * 获取会话文件路径
-   */
+  /** 获取会话文件路径 */
   private static getSessionFilePath(projectPath: string, sessionId: string): string {
     return getSessionFilePath(projectPath, sessionId);
   }

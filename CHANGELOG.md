@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.206] - 2026-09-16
+
+### Fixed
+- Release Skill tool restrictions when their admitted logical turn completes, fails, is cancelled, or closes. Preserve restrictions through same-turn Plan approval and leave the active turn unchanged when a concurrent request is rejected.
+
+### Tests
+- Verify reused Agents restore ordinary tool schemas on the next task with real Flash/Pro requests.
+- Exercise subsequent task recovery through Headless, ACP, raw PTY, and production/development Chromium while keeping stopped Goal usage unchanged.
+
 ## [0.10.205] - 2026-09-16
 
 ### Fixed

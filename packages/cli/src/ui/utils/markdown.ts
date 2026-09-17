@@ -1,6 +1,4 @@
-/**
- * Markdown 工具函数
- */
+/** Markdown 工具函数 */
 
 import stringWidth from 'string-width';
 import wrapAnsi from 'wrap-ansi';
@@ -32,8 +30,7 @@ export const getPlainTextLength = (text: string): number => {
     // 移除链接，只保留链接文本 [text](url) -> text
     .replace(/\[(.*?)\]\(.*?\)/g, '$1');
 
-  // 使用 string-width 计算真实显示宽度
-  // 能正确处理 Unicode、emoji、全角字符等
+  // 使用 string-width 计算真实显示宽度 能正确处理 Unicode、emoji、全角字符等
   return stringWidth(cleanText);
 };
 
@@ -103,10 +100,7 @@ export const hasMarkdownFormat = (text: string): boolean => {
 
 // ==================== 表格文本换行 ====================
 
-/**
- * 获取文本中最长单词的显示宽度
- * 用于计算表格列的最小宽度（避免断词）
- */
+/** 获取文本中最长单词的显示宽度 用于计算表格列的最小宽度（避免断词） */
 export const getLongestWordWidth = (text: string): number => {
   const cleanText = text
     .replace(/\*\*(.*?)\*\*/g, '$1')
@@ -142,9 +136,7 @@ export const wrapCellText = (text: string, width: number, hard = false): string[
   return lines.length > 0 ? lines : [''];
 };
 
-/**
- * 填充文本到指定宽度（支持对齐方式）
- */
+/** 填充文本到指定宽度（支持对齐方式） */
 export const padAligned = (
   content: string,
   displayWidth: number,

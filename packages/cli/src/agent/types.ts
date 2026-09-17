@@ -1,6 +1,4 @@
-/**
- * Agent核心类型定义
- */
+/** Agent核心类型定义 */
 
 import type { FollowUpQueueSnapshot } from '../api/followUpQueueSchemas.js';
 import type { PermissionConfig } from '../config/types.js';
@@ -28,15 +26,10 @@ import type {
 import type { TaskAdmissionHandle } from './runtime/TaskRunScheduler.js';
 import type { SubagentConfig } from './subagents/types.js';
 
-/**
- * 用户消息内容类型
- * 支持纯文本或多模态内容（文本 + 图片）
- */
+/** 用户消息内容类型 支持纯文本或多模态内容（文本 + 图片） */
 export type UserMessageContent = string | ContentPart[];
 
-/**
- * 子代理信息（用于 JSONL 写入）
- */
+/** 子代理信息（用于 JSONL 写入） */
 export interface SubagentInfoForContext {
   parentSessionId: string;
   providerAdmissionOwnerId?: string;
@@ -48,13 +41,11 @@ export interface SubagentInfoForContext {
 }
 
 /**
- * 聊天上下文接口
- *
- * 职责：保存会话相关的数据和状态
- * - 消息历史、会话标识、用户标识等数据
- * - 会话级别的 UI 交互处理器（如 confirmationHandler）
- *
- * 不包含：循环过程中的事件回调（这些应该放在 LoopOptions）
+
+ * 聊天上下文接口 <p> 职责：保存会话相关的数据和状态 - 消息历史、会话标识、用户标识等数据 - 会话级别的 UI 交互处理器（如
+
+ * confirmationHandler） <p> 不包含：循环过程中的事件回调（这些应该放在 LoopOptions）
+
  */
 export interface ChatContext {
   messages: Message[];
@@ -77,10 +68,7 @@ export interface ChatContext {
   subagentInfo?: SubagentInfoForContext; // 子代理信息（用于 JSONL 写入）
 }
 
-/**
- * Agent 创建选项 - 仅包含运行时参数
- * Agent 的配置来自 Store (通过 getConfig() 获取 BladeConfig)
- */
+/** Agent 创建选项 - 仅包含运行时参数 Agent 的配置来自 Store (通过 getConfig() 获取 BladeConfig) */
 export interface AgentOptions {
   sessionId?: string;
   // 运行时参数
@@ -116,16 +104,15 @@ export interface AgentResponse {
 // ===== Agentic Loop Types =====
 
 /**
- * Agentic Loop 选项
- *
- * 职责：控制循环行为
- * - 循环控制参数（maxTurns, autoCompact 等）
- * - 行为回调（onToolApprove, onToolResult, onTurnLimitReached）
- *
- * 设计原则：
- * - Phase 4 完成：事件通知回调已移除，消费者通过 chatStream() + LoopEvent 获取事件
- * - 保留的回调都是 behavioral（影响循环控制流），不是 notification
- * - 和 ChatContext 职责分离：LoopOptions = 行为控制，ChatContext = 数据状态
+
+ * Agentic Loop 选项 <p> 职责：控制循环行为 - 循环控制参数（maxTurns, autoCompact 等） -
+
+ * 行为回调（onToolApprove, onToolResult, onTurnLimitReached） <p> 设计原则： - Phase 4
+
+ * 完成：事件通知回调已移除，消费者通过 chatStream() + LoopEvent 获取事件 - 保留的回调都是 behavioral（影响循环控制流），不是
+
+ * notification - 和 ChatContext 职责分离：LoopOptions = 行为控制，ChatContext = 数据状态
+
  */
 export interface LoopOptions {
   // 循环控制参数
@@ -197,9 +184,7 @@ export interface LoopOptions {
   onTurnLimitReached?: (data: { turnsCount: number }) => Promise<TurnLimitResponse>;
 }
 
-/**
- * 轮次限制响应
- */
+/** 轮次限制响应 */
 export interface TurnLimitResponse {
   continue: boolean;
   reason?: string;

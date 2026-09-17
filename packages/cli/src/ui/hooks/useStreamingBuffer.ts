@@ -1,8 +1,6 @@
 /**
- * 流式输出批处理 Hook
- *
- * 管理 content 和 thinking 的缓冲区，按多行/块输出以减少渲染次数。
- * 提供 drainPendingBuffers() 原子 API，供 stream_end 和 handleAbort 共用。
+ * 流式输出批处理 Hook <p> 管理 content 和 thinking 的缓冲区，按多行/块输出以减少渲染次数。 提供 drainPendingBuffers()
+ * 原子 API，供 stream_end 和 handleAbort 共用。
  */
 
 import { useMemoizedFn } from 'ahooks';
@@ -34,13 +32,9 @@ export interface StreamingBufferAPI {
   flushThinkingBuffer: () => void;
   resetStreamingBuffers: () => void;
   /**
-   * stream_end / handleAbort 共用的原子操作：
-   * 1. 清理所有 flush timer
-   * 2. 读取并清空 content/thinking 缓冲区
-   * 3. 返回剩余内容供调用方提交到 finalizeStreamingMessage
-   *
-   * 这样 loopEventHandler 和编排层都不需要理解 buffer 内部状态，
-   * 只需调用此方法并用返回值做 finalizeStreamingMessage
+   * stream_end / handleAbort 共用的原子操作： 1. 清理所有 flush timer 2. 读取并清空 content/thinking 缓冲区
+   * 3. 返回剩余内容供调用方提交到 finalizeStreamingMessage <p> 这样 loopEventHandler 和编排层都不需要理解 buffer
+   * 内部状态， 只需调用此方法并用返回值做 finalizeStreamingMessage
    */
   drainPendingBuffers: () => DrainResult;
 }

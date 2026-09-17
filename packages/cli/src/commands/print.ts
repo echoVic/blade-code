@@ -24,6 +24,7 @@ import {
   readCliInput,
   readOptionalCliInput,
 } from './shared/commandInput.js';
+import { resolveInputlessResumeState } from './shared/inputlessResume.js';
 import { resolveCliOutputSchema } from './shared/outputSchema.js';
 import { resolveNonInteractiveSession } from './shared/sessionContext.js';
 
@@ -256,20 +257,14 @@ export async function runPrint(
           }
         : {}),
     });
-    const pendingInputOnly = inputlessResume && runtime.getPendingSteeringCount() > 0;
-    const resumedGoal =
-      inputlessResume && !pendingInputOnly ? await runtime.getGoal() : null;
-    const goalContinuationOnly =
-      resumedGoal?.status === 'active' || resumedGoal?.status === 'verifying';
-    const startupRecoveryAssessment = runtime.getTurnRecoveryAssessment?.() ?? {
-      state: 'none' as const,
-    };
-    if (
-      inputlessResume &&
-      !pendingInputOnly &&
-      !goalContinuationOnly &&
-      startupRecoveryAssessment.state === 'requires_attention'
-    ) {
+    const {
+      pendingInputOnly,
+      goalContinuationOnly,
+      finalRecovery,
+      recoveryAssessment: startupRecoveryAssessment,
+      recoveredFinalResponse,
+    } = await resolveInputlessResumeState(runtime, inputlessResume);
+    if (finalRecovery && startupRecoveryAssessment.state === 'requires_attention') {
       io.stderr.write(
         `[turn-recovery:${startupRecoveryAssessment.state}] ${startupRecoveryAssessment.turnId}\n`
       );
@@ -277,11 +272,7 @@ export async function runPrint(
         'Turn recovery requires explicit user attention before continuation'
       );
     }
-    const recoveredFinalResponse =
-      inputlessResume && !pendingInputOnly && !goalContinuationOnly
-        ? await runtime.getRecoveredFinalResponse()
-        : undefined;
-    if (inputlessResume && !pendingInputOnly && !goalContinuationOnly) {
+    if (finalRecovery) {
       if (!recoveredFinalResponse) {
         throw new Error('No unfinished turn or active goal to resume');
       }
@@ -388,10 +379,7 @@ export async function runPrint(
   }
 }
 
-/**
- * 检查命令行参数是否包含 --print 选项
- * 如果包含,则以 print 模式运行
- */
+/** 检查命令行参数是否包含 --print 选项 如果包含,则以 print 模式运行 */
 export async function handlePrintMode(): Promise<boolean> {
   const argv = process.argv.slice(2);
   const printIndex = argv.findIndex((arg) => arg === '--print' || arg === '-p');

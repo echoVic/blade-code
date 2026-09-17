@@ -1,7 +1,4 @@
-/**
- * Yargs 配置文件
- * 定义所有全局选项和命令结构
- */
+/** Yargs 配置文件 定义所有全局选项和命令结构 */
 
 import type { Options } from 'yargs';
 import { getDescription, getVersion } from '../utils/packageInfo.js';

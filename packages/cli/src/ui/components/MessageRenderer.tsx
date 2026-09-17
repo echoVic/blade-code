@@ -1,13 +1,6 @@
 /**
- * 消息渲染器 - 完整的 Markdown 格式化支持
- *
- * 支持的 Markdown 特性：
- * - 代码块（语法高亮）
- * - 表格
- * - 标题（H1-H4）
- * - 列表（有序/无序，支持嵌套）
- * - 水平线
- * - 内联格式（粗体、斜体、删除线、内联代码、链接）
+ * 消息渲染器 - 完整的 Markdown 格式化支持 <p> 支持的 Markdown 特性： - 代码块（语法高亮） - 表格 - 标题（H1-H4） -
+ * 列表（有序/无序，支持嵌套） - 水平线 - 内联格式（粗体、斜体、删除线、内联代码、链接）
  */
 
 import { Box, Text } from 'ink';
@@ -74,10 +67,7 @@ const getRoleStyle = (
   }
 };
 
-/**
- * 渲染代码块
- *
- */
+/** 渲染代码块 */
 const CodeBlock: React.FC<{
   content: string;
   language?: string;
@@ -124,9 +114,7 @@ const CodeBlock: React.FC<{
   }
 );
 
-/**
- * 渲染标题
- */
+/** 渲染标题 */
 const Heading: React.FC<{
   content: string;
   level: number;
@@ -168,9 +156,7 @@ const Heading: React.FC<{
   }
 });
 
-/**
- * 渲染水平线
- */
+/** 渲染水平线 */
 const HorizontalRule: React.FC<{ terminalWidth: number }> = React.memo(
   ({ terminalWidth }) => {
     const theme = useTheme();
@@ -183,9 +169,7 @@ const HorizontalRule: React.FC<{ terminalWidth: number }> = React.memo(
   }
 );
 
-/**
- * 渲染普通文本
- */
+/** 渲染普通文本 */
 const TextBlock: React.FC<{ content: string }> = React.memo(({ content }) => {
   return (
     <Text wrap="wrap">
@@ -194,10 +178,7 @@ const TextBlock: React.FC<{ content: string }> = React.memo(({ content }) => {
   );
 });
 
-/**
- * 渲染 <command-message> 标签
- * 显示为带图标的状态消息
- */
+/** 渲染 <command-message> 标签 显示为带图标的状态消息 */
 const CommandMessage: React.FC<{ content: string }> = React.memo(({ content }) => {
   const theme = useTheme();
   return (
@@ -211,12 +192,11 @@ const CommandMessage: React.FC<{ content: string }> = React.memo(({ content }) =
 });
 
 /**
- * 工具详细内容渲染器（优化版）
- *
- * 优化策略：
- * 1. 只支持代码块和 diff（简化 Markdown）
- * 2. 限制最大行数（避免过大的组件树）
- * 3. 使用 memo 优化（避免不必要的重渲染）
+
+ * 工具详细内容渲染器（优化版） <p> 优化策略： 1. 只支持代码块和 diff（简化 Markdown） 2. 限制最大行数（避免过大的组件树） 3. 使用 memo
+
+ * 优化（避免不必要的重渲染）
+
  */
 const ToolDetailRenderer: React.FC<{
   detail: string;
@@ -318,13 +298,11 @@ const ToolDetailRenderer: React.FC<{
 });
 
 /**
- * 截断内容以适应可用终端高度
- *
- * 只在 pending 状态下截断，避免流式输出时内容超过终端高度导致闪烁
- *
- * NEW: 优化：使用字符级快速截断，避免遍历所有行
- * - 直接从末尾截取估算的字符数
- * - 大幅减少长内容的计算开销
+
+ * 截断内容以适应可用终端高度 <p> 只在 pending 状态下截断，避免流式输出时内容超过终端高度导致闪烁 <p> NEW: 优化：使用字符级快速截断，避免遍历所有行
+
+ * - 直接从末尾截取估算的字符数 - 大幅减少长内容的计算开销
+
  */
 function truncateContentForHeight(
   content: string,
@@ -341,8 +319,7 @@ function truncateContentForHeight(
   const RESERVED_LINES = 8;
   const maxDisplayLines = Math.max(1, availableHeight - RESERVED_LINES);
 
-  // NEW: 快速路径：估算最大字符数，直接从末尾截取
-  // 假设每行平均 terminalWidth * 0.8 个字符（考虑换行和短行）
+  // NEW: 快速路径：估算最大字符数，直接从末尾截取 假设每行平均 terminalWidth * 0.8 个字符（考虑换行和短行）
   const avgCharsPerLine = Math.max(40, terminalWidth * 0.8);
   const estimatedMaxChars = maxDisplayLines * avgCharsPerLine;
 
@@ -373,9 +350,7 @@ function truncateContentForHeight(
   };
 }
 
-/**
- * 主要的消息渲染器组件
- */
+/** 主要的消息渲染器组件 */
 export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
   ({
     content,
@@ -597,9 +572,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
       }
     }
 
-    // 流式模式优化：分离已完成行和当前行
-    // - 只对已完成行做 Markdown 解析（结构稳定）
-    // - 当前行作为纯文本追加（避免未闭合结构导致的解析问题）
+    // 流式模式优化：分离已完成行和当前行 - 只对已完成行做 Markdown 解析（结构稳定） - 当前行作为纯文本追加（避免未闭合结构导致的解析问题）
     const { completedContent, currentLine } = useMemo(() => {
       if (usingBlocksOverride) {
         return {

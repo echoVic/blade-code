@@ -1,16 +1,11 @@
 /**
- * Blade Code Plugins System - Namespacing Utilities
- *
- * This module provides utilities for handling plugin namespacing.
- * Plugin resources (commands, skills, agents) are namespaced to prevent conflicts.
- *
- * Format: plugin-name:resource-name
- * Example: my-plugin:commit
+ * Blade Code Plugins System - Namespacing Utilities <p> This module provides utilities
+ * for handling plugin namespacing. Plugin resources (commands, skills, agents) are
+ * namespaced to prevent conflicts. <p> Format: plugin-name:resource-name Example:
+ * my-plugin:commit
  */
 
-/**
- * Namespace separator used between plugin name and resource name
- */
+/** Namespace separator used between plugin name and resource name */
 const NAMESPACE_SEPARATOR = ':';
 
 /**

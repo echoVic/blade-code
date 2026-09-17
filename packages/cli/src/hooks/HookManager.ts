@@ -1,8 +1,4 @@
-/**
- * Hook Manager
- *
- * 管理 Hook 配置和执行
- */
+/** Hook Manager 管理 Hook 配置和执行 */
 
 import path from 'node:path';
 import { LRUCache } from 'lru-cache';
@@ -34,8 +30,6 @@ import {
   HookType,
   type MatchContext,
   type MatcherConfig,
-  type NotificationHookResult,
-  type NotificationInput,
   type PermissionRequestHookResult,
   type PermissionRequestInput,
   type PostToolHookResult,
@@ -58,11 +52,7 @@ import {
 
 export const MAX_RESIDENT_HOOK_PROJECT_CONFIGS = 64;
 
-/**
- * Hook Manager
- *
- * 单例模式,管理整个应用的 Hook 系统
- */
+/** Hook Manager 单例模式,管理整个应用的 Hook 系统 */
 export class HookManager {
   private static instance: HookManager | null = null;
 
@@ -81,9 +71,7 @@ export class HookManager {
 
   private constructor() {}
 
-  /**
-   * 获取单例实例
-   */
+  /** 获取单例实例 */
   static getInstance(): HookManager {
     if (!HookManager.instance) {
       HookManager.instance = new HookManager();
@@ -149,9 +137,7 @@ export class HookManager {
     HookManager.instance = null;
   }
 
-  /**
-   * 加载配置
-   */
+  /** 加载配置 */
   loadConfig(config: Partial<HookConfig>, projectDir: string = getCwd()): void {
     // 合并配置: 默认 -> 用户配置 -> 环境变量
     let merged = mergeHookConfig(DEFAULT_HOOK_CONFIG, config);
@@ -161,9 +147,7 @@ export class HookManager {
     this.storeProjectConfig(projectDir, merged);
   }
 
-  /**
-   * 检查是否启用
-   */
+  /** 检查是否启用 */
   isEnabled(projectDir: string = getCwd(), sessionId?: string): boolean {
     const config = sessionId
       ? this.getExecutionConfig(sessionId, projectDir)
@@ -187,17 +171,13 @@ export class HookManager {
     return true;
   }
 
-  /**
-   * Disable all hooks process-wide. Kept for host policy and test compatibility.
-   */
+  /** Disable all hooks process-wide. Kept for host policy and test compatibility. */
   disable(): void {
     this.processDisabled = true;
     console.log('[HookManager] Hooks disabled for this process');
   }
 
-  /**
-   * Re-enable process-wide hook execution.
-   */
+  /** Re-enable process-wide hook execution. */
   enable(): void {
     this.processDisabled = false;
     console.log('[HookManager] Hooks enabled for this process');
@@ -219,9 +199,7 @@ export class HookManager {
     return this.disabledSessions.has(this.sessionStateKey(sessionId, projectDir));
   }
 
-  /**
-   * 获取当前配置（只读）
-   */
+  /** 获取当前配置（只读） */
   getConfig(projectDir: string = getCwd()): Readonly<HookConfig> {
     const projectKey = path.resolve(projectDir);
     const projectConfig = this.projectConfigs.get(projectKey);
@@ -410,9 +388,7 @@ export class HookManager {
     };
   }
 
-  /**
-   * 重新加载配置（直接从配置文件读取）
-   */
+  /** 重新加载配置（直接从配置文件读取） */
   async reloadConfig(projectDir: string = getCwd()): Promise<void> {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
@@ -431,9 +407,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 执行 PreToolUse Hooks
-   */
+  /** 执行 PreToolUse Hooks */
   async executePreToolHooks(
     toolName: string,
     toolUseId: string,
@@ -534,9 +508,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 执行 PostToolUse Hooks
-   */
+  /** 执行 PostToolUse Hooks */
   async executePostToolHooks(
     toolName: string,
     toolUseId: string,
@@ -626,9 +598,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 执行 Stop Hooks
-   */
+  /** 执行 Stop Hooks */
   async executeStopHooks(context: {
     projectDir: string;
     sessionId: string;
@@ -684,9 +654,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 执行 SubagentStop Hooks
-   */
+  /** 执行 SubagentStop Hooks */
   async executeSubagentStopHooks(
     agentType: string,
     context: {
@@ -752,9 +720,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 执行 PermissionRequest Hooks
-   */
+  /** 执行 PermissionRequest Hooks */
   async executePermissionRequestHooks(
     toolName: string,
     toolUseId: string,
@@ -825,9 +791,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 执行 UserPromptSubmit Hooks
-   */
+  /** 执行 UserPromptSubmit Hooks */
   async executeUserPromptSubmitHooks(
     userPrompt: string,
     context: {
@@ -889,9 +853,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 执行 SessionStart Hooks
-   */
+  /** 执行 SessionStart Hooks */
   async executeSessionStartHooks(context: {
     projectDir: string;
     sessionId: string;
@@ -949,9 +911,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 执行 SessionEnd Hooks
-   */
+  /** 执行 SessionEnd Hooks */
   async executeSessionEndHooks(
     reason: SessionEndInput['reason'],
     context: {
@@ -1005,9 +965,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 执行 PostToolUseFailure Hooks
-   */
+  /** 执行 PostToolUseFailure Hooks */
   async executePostToolUseFailureHooks(
     toolName: string,
     toolUseId: string,
@@ -1080,71 +1038,6 @@ export class HookManager {
     } catch (err) {
       console.error('[HookManager] Error executing PostToolUseFailure hooks:', err);
       return {
-        warning: `Hook execution failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-  }
-
-  /**
-   * 执行 Notification Hooks
-   */
-  async executeNotificationHooks(
-    notificationType: NotificationInput['notification_type'],
-    message: string,
-    context: {
-      projectDir: string;
-      sessionId: string;
-      permissionMode: PermissionMode;
-      title?: string;
-      abortSignal?: AbortSignal;
-    }
-  ): Promise<NotificationHookResult> {
-    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
-      return { suppress: false, message };
-    }
-
-    // 构建 Hook 输入
-    const hookInput: NotificationInput = {
-      hook_event_name: HookEvent.Notification,
-      hook_execution_id: nanoid(),
-      timestamp: new Date().toISOString(),
-      project_dir: context.projectDir,
-      session_id: context.sessionId,
-      permission_mode: context.permissionMode,
-      notification_type: notificationType,
-      title: context.title,
-      message,
-    };
-
-    // 获取 hooks
-    const hooks = this.getMatchingHooks(HookEvent.Notification, {}, config);
-
-    if (hooks.length === 0) {
-      return { suppress: false, message };
-    }
-
-    // 构建执行上下文
-    const execContext: HookExecutionContext = {
-      projectDir: context.projectDir,
-      sessionId: context.sessionId,
-      permissionMode: context.permissionMode,
-      config,
-      abortSignal: context.abortSignal,
-    };
-
-    try {
-      const results = await this.executor.executeNotificationHooks(
-        hooks,
-        hookInput,
-        execContext
-      );
-      return results;
-    } catch (err) {
-      console.error('[HookManager] Error executing Notification hooks:', err);
-      return {
-        suppress: false,
-        message,
         warning: `Hook execution failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
@@ -1253,9 +1146,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 执行 Compaction Hooks
-   */
+  /** 执行 Compaction Hooks */
   async executeCompactionHooks(
     trigger: 'manual' | 'auto',
     context: {
@@ -1317,9 +1208,7 @@ export class HookManager {
     }
   }
 
-  /**
-   * 获取匹配的 Hooks
-   */
+  /** 获取匹配的 Hooks */
   private getMatchingHooks(
     event: HookEvent,
     context: MatchContext,
@@ -1341,9 +1230,7 @@ export class HookManager {
     return matchedHooks;
   }
 
-  /**
-   * 从工具输入提取文件路径
-   */
+  /** 从工具输入提取文件路径 */
   private extractFilePaths(toolInput: Record<string, unknown>): string[] {
     const paths: string[] = [];
     // 常见的文件路径字段
@@ -1369,9 +1256,7 @@ export class HookManager {
     return [...new Set(paths)];
   }
 
-  /**
-   * 从工具输入提取命令
-   */
+  /** 从工具输入提取命令 */
   private extractCommand(
     toolName: string,
     toolInput: Record<string, unknown>
@@ -1387,9 +1272,7 @@ export class HookManager {
     return undefined;
   }
 
-  /**
-   * 清理所有状态
-   */
+  /** 清理所有状态 */
   cleanup(): void {
     this.guard.cleanupAll();
     this.config = DEFAULT_HOOK_CONFIG;

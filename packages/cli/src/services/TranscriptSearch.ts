@@ -1,8 +1,6 @@
 /**
- * Transcript Search — 历史会话搜索
- *
- * 在过去的 session JSONL 文件中搜索关键词，返回匹配的上下文片段。
- * 用于 /search 命令和 Agent 工具（回忆过去做过的事情）。
+ * Transcript Search — 历史会话搜索 <p> 在过去的 session JSONL 文件中搜索关键词，返回匹配的上下文片段。 用于 /search 命令和
+ * Agent 工具（回忆过去做过的事情）。
  */
 
 import * as fs from 'node:fs/promises';

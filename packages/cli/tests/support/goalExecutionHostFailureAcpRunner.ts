@@ -1,7 +1,7 @@
-import { type ChildProcess, spawn } from 'node:child_process';
-import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
+import { createBladeAcpChildHarness } from './acp/createBladeAcpChildHarness.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -19,49 +19,6 @@ function loadInput(): RunnerInput {
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
 }
 
-async function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs = 60_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
-}
-
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 10_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Goal host failure ACP child did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
-}
-
 function goalMetadata(client: ChildBackedRecordingAcpClient) {
   return client.sessionUpdates.flatMap((notification) => {
     const metadata = notification.update._meta?.['blade/goal'];
@@ -73,36 +30,17 @@ function goalMetadata(client: ChildBackedRecordingAcpClient) {
 
 async function main(): Promise<void> {
   const input = loadInput();
-  const child = spawn(process.execPath, [input.cliEntry, '--acp'], {
-    cwd: input.workspace,
+  const client = new ChildBackedRecordingAcpClient();
+  const harness = createBladeAcpChildHarness({
+    ...input,
+    client,
     env: {
-      ...process.env,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '0',
-      BLADE_TELEMETRY_DISABLED: '1',
       BLADE_VERSION: '999.0.0',
       BLADE_API_KEY: input.secret,
-      TERM: 'xterm-256color',
     },
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdioError: 'Goal host failure ACP stdio is unavailable',
   });
-  if (!child.stdin || !child.stdout) {
-    child.kill('SIGKILL');
-    throw new Error('Goal host failure ACP stdio is unavailable');
-  }
-  let stderr = '';
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    stderr = `${stderr}${chunk.toString()}`.slice(-64_000);
-  });
-  const client = new ChildBackedRecordingAcpClient();
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(
-      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
-    )
-  );
+  const { connection } = harness;
 
   try {
     await connection.initialize({
@@ -127,15 +65,12 @@ async function main(): Promise<void> {
       throw new Error('ACP goal host failure left an active terminal');
     }
 
-    child.kill('SIGTERM');
-    const exit = await waitForChildExit(child);
-    await connection.closed.catch(() => undefined);
+    const exit = await harness.shutdown('SIGTERM', 10_000);
     if (exit.signal || exit.code !== 0) {
       throw new Error(
-        `Goal host failure ACP exited ${exit.code ?? exit.signal}: ${stderr.replaceAll(
-          input.secret,
-          '[redacted]'
-        )}`
+        `Goal host failure ACP exited ${
+          exit.code ?? exit.signal
+        }: ${harness.stderr.replaceAll(input.secret, '[redacted]')}`
       );
     }
     process.stdout.write(
@@ -171,8 +106,7 @@ async function main(): Promise<void> {
     );
     process.exitCode = 1;
   } finally {
-    await client.close().catch(() => undefined);
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await harness.close();
   }
 }
 

@@ -1,6 +1,4 @@
-/**
- * /compact 命令 - 手动压缩上下文
- */
+/** /compact 命令 - 手动压缩上下文 */
 
 import {
   CompactionAbortedError,
@@ -23,10 +21,7 @@ import {
   type SlashCommandResult,
 } from './types.js';
 
-/**
- * Compact 命令处理函数
- * 手动触发上下文压缩并显示统计信息
- */
+/** Compact 命令处理函数 手动触发上下文压缩并显示统计信息 */
 async function compactCommandHandler(
   _args: string[],
   context: SlashCommandContext
@@ -272,9 +267,7 @@ async function compactCommandHandler(
   }
 }
 
-/**
- * Compact 命令定义
- */
+/** Compact 命令定义 */
 const compactCommand: SlashCommand = {
   name: 'compact',
   description: '手动压缩当前会话的上下文',

@@ -1,6 +1,4 @@
-/**
- * API Schemas 测试
- */
+/** API Schemas 测试 */
 
 import { describe, expect, it } from 'vitest';
 import {

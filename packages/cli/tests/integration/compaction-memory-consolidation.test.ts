@@ -23,6 +23,10 @@ import { getProjectStoragePath } from '../../src/context/storage/pathUtils.js';
 import { resetProjectionDbCache } from '../../src/context/storage/sqlite/projection.js';
 import { INTERNAL_CONTROL_MESSAGE_METADATA } from '../../src/services/clientMessageVisibility.js';
 import { SessionService } from '../../src/services/SessionService.js';
+import {
+  reserveLoopbackPort as reservePort,
+  waitForCondition as waitFor,
+} from '../support/asyncTestUtils.js';
 import { removeTestDirectory } from '../support/helpers/removeTestDirectory.js';
 
 vi.unmock('node:child_process');
@@ -644,32 +648,6 @@ async function runPty(test: Fixture): Promise<void> {
     memoryNoticeSeen: true,
     discoveryMarkerSeen: true,
   });
-}
-
-async function reservePort(): Promise<number> {
-  const server = createHttpServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address() as AddressInfo;
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve()))
-  );
-  return address.port;
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs = 60_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 async function openEventProbe(

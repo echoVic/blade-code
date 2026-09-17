@@ -1,8 +1,6 @@
 /**
- * Abort Reason 语义化类型
- *
- * 区分不同的 abort 来源，让下游代码根据 reason 做不同处理。
- * 例如 interrupt 不显示"任务已停止"，而 user-cancel 显示。
+ * Abort Reason 语义化类型 <p> 区分不同的 abort 来源，让下游代码根据 reason 做不同处理。 例如 interrupt 不显示"任务已停止"，而
+ * user-cancel 显示。
  */
 
 /**

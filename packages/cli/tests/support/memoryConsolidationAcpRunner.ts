@@ -1,9 +1,8 @@
-import { type ChildProcess, spawn } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
-import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
 import { findSessionTranscript } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
+import { createBladeAcpChildHarness } from './acp/createBladeAcpChildHarness.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -26,79 +25,19 @@ function loadInput(): RunnerInput {
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
 }
 
-function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs = 30_000
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Memory consolidation ACP child did not exit'));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('error', onError);
-      child.off('exit', onExit);
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      resolve({ code, signal });
-    };
-    child.once('error', onError);
-    child.once('exit', onExit);
-  });
-}
-
-function agentText(client: ChildBackedRecordingAcpClient, sessionId: string): string {
-  return client.sessionUpdates
-    .filter((notification) => notification.sessionId === sessionId)
-    .flatMap((notification) =>
-      notification.update.sessionUpdate === 'agent_message_chunk' &&
-      notification.update.content.type === 'text'
-        ? [notification.update.content.text]
-        : []
-    )
-    .join('');
-}
-
 async function run(input: RunnerInput) {
-  const child = spawn(process.execPath, [input.cliEntry, '--acp'], {
-    cwd: input.workspace,
+  const client = new ChildBackedRecordingAcpClient();
+  const harness = createBladeAcpChildHarness({
+    ...input,
+    client,
+    autoMemory: true,
     env: {
-      ...process.env,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '1',
-      BLADE_TELEMETRY_DISABLED: '1',
       BLADE_VERSION: '999.0.0',
       BLADE_API_KEY: input.secret,
-      TERM: 'xterm-256color',
     },
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdioError: 'Memory consolidation ACP stdio is unavailable',
   });
-  if (!child.stdin || !child.stdout) {
-    child.kill('SIGKILL');
-    throw new Error('Memory consolidation ACP stdio is unavailable');
-  }
-  let stderr = '';
-  child.stderr?.on('data', (chunk: Buffer | string) => {
-    stderr = `${stderr}${chunk.toString()}`.slice(-64_000);
-  });
-  const client = new ChildBackedRecordingAcpClient();
-  const connection = new acp.ClientSideConnection(
-    () => client,
-    acp.ndJsonStream(
-      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
-    )
-  );
+  const { connection } = harness;
   let sessionId = '';
   try {
     await connection.initialize({
@@ -142,11 +81,10 @@ async function run(input: RunnerInput) {
         throw new Error('Manual compaction ACP did not report cancellation');
       if (!(await readFile(transcript)).equals(before))
         throw new Error('Cancelled manual compaction changed the transcript');
-      const content = agentText(client, sessionId);
+      const content = client.agentText(sessionId);
       if (!content.includes('上下文压缩已取消') || content.includes('[FAIL]'))
         throw new Error('Manual compaction ACP cancellation output is incorrect');
-      child.kill('SIGTERM');
-      const exit = await waitForChildExit(child);
+      const exit = await harness.shutdown();
       if (exit.signal || exit.code !== 0)
         throw new Error(`Manual compaction ACP exited ${exit.code ?? exit.signal}`);
       return {
@@ -173,7 +111,7 @@ async function run(input: RunnerInput) {
     if (serialized.includes(input.secret)) {
       throw new Error('Memory consolidation ACP updates leaked a credential');
     }
-    if (stderr.includes(input.secret)) {
+    if (harness.stderr.includes(input.secret)) {
       throw new Error('Memory consolidation ACP stderr leaked a credential');
     }
     const discovery = await connection.newSession({
@@ -194,25 +132,22 @@ async function run(input: RunnerInput) {
       );
     }
 
-    child.kill('SIGTERM');
-    const exit = await waitForChildExit(child);
-    await connection.closed.catch(() => undefined);
+    const exit = await harness.shutdown();
     if (exit.signal || exit.code !== 0) {
       throw new Error(`Memory consolidation ACP exited ${exit.code ?? exit.signal}`);
     }
     return {
       success: true,
       sessionId,
-      finalMarkerSeen: agentText(client, sessionId).includes(input.marker),
-      discoveryMarkerSeen: agentText(client, discovery.sessionId).includes(
-        input.discoveryMarker
-      ),
+      finalMarkerSeen: client.agentText(sessionId).includes(input.marker),
+      discoveryMarkerSeen: client
+        .agentText(discovery.sessionId)
+        .includes(input.discoveryMarker),
       compactions,
       updateCount: client.sessionUpdates.length,
     };
   } finally {
-    await client.close().catch(() => undefined);
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await harness.close();
   }
 }
 

@@ -1,10 +1,6 @@
-/**
- * UI 模块常量配置
- */
+/** UI 模块常量配置 */
 
-/**
- * 粘贴检测配置
- */
+/** 粘贴检测配置 */
 export const PASTE_CONFIG = {
   /** chunk 合并超时时间（毫秒） */
   TIMEOUT_MS: 100,

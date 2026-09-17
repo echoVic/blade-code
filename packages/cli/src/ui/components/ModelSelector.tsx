@@ -1,10 +1,4 @@
-/**
- * ModelSelector - 模型选择器
- *
- * 功能：
- * - 显示模型列表和详情
- * - 操作：Enter 切换、D 删除、ESC 取消、Ctrl+C 退出
- */
+/** ModelSelector - 模型选择器 功能： - 显示模型列表和详情 - 操作：Enter 切换、D 删除、ESC 取消、Ctrl+C 退出 */
 
 import { useMemoizedFn, useMount } from 'ahooks';
 import { Box, Text, useFocus, useFocusManager } from 'ink';

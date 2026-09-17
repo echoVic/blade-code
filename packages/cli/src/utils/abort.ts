@@ -1,8 +1,6 @@
 /**
- * Abort 信号工具集
- *
- * 提供 AbortController/AbortSignal 的组合与传播工具，
- * 从 StreamingToolExecutor 中提取并增强。
+ * Abort 信号工具集 <p> 提供 AbortController/AbortSignal 的组合与传播工具， 从 StreamingToolExecutor
+ * 中提取并增强。
  */
 
 import { isAbortReason } from './abortReason.js';
@@ -19,39 +17,6 @@ export function isAbortError(error: unknown): boolean {
   if (error instanceof DOMException && error.name === 'AbortError') return true;
   if (error.message.includes('aborted')) return true;
   return false;
-}
-
-/**
- * 创建一个子 AbortController，当父 signal abort 时子也 abort（单向传播）。
- * - 父已 aborted → 子立即 abort（快速路径）
- * - 子 abort 时自动从父移除 listener，防止内存泄漏
- * - 传播 abort reason
- */
-export function createChildAbortController(parentSignal: AbortSignal): AbortController {
-  const child = new AbortController();
-
-  // 快速路径：父已 aborted
-  if (parentSignal.aborted) {
-    child.abort(parentSignal.reason);
-    return child;
-  }
-
-  const onParentAbort = () => {
-    child.abort(parentSignal.reason);
-  };
-
-  parentSignal.addEventListener('abort', onParentAbort, { once: true });
-
-  // 子 abort 时清理父上的 listener
-  child.signal.addEventListener(
-    'abort',
-    () => {
-      parentSignal.removeEventListener('abort', onParentAbort);
-    },
-    { once: true }
-  );
-
-  return child;
 }
 
 /**

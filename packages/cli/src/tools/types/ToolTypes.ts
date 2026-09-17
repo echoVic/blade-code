@@ -8,10 +8,6 @@ import type {
 import type { PermissionMode } from '../../config/types.js';
 import type { GoalExecutionHostFailureCategory } from '../../goals/types.js';
 import type { ExecutionContext } from './ExecutionTypes.js';
-
-/**
- * Node.js 错误类型（带有 code 属性）
- */
 export interface NodeError extends Error {
   code?: string;
 }
@@ -31,9 +27,6 @@ export enum ToolKind {
   Execute = 'execute',
 }
 
-/**
- * Metadata 基础字段 - 所有工具共享
- */
 interface BaseMetadataFields {
   summary?: string;
   shouldExitLoop?: boolean;
@@ -42,18 +35,12 @@ interface BaseMetadataFields {
   model?: string;
 }
 
-/**
- * 文件操作类工具的基础字段
- */
 interface FileMetadataFields extends BaseMetadataFields {
   file_path: string;
   file_size?: number;
   last_modified?: string;
 }
 
-/**
- * Diff 相关字段（Write/Edit 工具）
- */
 interface DiffMetadataFields extends FileMetadataFields {
   kind: 'edit';
   oldContent: string;
@@ -63,9 +50,6 @@ interface DiffMetadataFields extends FileMetadataFields {
   message_id?: string;
 }
 
-/**
- * Read 工具的字段
- */
 interface ReadMetadataFields extends FileMetadataFields {
   file_type: string;
   encoding: string;
@@ -78,9 +62,6 @@ interface ReadMetadataFields extends FileMetadataFields {
   end_line?: number;
 }
 
-/**
- * Write 工具的字段
- */
 interface WriteMetadataFields extends DiffMetadataFields {
   content_size: number;
   encoding: string;
@@ -91,9 +72,6 @@ interface WriteMetadataFields extends DiffMetadataFields {
   sideEffectsUncertain?: boolean;
 }
 
-/**
- * Edit 工具的字段
- */
 interface EditMetadataFields extends DiffMetadataFields {
   matches_found: number;
   replacements_made: number;
@@ -130,9 +108,6 @@ interface ApplyPatchMetadataFields extends BaseMetadataFields {
   requiresRead?: boolean;
 }
 
-/**
- * Edit 工具错误诊断的字段
- */
 interface EditErrorMetadataFields extends BaseMetadataFields {
   searchStringLength: number;
   fuzzyMatches: Array<{
@@ -144,9 +119,6 @@ interface EditErrorMetadataFields extends BaseMetadataFields {
   totalLines: number;
 }
 
-/**
- * Glob 工具的字段
- */
 interface GlobMetadataFields extends BaseMetadataFields {
   search_path: string;
   pattern: string;
@@ -164,9 +136,6 @@ interface GlobMetadataFields extends BaseMetadataFields {
   }>;
 }
 
-/**
- * Grep 工具的字段
- */
 interface GrepMetadataFields extends BaseMetadataFields {
   search_pattern: string;
   search_path: string;
@@ -180,9 +149,6 @@ interface GrepMetadataFields extends BaseMetadataFields {
   exit_code?: number;
 }
 
-/**
- * Bash 工具的字段（后台执行）
- */
 interface BashBackgroundMetadataFields extends BaseMetadataFields {
   command: string;
   background: true;
@@ -198,9 +164,6 @@ interface BashBackgroundMetadataFields extends BaseMetadataFields {
   acp_mode?: boolean;
 }
 
-/**
- * Bash 工具的字段（前台执行）
- */
 interface BashForegroundMetadataFields extends BaseMetadataFields {
   command: string;
   execution_host_failure?: GoalExecutionHostFailureCategory;
@@ -230,9 +193,6 @@ interface BashForegroundMetadataFields extends BaseMetadataFields {
   sandboxed?: boolean;
 }
 
-/**
- * WebSearch 工具的字段
- */
 interface WebSearchMetadataFields extends BaseMetadataFields {
   query: string;
   provider: string;
@@ -243,9 +203,6 @@ interface WebSearchMetadataFields extends BaseMetadataFields {
   blocked_domains?: string[];
 }
 
-/**
- * WebFetch 工具的字段
- */
 interface WebFetchMetadataFields extends BaseMetadataFields {
   url: string;
   method: string;
@@ -288,25 +245,9 @@ interface BrowserToolMetadataFields extends BaseMetadataFields {
   };
 }
 
-/**
- * 泛型 Metadata 类型
- *
- * @template T - 具体的 metadata 字段接口
- *
- * @example
- * // 在工具内部使用具体类型
- * const metadata: Metadata<EditMetadataFields> = { ... };
- *
- * // 返回时自动兼容 ToolResultMetadata
- * return { success: true, metadata };
- */
 type Metadata<T extends BaseMetadataFields = BaseMetadataFields> = T & {
   [key: string]: unknown;
 };
-
-/**
- * 预定义的 Metadata 类型别名（方便使用）
- */
 type FileMetadata = Metadata<FileMetadataFields>;
 type DiffMetadata = Metadata<DiffMetadataFields>;
 export type ReadMetadata = Metadata<ReadMetadataFields>;
@@ -322,17 +263,7 @@ type BashMetadata = BashBackgroundMetadata | BashForegroundMetadata;
 export type WebSearchMetadata = Metadata<WebSearchMetadataFields>;
 export type WebFetchMetadata = Metadata<WebFetchMetadataFields>;
 export type BrowserToolMetadata = Metadata<BrowserToolMetadataFields>;
-
-/**
- * ToolResult.metadata 的类型（向后兼容）
- *
- * 使用 Metadata<BaseMetadataFields> 作为基础，允许任意扩展字段
- */
 export type ToolResultMetadata = Metadata<BaseMetadataFields>;
-
-/**
- * 类型守卫：检查 metadata 是否为 diff 类型（Write/Edit）
- */
 function _isDiffMetadata(
   metadata: ToolResultMetadata | undefined
 ): metadata is DiffMetadata {
@@ -344,27 +275,18 @@ function _isDiffMetadata(
   );
 }
 
-/**
- * 类型守卫：检查 metadata 是否为文件类型
- */
 function _isFileMetadata(
   metadata: ToolResultMetadata | undefined
 ): metadata is FileMetadata {
   return metadata !== undefined && typeof metadata.file_path === 'string';
 }
 
-/**
- * 类型守卫：检查 metadata 是否为命令执行类型
- */
 function _isBashMetadata(
   metadata: ToolResultMetadata | undefined
 ): metadata is BashMetadata {
   return metadata !== undefined && typeof metadata.command === 'string';
 }
 
-/**
- * 类型守卫：检查 metadata 是否为 Glob 类型
- */
 export function isGlobMetadata(
   metadata: ToolResultMetadata | undefined
 ): metadata is GlobMetadata {
@@ -375,9 +297,6 @@ export function isGlobMetadata(
   );
 }
 
-/**
- * 类型守卫：检查 metadata 是否为 Grep 类型
- */
 function _isGrepMetadata(
   metadata: ToolResultMetadata | undefined
 ): metadata is GrepMetadata {
@@ -388,9 +307,6 @@ function _isGrepMetadata(
   );
 }
 
-/**
- * 类型守卫：检查 metadata 是否为 Read 类型
- */
 function _isReadMetadata(
   metadata: ToolResultMetadata | undefined
 ): metadata is ReadMetadata {
@@ -401,9 +317,6 @@ function _isReadMetadata(
   );
 }
 
-/**
- * 类型守卫：检查 metadata 是否为 Edit 类型
- */
 export function isEditMetadata(
   metadata: ToolResultMetadata | undefined
 ): metadata is EditMetadata {
@@ -424,21 +337,7 @@ export interface ToolResultModelImage {
 // Model-only images must not enter JSON events, durable results, or UI projections.
 export const TOOL_RESULT_MODEL_IMAGES = Symbol('blade.tool-result-model-images');
 
-/**
- * 泛型工具执行结果
- *
- * @template TMetadata - metadata 的具体类型
- *
- * @example
- * // 在工具内部使用具体类型
- * async function execute(): Promise<TypedToolResult<EditMetadata>> {
- * return {
- * success: true,
- * llmContent: '...',
- * metadata: { file_path: '...', matches_found: 1, ... }
- * };
- * }
- */
+/** Tool result with a concrete metadata contract. */
 interface TypedToolResult<TMetadata extends ToolResultMetadata = ToolResultMetadata> {
   success: boolean;
   llmContent: string | object;
@@ -474,26 +373,13 @@ export function getModelVisibleToolResultContent(
   return images && images.length > 0 ? [{ type: 'text', text }, ...images] : text;
 }
 
-/**
- * 工具展示输出（由格式化层生成，供所有 UI 消费者使用）
- */
 export interface ToolDisplayOutput {
-  /** 状态：ok / fail / warn */
   status: 'ok' | 'fail' | 'warn';
-  /** 一行摘要 */
   summary: string;
-  /** 多行详情（diff、输出预览等），可选 */
   detail?: string;
 }
 
-/**
- * 工具执行结果（向后兼容的非泛型版本）
- */
 export type ToolResult = TypedToolResult<ToolResultMetadata>;
-
-/**
- * 工具错误类型
- */
 interface ToolError {
   message: string;
   type: ToolErrorType;
@@ -510,9 +396,6 @@ export enum ToolErrorType {
   NETWORK_ERROR = 'network_error',
 }
 
-/**
- * 函数声明 (用于LLM函数调用)
- */
 export interface FunctionDeclaration {
   name: string;
   description: string;
@@ -520,15 +403,11 @@ export interface FunctionDeclaration {
   constrainedSampling?: false | ConstrainedSamplingConfig;
 }
 
-/**
- * 工具调用抽象
- */
 export interface ToolInvocation<TParams = unknown, TResult = ToolResult> {
   readonly toolName: string;
   readonly params: TParams;
   /** True only when replaying after an indeterminate transient failure is safe. */
   readonly isRetrySafe?: boolean;
-
   getDescription(): string;
   getAffectedPaths(): string[];
   execute(
@@ -538,36 +417,21 @@ export interface ToolInvocation<TParams = unknown, TResult = ToolResult> {
   ): Promise<TResult>;
 }
 
-/**
- * 工具描述格式
- */
 export interface ToolDescription {
-  /** 简短描述 (1行) */
   short: string;
-  /** 详细说明 (可选) */
   long?: string;
-  /** 使用说明列表 */
   usageNotes?: string[];
-  /** 使用示例 */
   examples?: Array<{
     description: string;
     params: Record<string, unknown>;
   }>;
-  /** 重要提示 */
   important?: string[];
 }
 
-/**
- * 工具配置 (泛型接口，用于配合 TypeBox Schema)
- * TSchema: TypeBox Schema 类型
- * TParams: 推断的参数类型
- */
+/** 工具配置 (泛型接口，用于配合 TypeBox Schema) TSchema: TypeBox Schema 类型 TParams: 推断的参数类型 */
 export interface ToolConfig<TSchema = unknown, TParams = unknown> {
-  /** 工具唯一名称 */
   name: string;
-  /** 工具显示名称 */
   displayName: string;
-  /** 工具类型 */
   kind: ToolKind;
   /** 是否可与同批其他并发安全工具共享执行（可选，默认 false） */
   isConcurrencySafe?: boolean;
@@ -579,15 +443,10 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   strict?: boolean;
   /** TypeBox Schema 定义 */
   schema: TSchema;
-  /** 工具描述 */
   description: ToolDescription;
-  /** 执行函数 */
   execute: (params: TParams, context: ExecutionContext) => Promise<ToolResult>;
-  /** 版本号 */
   version?: string;
-  /** 分类 */
   category?: string;
-  /** 标签 */
   tags?: string[];
 
   /**
@@ -603,9 +462,7 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
    */
   extractSignatureContent?: (params: TParams) => string;
 
-  /**
-   * 返回调用可能读写的路径，用于权限、安全审阅和多路径工具。
-   */
+  /** 返回调用可能读写的路径，用于权限、安全审阅和多路径工具。 */
   affectedPaths?: (params: TParams) => string[];
 
   /**
@@ -622,73 +479,37 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   abstractPermissionRule?: (params: TParams) => string;
 }
 
-/**
- * Tool 接口
- */
 export interface Tool<TParams = unknown> {
-  /** 工具名称 */
   readonly name: string;
-  /** 显示名称 */
   readonly displayName: string;
-  /** 工具类型 */
   readonly kind: ToolKind;
   /** 是否支持并发安全 */
   readonly isConcurrencySafe: boolean;
   /** 瞬态异常后是否可安全重放 */
   readonly isRetrySafe?: boolean;
-  /** 是否可与同批其他 shared 工具并发 */
   readonly parallelism?: 'shared' | 'exclusive';
   /** 是否启用 OpenAI Structured Outputs */
   readonly strict: boolean;
-  /** 工具描述 */
   readonly description: ToolDescription;
-  /** 版本号 */
   readonly version: string;
-  /** 分类 */
   readonly category?: string;
-  /** 标签 */
   readonly tags: string[];
-
-  /**
-   * 获取函数声明 (用于 LLM)
-   */
   getFunctionDeclaration(): FunctionDeclaration;
-
-  /**
-   * 获取工具元信息
-   */
   getMetadata(): Record<string, unknown>;
-
-  /**
-   * 构建工具调用
-   */
   build(params: TParams): ToolInvocation<TParams>;
-
-  /**
-   * 一键执行
-   */
   execute(
     params: TParams,
     signal?: AbortSignal,
     context?: Partial<ExecutionContext>
   ): Promise<ToolResult>;
 
-  /**
-   * [OK] 新增：签名内容提取器
-   * 从参数中提取用于权限签名的内容字符串
-   */
+  /** [OK] 新增：签名内容提取器 从参数中提取用于权限签名的内容字符串 */
   extractSignatureContent?: (params: TParams) => string;
 
-  /**
-   * [OK] 新增：权限规则抽象器
-   * 将具体参数抽象为通配符权限规则
-   */
+  /** [OK] 新增：权限规则抽象器 将具体参数抽象为通配符权限规则 */
   abstractPermissionRule?: (params: TParams) => string;
 }
 
-/**
- * 根据 ToolKind 推断是否为只读工具
- */
 export function isReadOnlyKind(kind: ToolKind): boolean {
   return kind === ToolKind.ReadOnly;
 }

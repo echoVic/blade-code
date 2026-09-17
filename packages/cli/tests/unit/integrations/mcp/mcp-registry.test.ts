@@ -1,6 +1,4 @@
-/**
- * McpRegistry 单元测试
- */
+/** McpRegistry 单元测试 */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';

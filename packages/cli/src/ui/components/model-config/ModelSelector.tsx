@@ -1,8 +1,4 @@
-/**
- * ModelSelector - 模型选择组件
- * Step 3: 从 Provider 内置模型列表中选择
- * 直接输入即可搜索，类似 fzf
- */
+/** ModelSelector - 模型选择组件 Step 3: 从 Provider 内置模型列表中选择 直接输入即可搜索，类似 fzf */
 
 import { Box, Text } from 'ink';
 import SelectInput from 'ink-select-input';

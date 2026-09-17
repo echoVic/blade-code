@@ -1,8 +1,4 @@
-/**
- * Mock Agent
- *
- * 用于测试 BladeAgent 和 Session，模拟 Agent 类
- */
+/** Mock Agent 用于测试 BladeAgent 和 Session，模拟 Agent 类 */
 
 import { vi } from 'vitest';
 import type { Agent } from '../../../src/agent/Agent.js';
@@ -79,9 +75,7 @@ export class MockAgent implements Partial<Agent> {
     };
   }
 
-  /**
-   * 高层 API：消费 chatStream() 并返回 LoopResult。
-   */
+  /** 高层 API：消费 chatStream() 并返回 LoopResult。 */
   async chat(
     message: UserMessageContent,
     context: ChatContext,

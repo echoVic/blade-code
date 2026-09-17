@@ -3,7 +3,11 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { resolveTestTimeout, testTypes } from '../../../scripts/test-config.js';
+import {
+  assertConfiguredTestFilesExist,
+  resolveTestTimeout,
+  testTypes,
+} from '../../../scripts/test-config.js';
 import {
   createTestProcessEnvironment,
   isolateManagedGitAttributionEnvironment,
@@ -256,180 +260,38 @@ describe('real API setup import boundary', () => {
 describe.skipIf(process.platform === 'win32')('test runner process ownership', () => {
   it('allows the complete serial real API matrix to run for one hour', () => {
     expect(testTypes.realApi.timeout).toBe(60 * 60 * 1000);
+    expect(testTypes.realApi.files).toEqual([
+      'tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts',
+      'tests/integration/real-api/agent-trajectory.test.ts',
+      'tests/integration/real-api/browser-tool-trajectory.test.ts',
+      'tests/integration/real-api/cross-provider-fallback-trajectory.test.ts',
+      'tests/integration/real-api/durable-interaction-recovery-trajectory.test.ts',
+      'tests/integration/real-api/goal-mode-trajectory.test.ts',
+      'tests/integration/real-api/goal-paused-usage-trajectory.test.ts',
+      'tests/integration/real-api/release-coding-trajectory.test.ts',
+      'tests/integration/real-api/structured-output-trajectory.test.ts',
+      'tests/integration/real-api/task-list-team-trajectory.test.ts',
+      'tests/integration/real-api/workspace-agent-resources-trajectory.test.ts',
+    ]);
   });
 
-  it('allows the expanded release-blocking matrix to run for ninety minutes', () => {
+  it('keeps a focused release-blocking matrix with a ninety minute budget', () => {
     expect(testTypes.realApiQualification.timeout).toBe(90 * 60 * 1000);
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/goal-mode-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/release-coding-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/task-list-team-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/provider-retry-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/provider-attempt-deadline-web-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/prompt-cache-surface-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/action-stationarity-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/acp-session-fork-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/goal-finalization-handoff-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/subagent-result-adoption-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/background-subagent-completion-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/provider-request-admission-acp-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/provider-request-admission-web-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/foreground-bounded-output-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/keyed-coordination-reclamation-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/side-conversation-trajectory.test.ts'
-    );
-    expect(testTypes.realApiQualification.files).not.toContain(
-      'tests/integration/real-api/blade-coding-task.test.ts'
-    );
+    expect(testTypes.realApiQualification.files).toEqual([
+      'tests/integration/real-api/agent-trajectory.test.ts',
+      'tests/integration/real-api/structured-output-trajectory.test.ts',
+      'tests/integration/real-api/durable-interaction-recovery-trajectory.test.ts',
+      'tests/integration/real-api/release-coding-trajectory.test.ts',
+      'tests/integration/real-api/task-list-team-trajectory.test.ts',
+      'tests/integration/real-api/cross-provider-fallback-trajectory.test.ts',
+      'tests/integration/real-api/goal-mode-trajectory.test.ts',
+      'tests/integration/real-api/browser-tool-trajectory.test.ts',
+      'tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts',
+    ]);
     expect(testTypes.realApiQualification.env).toMatchObject({
       REAL_API_TEST: '1',
       REAL_API_RELEASE_MATRIX: '1',
     });
-  });
-
-  it('keeps the complete token-budget handoff matrix release-blocking', async () => {
-    const file = 'tests/integration/real-api/token-budget-handoff-trajectory.test.ts';
-    expect(testTypes.realApiQualification.files).toContain(file);
-    const source = await readFile(
-      path.resolve(import.meta.dirname, '../../..', file),
-      'utf8'
-    );
-    expect(source).toContain(
-      "const surfaces = ['headless', 'pty', 'web', 'acp'] as const"
-    );
-    expect(source).toContain('matrix.length !== 8');
-    expect(source).not.toContain('releaseBlockingSurfaces');
-    expect(testTypes.realApiQualification.env).toMatchObject({
-      REAL_API_TEST: '1',
-      REAL_API_RELEASE_MATRIX: '1',
-    });
-  });
-
-  it('keeps the complete large-prompt offload matrix release-blocking', async () => {
-    const file = 'tests/integration/real-api/large-prompt-offload-trajectory.test.ts';
-    expect(testTypes.realApiQualification.files).toContain(file);
-    const source = await readFile(
-      path.resolve(import.meta.dirname, '../../..', file),
-      'utf8'
-    );
-    expect(source).toContain(
-      "const surfaces = ['headless', 'pty', 'web', 'acp'] as const"
-    );
-    expect(source).toContain('matrix.length !== 8');
-    expect(source).toContain('const SURFACE_TIMEOUT_MS = 270_000');
-    expect(source).toContain('maxRetries: 0');
-    expect(source).toContain('maxOutputTokens: REAL_API_OUTPUT_BUDGET');
-    expect(source).toContain('temperature: 0');
-    expect(source).toContain('modelMaxRetries: 0');
-    expect(source).toContain('modelMaxOutputTokens: REAL_API_OUTPUT_BUDGET');
-    expect(source).toContain('modelTemperature: 0');
-  });
-
-  it('keeps the real Provider embedded-browser GUI trajectory release-blocking', async () => {
-    const file = 'tests/integration/real-api/browser-preview-trajectory.test.ts';
-    expect(testTypes.realApiQualification.files).toContain(file);
-    const source = await readFile(
-      path.resolve(import.meta.dirname, '../../..', file),
-      'utf8'
-    );
-    expect(source).toContain('buildRealApiRuntimeConfig(model)');
-    expect(source).toContain('await chromium.launch({ headless: true })');
-    expect(source).toContain("frameLocator('[data-preview-browser-frame]')");
-    expect(source).toContain("getByRole('button', { name: 'Go back' })");
-    expect(source).toContain("getByRole('button', { name: 'Go forward' })");
-    expect(source).toContain("getByRole('button', { name: 'Reload page' })");
-  });
-
-  it('keeps the complete native Browser Tool matrix release-blocking', async () => {
-    const file = 'tests/integration/real-api/browser-tool-trajectory.test.ts';
-    expect(testTypes.realApiQualification.files).toContain(file);
-    const source = await readFile(
-      path.resolve(import.meta.dirname, '../../..', file),
-      'utf8'
-    );
-    expect(source).toContain(
-      "const surfaces = ['headless', 'pty', 'web', 'acp'] as const"
-    );
-    expect(source).toContain('matrix.length !== 8');
-    expect(source).toContain(
-      'select:BrowserNavigate,BrowserSnapshot,BrowserInteract,BrowserWait,BrowserInspect,BrowserPage'
-    );
-    for (const toolName of [
-      'BrowserNavigate',
-      'BrowserSnapshot',
-      'BrowserInteract',
-      'BrowserWait',
-      'BrowserInspect',
-      'BrowserPage',
-    ]) {
-      expect(source).toContain(`'${toolName}'`);
-    }
-  });
-
-  it('keeps raw PTY marker authorities in the release-blocking matrix', () => {
-    const files = testTypes.realApiQualification.files;
-
-    expect(files).toContain(
-      'tests/integration/real-api/foreground-command-handoff-trajectory.test.ts'
-    );
-    expect(files).toContain(
-      'tests/integration/real-api/foreground-provider-recovery-trajectory.test.ts'
-    );
-    expect(files).toContain(
-      'tests/integration/real-api/tool-admission-trajectory.test.ts'
-    );
-  });
-
-  it('keeps all four textual tool-call recovery surfaces release-blocking', async () => {
-    const file = 'tests/integration/real-api/textual-tool-call-trajectory.test.ts';
-    expect(testTypes.realApiQualification.files).toContain(file);
-    const source = await readFile(
-      path.resolve(import.meta.dirname, '../../..', file),
-      'utf8'
-    );
-    expect(source).toContain(
-      "const surfaces = ['headless', 'acp', 'pty', 'web'] as const"
-    );
-    expect(source).toContain('resolveRequiredDeepSeekQualificationModels()');
-    expect(source).toContain('maxRetries: 0');
-    expect(source).toContain('expect(proxy.injectedRequestNumbers).toEqual([])');
-    expect(source).not.toContain('releaseBlockingSurfaces');
-  });
-
-  it('keeps cross-provider fallback in the release-blocking matrix', () => {
-    expect(testTypes.realApiQualification.files).toContain(
-      'tests/integration/real-api/cross-provider-fallback-trajectory.test.ts'
-    );
   });
 
   it('disables framework retry for the release-blocking real API matrix', async () => {
@@ -454,6 +316,44 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
 
   it('keeps wall-clock performance tests out of the coverage matrix', () => {
     expect(testTypes.all.coverageExcludedProjects).toEqual(['performance']);
+  });
+
+  it('points the headless gate at the current event contract suite', () => {
+    expect(testTypes.headlessCore.files).toContain(
+      'tests/unit/cli/headless-boundaries.test.ts'
+    );
+    expect(testTypes.headlessCore.files).toContain(
+      'tests/unit/cli/headless-event-contract.test.ts'
+    );
+    expect(testTypes.headlessCore.files).not.toContain(
+      'tests/unit/cli/headless-events.test.ts'
+    );
+  });
+
+  it('fails before Vitest when an explicit inventory contains a missing file', () => {
+    const root = path.resolve(import.meta.dirname, '../../..');
+    expect(() =>
+      assertConfiguredTestFilesExist(
+        {
+          name: 'broken inventory',
+          files: ['tests/unit/cli/does-not-exist.test.ts'],
+        },
+        root
+      )
+    ).toThrow(
+      'broken inventory contains missing test file: tests/unit/cli/does-not-exist.test.ts'
+    );
+  });
+
+  it('accepts every committed explicit test inventory', () => {
+    const root = path.resolve(import.meta.dirname, '../../..');
+    expect(() => assertConfiguredTestFilesExist(testTypes.realApi, root)).not.toThrow();
+    expect(() =>
+      assertConfiguredTestFilesExist(testTypes.realApiQualification, root)
+    ).not.toThrow();
+    expect(() =>
+      assertConfiguredTestFilesExist(testTypes.headlessCore, root)
+    ).not.toThrow();
   });
 
   it('resolves the Vitest CLI through its public package metadata', async () => {

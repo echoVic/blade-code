@@ -1,16 +1,9 @@
 /**
- * 命令处理编排 Hook
- *
- * 组合各子模块，负责任务生命周期管理（队列、abort controller、race condition 保护）。
- * 具体职责已拆分到：
- * - errorExtractor.ts — 统一错误分类
- * - messageContent.ts — 多模态输入序列化
- * - slashCommandRouter.ts — slash 命令路由与分派
- * - useStreamingBuffer.ts — 流式批处理缓冲
- * - loopEventHandler.ts — drainLoop 事件消费映射
- *
- * TuiStreamSession 收敛正常完成、abort 和 fallback 的流终态；
- * PendingResumeCoordinator 合并来自 UI、Team 和 Subagent 的恢复唤醒。
+ * 命令处理编排 Hook <p> 组合各子模块，负责任务生命周期管理（队列、abort controller、race condition 保护）。 具体职责已拆分到： -
+ * errorExtractor.ts — 统一错误分类 - messageContent.ts — 多模态输入序列化 - slashCommandRouter.ts —
+ * slash 命令路由与分派 - useStreamingBuffer.ts — 流式批处理缓冲 - loopEventHandler.ts — drainLoop
+ * 事件消费映射 <p> TuiStreamSession 收敛正常完成、abort 和 fallback 的流终态； PendingResumeCoordinator
+ * 合并来自 UI、Team 和 Subagent 的恢复唤醒。
  */
 
 import { randomUUID } from 'node:crypto';
@@ -101,10 +94,7 @@ function isLoopCancellation(result: LoopResult): boolean {
   );
 }
 
-/**
- * 命令处理 Hook
- * 负责命令的执行和状态管理
- */
+/** 命令处理 Hook 负责命令的执行和状态管理 */
 export const useCommandHandler = (
   replaceSystemPrompt?: string,
   appendSystemPrompt?: string,
@@ -1043,8 +1033,7 @@ export const useCommandHandler = (
       return;
     }
 
-    // 运行中提交新消息时，将其注入当前 Agent 回合的下一个安全边界。
-    // Esc/Ctrl+C 仍由 handleAbort 提供真正的中止语义。
+    // 运行中提交新消息时，将其注入当前 Agent 回合的下一个安全边界。 Esc/Ctrl+C 仍由 handleAbort 提供真正的中止语义。
     if (isProcessing) {
       if (resolved.text.trimStart().startsWith('/')) {
         const slash = resolved.text.trim();
@@ -1174,8 +1163,7 @@ export const useCommandHandler = (
         sessionActions.setError(`执行失败: ${classified.displayMessage}`);
       }
     } finally {
-      // NOTE: 关键：只有当我们的 controller 仍然是当前的才重置状态
-      // 防止竞态条件：用户取消后立即发送新消息时，旧任务的 finally 不影响新任务
+      // NOTE: 关键：只有当我们的 controller 仍然是当前的才重置状态 防止竞态条件：用户取消后立即发送新消息时，旧任务的 finally 不影响新任务
       const currentController = commandActions.getAbortController();
       const isOurTask = currentController === taskAbortController;
 

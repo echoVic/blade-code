@@ -1058,56 +1058,60 @@ export class Agent {
 
           // 选择对应模式的 generator
           let result: LoopResult;
-          if (currentContext.permissionMode === 'plan') {
-            result = yield* this.runPlanLoop(
-              currentMessage,
-              currentContext,
-              loopOptions
-            );
-          } else {
-            result = yield* this.runLoop(currentMessage, currentContext, loopOptions);
-          }
-
-          // Plan 模式批准后切换模式并重新执行
-          if (
-            result.success &&
-            result.metadata?.targetMode &&
-            currentContext.permissionMode === 'plan'
-          ) {
-            const targetMode = result.metadata.targetMode as PermissionMode;
-            const planContent = result.metadata.planContent as string | undefined;
-            logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
-
-            if (this.sessionRuntime && currentContext.sessionId) {
-              await SessionService.setSessionPermissionMode(
-                currentContext.sessionId,
-                this.sessionRuntime.workspaceRoot,
-                targetMode
+          try {
+            if (currentContext.permissionMode === 'plan') {
+              result = yield* this.runPlanLoop(
+                currentMessage,
+                currentContext,
+                loopOptions
               );
+            } else {
+              result = yield* this.runLoop(currentMessage, currentContext, loopOptions);
             }
-            await currentContext.onPermissionModeChange?.(targetMode);
 
-            currentContext = {
-              ...currentContext,
-              permissionMode: targetMode,
-            };
-            let messageWithPlan: UserMessageContent = currentMessage;
-            if (planContent) {
-              const planSuffix = `\n\n<approved-plan>\n${planContent}\n</approved-plan>\n\nIMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
-              if (typeof currentMessage === 'string') {
-                messageWithPlan = currentMessage + planSuffix;
-              } else {
-                messageWithPlan = [
-                  ...currentMessage,
-                  { type: 'text', text: planSuffix },
-                ];
+            // Plan 模式批准后切换模式并重新执行
+            if (
+              result.success &&
+              result.metadata?.targetMode &&
+              currentContext.permissionMode === 'plan'
+            ) {
+              const targetMode = result.metadata.targetMode as PermissionMode;
+              const planContent = result.metadata.planContent as string | undefined;
+              logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
+
+              if (this.sessionRuntime && currentContext.sessionId) {
+                await SessionService.setSessionPermissionMode(
+                  currentContext.sessionId,
+                  this.sessionRuntime.workspaceRoot,
+                  targetMode
+                );
               }
-            }
+              await currentContext.onPermissionModeChange?.(targetMode);
 
-            result = yield* this.runLoop(messageWithPlan, currentContext, {
-              ...loopOptions,
-              inputMessageId: undefined,
-            });
+              currentContext = {
+                ...currentContext,
+                permissionMode: targetMode,
+              };
+              let messageWithPlan: UserMessageContent = currentMessage;
+              if (planContent) {
+                const planSuffix = `\n\n<approved-plan>\n${planContent}\n</approved-plan>\n\nIMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
+                if (typeof currentMessage === 'string') {
+                  messageWithPlan = currentMessage + planSuffix;
+                } else {
+                  messageWithPlan = [
+                    ...currentMessage,
+                    { type: 'text', text: planSuffix },
+                  ];
+                }
+              }
+
+              result = yield* this.runLoop(messageWithPlan, currentContext, {
+                ...loopOptions,
+                inputMessageId: undefined,
+              });
+            }
+          } finally {
+            this.clearSkillContext();
           }
 
           if (!this.sessionRuntime || !ownedHandle) {

@@ -1,7 +1,4 @@
-/**
- * 文本处理工具函数
- * 提供 Unicode 感知的文本操作
- */
+/** 文本处理工具函数 提供 Unicode 感知的文本操作 */
 
 import { LRUCache } from 'lru-cache';
 import stringWidth from 'string-width';
@@ -136,9 +133,7 @@ export function clearTextMeasurementCaches(): void {
   stringWidthCache.clear();
 }
 
-/**
- * 样式化文本片段
- */
+/** 样式化文本片段 */
 export interface StyledText {
   text: string;
   props: Record<string, unknown>;

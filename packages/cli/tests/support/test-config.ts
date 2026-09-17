@@ -1,7 +1,4 @@
-/**
- * 测试配置文件
- * 管理测试环境变量和配置
- */
+/** 测试配置文件 管理测试环境变量和配置 */
 
 export interface TestConfig {
   // 基础配置
@@ -83,9 +80,7 @@ class TestConfigManager {
     this.loadFromEnvironment();
   }
 
-  /**
-   * 从环境变量加载配置
-   */
+  /** 从环境变量加载配置 */
   private loadFromEnvironment(): void {
     const envConfig: Partial<TestConfig> = {};
 
@@ -139,37 +134,27 @@ class TestConfigManager {
     this.config = { ...this.config, ...envConfig };
   }
 
-  /**
-   * 获取配置值
-   */
+  /** 获取配置值 */
   get<K extends keyof TestConfig>(key: K): TestConfig[K] {
     return this.config[key];
   }
 
-  /**
-   * 设置配置值
-   */
+  /** 设置配置值 */
   set<K extends keyof TestConfig>(key: K, value: TestConfig[K]): void {
     this.config[key] = value;
   }
 
-  /**
-   * 获取所有配置
-   */
+  /** 获取所有配置 */
   getAll(): TestConfig {
     return { ...this.config };
   }
 
-  /**
-   * 重置为默认配置
-   */
+  /** 重置为默认配置 */
   reset(): void {
     this.config = { ...defaultConfig };
   }
 
-  /**
-   * 应用配置到环境变量
-   */
+  /** 应用配置到环境变量 */
   applyToEnvironment(): void {
     Object.entries(this.config).forEach(([key, value]) => {
       if (
@@ -182,9 +167,7 @@ class TestConfigManager {
     });
   }
 
-  /**
-   * 获取测试超时配置
-   */
+  /** 获取测试超时配置 */
   getTestTimeout(testType: 'unit' | 'integration' | 'e2e' | 'security'): number {
     switch (testType) {
       case 'unit':
@@ -200,30 +183,22 @@ class TestConfigManager {
     }
   }
 
-  /**
-   * 检查是否启用调试模式
-   */
+  /** 检查是否启用调试模式 */
   isDebugMode(): boolean {
     return this.get('DEBUG_TESTS') === 'true';
   }
 
-  /**
-   * 检查是否启用详细模式
-   */
+  /** 检查是否启用详细模式 */
   isVerboseMode(): boolean {
     return this.get('VERBOSE_TESTS') === 'true';
   }
 
-  /**
-   * 检查是否启用模拟
-   */
+  /** 检查是否启用模拟 */
   shouldMockFileOperations(): boolean {
     return this.get('MOCK_FILE_OPERATIONS');
   }
 
-  /**
-   * 检查是否启用外部服务模拟
-   */
+  /** 检查是否启用外部服务模拟 */
   shouldMockExternalServices(): boolean {
     return this.get('MOCK_EXTERNAL_SERVICES');
   }

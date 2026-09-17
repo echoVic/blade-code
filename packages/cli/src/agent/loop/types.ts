@@ -1,8 +1,4 @@
-/**
- * AsyncGenerator Loop 类型定义
- *
- * 用于将 Agent.executeLoop() 重构为 AsyncGenerator 模式
- */
+/** AsyncGenerator Loop 类型定义 用于将 Agent.executeLoop() 重构为 AsyncGenerator 模式 */
 
 import type { FollowUpQueueSnapshot } from '../../api/followUpQueueSchemas.js';
 import type { ProviderRecoveryProjection } from '../../api/providerRecoverySchemas.js';

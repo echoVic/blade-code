@@ -8,15 +8,13 @@
  * 4. 任一 signal abort 触发合并 signal
  * 5. abort reason 正确传播
  * 6. abort 后 listener 被清理（无泄漏）
- * 7. createChildAbortController 基本行为
- * 8. abortableSleep 基本行为
+ * 7. abortableSleep 基本行为
  */
 
 import { describe, expect, it, vi } from 'vitest';
 import {
   abortableSleep,
   combineAbortSignals,
-  createChildAbortController,
   isAbortError,
 } from '../../../src/utils/abort.js';
 
@@ -89,42 +87,6 @@ describe('combineAbortSignals', () => {
     // 如果使用 AbortSignal.any（Node 20+），removeEventListener 可能不被调用
     // 但在 fallback 路径中，两个 signal 的 listener 都应被清理
     // 这里只验证不会抛错，具体清理行为取决于运行时
-  });
-});
-
-describe('createChildAbortController', () => {
-  it('父 abort 传播到子', () => {
-    const parent = new AbortController();
-    const child = createChildAbortController(parent.signal);
-
-    expect(child.signal.aborted).toBe(false);
-    parent.abort('parent-reason');
-    expect(child.signal.aborted).toBe(true);
-    expect(child.signal.reason).toBe('parent-reason');
-  });
-
-  it('父已 aborted 时子立即 abort', () => {
-    const parent = new AbortController();
-    parent.abort('already');
-    const child = createChildAbortController(parent.signal);
-    expect(child.signal.aborted).toBe(true);
-    expect(child.signal.reason).toBe('already');
-  });
-
-  it('子 abort 不影响父', () => {
-    const parent = new AbortController();
-    const child = createChildAbortController(parent.signal);
-    child.abort('child-only');
-    expect(parent.signal.aborted).toBe(false);
-    expect(child.signal.aborted).toBe(true);
-  });
-
-  it('子 abort 后清理父上的 listener', () => {
-    const parent = new AbortController();
-    const spy = vi.spyOn(parent.signal, 'removeEventListener');
-    const child = createChildAbortController(parent.signal);
-    child.abort('cleanup');
-    expect(spy).toHaveBeenCalled();
   });
 });
 

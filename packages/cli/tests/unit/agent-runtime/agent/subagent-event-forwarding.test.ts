@@ -621,16 +621,20 @@ describe('Task tool subagent event publishing', () => {
     );
 
     const { PermissionMode } = await import('../../../../src/config/types.js');
-    const { subagentRegistry } = await import(
+    const { getSubagentRegistry } = await import(
       '../../../../src/agent/subagents/SubagentRegistry.js'
     );
-    subagentRegistry.applyOverrides([
+    const registry = getSubagentRegistry();
+    registry.applyOverrides([
       {
         name: 'test-worker',
         description: 'test worker',
       },
     ]);
-    const { taskTool } = await import('../../../../src/tools/builtin/task/task.js');
+    const { createTaskTool } = await import(
+      '../../../../src/tools/builtin/task/task.js'
+    );
+    const taskTool = createTaskTool({ registry });
     const context = {
       sessionId: 'parent-session',
       workspaceRoot: '/tmp/parent-workspace',
@@ -790,16 +794,20 @@ describe('Task tool subagent event publishing', () => {
     }));
 
     const { PermissionMode } = await import('../../../../src/config/types.js');
-    const { subagentRegistry } = await import(
+    const { getSubagentRegistry } = await import(
       '../../../../src/agent/subagents/SubagentRegistry.js'
     );
-    subagentRegistry.applyOverrides([
+    const registry = getSubagentRegistry();
+    registry.applyOverrides([
       {
         name: 'test-worker',
         description: 'test worker',
       },
     ]);
-    const { taskTool } = await import('../../../../src/tools/builtin/task/task.js');
+    const { createTaskTool } = await import(
+      '../../../../src/tools/builtin/task/task.js'
+    );
+    const taskTool = createTaskTool({ registry });
     const notifyBackgroundSubagentCompleted = vi.fn(async (agentId: string) => {
       completionOrder.push(`notify:${agentId}`);
     });

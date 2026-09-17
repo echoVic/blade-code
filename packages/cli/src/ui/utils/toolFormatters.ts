@@ -1,17 +1,11 @@
-/**
- * 工具调用格式化工具函数
- * 用于生成工具调用的摘要和判断是否显示详细内容
- */
+/** 工具调用格式化工具函数 用于生成工具调用的摘要和判断是否显示详细内容 */
 
 import { basename } from 'node:path';
 import { isBrowserToolName } from '../../browser/types.js';
 import { isEditMetadata, isGlobMetadata } from '../../tools/types/index.js';
 import type { ToolDisplayOutput } from '../../tools/types/ToolTypes.js';
 
-/**
- * 格式化工具调用摘要（用于流式显示）
- * 生成清晰的执行日志，让用户知道正在做什么
- */
+/** 格式化工具调用摘要（用于流式显示） 生成清晰的执行日志，让用户知道正在做什么 */
 export function formatToolCallSummary(
   toolName: string,
   params: Record<string, unknown>
@@ -173,9 +167,7 @@ interface ToolResult {
   metadata?: Record<string, unknown>;
 }
 
-/**
- * 判断是否显示工具详细内容
- */
+/** 判断是否显示工具详细内容 */
 export function shouldShowToolDetail(toolName: string, result: ToolResult): boolean {
   if (
     !result?.success &&
@@ -226,13 +218,11 @@ export function shouldShowToolDetail(toolName: string, result: ToolResult): bool
 }
 
 /**
- * 生成工具详细内容
- * 用于在工具执行后显示更多信息
- *
- * 优化原则：
- * - 紧凑预览：只显示前几行/项
- * - 明确数量：显示 "... (+N more)" 表示剩余
- * - 简洁格式：避免过多装饰
+
+ * 生成工具详细内容 用于在工具执行后显示更多信息 <p> 优化原则： - 紧凑预览：只显示前几行/项 - 明确数量：显示 "... (+N more)" 表示剩余 -
+
+ * 简洁格式：避免过多装饰
+
  */
 export function generateToolDetail(
   toolName: string,
@@ -648,10 +638,7 @@ function safeAcpRemoteFileFailureSummary(
   return operation === 'readTextFile' || operation === 'writeTextFile' ? message : null;
 }
 
-/**
- * 统一工具展示格式化入口
- * 所有面向用户的展示（CLI TUI / Web SSE / Headless / ACP）都应通过此函数
- */
+/** 统一工具展示格式化入口 所有面向用户的展示（CLI TUI / Web SSE / Headless / ACP）都应通过此函数 */
 export function formatToolDisplay(
   toolName: string,
   result: ToolResult
@@ -671,10 +658,7 @@ export function formatToolDisplay(
   return { status, summary, detail };
 }
 
-/**
- * 将 ToolDisplayOutput 渲染为纯文本字符串
- * 用于 Web SSE、ACP、Headless 等需要单一字符串的消费者
- */
+/** 将 ToolDisplayOutput 渲染为纯文本字符串 用于 Web SSE、ACP、Headless 等需要单一字符串的消费者 */
 export function renderToolDisplayToString(display: ToolDisplayOutput): string {
   const prefix = { ok: '[OK]', fail: '[FAIL]', warn: '[WARN]' }[display.status];
   return display.detail

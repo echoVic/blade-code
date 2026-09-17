@@ -263,9 +263,3 @@ export function getBrowserProcessPool(): BrowserProcessPool {
   defaultPool ??= new BrowserProcessPool();
   return defaultPool;
 }
-
-export async function disposeBrowserProcessPool(): Promise<void> {
-  const pool = defaultPool;
-  defaultPool = undefined;
-  await pool?.dispose();
-}

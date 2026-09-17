@@ -2,6 +2,7 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { spawn } from 'bun-pty';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
@@ -93,19 +94,6 @@ function loadInput(): RunnerInput {
     completionTimeoutMs: readBoundedTimeout(candidate.completionTimeoutMs),
     observeLiveSelector: candidate.observeLiveSelector,
   };
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 function signalTerminalTree(

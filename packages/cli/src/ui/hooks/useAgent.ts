@@ -1,7 +1,4 @@
-/**
- * Agent 生命周期管理工具
- * 负责创建、初始化和清理 Agent 实例
- */
+/** Agent 生命周期管理工具 负责创建、初始化和清理 Agent 实例 */
 
 import { useMemoizedFn } from 'ahooks';
 import { useEffect, useRef } from 'react';
@@ -425,9 +422,7 @@ export function useAgent(options: AgentOptions) {
     }
   );
 
-  /**
-   * 创建并设置 Agent 实例
-   */
+  /** 创建并设置 Agent 实例 */
   const initializeAgentCandidate = async (
     overrides: Partial<AgentOptions> | undefined,
     sessionId: string | undefined,

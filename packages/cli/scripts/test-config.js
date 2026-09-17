@@ -1,3 +1,6 @@
+import { statSync } from 'node:fs';
+import path from 'node:path';
+
 export const testTypes = {
   unit: {
     name: '单元测试',
@@ -15,6 +18,19 @@ export const testTypes = {
     project: 'real-api',
     timeout: 60 * 60 * 1_000,
     requiresProductionBuild: true,
+    files: [
+      'tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts',
+      'tests/integration/real-api/agent-trajectory.test.ts',
+      'tests/integration/real-api/browser-tool-trajectory.test.ts',
+      'tests/integration/real-api/cross-provider-fallback-trajectory.test.ts',
+      'tests/integration/real-api/durable-interaction-recovery-trajectory.test.ts',
+      'tests/integration/real-api/goal-mode-trajectory.test.ts',
+      'tests/integration/real-api/goal-paused-usage-trajectory.test.ts',
+      'tests/integration/real-api/release-coding-trajectory.test.ts',
+      'tests/integration/real-api/structured-output-trajectory.test.ts',
+      'tests/integration/real-api/task-list-team-trajectory.test.ts',
+      'tests/integration/real-api/workspace-agent-resources-trajectory.test.ts',
+    ],
     env: {
       REAL_API_TEST: '1',
     },
@@ -27,53 +43,13 @@ export const testTypes = {
     files: [
       'tests/integration/real-api/agent-trajectory.test.ts',
       'tests/integration/real-api/structured-output-trajectory.test.ts',
-      'tests/integration/real-api/code-review-trajectory.test.tsx',
       'tests/integration/real-api/durable-interaction-recovery-trajectory.test.ts',
-      'tests/integration/real-api/acp-session-fork-trajectory.test.ts',
       'tests/integration/real-api/release-coding-trajectory.test.ts',
       'tests/integration/real-api/task-list-team-trajectory.test.ts',
-      'tests/integration/real-api/provider-retry-trajectory.test.ts',
       'tests/integration/real-api/cross-provider-fallback-trajectory.test.ts',
-      'tests/integration/real-api/provider-attempt-deadline-web-trajectory.test.ts',
-      'tests/integration/real-api/prompt-cache-surface-trajectory.test.ts',
-      'tests/integration/real-api/action-stationarity-trajectory.test.ts',
       'tests/integration/real-api/goal-mode-trajectory.test.ts',
-      'tests/integration/real-api/root-turn-auto-resume-trajectory.test.ts',
-      'tests/integration/real-api/goal-finalization-handoff-trajectory.test.ts',
-      'tests/integration/real-api/subagent-result-adoption-trajectory.test.ts',
-      'tests/integration/real-api/background-subagent-completion-trajectory.test.ts',
-      'tests/integration/real-api/durable-task-unread-trajectory.test.ts',
-      'tests/integration/real-api/tui-task-attention-trajectory.test.ts',
-      'tests/integration/real-api/foreground-bounded-output-trajectory.test.ts',
-      'tests/integration/real-api/foreground-command-handoff-trajectory.test.ts',
-      'tests/integration/real-api/token-budget-handoff-trajectory.test.ts',
-      'tests/integration/real-api/browser-preview-trajectory.test.ts',
       'tests/integration/real-api/browser-tool-trajectory.test.ts',
-      'tests/integration/real-api/large-prompt-offload-trajectory.test.ts',
-      'tests/integration/real-api/compaction-rich-media-trajectory.test.ts',
-      'tests/integration/real-api/foreground-provider-recovery-trajectory.test.ts',
-      'tests/integration/real-api/provider-rate-limit-cooldown-trajectory.test.ts',
-      'tests/integration/real-api/turn-activity-surface-trajectory.test.ts',
-      'tests/integration/real-api/provider-request-admission-acp-trajectory.test.ts',
-      'tests/integration/real-api/provider-request-admission-web-trajectory.test.ts',
       'tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts',
-      'tests/integration/real-api/weighted-provider-admission-acp-trajectory.test.ts',
-      'tests/integration/real-api/weighted-provider-admission-web-trajectory.test.ts',
-      'tests/integration/real-api/weighted-task-admission-acp-trajectory.test.ts',
-      'tests/integration/real-api/weighted-task-admission-web-trajectory.test.ts',
-      'tests/integration/real-api/keyed-coordination-reclamation-trajectory.test.ts',
-      'tests/integration/real-api/session-runtime-residency-acp-trajectory.test.ts',
-      'tests/integration/real-api/session-runtime-residency-controls-trajectory.test.ts',
-      'tests/integration/real-api/session-runtime-residency-web-trajectory.test.ts',
-      'tests/integration/real-api/graceful-shutdown-trajectory.test.ts',
-      'tests/integration/real-api/tool-admission-trajectory.test.ts',
-      'tests/integration/real-api/side-conversation-trajectory.test.ts',
-      'tests/integration/real-api/follow-up-queue-trajectory.test.ts',
-      'tests/integration/real-api/compaction-memory-consolidation-trajectory.test.ts',
-      'tests/integration/real-api/goal-execution-host-failure-trajectory.test.ts',
-      'tests/integration/real-api/goal-turn-lineage-trajectory.test.ts',
-      'tests/integration/real-api/goal-paused-usage-trajectory.test.ts',
-      'tests/integration/real-api/textual-tool-call-trajectory.test.ts',
     ],
     env: {
       REAL_API_TEST: '1',
@@ -92,15 +68,17 @@ export const testTypes = {
     timeout: 120_000,
     requiresProductionBuild: true,
     files: [
-      'tests/unit/cli/headless.test.ts',
-      'tests/unit/cli/headless-events.test.ts',
+      'tests/unit/cli/headless-boundaries.test.ts',
+      'tests/unit/cli/headless-event-contract.test.ts',
       'tests/integration/cli/blade-help.test.ts',
       'tests/unit/agent-runtime/context/jsonl-recovery.test.ts',
+      'tests/unit/agent-runtime/agent/active-turn-mailbox.test.ts',
       'tests/unit/agent-runtime/agent/session-lease.test.ts',
-      'tests/unit/agent-runtime/agent/session-runtime.test.ts',
+      'tests/unit/agent-runtime/agent/completion-policy.test.ts',
       'tests/unit/agent-runtime/agent/subagent-registry.test.ts',
-      'tests/unit/agent-runtime/server/session-routes.test.ts',
-      'tests/unit/agent-runtime/acp/session.test.ts',
+      'tests/unit/agent-runtime/server/task-routes.test.ts',
+      'tests/unit/agent-runtime/acp/bladeAgent.test.ts',
+      'tests/unit/services/session-interaction-recovery.test.ts',
     ],
   },
   e2e: {
@@ -135,6 +113,20 @@ export const testTypes = {
     projectSequence: ['!performance', 'performance'],
   },
 };
+
+export function assertConfiguredTestFilesExist(config, rootDirectory) {
+  for (const file of config.files ?? []) {
+    let exists = false;
+    try {
+      exists = statSync(path.resolve(rootDirectory, file)).isFile();
+    } catch {
+      // Report one stable configuration error below.
+    }
+    if (!exists) {
+      throw new Error(`${config.name} contains missing test file: ${file}`);
+    }
+  }
+}
 
 export function resolveTestTimeout(config, options) {
   return options.coverage

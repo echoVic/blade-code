@@ -721,292 +721,199 @@ const handleToolResult: EventHandler = (props, get, set) => {
   applyPendingSubagentCompletion(subagentSessionId, get, set);
 };
 
-const handleMcpCatalogChanged: EventHandler = (props, get, set) => {
-  const { currentSessionId, appendToolCall } = get();
-  if (props.sessionId !== currentSessionId) return;
-  const messageId = ensureAssistantMessage(
-    get,
-    set,
-    (props.messageId as string) || `mcp-catalog-${String(props.revision)}`
-  );
-  if (!messageId) return;
-  const added = Array.isArray(props.added) ? props.added.map(String) : [];
-  const removed = Array.isArray(props.removed) ? props.removed.map(String) : [];
-  const updated = Array.isArray(props.updated) ? props.updated.map(String) : [];
-  const summary =
-    `MCP catalog r${String(props.revision)}: ` +
-    `+${added.length} -${removed.length} ~${updated.length}`;
-  appendToolCall(messageId, {
-    toolCallId: `mcp-catalog:${String(props.revision)}`,
-    toolName: 'MCP Catalog',
-    arguments: JSON.stringify({
-      serverName: props.serverName,
-      added,
-      removed,
-      updated,
-    }),
-    toolKind: 'readonly',
-    status: 'success',
-    startTime: Date.now(),
-    summary,
-    output: [
-      added.length > 0 ? `Added: ${added.join(', ')}` : '',
-      removed.length > 0 ? `Removed: ${removed.join(', ')}` : '',
-      updated.length > 0 ? `Updated: ${updated.join(', ')}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  });
-};
+type McpProjectionKind =
+  | 'catalog'
+  | 'content'
+  | 'resource'
+  | 'connection'
+  | 'log'
+  | 'instructions'
+  | 'task'
+  | 'project_rules';
 
-const handleMcpContentChanged: EventHandler = (props, get, set) => {
-  const { currentSessionId, appendToolCall } = get();
-  if (props.sessionId !== currentSessionId) return;
-  const messageId = ensureAssistantMessage(
-    get,
-    set,
-    (props.messageId as string) || `mcp-content-${String(props.revision)}`
-  );
-  if (!messageId) return;
-  const added = Array.isArray(props.added) ? props.added.map(String) : [];
-  const removed = Array.isArray(props.removed) ? props.removed.map(String) : [];
-  const updated = Array.isArray(props.updated) ? props.updated.map(String) : [];
-  const summary =
-    `MCP ${String(props.contentKind)} r${String(props.revision)}: ` +
-    `+${added.length} -${removed.length} ~${updated.length}`;
-  appendToolCall(messageId, {
-    toolCallId: `mcp-content:${String(props.revision)}`,
-    toolName: 'MCP Content',
-    arguments: JSON.stringify({
-      serverName: props.serverName,
-      contentKind: props.contentKind,
-      added,
-      removed,
-      updated,
-    }),
-    toolKind: 'readonly',
-    status: 'success',
-    startTime: Date.now(),
-    summary,
-    output: [
-      added.length > 0 ? `Added: ${added.join(', ')}` : '',
-      removed.length > 0 ? `Removed: ${removed.join(', ')}` : '',
-      updated.length > 0 ? `Updated: ${updated.join(', ')}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  });
-};
+function changeList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
 
-const handleMcpResourceUpdated: EventHandler = (props, get, set) => {
-  const { currentSessionId, appendToolCall } = get();
-  if (props.sessionId !== currentSessionId) return;
-  const messageId = ensureAssistantMessage(
-    get,
-    set,
-    (props.messageId as string) || `mcp-resource-${String(props.revision)}`
-  );
-  if (!messageId) return;
-  appendToolCall(messageId, {
-    toolCallId: `mcp-resource:${String(props.revision)}`,
-    toolName: 'MCP Resource',
-    arguments: JSON.stringify({
-      serverName: props.serverName,
-      uri: props.uri,
-    }),
-    toolKind: 'readonly',
-    status: 'success',
-    startTime: Date.now(),
-    summary: `MCP resource updated: ${String(props.uri)}`,
-    output: `${String(props.serverName)} · revision ${String(props.revision)}`,
-  });
-};
-
-const handleMcpConnectionChanged: EventHandler = (props, get, set) => {
-  const { currentSessionId, appendToolCall } = get();
-  if (props.sessionId !== currentSessionId) return;
-  const messageId = ensureAssistantMessage(
-    get,
-    set,
-    (props.messageId as string) || `mcp-connection-${String(props.revision)}`
-  );
-  if (!messageId) return;
-  const phase = String(props.phase);
-  const summary =
-    `MCP ${String(props.serverName)} ${phase}` +
-    (phase === 'reconnecting'
-      ? ` (${String(props.attempt)}/${String(props.maxAttempts)})`
-      : '');
-  appendToolCall(messageId, {
-    toolCallId: `mcp-connection:${String(props.revision)}`,
-    toolName: 'MCP Connection',
-    arguments: JSON.stringify({
-      serverName: props.serverName,
-      phase,
-      reason: props.reason,
-      attempt: props.attempt,
-      maxAttempts: props.maxAttempts,
-    }),
-    toolKind: 'readonly',
-    status: phase === 'failed' ? 'error' : 'success',
-    startTime: Date.now(),
-    summary,
-    output: [
-      `Reason: ${String(props.reason)}`,
-      props.error ? `Error: ${String(props.error)}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  });
-};
-
-const handleMcpLog: EventHandler = (props, get, set) => {
-  const { currentSessionId, appendToolCall } = get();
-  if (props.sessionId !== currentSessionId) return;
-  const messageId = ensureAssistantMessage(
-    get,
-    set,
-    (props.messageId as string) || `mcp-log-${String(props.revision)}`
-  );
-  if (!messageId) return;
-  const level = String(props.level);
-  const logger = typeof props.logger === 'string' ? props.logger : undefined;
-  const summary =
-    `MCP ${level} · ${String(props.serverName)}` + (logger ? ` · ${logger}` : '');
-  appendToolCall(messageId, {
-    toolCallId: `mcp-log:${String(props.revision)}`,
-    toolName: 'MCP Log',
-    arguments: JSON.stringify({
-      serverName: props.serverName,
-      level,
-      logger,
-    }),
-    toolKind: 'readonly',
-    status: 'success',
-    startTime: Date.now(),
-    summary,
-    output: [
-      String(props.message),
-      `SHA-256: ${String(props.dataSha256)}`,
-      props.truncated === true ? 'Truncated' : '',
-      props.detailsOmitted === true ? 'Details omitted by runtime policy' : '',
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  });
-};
-
-const handleMcpInstructionsChanged: EventHandler = (props, get, set) => {
-  const { currentSessionId, appendToolCall } = get();
-  if (props.sessionId !== currentSessionId) return;
+function projectMcpTool(
+  kind: McpProjectionKind,
+  props: Record<string, unknown>,
+  detailed: boolean
+): ToolCallInfo {
+  const startTime = Date.now();
   const serverName = String(props.serverName);
-  const action = String(props.action);
-  const messageId = ensureAssistantMessage(
-    get,
-    set,
-    (props.messageId as string) ||
-      `mcp-instructions-${String(props.revision)}-${serverName}`
-  );
-  if (!messageId) return;
-  const summary =
-    `MCP instructions ${action}: ${serverName}` +
-    (props.truncated === true ? ' (truncated)' : '');
-  appendToolCall(messageId, {
-    toolCallId: `mcp-instructions:${String(props.revision)}:${serverName}:${action}`,
-    toolName: 'MCP Instructions',
-    arguments: JSON.stringify({
-      serverName,
-      action,
-      reason: props.reason,
-    }),
-    toolKind: 'readonly',
-    status: 'success',
-    startTime: Date.now(),
-    summary,
-    output: [
-      typeof props.text === 'string' ? props.text : '',
-      props.sha256 ? `SHA-256: ${String(props.sha256)}` : '',
-      props.detailsOmitted === true ? 'Details omitted by runtime policy' : '',
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  });
-};
-
-const handleMcpTaskChanged: EventHandler = (props, get, set) => {
-  const { currentSessionId, appendToolCall, updateToolCall } = get();
-  if (props.sessionId !== currentSessionId) return;
-  const taskId = String(props.taskId);
-  const status = String(props.status);
-  const toolCallId = `mcp-task:${taskId}`;
-  const messageId = ensureAssistantMessage(
-    get,
-    set,
-    (props.messageId as string) || `mcp-task-${taskId}`
-  );
-  if (!messageId) return;
-  const summary =
-    `MCP task ${status}: ${taskId}` +
-    ` · ${String(props.serverName)}/${String(props.toolName)}`;
-  const taskProjection = {
-    status:
-      status === 'failed' || status === 'cancelled'
-        ? ('error' as const)
-        : status === 'completed'
-          ? ('success' as const)
-          : ('running' as const),
-    summary,
-    output: [
-      typeof props.statusMessage === 'string' ? props.statusMessage : '',
-      props.hasResult === true ? 'Result available via TaskOutput' : '',
-      typeof props.error === 'string' ? `Error: ${props.error}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  };
-  const existing = get()
-    .messages.find((message) => message.id === messageId)
-    ?.agentContent?.toolCalls.some((tool) => tool.toolCallId === toolCallId);
-  if (existing) {
-    updateToolCall(messageId, toolCallId, taskProjection);
-    return;
+  const revision = String(props.revision);
+  if (kind === 'catalog' || kind === 'content') {
+    const added = changeList(props.added);
+    const removed = changeList(props.removed);
+    const updated = changeList(props.updated);
+    const contentKind = kind === 'catalog' ? 'catalog' : String(props.contentKind);
+    return {
+      toolCallId: `mcp-${kind}:${revision}`,
+      toolName: kind === 'catalog' ? 'MCP Catalog' : 'MCP Content',
+      arguments: JSON.stringify({
+        serverName: props.serverName,
+        ...(kind === 'content' ? { contentKind: props.contentKind } : {}),
+        added,
+        removed,
+        updated,
+      }),
+      toolKind: 'readonly',
+      status: 'success',
+      startTime,
+      summary:
+        `MCP ${contentKind} r${revision}: ` +
+        `+${added.length} -${removed.length} ~${updated.length}`,
+      ...(kind === 'catalog' || detailed
+        ? {
+            output: [
+              added.length > 0 ? `Added: ${added.join(', ')}` : '',
+              removed.length > 0 ? `Removed: ${removed.join(', ')}` : '',
+              updated.length > 0 ? `Updated: ${updated.join(', ')}` : '',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          }
+        : {}),
+    };
   }
-  appendToolCall(messageId, {
-    toolCallId,
-    toolName: 'MCP Task',
-    arguments: JSON.stringify({
-      taskId,
-      serverName: props.serverName,
-      toolName: props.toolName,
-    }),
-    toolKind: 'readonly',
-    status: taskProjection.status,
-    startTime: Number(props.createdAt) || Date.now(),
-    summary: taskProjection.summary,
-    output: taskProjection.output,
-  });
-};
 
-const handleProjectRulesLoaded: EventHandler = (props, get, set) => {
-  const { currentSessionId, appendToolCall } = get();
-  if (props.sessionId !== currentSessionId) return;
+  if (kind === 'resource') {
+    return {
+      toolCallId: `mcp-resource:${revision}`,
+      toolName: 'MCP Resource',
+      arguments: JSON.stringify({
+        serverName: props.serverName,
+        uri: props.uri,
+      }),
+      toolKind: 'readonly',
+      status: 'success',
+      startTime,
+      summary: `MCP resource updated: ${String(props.uri)}`,
+      ...(detailed ? { output: `${serverName} · revision ${revision}` } : {}),
+    };
+  }
+
+  if (kind === 'connection') {
+    const phase = String(props.phase);
+    return {
+      toolCallId: `mcp-connection:${revision}`,
+      toolName: 'MCP Connection',
+      arguments: JSON.stringify({
+        serverName: props.serverName,
+        phase,
+        reason: props.reason,
+        attempt: props.attempt,
+        maxAttempts: props.maxAttempts,
+      }),
+      toolKind: 'readonly',
+      status: phase === 'failed' ? 'error' : 'success',
+      startTime,
+      summary:
+        `MCP ${serverName} ${phase}` +
+        (phase === 'reconnecting'
+          ? ` (${String(props.attempt)}/${String(props.maxAttempts)})`
+          : ''),
+      output: detailed
+        ? [
+            `Reason: ${String(props.reason)}`,
+            props.error ? `Error: ${String(props.error)}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n')
+        : props.error
+          ? `Error: ${String(props.error)}`
+          : undefined,
+    };
+  }
+
+  if (kind === 'log') {
+    const level = String(props.level);
+    const logger = typeof props.logger === 'string' ? props.logger : undefined;
+    return {
+      toolCallId: `mcp-log:${revision}`,
+      toolName: 'MCP Log',
+      arguments: JSON.stringify({ serverName: props.serverName, level, logger }),
+      toolKind: 'readonly',
+      status: 'success',
+      startTime,
+      summary: `MCP ${level} · ${serverName}` + (logger ? ` · ${logger}` : ''),
+      output: [
+        String(props.message),
+        `SHA-256: ${String(props.dataSha256)}`,
+        props.truncated === true ? 'Truncated' : '',
+        props.detailsOmitted === true ? 'Details omitted by runtime policy' : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    };
+  }
+
+  if (kind === 'instructions') {
+    const action = String(props.action);
+    return {
+      toolCallId: `mcp-instructions:${revision}:${serverName}:${action}`,
+      toolName: 'MCP Instructions',
+      arguments: JSON.stringify({
+        serverName,
+        action,
+        reason: props.reason,
+      }),
+      toolKind: 'readonly',
+      status: 'success',
+      startTime,
+      summary:
+        `MCP instructions ${action}: ${serverName}` +
+        (props.truncated === true ? ' (truncated)' : ''),
+      output: [
+        typeof props.text === 'string' ? props.text : '',
+        props.sha256 ? `SHA-256: ${String(props.sha256)}` : '',
+        props.detailsOmitted === true ? 'Details omitted by runtime policy' : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    };
+  }
+
+  if (kind === 'task') {
+    const taskId = String(props.taskId);
+    const status = String(props.status);
+    return {
+      toolCallId: `mcp-task:${taskId}`,
+      toolName: 'MCP Task',
+      arguments: JSON.stringify({
+        taskId,
+        serverName: props.serverName,
+        toolName: props.toolName,
+      }),
+      toolKind: 'readonly',
+      status:
+        status === 'failed' || status === 'cancelled'
+          ? 'error'
+          : status === 'completed'
+            ? 'success'
+            : 'running',
+      startTime: Number(props.createdAt) || startTime,
+      summary:
+        `MCP task ${status}: ${taskId}` + ` · ${serverName}/${String(props.toolName)}`,
+      output: [
+        typeof props.statusMessage === 'string' ? props.statusMessage : '',
+        props.hasResult === true ? 'Result available via TaskOutput' : '',
+        typeof props.error === 'string' ? `Error: ${props.error}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    };
+  }
+
   const files = Array.isArray(props.files)
     ? props.files.filter(
         (file): file is Record<string, unknown> =>
           Boolean(file) && typeof file === 'object' && !Array.isArray(file)
       )
     : [];
-  const messageId = ensureAssistantMessage(
-    get,
-    set,
-    (props.messageId as string) || `project-rules-${Date.now()}`
-  );
-  if (!messageId) return;
   const blockedWrite = props.blockedWrite === true;
-  const summary =
-    `Project rules loaded: ${files.length}` +
-    (blockedWrite ? ' (write retry required)' : '');
-  appendToolCall(messageId, {
+  return {
     toolCallId: `project-rules:${files.map((file) => String(file.id)).join(',')}`,
     toolName: 'Project Rules',
     arguments: JSON.stringify({
@@ -1015,8 +922,10 @@ const handleProjectRulesLoaded: EventHandler = (props, get, set) => {
     }),
     toolKind: 'readonly',
     status: 'success',
-    startTime: Date.now(),
-    summary,
+    startTime,
+    summary:
+      `Project rules loaded: ${files.length}` +
+      (detailed && blockedWrite ? ' (write retry required)' : ''),
     output: files
       .map(
         (file) =>
@@ -1024,8 +933,68 @@ const handleProjectRulesLoaded: EventHandler = (props, get, set) => {
           `SHA-256: ${String(file.contentSha256)}`
       )
       .join('\n'),
-  });
-};
+  };
+}
+
+function mainMcpMessageId(
+  kind: McpProjectionKind,
+  props: Record<string, unknown>
+): string {
+  const revision = String(props.revision);
+  switch (kind) {
+    case 'catalog':
+    case 'content':
+    case 'resource':
+    case 'connection':
+    case 'log':
+      return `mcp-${kind}-${revision}`;
+    case 'instructions':
+      return `mcp-instructions-${revision}-${String(props.serverName)}`;
+    case 'task':
+      return `mcp-task-${String(props.taskId)}`;
+    case 'project_rules':
+      return `project-rules-${Date.now()}`;
+  }
+}
+
+function mainMcpHandler(kind: McpProjectionKind): EventHandler {
+  return (props, get, set) => {
+    const { currentSessionId, appendToolCall, updateToolCall } = get();
+    if (props.sessionId !== currentSessionId) return;
+    const messageId = ensureAssistantMessage(
+      get,
+      set,
+      (props.messageId as string) || mainMcpMessageId(kind, props)
+    );
+    if (!messageId) return;
+    const tool = projectMcpTool(kind, props, true);
+    const exists =
+      kind === 'task' &&
+      get()
+        .messages.find((message) => message.id === messageId)
+        ?.agentContent?.toolCalls.some(
+          (candidate) => candidate.toolCallId === tool.toolCallId
+        );
+    if (exists) {
+      updateToolCall(messageId, tool.toolCallId, {
+        status: tool.status,
+        summary: tool.summary,
+        output: tool.output,
+      });
+    } else {
+      appendToolCall(messageId, tool);
+    }
+  };
+}
+
+const handleMcpCatalogChanged = mainMcpHandler('catalog');
+const handleMcpContentChanged = mainMcpHandler('content');
+const handleMcpResourceUpdated = mainMcpHandler('resource');
+const handleMcpConnectionChanged = mainMcpHandler('connection');
+const handleMcpLog = mainMcpHandler('log');
+const handleMcpInstructionsChanged = mainMcpHandler('instructions');
+const handleMcpTaskChanged = mainMcpHandler('task');
+const handleProjectRulesLoaded = mainMcpHandler('project_rules');
 
 const userShellMessageId = (executionId: string): string => `user-shell-${executionId}`;
 
@@ -1426,330 +1395,37 @@ const handleSubagentToolProgress: EventHandler = (props, get) => {
   }));
 };
 
-const handleSubagentMcpCatalogChanged: EventHandler = (props, get) => {
-  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
-    get();
-  if (props.sessionId !== currentSessionId) return;
-  const target = findSubagentTarget(
-    messages,
-    props.subagentSessionId as string | undefined,
-    currentAssistantMessageId
-  );
-  if (!target) return;
-  const added = Array.isArray(props.added) ? props.added.map(String) : [];
-  const removed = Array.isArray(props.removed) ? props.removed.map(String) : [];
-  const updated = Array.isArray(props.updated) ? props.updated.map(String) : [];
-  const toolCallId = `mcp-catalog:${String(props.revision)}`;
-  updateSubagent(target.messageId, target.subagent.id, (current) => ({
-    toolCalls: [
-      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
-      {
-        toolCallId,
-        toolName: 'MCP Catalog',
-        arguments: JSON.stringify({
-          serverName: props.serverName,
-          added,
-          removed,
-          updated,
-        }),
-        toolKind: 'readonly',
-        status: 'success',
-        startTime: Date.now(),
-        summary:
-          `MCP catalog r${String(props.revision)}: ` +
-          `+${added.length} -${removed.length} ~${updated.length}`,
-        output: [
-          added.length > 0 ? `Added: ${added.join(', ')}` : '',
-          removed.length > 0 ? `Removed: ${removed.join(', ')}` : '',
-          updated.length > 0 ? `Updated: ${updated.join(', ')}` : '',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      },
-    ],
-  }));
-};
+function subagentMcpHandler(kind: McpProjectionKind): EventHandler {
+  return (props, get) => {
+    const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+      get();
+    if (props.sessionId !== currentSessionId) return;
+    const target = findSubagentTarget(
+      messages,
+      props.subagentSessionId as string | undefined,
+      currentAssistantMessageId
+    );
+    if (!target) return;
+    const tool = projectMcpTool(kind, props, false);
+    updateSubagent(target.messageId, target.subagent.id, (current) => ({
+      toolCalls: [
+        ...(current.toolCalls || []).filter(
+          (candidate) => candidate.toolCallId !== tool.toolCallId
+        ),
+        tool,
+      ],
+    }));
+  };
+}
 
-const handleSubagentMcpContentChanged: EventHandler = (props, get) => {
-  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
-    get();
-  if (props.sessionId !== currentSessionId) return;
-  const target = findSubagentTarget(
-    messages,
-    props.subagentSessionId as string | undefined,
-    currentAssistantMessageId
-  );
-  if (!target) return;
-  const added = Array.isArray(props.added) ? props.added.map(String) : [];
-  const removed = Array.isArray(props.removed) ? props.removed.map(String) : [];
-  const updated = Array.isArray(props.updated) ? props.updated.map(String) : [];
-  const toolCallId = `mcp-content:${String(props.revision)}`;
-  updateSubagent(target.messageId, target.subagent.id, (current) => ({
-    toolCalls: [
-      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
-      {
-        toolCallId,
-        toolName: 'MCP Content',
-        arguments: JSON.stringify({
-          serverName: props.serverName,
-          contentKind: props.contentKind,
-          added,
-          removed,
-          updated,
-        }),
-        toolKind: 'readonly',
-        status: 'success',
-        startTime: Date.now(),
-        summary:
-          `MCP ${String(props.contentKind)} r${String(props.revision)}: ` +
-          `+${added.length} -${removed.length} ~${updated.length}`,
-      },
-    ],
-  }));
-};
-
-const handleSubagentMcpResourceUpdated: EventHandler = (props, get) => {
-  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
-    get();
-  if (props.sessionId !== currentSessionId) return;
-  const target = findSubagentTarget(
-    messages,
-    props.subagentSessionId as string | undefined,
-    currentAssistantMessageId
-  );
-  if (!target) return;
-  const toolCallId = `mcp-resource:${String(props.revision)}`;
-  updateSubagent(target.messageId, target.subagent.id, (current) => ({
-    toolCalls: [
-      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
-      {
-        toolCallId,
-        toolName: 'MCP Resource',
-        arguments: JSON.stringify({
-          serverName: props.serverName,
-          uri: props.uri,
-        }),
-        toolKind: 'readonly',
-        status: 'success',
-        startTime: Date.now(),
-        summary: `MCP resource updated: ${String(props.uri)}`,
-      },
-    ],
-  }));
-};
-
-const handleSubagentMcpConnectionChanged: EventHandler = (props, get) => {
-  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
-    get();
-  if (props.sessionId !== currentSessionId) return;
-  const target = findSubagentTarget(
-    messages,
-    props.subagentSessionId as string | undefined,
-    currentAssistantMessageId
-  );
-  if (!target) return;
-  const phase = String(props.phase);
-  const toolCallId = `mcp-connection:${String(props.revision)}`;
-  updateSubagent(target.messageId, target.subagent.id, (current) => ({
-    toolCalls: [
-      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
-      {
-        toolCallId,
-        toolName: 'MCP Connection',
-        arguments: JSON.stringify({
-          serverName: props.serverName,
-          phase,
-          reason: props.reason,
-          attempt: props.attempt,
-          maxAttempts: props.maxAttempts,
-        }),
-        toolKind: 'readonly',
-        status: phase === 'failed' ? 'error' : 'success',
-        startTime: Date.now(),
-        summary:
-          `MCP ${String(props.serverName)} ${phase}` +
-          (phase === 'reconnecting'
-            ? ` (${String(props.attempt)}/${String(props.maxAttempts)})`
-            : ''),
-        output: props.error ? `Error: ${String(props.error)}` : undefined,
-      },
-    ],
-  }));
-};
-
-const handleSubagentMcpLog: EventHandler = (props, get) => {
-  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
-    get();
-  if (props.sessionId !== currentSessionId) return;
-  const target = findSubagentTarget(
-    messages,
-    props.subagentSessionId as string | undefined,
-    currentAssistantMessageId
-  );
-  if (!target) return;
-  const level = String(props.level);
-  const logger = typeof props.logger === 'string' ? props.logger : undefined;
-  const toolCallId = `mcp-log:${String(props.revision)}`;
-  updateSubagent(target.messageId, target.subagent.id, (current) => ({
-    toolCalls: [
-      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
-      {
-        toolCallId,
-        toolName: 'MCP Log',
-        arguments: JSON.stringify({
-          serverName: props.serverName,
-          level,
-          logger,
-        }),
-        toolKind: 'readonly',
-        status: 'success',
-        startTime: Date.now(),
-        summary:
-          `MCP ${level} · ${String(props.serverName)}` + (logger ? ` · ${logger}` : ''),
-        output: [
-          String(props.message),
-          `SHA-256: ${String(props.dataSha256)}`,
-          props.truncated === true ? 'Truncated' : '',
-          props.detailsOmitted === true ? 'Details omitted by runtime policy' : '',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      },
-    ],
-  }));
-};
-
-const handleSubagentMcpInstructionsChanged: EventHandler = (props, get) => {
-  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
-    get();
-  if (props.sessionId !== currentSessionId) return;
-  const target = findSubagentTarget(
-    messages,
-    props.subagentSessionId as string | undefined,
-    currentAssistantMessageId
-  );
-  if (!target) return;
-  const serverName = String(props.serverName);
-  const action = String(props.action);
-  const toolCallId = `mcp-instructions:${String(props.revision)}:${serverName}:${action}`;
-  updateSubagent(target.messageId, target.subagent.id, (current) => ({
-    toolCalls: [
-      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
-      {
-        toolCallId,
-        toolName: 'MCP Instructions',
-        arguments: JSON.stringify({
-          serverName,
-          action,
-          reason: props.reason,
-        }),
-        toolKind: 'readonly',
-        status: 'success',
-        startTime: Date.now(),
-        summary:
-          `MCP instructions ${action}: ${serverName}` +
-          (props.truncated === true ? ' (truncated)' : ''),
-        output: [
-          typeof props.text === 'string' ? props.text : '',
-          props.sha256 ? `SHA-256: ${String(props.sha256)}` : '',
-          props.detailsOmitted === true ? 'Details omitted by runtime policy' : '',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      },
-    ],
-  }));
-};
-
-const handleSubagentMcpTaskChanged: EventHandler = (props, get) => {
-  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
-    get();
-  if (props.sessionId !== currentSessionId) return;
-  const target = findSubagentTarget(
-    messages,
-    props.subagentSessionId as string | undefined,
-    currentAssistantMessageId
-  );
-  if (!target) return;
-  const taskId = String(props.taskId);
-  const status = String(props.status);
-  const toolCallId = `mcp-task:${taskId}`;
-  updateSubagent(target.messageId, target.subagent.id, (current) => ({
-    toolCalls: [
-      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
-      {
-        toolCallId,
-        toolName: 'MCP Task',
-        arguments: JSON.stringify({
-          taskId,
-          serverName: props.serverName,
-          toolName: props.toolName,
-        }),
-        toolKind: 'readonly',
-        status:
-          status === 'failed' || status === 'cancelled'
-            ? 'error'
-            : status === 'completed'
-              ? 'success'
-              : 'running',
-        startTime: Number(props.createdAt) || Date.now(),
-        summary:
-          `MCP task ${status}: ${taskId}` +
-          ` · ${String(props.serverName)}/${String(props.toolName)}`,
-        output: [
-          typeof props.statusMessage === 'string' ? props.statusMessage : '',
-          props.hasResult === true ? 'Result available via TaskOutput' : '',
-          typeof props.error === 'string' ? `Error: ${props.error}` : '',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      },
-    ],
-  }));
-};
-
-const handleSubagentProjectRulesLoaded: EventHandler = (props, get) => {
-  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
-    get();
-  if (props.sessionId !== currentSessionId) return;
-  const target = findSubagentTarget(
-    messages,
-    props.subagentSessionId as string | undefined,
-    currentAssistantMessageId
-  );
-  if (!target) return;
-  const files = Array.isArray(props.files)
-    ? props.files.filter(
-        (file): file is Record<string, unknown> =>
-          Boolean(file) && typeof file === 'object' && !Array.isArray(file)
-      )
-    : [];
-  const toolCallId = `project-rules:${files.map((file) => String(file.id)).join(',')}`;
-  updateSubagent(target.messageId, target.subagent.id, (current) => ({
-    toolCalls: [
-      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
-      {
-        toolCallId,
-        toolName: 'Project Rules',
-        arguments: JSON.stringify({
-          triggerPaths: props.triggerPaths,
-          blockedWrite: props.blockedWrite,
-        }),
-        toolKind: 'readonly',
-        status: 'success',
-        startTime: Date.now(),
-        summary: `Project rules loaded: ${files.length}`,
-        output: files
-          .map(
-            (file) =>
-              `${String(file.relativePath)} ${String(file.source)} ` +
-              `SHA-256: ${String(file.contentSha256)}`
-          )
-          .join('\n'),
-      },
-    ],
-  }));
-};
+const handleSubagentMcpCatalogChanged = subagentMcpHandler('catalog');
+const handleSubagentMcpContentChanged = subagentMcpHandler('content');
+const handleSubagentMcpResourceUpdated = subagentMcpHandler('resource');
+const handleSubagentMcpConnectionChanged = subagentMcpHandler('connection');
+const handleSubagentMcpLog = subagentMcpHandler('log');
+const handleSubagentMcpInstructionsChanged = subagentMcpHandler('instructions');
+const handleSubagentMcpTaskChanged = subagentMcpHandler('task');
+const handleSubagentProjectRulesLoaded = subagentMcpHandler('project_rules');
 
 const handlePermissionAsked: EventHandler = (props, get, set) => {
   const { currentSessionId, setConfirmation } = get();

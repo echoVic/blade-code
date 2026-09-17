@@ -1,10 +1,11 @@
 import { access, readFile, writeFile } from 'node:fs/promises';
-import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { spawn } from 'bun-pty';
+import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { GoalStore } from '../../src/goals/GoalStore.js';
 import {
-  appendBoundedPtyEvidence,
   ArmedPtyMarkerLatch,
+  appendBoundedPtyEvidence,
+  latestCompleteStandardPtyFrame,
   projectForegroundBoundedPtyOutput,
   waitForPtyExit,
 } from './foregroundBoundedOutputPtyDriver.js';
@@ -22,6 +23,9 @@ interface RunnerInput {
   settlementState: 'paused' | 'blocked';
   directSchemas: boolean;
   skillSchemas: boolean;
+  followUpReadyFile: string;
+  followUpPrompt: string;
+  followUpMarker: string;
 }
 
 async function waitFor(
@@ -169,6 +173,24 @@ async function main(): Promise<void> {
       () => projectForegroundBoundedPtyOutput(output).includes('budget_limited'),
       'Budget limit was not rendered'
     );
+    if (input.skillSchemas) {
+      if (input.followUpPrompt.includes(input.followUpMarker))
+        throw new Error('Follow-up prompt leaks the marker');
+      await writeFile(input.followUpReadyFile, 'ready');
+      await writeBracketedPaste(terminal, input.followUpPrompt);
+      await waitFor(() => {
+        const frame = latestCompleteStandardPtyFrame(output, /lineage:[^\r\n]+\r?\n?$/);
+        return (
+          frame?.includes(input.followUpPrompt.slice(0, 64)) === true &&
+          frame.includes(input.followUpPrompt.split('\n').at(-1) ?? '')
+        );
+      }, 'Follow-up input did not reach the latest composer frame');
+      terminal.write('\r');
+      await waitFor(
+        () => projectForegroundBoundedPtyOutput(output).includes(input.followUpMarker),
+        'Next ordinary task did not render'
+      );
+    }
     if (output.includes(input.secret)) throw new Error('PTY leaked a credential');
     stop('SIGTERM');
     await waitForPtyExit(exitPromise, 'Goal paused usage PTY did not exit');

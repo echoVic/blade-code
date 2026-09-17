@@ -38,45 +38,29 @@ import { loadProjectInstructions } from './projectInstructions.js';
 /** available_skills 占位符的正则表达式 */
 const AVAILABLE_SKILLS_REGEX = /<available_skills>\s*<\/available_skills>/;
 
-/**
- * 提示词构建选项
- */
+/** 提示词构建选项 */
 export interface BuildSystemPromptOptions {
   /** Host workspace resources available to this prompt build. */
   workspaceAccess?: 'full' | 'none';
-  /**
-   * 项目路径，用于查找分层项目指令
-   */
+  /** 项目路径，用于查找分层项目指令 */
   projectPath?: string;
 
-  /**
-   * 替换默认提示（仅替换 DEFAULT_SYSTEM_PROMPT，不影响项目指令）
-   */
+  /** 替换默认提示（仅替换 DEFAULT_SYSTEM_PROMPT，不影响项目指令） */
   replaceDefault?: string;
 
-  /**
-   * 追加到提示词末尾
-   */
+  /** 追加到提示词末尾 */
   append?: string;
 
-  /**
-   * 权限模式（Plan 模式会使用独立的 system prompt）
-   */
+  /** 权限模式（Plan 模式会使用独立的 system prompt） */
   mode?: PermissionMode;
 
-  /**
-   * 是否包含环境上下文（默认 true）
-   */
+  /** 是否包含环境上下文（默认 true） */
   includeEnvironment?: boolean;
 
-  /**
-   * 环境上下文选项
-   */
+  /** 环境上下文选项 */
   environmentOptions?: EnvironmentContextOptions;
 
-  /**
-   * AI 回复语言（如 'zh-CN', 'en-US'）
-   */
+  /** AI 回复语言（如 'zh-CN', 'en-US'） */
   language?: string;
 
   /**
@@ -85,14 +69,10 @@ export interface BuildSystemPromptOptions {
    */
   projectTrusted?: boolean;
 
-  /**
-   * Immutable project-rule catalog owned by the current Session.
-   */
+  /** Immutable project-rule catalog owned by the current Session. */
   projectRuleCatalog?: ProjectRuleCatalog;
 
-  /**
-   * Source checkout path represented by the execution workspace.
-   */
+  /** Source checkout path represented by the execution workspace. */
   projectInstructionSourcePath?: string;
 
   /**
@@ -107,24 +87,16 @@ export interface BuildSystemPromptOptions {
    */
   communicationStyle?: CommunicationStyleSelection;
 
-  /**
-   * Immutable style catalog owned by the current Session.
-   */
+  /** Immutable style catalog owned by the current Session. */
   communicationStyleCatalog?: CommunicationStyleCatalog;
 }
 
-/**
- * 提示词构建结果
- */
+/** 提示词构建结果 */
 export interface BuildSystemPromptResult {
-  /**
-   * 最终的系统提示词
-   */
+  /** 最终的系统提示词 */
   prompt: string;
 
-  /**
-   * 各部分来源（用于调试）
-   */
+  /** 各部分来源（用于调试） */
   sources: Array<{
     name: string;
     loaded: boolean;
@@ -174,8 +146,7 @@ export async function buildSystemPrompt(
   const parts: string[] = [];
   const sources: BuildSystemPromptResult['sources'] = [];
 
-  // 1. 默认提示或替换内容
-  // Plan 模式使用独立的 system prompt
+  // 1. 默认提示或替换内容 Plan 模式使用独立的 system prompt
   const isPlanMode = mode === PermissionMode.PLAN;
 
   let basePrompt: string;
@@ -294,9 +265,7 @@ export async function buildSystemPrompt(
   return { prompt, sources };
 }
 
-/**
- * 注入 Skills 列表到系统提示的 <available_skills> 占位符
- */
+/** 注入 Skills 列表到系统提示的 <available_skills> 占位符 */
 function injectSkillsToPrompt(
   prompt: string,
   projectPath?: string,

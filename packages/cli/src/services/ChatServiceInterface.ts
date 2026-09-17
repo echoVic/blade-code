@@ -1,7 +1,4 @@
-/**
- * ChatService 接口抽象
- * 定义统一的聊天服务接口，支持多种 API 提供商
- */
+/** ChatService 接口抽象 定义统一的聊天服务接口，支持多种 API 提供商 */
 
 import type {
   ConstrainedSamplingConfig,
@@ -49,17 +46,12 @@ import type { ProviderStallEvent } from './pi/providerStall.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
-/**
- * Anthropic Prompt Caching 配置
- * 用于标记可缓存的内容，减少 token 消耗（成本降低 90%，延迟降低 85%）
- */
+/** Anthropic Prompt Caching 配置 用于标记可缓存的内容，减少 token 消耗（成本降低 90%，延迟降低 85%） */
 export interface AnthropicCacheControl {
   type: 'ephemeral';
 }
 
-/**
- * Provider 特定选项
- */
+/** Provider 特定选项 */
 export interface ProviderOptions {
   anthropic?: {
     cacheControl?: AnthropicCacheControl;
@@ -80,18 +72,14 @@ export interface ChatFallbackModel extends ModelRef {
   };
 }
 
-/**
- * 多模态内容部分 - 文本
- */
+/** 多模态内容部分 - 文本 */
 interface TextContentPart {
   type: 'text';
   text: string;
   providerOptions?: ProviderOptions;
 }
 
-/**
- * 多模态内容部分 - 图片 (OpenAI Vision API 格式)
- */
+/** 多模态内容部分 - 图片 (OpenAI Vision API 格式) */
 interface ImageContentPart {
   type: 'image_url';
   image_url: {
@@ -99,15 +87,10 @@ interface ImageContentPart {
   };
 }
 
-/**
- * 多模态内容部分
- */
+/** 多模态内容部分 */
 export type ContentPart = TextContentPart | ImageContentPart;
 
-/**
- * 消息类型
- * content 支持纯文本或多模态内容（文本+图片）
- */
+/** 消息类型 content 支持纯文本或多模态内容（文本+图片） */
 export type Message = {
   id?: string;
   role: MessageRole;
@@ -119,10 +102,7 @@ export type Message = {
   metadata?: JsonValue;
 };
 
-/**
- * ChatConfig - 聊天服务所需的配置
- * 注意：这些字段现在从 ModelConfig 中获取，而非直接从 BladeConfig
- */
+/** ChatConfig - 聊天服务所需的配置 注意：这些字段现在从 ModelConfig 中获取，而非直接从 BladeConfig */
 export interface ChatConfig {
   provider: ProviderType;
   apiKey?: string;
@@ -157,9 +137,7 @@ export interface ChatConfig {
   modelCatalog?: PiModelCatalog;
 }
 
-/**
- * 聊天响应
- */
+/** 聊天响应 */
 export interface UsageInfo {
   promptTokens: number;
   completionTokens: number;
@@ -237,9 +215,7 @@ export interface ChatToolDefinition {
  */
 export type StreamToolCall = ChatCompletionMessageToolCall | StreamToolCallDelta;
 
-/**
- * 流式响应块
- */
+/** 流式响应块 */
 export interface StreamChunk {
   content?: string;
   reasoningContent?: string;
@@ -253,14 +229,9 @@ export interface StreamChunk {
   providerStall?: ProviderStallEvent;
 }
 
-/**
- * 聊天服务接口
- * 所有 Provider 实现必须实现此接口
- */
+/** 聊天服务接口 所有 Provider 实现必须实现此接口 */
 export interface IChatService {
-  /**
-   * 发送聊天请求（非流式）
-   */
+  /** 发送聊天请求（非流式） */
   chat(
     messages: Message[],
     tools?: ChatToolDefinition[],
@@ -268,9 +239,7 @@ export interface IChatService {
     options?: ChatRequestOptions
   ): Promise<ChatResponse>;
 
-  /**
-   * 发送聊天请求（流式）
-   */
+  /** 发送聊天请求（流式） */
   streamChat(
     messages: Message[],
     tools?: ChatToolDefinition[],
@@ -278,14 +247,10 @@ export interface IChatService {
     options?: ChatRequestOptions
   ): AsyncGenerator<StreamChunk, void, unknown>;
 
-  /**
-   * 获取当前配置
-   */
+  /** 获取当前配置 */
   getConfig(): ChatConfig;
 
-  /**
-   * 更新配置
-   */
+  /** 更新配置 */
   updateConfig(newConfig: Partial<ChatConfig>): void;
 }
 

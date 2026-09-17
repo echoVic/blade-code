@@ -1,6 +1,4 @@
-/**
- * 获取 pi-ai catalog 数据的 React Hook
- */
+/** 获取 pi-ai catalog 数据的 React Hook */
 
 import { useEffect, useState } from 'react';
 import {

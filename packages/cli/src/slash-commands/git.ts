@@ -1,7 +1,4 @@
-/**
- * /git slash command
- * Git 仓库查询和 AI 辅助功能
- */
+/** /git slash command Git 仓库查询和 AI 辅助功能 */
 
 import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
@@ -88,9 +85,7 @@ const gitCommand: SlashCommand = {
   },
 };
 
-/**
- * 显示 Git 状态
- */
+/** 显示 Git 状态 */
 async function handleStatus(context: SlashCommandContext): Promise<SlashCommandResult> {
   const ui = getUI(context);
   const status = await getGitStatus({ cwd: context.cwd });
@@ -108,9 +103,7 @@ async function handleStatus(context: SlashCommandContext): Promise<SlashCommandR
   return { success: true };
 }
 
-/**
- * 显示提交历史
- */
+/** 显示提交历史 */
 async function handleLog(
   context: SlashCommandContext,
   countArg?: string
@@ -128,9 +121,7 @@ async function handleLog(
   return { success: true };
 }
 
-/**
- * 显示暂存区 diff
- */
+/** 显示暂存区 diff */
 async function handleDiff(context: SlashCommandContext): Promise<SlashCommandResult> {
   const ui = getUI(context);
   const { cwd } = context;
@@ -148,16 +139,12 @@ async function handleDiff(context: SlashCommandContext): Promise<SlashCommandRes
   return { success: true };
 }
 
-/**
- * AI Code Review
- */
+/** AI Code Review */
 async function handleReview(context: SlashCommandContext): Promise<SlashCommandResult> {
   return reviewCommand.handler(['uncommitted'], context);
 }
 
-/**
- * AI 生成 Commit Message（不提交）
- */
+/** AI 生成 Commit Message（不提交） */
 async function handlePreCommit(
   context: SlashCommandContext
 ): Promise<SlashCommandResult> {
@@ -224,9 +211,7 @@ async function handlePreCommit(
   return { success: true };
 }
 
-/**
- * AI 生成 Commit Message 并提交
- */
+/** AI 生成 Commit Message 并提交 */
 async function handleCommit(context: SlashCommandContext): Promise<SlashCommandResult> {
   const ui = getUI(context);
   const { cwd, signal } = context;
@@ -299,10 +284,7 @@ async function handleCommit(context: SlashCommandContext): Promise<SlashCommandR
   return { success: true };
 }
 
-/**
- * 生成 commit message 的 prompt
- * 强调参考历史提交风格
- */
+/** 生成 commit message 的 prompt 强调参考历史提交风格 */
 function generateCommitPrompt(
   fileList: string,
   diff: string | null,

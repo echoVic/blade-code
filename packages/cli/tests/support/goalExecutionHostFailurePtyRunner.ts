@@ -1,4 +1,5 @@
 import { spawn } from 'bun-pty';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   projectForegroundBoundedPtyOutput,
@@ -20,19 +21,6 @@ function loadInput(): RunnerInput {
   if (!encoded) throw new Error('Missing BLADE_GOAL_HOST_FAILURE_PTY_INPUT');
   delete process.env.BLADE_GOAL_HOST_FAILURE_PTY_INPUT;
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as RunnerInput;
-}
-
-async function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs = 60_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(message);
 }
 
 function signalTree(pid: number, signal: NodeJS.Signals, fallback: () => void): void {

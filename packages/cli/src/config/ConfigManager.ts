@@ -142,14 +142,10 @@ export class ConfigManager {
   private lastAdditionalSettings?: Partial<RuntimeConfig>;
   private warnedGlobalOnlyProjectionResidencyFiles = new Set<string>();
 
-  /**
-   * 私有构造函数，防止外部直接实例化
-   */
+  /** 私有构造函数，防止外部直接实例化 */
   private constructor() {}
 
-  /**
-   * 获取 ConfigManager 单例实例
-   */
+  /** 获取 ConfigManager 单例实例 */
   public static getInstance(): ConfigManager {
     if (!ConfigManager.instance) {
       ConfigManager.instance = new ConfigManager();
@@ -157,23 +153,17 @@ export class ConfigManager {
     return ConfigManager.instance;
   }
 
-  /**
-   * 重置单例实例（仅用于测试）
-   */
+  /** 重置单例实例（仅用于测试） */
   public static resetInstance(): void {
     ConfigManager.instance = null;
   }
 
   /**
-   * 初始化配置系统（Bootstrap/Loader）
-   *
-   * 职责：
-   * - 从多文件加载配置（config.json + settings.json）
-   * - 合并配置（优先级处理）
-   * - 解析环境变量插值
-   * - 返回完整的 BladeConfig
-   *
-   * 注意：不保存状态，调用方需要将结果灌进 Store
+
+   * 初始化配置系统（Bootstrap/Loader） <p> 职责： - 从多文件加载配置（config.json + settings.json） -
+
+   * 合并配置（优先级处理） - 解析环境变量插值 - 返回完整的 BladeConfig <p> 注意：不保存状态，调用方需要将结果灌进 Store
+
    */
   async initialize(
     additionalSettings?: Partial<RuntimeConfig>
@@ -366,10 +356,7 @@ export class ConfigManager {
     return migrated;
   }
 
-  /**
-   * 加载 settings.json 文件 (3层优先级)
-   * 优先级: 本地配置 > 项目配置 > 用户配置
-   */
+  /** 加载 settings.json 文件 (3层优先级) 优先级: 本地配置 > 项目配置 > 用户配置 */
   private async loadSettingsFiles(
     projectTrusted: boolean
   ): Promise<Partial<BladeConfig>> {
@@ -455,10 +442,7 @@ export class ConfigManager {
     );
   }
 
-  /**
-   * 为独立 runtime 合并指定 workspace 的项目与本地权限。
-   * 用户级规则已经包含在 base 中，这里只叠加 workspace 私有层。
-   */
+  /** 为独立 runtime 合并指定 workspace 的项目与本地权限。 用户级规则已经包含在 base 中，这里只叠加 workspace 私有层。 */
   async loadWorkspacePermissions(
     workspaceRoot: string,
     base: PermissionConfig
@@ -1178,9 +1162,7 @@ export class ConfigManager {
     }
   }
 
-  /**
-   * 加载 JSON 文件
-   */
+  /** 加载 JSON 文件 */
   private async loadJsonFile(filePath: string): Promise<Partial<BladeConfig> | null> {
     try {
       if (await this.fileExists(filePath)) {
@@ -1193,9 +1175,7 @@ export class ConfigManager {
     return null;
   }
 
-  /**
-   * 检查文件是否存在
-   */
+  /** 检查文件是否存在 */
   private async fileExists(filePath: string): Promise<boolean> {
     try {
       await fs.access(filePath);
@@ -1236,9 +1216,7 @@ export class ConfigManager {
     return result as Partial<RuntimeConfig>;
   }
 
-  /**
-   * 验证 BladeConfig 是否包含 Agent 所需的必要字段
-   */
+  /** 验证 BladeConfig 是否包含 Agent 所需的必要字段 */
   public validateConfig(
     config: BladeConfig,
     catalog: PiModelCatalog = getPiModelCatalog()

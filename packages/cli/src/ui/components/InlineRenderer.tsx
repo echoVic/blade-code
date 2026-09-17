@@ -1,7 +1,4 @@
-/**
- * 内联 Markdown 渲染器
- * 支持粗体、斜体、删除线、内联代码、链接等格式
- */
+/** 内联 Markdown 渲染器 支持粗体、斜体、删除线、内联代码、链接等格式 */
 
 import { Text } from 'ink';
 import React from 'react';
@@ -18,10 +15,7 @@ const ITALIC_MARKER_LENGTH = 1; // * 或 _
 const STRIKETHROUGH_MARKER_LENGTH = 2; // ~~
 const _INLINE_CODE_MARKER_LENGTH = 1; // `
 
-/**
- * 生成稳定的 key（基于类型和局部序号）
- * 避免同一文本在多次渲染中 key 抖动导致重渲染
- */
+/** 生成稳定的 key（基于类型和局部序号） 避免同一文本在多次渲染中 key 抖动导致重渲染 */
 function stableKey(kind: 'text' | 'match', seq: number): string {
   return `inline-${kind}-${seq}`;
 }
@@ -54,8 +48,7 @@ const InlineRendererInternal: React.FC<InlineRendererProps> = ({ text }) => {
   let textSeq = 0; // 纯文本序号
   let matchSeq = 0; // 匹配项序号
 
-  // 统一正则表达式匹配所有内联格式
-  // 顺序很重要：粗体在斜体之前，以避免 **text** 被误识别为两个 *
+  // 统一正则表达式匹配所有内联格式 顺序很重要：粗体在斜体之前，以避免 **text** 被误识别为两个 *
   const inlineRegex =
     /(\*\*.*?\*\*|\*(?!\s).*?(?<!\s)\*|_(?!\s).*?(?<!\s)_|~~.*?~~|`+[^`]+`+|\[.*?\]\(.*?\)|https?:\/\/\S+)/g;
 
@@ -85,8 +78,7 @@ const InlineRendererInternal: React.FC<InlineRendererProps> = ({ text }) => {
           </Text>
         );
       }
-      // 斜体：*text* 或 _text_
-      // 避免误判文件路径中的下划线（如 file_name.txt）
+      // 斜体：*text* 或 _text_ 避免误判文件路径中的下划线（如 file_name.txt）
       else if (
         fullMatch.length > ITALIC_MARKER_LENGTH * 2 &&
         ((fullMatch.startsWith('*') && fullMatch.endsWith('*')) ||

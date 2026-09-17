@@ -52,9 +52,7 @@ const RETRY_CONFIG = {
 // 代理支持
 // ============================================================================
 
-/**
- * 获取代理 Agent（如果配置了代理环境变量）
- */
+/** 获取代理 Agent（如果配置了代理环境变量） */
 function getProxyAgent(): ProxyAgent | undefined {
   const proxyUrl =
     process.env.HTTPS_PROXY ||
@@ -77,9 +75,7 @@ function getProxyAgent(): ProxyAgent | undefined {
 // 网络请求函数
 // ============================================================================
 
-/**
- * 带超时的 fetch 请求
- */
+/** 带超时的 fetch 请求 */
 async function fetchWithTimeout(
   url: string,
   options: { headers: Record<string, string>; method?: string; body?: string },
@@ -111,9 +107,7 @@ async function fetchWithTimeout(
   }
 }
 
-/**
- * 带重试的 fetch 请求（指数退避）
- */
+/** 带重试的 fetch 请求（指数退避） */
 async function fetchWithRetry(
   url: string,
   options: { headers: Record<string, string>; method?: string; body?: string },
@@ -156,9 +150,7 @@ async function fetchWithRetry(
 // 多提供商故障转移
 // ============================================================================
 
-/**
- * 使用单个提供商搜索
- */
+/** 使用单个提供商搜索 */
 async function searchWithProvider(
   provider: SearchProvider,
   query: string,
@@ -242,9 +234,7 @@ async function searchWithProvider(
   return { results, providerName: provider.name };
 }
 
-/**
- * 多提供商故障转移搜索
- */
+/** 多提供商故障转移搜索 */
 async function searchWithFallback(
   query: string,
   timeout: number,

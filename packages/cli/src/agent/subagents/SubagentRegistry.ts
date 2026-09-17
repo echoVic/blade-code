@@ -19,9 +19,7 @@ const RESERVED_BUILTIN_SUBAGENTS = new Set([
   GOAL_VERIFICATION_SUBAGENT_TYPE,
 ]);
 
-/**
- * 配置来源类型（不包含动态的 plugin:xxx 格式）
- */
+/** 配置来源类型（不包含动态的 plugin:xxx 格式） */
 type ConfigSource =
   | 'builtin'
   | 'claude-code-user'
@@ -32,12 +30,11 @@ type ConfigSource =
   | 'plugin';
 
 /**
- * Subagent 注册表
- *
- * 职责：
- * - 注册和发现 subagents
- * - 解析 Markdown + YAML frontmatter 配置
- * - 生成 LLM 可读的描述
+
+ * Subagent 注册表 <p> 职责： - 注册和发现 subagents - 解析 Markdown + YAML frontmatter 配置 - 生成 LLM
+
+ * 可读的描述
+
  */
 export class SubagentRegistry {
   private static instances = new Map<string, SubagentRegistry>();
@@ -90,30 +87,22 @@ export class SubagentRegistry {
     }
   }
 
-  /**
-   * 获取指定 subagent
-   */
+  /** 获取指定 subagent */
   getSubagent(name: string): SubagentConfig | undefined {
     return this.subagents.get(name);
   }
 
-  /**
-   * 获取所有 subagent 名称
-   */
+  /** 获取所有 subagent 名称 */
   getAllNames(): string[] {
     return Array.from(this.subagents.keys());
   }
 
-  /**
-   * 获取所有 subagent 配置
-   */
+  /** 获取所有 subagent 配置 */
   getAllSubagents(): SubagentConfig[] {
     return Array.from(this.subagents.values());
   }
 
-  /**
-   * 生成 LLM 可读的 subagent 描述（用于系统提示）
-   */
+  /** 生成 LLM 可读的 subagent 描述（用于系统提示） */
   getDescriptionsForPrompt(): string {
     const subagents = this.getAllSubagents();
     if (subagents.length === 0) {
@@ -301,9 +290,7 @@ export class SubagentRegistry {
     return count;
   }
 
-  /**
-   * 加载内置 subagent 配置
-   */
+  /** 加载内置 subagent 配置 */
   loadBuiltinAgents(): void {
     for (const agent of builtinAgents) {
       // 使用 set 而非 register，允许被后续配置覆盖
@@ -316,9 +303,7 @@ export class SubagentRegistry {
     logger.debug(`Loaded ${builtinAgents.length} builtin subagents`);
   }
 
-  /**
-   * 清空所有注册的 subagents（用于测试）
-   */
+  /** 清空所有注册的 subagents（用于测试） */
   clear(): void {
     this.subagents.clear();
   }
@@ -338,10 +323,7 @@ export class SubagentRegistry {
     return snapshot;
   }
 
-  /**
-   * 获取按来源分组的 subagents
-   * 用于 UI 展示和调试
-   */
+  /** 获取按来源分组的 subagents 用于 UI 展示和调试 */
   getSubagentsBySource(): Record<ConfigSource, SubagentConfig[]> {
     const result: Record<ConfigSource, SubagentConfig[]> = {
       builtin: [],
@@ -365,10 +347,7 @@ export class SubagentRegistry {
     return result;
   }
 
-  /**
-   * 清除所有插件代理
-   * Called when refreshing plugins
-   */
+  /** 清除所有插件代理 Called when refreshing plugins */
   clearPluginAgents(): void {
     const toDelete: string[] = [];
     for (const [name, config] of this.subagents.entries()) {
@@ -380,44 +359,11 @@ export class SubagentRegistry {
       this.subagents.delete(name);
     }
   }
-
-  /**
-   * 获取 Claude Code 配置目录路径
-   * 用于 UI 展示
-   */
-  static getClaudeCodeAgentsDir(type: 'user' | 'project'): string {
-    if (type === 'user') {
-      return path.join(os.homedir(), '.claude', 'agents');
-    }
-    return path.join(getCwd(), '.claude', 'agents');
-  }
-
-  /**
-   * 获取 Blade 配置目录路径
-   * 用于 UI 展示
-   */
-  static getBladeAgentsDir(type: 'user' | 'project'): string {
-    if (type === 'user') {
-      return path.join(os.homedir(), '.blade', 'agents');
-    }
-    return path.join(getCwd(), '.blade', 'agents');
-  }
 }
 
-/**
- * 全局单例
- */
+/** 全局单例 */
 export function getSubagentRegistry(
   workspaceRoot: string = getCwd()
 ): SubagentRegistry {
   return SubagentRegistry.getInstance(workspaceRoot);
 }
-
-/** @deprecated Use getSubagentRegistry(workspaceRoot). */
-export const subagentRegistry = new Proxy({} as SubagentRegistry, {
-  get(_target, property) {
-    const registry = getSubagentRegistry();
-    const value = Reflect.get(registry, property, registry) as unknown;
-    return typeof value === 'function' ? value.bind(registry) : value;
-  },
-});

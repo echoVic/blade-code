@@ -1,8 +1,7 @@
 /**
- * Blade Code Plugins System - Plugin Loader
- *
- * This module is responsible for loading plugins from directories,
- * including their commands, agents, skills, hooks, and MCP configurations.
+ * Blade Code Plugins System - Plugin Loader <p> This module is responsible for loading
+ * plugins from directories, including their commands, agents, skills, hooks, and MCP
+ * configurations.
  */
 
 import * as fs from 'node:fs/promises';
@@ -109,9 +108,7 @@ export class PluginLoader {
     };
   }
 
-  /**
-   * Load commands from the commands/ directory
-   */
+  /** Load commands from the commands/ directory */
   private async loadCommands(
     pluginDir: string,
     pluginName: string
@@ -143,9 +140,7 @@ export class PluginLoader {
     return commands;
   }
 
-  /**
-   * Parse a command file
-   */
+  /** Parse a command file */
   private async parseCommandFile(
     filePath: string,
     basePath: string,
@@ -184,9 +179,7 @@ export class PluginLoader {
     };
   }
 
-  /**
-   * Normalize command frontmatter to CustomCommandConfig
-   */
+  /** Normalize command frontmatter to CustomCommandConfig */
   private normalizeCommandConfig(data: Record<string, unknown>): CustomCommandConfig {
     return {
       description: this.asString(data.description),
@@ -197,9 +190,7 @@ export class PluginLoader {
     };
   }
 
-  /**
-   * Load agents from the agents/ directory
-   */
+  /** Load agents from the agents/ directory */
   private async loadAgents(
     pluginDir: string,
     pluginName: string
@@ -231,9 +222,7 @@ export class PluginLoader {
     return agents;
   }
 
-  /**
-   * Parse an agent file
-   */
+  /** Parse an agent file */
   private async parseAgentFile(
     filePath: string,
     basePath: string,
@@ -273,9 +262,7 @@ export class PluginLoader {
     };
   }
 
-  /**
-   * Load skills from the skills/ directory
-   */
+  /** Load skills from the skills/ directory */
   private async loadSkills(
     pluginDir: string,
     pluginName: string
@@ -325,9 +312,7 @@ export class PluginLoader {
     return skills;
   }
 
-  /**
-   * Load hooks configuration from hooks/hooks.json
-   */
+  /** Load hooks configuration from hooks/hooks.json */
   private async loadHooks(pluginDir: string): Promise<HookConfig | undefined> {
     const hooksPath = path.join(pluginDir, 'hooks', 'hooks.json');
 
@@ -344,9 +329,7 @@ export class PluginLoader {
     }
   }
 
-  /**
-   * Load MCP configuration from .mcp.json
-   */
+  /** Load MCP configuration from .mcp.json */
   private async loadMcpConfig(
     pluginDir: string,
     pluginName: string
@@ -425,9 +408,7 @@ export class PluginLoader {
     }
   }
 
-  /**
-   * Recursively scan for .md files in a directory
-   */
+  /** Recursively scan for .md files in a directory */
   private async scanMarkdownFiles(dir: string): Promise<string[]> {
     const files: string[] = [];
 
@@ -449,9 +430,7 @@ export class PluginLoader {
     return files;
   }
 
-  /**
-   * Check if a directory exists
-   */
+  /** Check if a directory exists */
   private async dirExists(dirPath: string): Promise<boolean> {
     try {
       const stat = await fs.stat(dirPath);
@@ -461,9 +440,7 @@ export class PluginLoader {
     }
   }
 
-  /**
-   * Safely convert value to string
-   */
+  /** Safely convert value to string */
   private asString(value: unknown): string | undefined {
     if (typeof value === 'string' && value.trim()) {
       return value.trim();
@@ -471,9 +448,7 @@ export class PluginLoader {
     return undefined;
   }
 
-  /**
-   * Parse a string array from various formats
-   */
+  /** Parse a string array from various formats */
   private parseStringArray(value: unknown): string[] | undefined {
     if (!value) return undefined;
 

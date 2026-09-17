@@ -1,11 +1,6 @@
 /**
- * 表格渲染器
- *
- * 特性：
- * - 三层宽度策略（理想宽度 / 按比例收缩 / 强制断词）
- * - 多行单元格换行（非截断），保留 Markdown 格式完整性
- * - 窄终端垂直格式降级（key-value 格式）
- * - Unicode 边框 + 安全余量防闪烁
+ * 表格渲染器 <p> 特性： - 三层宽度策略（理想宽度 / 按比例收缩 / 强制断词） - 多行单元格换行（非截断），保留 Markdown 格式完整性 -
+ * 窄终端垂直格式降级（key-value 格式） - Unicode 边框 + 安全余量防闪烁
  */
 
 import { Text } from 'ink';
@@ -30,9 +25,7 @@ const SAFETY_MARGIN = 4;
 const MIN_COLUMN_WIDTH = 3;
 const MAX_ROW_LINES = 4;
 
-/**
- * 表格渲染器组件
- */
+/** 表格渲染器组件 */
 export const TableRenderer: React.FC<TableRendererProps> = React.memo(
   ({ headers, rows, terminalWidth }) => {
     const theme = useTheme();
@@ -61,8 +54,7 @@ export const TableRenderer: React.FC<TableRendererProps> = React.memo(
         return maxIdeal;
       });
 
-      // Step 2: 计算可用空间
-      // 边框开销: │ content │ content │ = 1 + (width + 3) per column
+      // Step 2: 计算可用空间 边框开销: │ content │ content │ = 1 + (width + 3) per column
       const borderOverhead = 1 + numCols * 3;
       const availableWidth = Math.max(
         terminalWidth - borderOverhead - SAFETY_MARGIN,

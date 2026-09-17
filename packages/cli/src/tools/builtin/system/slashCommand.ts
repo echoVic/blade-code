@@ -4,18 +4,13 @@ import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
 
-/**
- * 字符预算（默认 15,000 字符）
- * 可通过环境变量 SLASH_COMMAND_TOOL_CHAR_BUDGET 配置
- */
+/** 字符预算（默认 15,000 字符） 可通过环境变量 SLASH_COMMAND_TOOL_CHAR_BUDGET 配置 */
 const CHAR_BUDGET = Number.parseInt(
   process.env.SLASH_COMMAND_TOOL_CHAR_BUDGET || '15000',
   10
 );
 
-/**
- * 生成可用命令列表描述
- */
+/** 生成可用命令列表描述 */
 function generateAvailableCommandsDescription(registry: CustomCommandRegistry): string {
   if (!registry.isInitialized()) {
     return '\n(Custom commands not yet initialized)';
@@ -220,12 +215,7 @@ ${generateAvailableCommandsDescription(registry)}`,
   });
 }
 
-/** @deprecated Use createSlashCommandTool(registry). */
-export const slashCommandTool = createSlashCommandTool();
-
-/**
- * 构建完整的命令指令
- */
+/** 构建完整的命令指令 */
 function buildCommandInstructions(
   name: string,
   content: string,

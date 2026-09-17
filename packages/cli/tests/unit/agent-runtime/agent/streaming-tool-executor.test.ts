@@ -1,8 +1,4 @@
-/**
- * StreamingToolExecutor unit tests
- *
- * 测试流式预启动白名单、并发安全屏障和流提交后的批量调度。
- */
+/** StreamingToolExecutor unit tests 测试流式预启动白名单、并发安全屏障和流提交后的批量调度。 */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {

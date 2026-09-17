@@ -895,7 +895,6 @@ async function appendSyntheticHistory(
 ): Promise<number> {
   const persistent = new PersistentStore(
     result.projectPath,
-    100,
     undefined,
     createRemoteSessionStateStorage(result.projectPath, result.remoteWorkspace)
   );

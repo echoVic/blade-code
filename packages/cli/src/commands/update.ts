@@ -1,6 +1,4 @@
-/**
- * Update 命令 - Yargs 版本
- */
+/** Update 命令 - Yargs 版本 */
 
 import { execSync } from 'child_process';
 import type { CommandModule } from 'yargs';

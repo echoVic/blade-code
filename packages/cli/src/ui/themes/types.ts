@@ -1,6 +1,4 @@
-/**
- * 主题类型定义
- */
+/** 主题类型定义 */
 
 // 语法高亮颜色配置
 export interface SyntaxColors {

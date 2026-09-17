@@ -6,9 +6,7 @@
  * 视觉模型不支持等所有错误类型，消除内层/外层 catch 的双轨分叉。
  */
 
-/**
- * 错误分类结果
- */
+/** 错误分类结果 */
 export interface ExtractedError {
   /** 用户友好的错误消息 */
   displayMessage: string;
@@ -18,10 +16,7 @@ export interface ExtractedError {
   isVisionNotSupported: boolean;
 }
 
-/**
- * 从 API 错误中提取用户友好的错误信息
- * 处理兼容层和 provider SDK 的嵌套错误结构
- */
+/** 从 API 错误中提取用户友好的错误信息 处理兼容层和 provider SDK 的嵌套错误结构 */
 function extractFriendlyErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) return '未知错误';
 
@@ -57,17 +52,13 @@ function extractFriendlyErrorMessage(error: unknown): string {
   return error.message;
 }
 
-/**
- * 检测是否为 AbortError
- */
+/** 检测是否为 AbortError */
 function isAbortError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return error.name === 'AbortError' || error.message.includes('aborted');
 }
 
-/**
- * 检测是否为视觉/多模态不支持的错误
- */
+/** 检测是否为视觉/多模态不支持的错误 */
 function isVisionNotSupportedError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const msg = error.message;

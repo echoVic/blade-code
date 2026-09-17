@@ -1,13 +1,7 @@
 /**
- * ConfigTool - 配置管理工具
- *
- * 让 AI 能够读取、修改和列举 Blade 配置项。
- * 支持三种操作：get（读取）、set（设置）、list（列举）。
- *
- * 安全约束：
- * - SET 操作仅允许白名单中的字段
- * - 禁止通过通用工具修改 models（由模型管理 API 维护）
- * - 禁止修改 RuntimeConfig 独有字段
+ * ConfigTool - 配置管理工具 <p> 让 AI 能够读取、修改和列举 Blade 配置项。 支持三种操作：get（读取）、set（设置）、list（列举）。
+ * <p> 安全约束： - SET 操作仅允许白名单中的字段 - 禁止通过通用工具修改 models（由模型管理 API 维护） - 禁止修改 RuntimeConfig
+ * 独有字段
  */
 
 import { getConfigService } from '../../../config/index.js';
@@ -108,9 +102,7 @@ function getNestedValue(obj: Record<string, unknown>, keyPath: string): unknown 
   return current;
 }
 
-/**
- * 生成可配置项列表
- */
+/** 生成可配置项列表 */
 function generateSettableKeysList(config: Record<string, unknown>): string {
   const lines: string[] = ['可配置项列表（白名单）：', ''];
   for (const key of SETTABLE_KEYS) {
@@ -192,9 +184,7 @@ export const configTool = createTool({
     }
 
     switch (operation) {
-      // ========================
-      // GET 操作
-      // ========================
+      // ======================== GET 操作 ========================
       case 'get': {
         if (!key) {
           return {
@@ -254,9 +244,7 @@ export const configTool = createTool({
         };
       }
 
-      // ========================
-      // SET 操作
-      // ========================
+      // ======================== SET 操作 ========================
       case 'set': {
         if (!key) {
           return {
@@ -331,13 +319,11 @@ export const configTool = createTool({
           };
         }
 
-        // 构造更新对象
-        // 如果 key 包含点号，需要构造嵌套对象
+        // 构造更新对象 如果 key 包含点号，需要构造嵌套对象
         let updates: Record<string, unknown>;
         if (key.includes('.')) {
           const parts = key.split('.');
-          // 只支持两层嵌套（如 hooks.PreToolUse）
-          // 对于更深层的嵌套，使用顶层 key 的完整值替换
+          // 只支持两层嵌套（如 hooks.PreToolUse） 对于更深层的嵌套，使用顶层 key 的完整值替换
           updates = { [parts[0]]: value };
 
           // 对于 hooks 等深度合并字段，构造嵌套结构
@@ -396,9 +382,7 @@ export const configTool = createTool({
         }
       }
 
-      // ========================
-      // LIST 操作
-      // ========================
+      // ======================== LIST 操作 ========================
       case 'list': {
         const configObj = config as unknown as Record<string, unknown>;
         const listContent = generateSettableKeysList(configObj);

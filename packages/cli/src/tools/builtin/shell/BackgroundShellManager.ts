@@ -910,10 +910,7 @@ export class BackgroundShellManager {
     };
   }
 
-  /**
-   * 终止所有后台进程
-   * 在应用退出时调用
-   */
+  /** 终止所有后台进程 在应用退出时调用 */
   async killAll(): Promise<void> {
     await Promise.all(
       Array.from(this.processes.values()).map((processInfo) =>

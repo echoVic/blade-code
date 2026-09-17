@@ -4,10 +4,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
 
-/**
- * NotebookEdit tool
- * Edit Jupyter notebook cells
- */
+/** NotebookEdit tool Edit Jupyter notebook cells */
 export const notebookEditTool = createTool({
   name: 'NotebookEdit',
   displayName: 'Notebook Edit',

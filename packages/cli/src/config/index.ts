@@ -1,7 +1,4 @@
-/**
- * Blade 配置系统
- * 双配置文件系统: config.json (基础配置) + settings.json (行为配置)
- */
+/** Blade 配置系统 双配置文件系统: config.json (基础配置) + settings.json (行为配置) */
 
 // 配置管理器
 export { ConfigManager, mergeRuntimeConfig } from './ConfigManager.js';

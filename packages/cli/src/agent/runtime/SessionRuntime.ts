@@ -815,7 +815,6 @@ export class SessionRuntime {
   ): Promise<boolean> {
     return new PersistentStore(
       workspaceRoot,
-      100,
       undefined,
       stateStorage
     ).hasRecoverableTurn(sessionId);
@@ -853,10 +852,6 @@ export class SessionRuntime {
 
   getConfig(): BladeConfig {
     return this.config;
-  }
-
-  getAvailableModels(): ModelConfig[] {
-    return this.config.models.map((model) => structuredClone(model));
   }
 
   getModelById(modelId: string): ModelConfig | undefined {
@@ -2925,11 +2920,6 @@ export class SessionRuntime {
         this.executorCatalogs.delete(registry);
       },
     });
-  }
-
-  /** @deprecated Use createToolExecutor() for new code. */
-  createExecutionPipeline(options: AgentOptions = {}): ToolExecutor {
-    return this.createToolExecutor(options);
   }
 
   async dispose(): Promise<void> {

@@ -1,6 +1,4 @@
-/**
- * Install 命令 - Yargs 版本
- */
+/** Install 命令 - Yargs 版本 */
 
 import type { CommandModule } from 'yargs';
 import type { InstallOptions } from '../cli/types.js';
@@ -41,11 +39,7 @@ export const installCommands: CommandModule<{}, InstallOptions> = {
       console.log('Installing...');
       console.log('Installation completed successfully');
 
-      // 实际实现时可以添加：
-      // 1. 下载指定版本的二进制文件
-      // 2. 验证文件完整性
-      // 3. 安装到系统路径
-      // 4. 更新符号链接
+      // 实际实现时可以添加： 1. 下载指定版本的二进制文件 2. 验证文件完整性 3. 安装到系统路径 4. 更新符号链接
     } catch (error) {
       console.error(
         `Error: Installation failed: ${error instanceof Error ? error.message : '未知错误'}`

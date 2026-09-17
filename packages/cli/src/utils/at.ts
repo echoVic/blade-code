@@ -62,9 +62,7 @@ export class At {
     return paths;
   }
 
-  /**
-   * 获取文件或目录的内容
-   */
+  /** 获取文件或目录的内容 */
   getContent(atReference: string): string {
     const paths = this.extractAtPaths(atReference);
     if (paths.length === 0) {
@@ -91,9 +89,7 @@ export class At {
     throw new Error(`Invalid path type: ${atPath.path}`);
   }
 
-  /**
-   * 读取文件内容（支持行号范围）
-   */
+  /** 读取文件内容（支持行号范围） */
   private readFile(
     filePath: string,
     lineRange?: { start: number; end: number }
@@ -122,9 +118,7 @@ export class At {
     return this.formatFileContent(filePath, selectedLines.join('\n'), start, end);
   }
 
-  /**
-   * 读取目录中的所有文件
-   */
+  /** 读取目录中的所有文件 */
   private readDirectory(dirPath: string): string {
     const files = this.getAllFilesInDirectory(dirPath);
     const contents: string[] = [];
@@ -143,9 +137,7 @@ export class At {
     return contents.join('\n\n---\n\n');
   }
 
-  /**
-   * 递归获取目录中的所有文件
-   */
+  /** 递归获取目录中的所有文件 */
   private getAllFilesInDirectory(dirPath: string): string[] {
     const files: string[] = [];
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -173,9 +165,7 @@ export class At {
     return files;
   }
 
-  /**
-   * 格式化文件内容输出
-   */
+  /** 格式化文件内容输出 */
   private formatFileContent(
     filePath: string,
     content: string,
@@ -189,9 +179,7 @@ export class At {
     return `\`\`\`${this.getFileExtension(filePath)}\n${header}\n${content}\n\`\`\``;
   }
 
-  /**
-   * 获取文件扩展名（用于语法高亮）
-   */
+  /** 获取文件扩展名（用于语法高亮） */
   private getFileExtension(filePath: string): string {
     const ext = path.extname(filePath).slice(1);
     return ext || 'text';

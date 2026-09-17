@@ -39,10 +39,7 @@ import { generateDiffSnippet } from './diffUtils.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
 import { SnapshotManager, type SnapshotMetadata } from './SnapshotManager.js';
 
-/**
- * WriteTool - File writer
- * Uses the TypeBox validation design
- */
+/** WriteTool - File writer Uses the TypeBox validation design */
 export const writeTool = createTool({
   name: 'Write',
   displayName: 'File Write',
@@ -239,9 +236,7 @@ export const writeTool = createTool({
           }
           await fsService.writeTextFile(file_path, content);
         } else {
-          // 二进制文件写入
-          // [WARN] ACP 模式下不支持二进制写入，必须明确失败
-          // 否则会写到本地磁盘而非远端，造成数据丢失/错位
+          // 二进制文件写入 [WARN] ACP 模式下不支持二进制写入，必须明确失败 否则会写到本地磁盘而非远端，造成数据丢失/错位
           if (useAcp) {
             return {
               success: false,
@@ -376,23 +371,17 @@ export const writeTool = createTool({
   category: '文件操作',
   tags: ['file', 'io', 'write', 'create'],
 
-  /**
-   * 提取签名内容：返回文件路径
-   */
+  /** 提取签名内容：返回文件路径 */
   extractSignatureContent: (params) => params.file_path,
 
-  /**
-   * 抽象权限规则：返回扩展名通配符格式
-   */
+  /** 抽象权限规则：返回扩展名通配符格式 */
   abstractPermissionRule: (params) => {
     const ext = extname(params.file_path);
     return ext ? `**/*${ext}` : '**/*';
   },
 });
 
-/**
- * 格式化文件大小
- */
+/** 格式化文件大小 */
 function formatFileSize(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB'];
   let size = bytes;
@@ -471,7 +460,9 @@ async function executeRemoteWrite(
       (error as AcpRemoteFileBoundaryError & { requiresRead?: boolean }).requiresRead
     );
   const getOldContent = (
-    prior: Awaited<ReturnType<AcpFileSystemService['readTextFileIfExists']>> | undefined
+    prior:
+      | Awaited<ReturnType<AcpFileSystemService['readTextFileIfExistsForParsedPath']>>
+      | undefined
   ): string => (prior?.exists ? prior.content : '');
   let lease: ReturnType<AcpFileSystemService['tryAcquireMutationLeaseForParsedPaths']>;
   let previous:

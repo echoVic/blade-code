@@ -7,9 +7,7 @@ import {
   type ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
 
-/**
- * 确认状态
- */
+/** 确认状态 */
 interface ConfirmationState {
   isVisible: boolean;
   details: ConfirmationDetails | null;
@@ -24,10 +22,7 @@ interface PendingConfirmation {
   settled: boolean;
 }
 
-/**
- * 确认管理 Hook
- * 提供一个 ConfirmationHandler 实现和确认状态管理
- */
+/** 确认管理 Hook 提供一个 ConfirmationHandler 实现和确认状态管理 */
 export const useConfirmation = () => {
   const [confirmationState, setConfirmationState] = useState<ConfirmationState>({
     isVisible: false,
@@ -57,9 +52,7 @@ export const useConfirmation = () => {
     }
   );
 
-  /**
-   * 显示确认对话框
-   */
+  /** 显示确认对话框 */
   const showConfirmation = useMemoizedFn(
     (
       details: ConfirmationDetails,
@@ -104,9 +97,7 @@ export const useConfirmation = () => {
     }
   );
 
-  /**
-   * 处理用户响应
-   */
+  /** 处理用户响应 */
   const handleResponse = useMemoizedFn((response: ConfirmationResponse) => {
     const active = activeRef.current;
     if (active) settle(active, response);
@@ -139,10 +130,7 @@ export const useConfirmation = () => {
     showActive(null);
   });
 
-  /**
-   * 创建 ConfirmationHandler 实例
-   * 使用 useMemo 确保引用稳定性，避免 React 闭包捕获过时引用
-   */
+  /** 创建 ConfirmationHandler 实例 使用 useMemo 确保引用稳定性，避免 React 闭包捕获过时引用 */
   const confirmationHandler: ConfirmationHandler = useMemo(
     () => ({
       requestConfirmation: showConfirmation,

@@ -1,11 +1,6 @@
 /**
- * Blade Store 类型定义
- *
- * 遵循准则：
- * 1. 只暴露 actions - 不直接暴露 set
- * 2. 强选择器约束 - 使用选择器访问状态
- * 3. Store 是内存单一数据源 - 持久化通过 ConfigManager/vanilla.ts actions
- * 4. vanilla store 对外 - 供 Agent 使用
+ * Blade Store 类型定义 <p> 遵循准则： 1. 只暴露 actions - 不直接暴露 set 2. 强选择器约束 - 使用选择器访问状态 3. Store
+ * 是内存单一数据源 - 持久化通过 ConfigManager/vanilla.ts actions 4. vanilla store 对外 - 供 Agent 使用
  */
 
 import type { ActionStationarityEvent } from '../agent/loop/actionStationarity.js';
@@ -41,22 +36,11 @@ import type { SessionSelectionIntent } from '../slash-commands/types.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import type { ToolProgressUpdate } from '../tools/types/ExecutionTypes.js';
 
-// ==================== Session Types ====================
-
-/**
- * 消息角色类型
- */
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
-
-// ==================== JSON Types ====================
 
 type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
-
-/**
- * 工具消息元数据
- */
 export interface ToolMessageMetadata {
   toolCallId?: string;
   toolName: string;
@@ -67,9 +51,6 @@ export interface ToolMessageMetadata {
   admission?: ToolProgressUpdate['admission'];
 }
 
-/**
- * 会话消息
- */
 export interface SessionMessage {
   id: string;
   role: MessageRole;
@@ -79,9 +60,6 @@ export interface SessionMessage {
   thinkingContent?: string; // Thinking 模型的推理过程内容
 }
 
-/**
- * Token 使用量统计
- */
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -102,11 +80,6 @@ export interface TokenUsageUpdate extends Partial<TokenUsage> {
   costUsd?: number;
 }
 
-/**
- * 会话状态
- *
- * 注意：isThinking 已合并到 CommandState.isProcessing
- */
 export interface SessionState {
   sessionId: string;
   workspaceRoot: string;
@@ -121,10 +94,8 @@ export interface SessionState {
   currentThinkingContent: string | null; // 当前正在接收的 thinking 内容（流式）
   thinkingExpanded: boolean; // thinking 内容是否展开显示
   clearCount: number; // 清屏计数器（用于强制 Static 组件重新挂载）
-  // 历史消息折叠相关
   historyExpanded: boolean; // 是否展开所有历史消息（默认 false，只显示最近 N 条）
   expandedMessageCount: number; // 始终保持展开的最近消息数量（默认 30）
-  // 流式消息相关
   currentStreamingMessageId: string | null; // 当前正在流式接收的助手消息 ID
   currentStreamingChunks: string[]; // NEW: 累积的原始增量片段（用于最终拼接）
   currentStreamingLines: string[]; // NEW: 已完成行的缓冲区
@@ -141,15 +112,11 @@ export interface SessionState {
   actionStationarity: ActionStationarityEvent | null; // 连续工具调用无进展状态
 }
 
-/**
- * 会话 Actions
- */
 export interface SessionActions {
   addMessage: (message: SessionMessage) => void;
   addUserMessage: (content: string) => void;
   addAssistantMessage: (content: string, thinkingContent?: string) => void;
   replaceLastAssistantMessage: (content: string) => void;
-  /** 添加助手消息并同时清空 thinking 内容（原子操作，避免闪烁） */
   addAssistantMessageAndClearThinking: (content: string) => void;
   addToolMessage: (content: string, metadata?: ToolMessageMetadata) => void;
   setCompacting: (isCompacting: boolean) => void;
@@ -167,18 +134,14 @@ export interface SessionActions {
   updateTokenUsage: (usage: TokenUsageUpdate) => void;
   resetContextUsage: () => void;
   resetTokenUsage: () => void;
-  // Thinking 相关 actions
   setCurrentThinkingContent: (content: string | null) => void;
   appendThinkingContent: (delta: string) => void;
   setThinkingExpanded: (expanded: boolean) => void;
   toggleThinkingExpanded: () => void;
-  // 历史消息折叠相关 actions
   setHistoryExpanded: (expanded: boolean) => void;
   toggleHistoryExpanded: () => void;
   setExpandedMessageCount: (count: number) => void;
-  // Static 组件刷新相关 actions
   incrementClearCount: () => void;
-  // 流式消息相关 actions
   startStreamingAssistantMessage: () => string; // 开始流式助手消息，返回消息 ID
   appendAssistantContent: (delta: string) => string; // 追加内容到当前流式消息
   finalizeStreamingMessage: (extraContent?: string, extraThinking?: string) => void; // 完成流式消息（可追加缓冲区剩余内容）
@@ -197,52 +160,29 @@ export interface SessionActions {
   resetConversationProjection: () => void; // 重置投影中间态
 }
 
-/**
- * Session Slice 类型
- */
 export interface SessionSlice extends SessionState {
   actions: SessionActions;
 }
 
-// ==================== Config Types ====================
-
-/**
- * 配置状态
- */
 export interface ConfigState {
   config: RuntimeConfig | null;
 }
 
-/**
- * 配置 Actions
- */
 export interface ConfigActions {
   setConfig: (config: RuntimeConfig) => void;
   updateConfig: (partial: Partial<RuntimeConfig>) => void;
 }
 
-/**
- * Config Slice 类型
- */
 export interface ConfigSlice extends ConfigState {
   actions: ConfigActions;
 }
 
-// ==================== App Types ====================
-
-/**
- * 初始化状态类型
- */
 export type InitializationStatus =
   | 'idle'
   | 'loading'
   | 'ready'
   | 'needsSetup'
   | 'error';
-
-/**
- * 活动模态框类型
- */
 export type ActiveModal =
   | 'none'
   | 'themeSelector'
@@ -260,10 +200,6 @@ export type ActiveModal =
   | 'skillsManager'
   | 'hooksManager'
   | 'pluginsManager';
-
-/**
- * Subagent 进度状态
- */
 export interface SubagentProgress {
   id: string;
   type: string;
@@ -293,9 +229,6 @@ export interface SideConversationState {
   durationMs?: number;
 }
 
-/**
- * 应用状态（纯 UI 状态）
- */
 export interface AppState {
   initializationStatus: InitializationStatus;
   initializationError: string | null;
@@ -320,9 +253,6 @@ export interface AppState {
   teams: TeamSnapshot[];
 }
 
-/**
- * 应用 Actions
- */
 export interface AppActions {
   setInitializationStatus: (status: InitializationStatus) => void;
   setInitializationError: (error: string | null) => void;
@@ -352,14 +282,12 @@ export interface AppActions {
     owner?: string
   ) => void;
   clearFollowUpQueue: (owner?: string) => void;
-  // Thinking 模式相关
   setReasoningEffort: (effort: ReasoningEffortSelection) => void;
   setServiceTier: (tier: ServiceTierSelection) => void;
   setResponseVerbosity: (verbosity: ResponseVerbositySelection) => void;
   setCommunicationStyle: (style: CommunicationStyleSelection) => void;
   setThinkingModeEnabled: (enabled: boolean) => void;
   toggleThinkingMode: () => void;
-  // Subagent 进度相关
   startSubagentProgress: (id: string, type: string, description: string) => void;
   updateSubagentTool: (id: string, toolName: string) => void;
   completeSubagentProgress: (
@@ -374,18 +302,10 @@ export interface AppActions {
   setTeams: (teams: TeamSnapshot[]) => void;
 }
 
-/**
- * App Slice 类型
- */
 export interface AppSlice extends AppState {
   actions: AppActions;
 }
 
-// ==================== Focus Types ====================
-
-/**
- * 焦点 ID 枚举
- */
 export enum FocusId {
   MAIN_INPUT = 'main-input',
   TRANSCRIPT_PAGER = 'transcript-pager',
@@ -404,42 +324,24 @@ export enum FocusId {
   HOOKS_MANAGER = 'hooks-manager',
 }
 
-/**
- * 焦点状态
- */
 export interface FocusState {
   currentFocus: FocusId;
   previousFocus: FocusId | null;
 }
 
-/**
- * 焦点 Actions
- */
 export interface FocusActions {
   setFocus: (id: FocusId) => void;
   restorePreviousFocus: () => void;
 }
 
-/**
- * Focus Slice 类型
- */
 export interface FocusSlice extends FocusState {
   actions: FocusActions;
 }
 
-// ==================== Command Types ====================
-
-/**
- * 待处理命令（支持图片）
- */
 export interface FollowUpPresentation {
-  /** 显示文本（带图片占位符，用于 UI 显示） */
   displayText: string;
-  /** 纯文本内容（不含图片占位符） */
   text: string;
-  /** 图片列表 */
   images: Array<{ id: number; base64: string; mimeType: string }>;
-  /** 交错的内容部分列表（保留顺序） */
   parts: Array<
     | { type: 'text'; text: string }
     | { type: 'image'; id: number; base64: string; mimeType: string }
@@ -454,9 +356,6 @@ export interface FollowUpQueueMutationState {
   supersededVersions?: readonly string[];
 }
 
-/**
- * 命令执行状态
- */
 export interface CommandState {
   isProcessing: boolean; // 临时状态 - 不持久化
   abortController: AbortController | null; // 不持久化
@@ -464,16 +363,9 @@ export interface CommandState {
   recoveredSteeringCount: number;
 }
 
-/**
- * 命令 Actions
- */
 export interface CommandActions {
   setProcessing: (isProcessing: boolean) => void;
   createAbortController: () => AbortController;
-  /**
-   * 获取当前的 AbortController
-   * 用于在 finally 块中检查是否应该重置状态
-   */
   getAbortController: () => AbortController | null;
   /**
    * 清理 AbortController
@@ -491,18 +383,10 @@ export interface CommandActions {
   setRecoveredSteeringCount: (count: number) => void;
 }
 
-/**
- * Command Slice 类型
- */
 export interface CommandSlice extends CommandState {
   actions: CommandActions;
 }
 
-// ==================== Combined Store ====================
-
-/**
- * Blade Store 完整类型
- */
 export interface BladeStore {
   session: SessionSlice;
   app: AppSlice;
@@ -510,7 +394,5 @@ export interface BladeStore {
   focus: FocusSlice;
   command: CommandSlice;
 }
-
-// ==================== Utility Types ====================
 
 export { PermissionMode };

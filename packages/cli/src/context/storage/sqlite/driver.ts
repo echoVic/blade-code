@@ -93,9 +93,7 @@ function initializationPragmas(busyTimeoutMs: number): string {
   ].join('\n');
 }
 
-/**
- * 打开（或创建）一个 SQLite 数据库。失败返回 null（调用方回退 JSONL）。
- */
+/** 打开（或创建）一个 SQLite 数据库。失败返回 null（调用方回退 JSONL）。 */
 export async function openDb(
   dbPath: string,
   options: OpenDbOptions = {}

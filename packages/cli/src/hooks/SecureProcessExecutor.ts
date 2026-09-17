@@ -1,8 +1,4 @@
-/**
- * Secure Process Executor
- *
- * 安全地执行 Hook 子进程
- */
+/** Secure Process Executor 安全地执行 Hook 子进程 */
 
 import { spawnOwnedProcess } from '../utils/process/OwnedProcessTree.js';
 import type {
@@ -12,9 +8,7 @@ import type {
   ProcessResult,
 } from './types/HookTypes.js';
 
-/**
- * 流量限制器
- */
+/** 流量限制器 */
 class StreamLimiter {
   private content = '';
   private maxSize: number;
@@ -39,17 +33,13 @@ class StreamLimiter {
   }
 }
 
-/**
- * 安全进程执行器
- */
+/** 安全进程执行器 */
 export class SecureProcessExecutor {
   private readonly MAX_STDOUT_SIZE = 1 * 1024 * 1024; // 1MB
   private readonly MAX_STDERR_SIZE = 1 * 1024 * 1024; // 1MB
   private readonly MAX_INPUT_SIZE = 100 * 1024; // 100KB
 
-  /**
-   * 执行命令
-   */
+  /** 执行命令 */
   async execute(
     command: string,
     input: HookInput,
@@ -170,9 +160,7 @@ export class SecureProcessExecutor {
     });
   }
 
-  /**
-   * 创建安全的环境变量
-   */
+  /** 创建安全的环境变量 */
   private createSafeEnv(
     input: HookInput,
     environment: Readonly<Record<string, string>> = {}

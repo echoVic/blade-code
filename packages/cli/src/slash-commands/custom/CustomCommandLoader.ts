@@ -1,8 +1,4 @@
-/**
- * 自定义命令加载器
- *
- * 扫描指定目录，发现并加载所有自定义命令
- */
+/** 自定义命令加载器 扫描指定目录，发现并加载所有自定义命令 */
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -18,15 +14,13 @@ export class CustomCommandLoader {
   private parser = new CustomCommandParser();
 
   /**
-   * 发现所有自定义命令
-   *
-   * 按优先级从低到高扫描目录，后面的命令覆盖前面的同名命令
-   *
-   * 优先级顺序（从低到高）:
-   * 1. ~/.blade/commands/ (用户级 Blade)
-   * 2. ~/.claude/commands/ (用户级 Claude Code 兼容)
-   * 3. .blade/commands/ (项目级 Blade)
-   * 4. .claude/commands/ (项目级 Claude Code 兼容)
+
+   * 发现所有自定义命令 <p> 按优先级从低到高扫描目录，后面的命令覆盖前面的同名命令 <p> 优先级顺序（从低到高）: 1. ~/.blade/commands/
+
+   * (用户级 Blade) 2. ~/.claude/commands/ (用户级 Claude Code 兼容) 3. .blade/commands/ (项目级
+
+   * Blade) 4. .claude/commands/ (项目级 Claude Code 兼容)
+
    */
   async discover(workspaceRoot: string): Promise<CustomCommandDiscoveryResult> {
     const commands: CustomCommand[] = [];
@@ -70,10 +64,7 @@ export class CustomCommandLoader {
     return { commands, scannedDirs, errors };
   }
 
-  /**
-   * 获取搜索目录列表
-   * 按优先级从低到高排序
-   */
+  /** 获取搜索目录列表 按优先级从低到高排序 */
   private getSearchDirs(workspaceRoot: string): CommandSearchDir[] {
     const homeDir = os.homedir();
 
@@ -103,9 +94,7 @@ export class CustomCommandLoader {
     ];
   }
 
-  /**
-   * 递归扫描目录下所有 .md 文件
-   */
+  /** 递归扫描目录下所有 .md 文件 */
   private async scanDirectory(dirPath: string): Promise<string[]> {
     const results: string[] = [];
 
@@ -126,44 +115,5 @@ export class CustomCommandLoader {
 
     await scan(dirPath);
     return results;
-  }
-
-  /**
-   * 检查指定目录是否存在命令文件
-   */
-  async hasCommands(workspaceRoot: string): Promise<boolean> {
-    const searchDirs = this.getSearchDirs(workspaceRoot);
-
-    for (const dir of searchDirs) {
-      if (!fs.existsSync(dir.path)) {
-        continue;
-      }
-
-      const files = await this.scanDirectory(dir.path);
-      if (files.length > 0) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * 获取命令目录路径
-   */
-  getCommandDirs(workspaceRoot: string): {
-    projectBlade: string;
-    projectClaude: string;
-    userBlade: string;
-    userClaude: string;
-  } {
-    const homeDir = os.homedir();
-
-    return {
-      projectBlade: path.join(workspaceRoot, '.blade', 'commands'),
-      projectClaude: path.join(workspaceRoot, '.claude', 'commands'),
-      userBlade: path.join(homeDir, '.blade', 'commands'),
-      userClaude: path.join(homeDir, '.claude', 'commands'),
-    };
   }
 }

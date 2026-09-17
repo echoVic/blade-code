@@ -1,5 +1,4 @@
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import type { BackgroundSubagentCompletion } from '../../agent/subagents/BackgroundSubagentCompletion.js';
 import type { SubagentInfoForContext } from '../../agent/types.js';
@@ -23,14 +22,12 @@ import {
   type ValidTokenBudgetHandoffEvent,
 } from '../TokenBudgetHandoff.js';
 import {
-  type ConversationContext,
   MAX_TURN_INPUT_MESSAGE_ID_CHARS,
   MAX_TURN_INPUT_MESSAGE_IDS,
   type MessageInfo,
   type MessagePersistenceMetadata,
   type PartInfo,
   parseTurnInputMessageIds,
-  type SessionContext,
   type SessionEvent,
   type SessionGoalFinalizationInfo,
   type SessionInfo,
@@ -50,16 +47,13 @@ import { JSONLStore } from './JSONLStore.js';
 import {
   detectGitBranch,
   getBladeStorageRoot,
-  getProjectStoragePath,
   getSessionFilePath,
   getSessionInboxFilePath,
-  listProjectDirectories,
 } from './pathUtils.js';
 import {
   createSessionStateStorage,
   type SessionStateStorage,
   sessionStateStorageKey,
-  withSessionStatePaths,
   withSessionStateRoot,
 } from './SessionStateStorage.js';
 
@@ -656,7 +650,6 @@ export class PersistentStore {
   private static readonly sessionInitializationRuns = new Map<string, Promise<void>>();
 
   private readonly projectPath: string;
-  private readonly maxSessions: number;
   private readonly version: string;
   private readonly stateStorage: SessionStateStorage;
   /** Positive per-facade cache; Runtime ownership prevents active-file deletion. */
@@ -664,12 +657,10 @@ export class PersistentStore {
 
   constructor(
     projectPath: string = getCwd(),
-    maxSessions: number = 100,
     version: string = getVersion(),
     stateStorage: SessionStateStorage = createSessionStateStorage(projectPath)
   ) {
     this.projectPath = projectPath;
-    this.maxSessions = maxSessions;
     this.version = version;
     this.stateStorage = stateStorage;
   }
@@ -711,7 +702,7 @@ export class PersistentStore {
 
     let initialization = PersistentStore.sessionInitializationRuns.get(filePath);
     if (!initialization) {
-      initialization = this.initializeSessionFile(sessionId, filePath, subagentInfo);
+      initialization = this.initializeSessionFile(sessionId, subagentInfo);
       PersistentStore.sessionInitializationRuns.set(filePath, initialization);
     }
 
@@ -737,7 +728,6 @@ export class PersistentStore {
 
   private async initializeSessionFile(
     sessionId: string,
-    filePath: string,
     subagentInfo?: SubagentInfoForContext
   ): Promise<void> {
     const entries = await this.log(sessionId).readAll();
@@ -814,9 +804,7 @@ export class PersistentStore {
     return result;
   }
 
-  /**
-   * 初始化存储目录
-   */
+  /** 初始化存储目录 */
   async initialize(): Promise<void> {
     try {
       await withSessionStateRoot(this.stateStorage, async (storagePath) => {
@@ -829,9 +817,7 @@ export class PersistentStore {
     }
   }
 
-  /**
-   * 保存消息到 JSONL 文件（追加模式）
-   */
+  /** 保存消息到 JSONL 文件（追加模式） */
   async saveMessage(
     sessionId: string,
     messageRole: MessageRole,
@@ -1824,9 +1810,7 @@ export class PersistentStore {
     });
   }
 
-  /**
-   * 保存工具调用到 JSONL 文件
-   */
+  /** 保存工具调用到 JSONL 文件 */
   async saveToolUse(
     sessionId: string,
     toolName: string,
@@ -1905,9 +1889,7 @@ export class PersistentStore {
     }
   }
 
-  /**
-   * 保存工具结果到 JSONL 文件
-   */
+  /** 保存工具结果到 JSONL 文件 */
   async saveToolResult(
     sessionId: string,
     toolId: string,
@@ -2115,10 +2097,7 @@ export class PersistentStore {
     return { outcome: 'created', event: event.event };
   }
 
-  /**
-   * 保存会话初始化事件到 JSONL
-   * 仅创建 session_created 事件，不写入空消息
-   */
+  /** 保存会话初始化事件到 JSONL 仅创建 session_created 事件，不写入空消息 */
   async initSession(
     sessionId: string,
     subagentInfo?: SubagentInfoForContext
@@ -2126,9 +2105,7 @@ export class PersistentStore {
     await this.ensureSessionCreated(sessionId, subagentInfo);
   }
 
-  /**
-   * 加载会话的原始 JSONL 事件流
-   */
+  /** 加载会话的原始 JSONL 事件流 */
   async loadEvents(sessionId: string): Promise<SessionEvent[] | null> {
     try {
       const entries = await this.log(sessionId).readAll();
@@ -2138,140 +2115,7 @@ export class PersistentStore {
     }
   }
 
-  /**
-   * 加载会话上下文（从 JSONL 重建）
-   */
-  async loadSession(sessionId: string): Promise<SessionContext | null> {
-    try {
-      const entries = materializeSessionEvents(await this.log(sessionId).readAll());
-      if (entries.length === 0) return null;
-      const firstEntry = entries.find((entry) => entry.type === 'session_created');
-
-      return {
-        sessionId,
-        userId: undefined,
-        preferences: {},
-        configuration: {},
-        startTime: new Date(firstEntry?.timestamp ?? entries[0].timestamp).getTime(),
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * 加载对话上下文（从 JSONL 重建）
-   */
-  async loadConversation(sessionId: string): Promise<ConversationContext | null> {
-    try {
-      const entries = materializeSessionEvents(await this.log(sessionId).readAll());
-      if (entries.length === 0) return null;
-      const messageMap = new Map<
-        string,
-        { id: string; role: MessageRole; content: string; timestamp: number }
-      >();
-      for (const entry of entries) {
-        if (entry.type === 'message_created') {
-          messageMap.set(entry.data.messageId, {
-            id: entry.data.messageId,
-            role: entry.data.role,
-            content: '',
-            timestamp: new Date(entry.timestamp).getTime(),
-          });
-        }
-        if (entry.type === 'part_created' && entry.data.partType === 'text') {
-          const message = messageMap.get(entry.data.messageId);
-          if (message) {
-            const payload = entry.data.payload as { text?: string };
-            message.content = payload.text ?? '';
-          }
-        }
-        if (entry.type === 'part_created' && entry.data.partType === 'image') {
-          const message = messageMap.get(entry.data.messageId);
-          if (message) {
-            message.content = message.content
-              ? `${message.content}\n[Image]`
-              : '[Image]';
-          }
-        }
-      }
-      const messages = Array.from(messageMap.values());
-      const lastEntry = entries[entries.length - 1];
-      const lastActivity = new Date(lastEntry.timestamp).getTime();
-
-      return {
-        messages,
-        topics: [],
-        lastActivity,
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * 获取所有会话列表
-   */
-  async listSessions(): Promise<string[]> {
-    if (this.stateStorage.kind === 'acp-remote') {
-      throw new Error('Remote session enumeration requires SessionService');
-    }
-    try {
-      const storagePath = getProjectStoragePath(this.projectPath);
-      const files = await fs.readdir(storagePath);
-      return files
-        .filter((file) => file.endsWith('.jsonl'))
-        .map((file) => file.replace('.jsonl', ''))
-        .sort();
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * 获取会话摘要信息
-   */
-  async getSessionSummary(sessionId: string): Promise<{
-    sessionId: string;
-    lastActivity: number;
-    messageCount: number;
-    topics: string[];
-  } | null> {
-    if (this.stateStorage.kind === 'acp-remote') {
-      throw new Error('Remote session summaries require SessionService');
-    }
-    try {
-      const filePath = getSessionFilePath(this.projectPath, sessionId);
-      const store = new JSONLStore(filePath);
-
-      const stats = await store.getStats();
-      if (!stats.exists) return null;
-
-      const rawEntries = await store.readAll();
-      if (rawEntries.length === 0) return null;
-      const entries = materializeSessionEvents(rawEntries);
-
-      const lastEntry = rawEntries[rawEntries.length - 1];
-      const messageCount = entries.filter(
-        (entry) =>
-          entry.type === 'message_created' &&
-          ['user', 'assistant'].includes(entry.data.role)
-      ).length;
-
-      return {
-        sessionId,
-        lastActivity: new Date(lastEntry.timestamp).getTime(),
-        messageCount,
-        topics: [],
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * 删除会话数据
-   */
+  /** 删除会话数据 */
   async deleteSession(sessionId: string): Promise<void> {
     if (this.stateStorage.kind === 'acp-remote') {
       throw new Error('Remote session deletion requires SessionService');
@@ -2306,121 +2150,6 @@ export class PersistentStore {
     } finally {
       this.initializedSessions.delete(sessionId);
     }
-  }
-
-  /**
-   * 清理旧会话（保持最近的N个会话）
-   */
-  async cleanupOldSessions(): Promise<void> {
-    if (this.stateStorage.kind === 'acp-remote') {
-      throw new Error('Remote session cleanup requires SessionService');
-    }
-    try {
-      const sessions = await this.listSessions();
-      if (sessions.length <= this.maxSessions) {
-        return;
-      }
-
-      // 获取所有会话的摘要信息并按时间排序
-      const sessionSummaries = await Promise.all(
-        sessions.map((sessionId) => this.getSessionSummary(sessionId))
-      );
-
-      const validSummaries = sessionSummaries
-        .filter((summary): summary is NonNullable<typeof summary> => summary !== null)
-        .sort((a, b) => b.lastActivity - a.lastActivity);
-
-      // 删除最旧的会话
-      const sessionsToDelete = validSummaries
-        .slice(this.maxSessions)
-        .map((summary) => summary.sessionId);
-
-      await Promise.all(
-        sessionsToDelete.map((sessionId) => this.deleteSession(sessionId))
-      );
-
-      console.log(`[PersistentStore] 已清理 ${sessionsToDelete.length} 个旧会话`);
-    } catch (error) {
-      console.error('[PersistentStore] 清理旧会话失败:', error);
-    }
-  }
-
-  /**
-   * 获取存储统计信息
-   */
-  async getStorageStats(): Promise<{
-    totalSessions: number;
-    totalSize: number;
-    projectPath: string;
-  }> {
-    if (this.stateStorage.kind === 'acp-remote') {
-      throw new Error('Remote storage statistics require SessionService');
-    }
-    try {
-      const sessions = await this.listSessions();
-      let totalSize = 0;
-
-      for (const sessionId of sessions) {
-        const filePath = getSessionFilePath(this.projectPath, sessionId);
-        const store = new JSONLStore(filePath);
-        const stats = await store.getStats();
-        totalSize += stats.size;
-      }
-
-      return {
-        totalSessions: sessions.length,
-        totalSize,
-        projectPath: this.projectPath,
-      };
-    } catch {
-      return {
-        totalSessions: 0,
-        totalSize: 0,
-        projectPath: this.projectPath,
-      };
-    }
-  }
-
-  /**
-   * 检查存储健康状态
-   */
-  async checkStorageHealth(): Promise<{
-    isAvailable: boolean;
-    canWrite: boolean;
-    error?: string;
-  }> {
-    if (this.stateStorage.kind === 'acp-remote') {
-      throw new Error('Remote storage health checks require SessionService');
-    }
-    try {
-      const storagePath = getProjectStoragePath(this.projectPath);
-
-      // 尝试创建目录
-      await fs.mkdir(storagePath, { recursive: true, mode: 0o755 });
-
-      // 尝试写入测试文件
-      const testFile = path.join(storagePath, '.health-check');
-      await fs.writeFile(testFile, 'test', 'utf-8');
-      await fs.unlink(testFile);
-
-      return {
-        isAvailable: true,
-        canWrite: true,
-      };
-    } catch (error) {
-      return {
-        isAvailable: false,
-        canWrite: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  /**
-   * 获取所有项目列表
-   */
-  static async listAllProjects(): Promise<string[]> {
-    return listProjectDirectories();
   }
 }
 

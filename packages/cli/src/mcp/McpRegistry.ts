@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import type { McpServerConfig } from '../config/types.js';
 import type { Tool } from '../tools/types/index.js';
-import type { McpOAuthLoginHandle, McpOAuthStatus } from './auth/index.js';
+import type { McpOAuthLoginHandle } from './auth/index.js';
 import { createMcpTool } from './createMcpTool.js';
 import {
   McpClient,
@@ -49,9 +49,7 @@ import {
 } from './McpToolCatalog.js';
 import { McpConnectionStatus, type McpToolDefinition } from './types.js';
 
-/**
- * MCP服务器信息
- */
+/** MCP服务器信息 */
 export interface McpServerInfo {
   config: McpServerConfig;
   client: McpClient;
@@ -132,14 +130,10 @@ export type McpRegisteredResourceTemplate = McpResourceTemplateDefinition & {
 };
 export type McpRegisteredPrompt = McpPromptDefinition & { server: string };
 
-/**
- * MCP注册表
- * 管理MCP服务器连接和工具发现
- */
+/** MCP注册表 管理MCP服务器连接和工具发现 */
 export class McpRegistry extends EventEmitter {
   private static instance: McpRegistry | null = null;
   private servers: Map<string, McpServerInfo> = new Map();
-  private isDiscovering = false;
   private catalogRevision = 0;
   private contentCatalogRevision = 0;
   private connectionRevision = 0;
@@ -152,9 +146,7 @@ export class McpRegistry extends EventEmitter {
     super();
   }
 
-  /**
-   * 获取单例实例
-   */
+  /** 获取单例实例 */
   static getInstance(): McpRegistry {
     if (!McpRegistry.instance) {
       McpRegistry.instance = new McpRegistry();
@@ -162,16 +154,12 @@ export class McpRegistry extends EventEmitter {
     return McpRegistry.instance;
   }
 
-  /**
-   * 创建由单个 runtime 独占的注册表，避免会话级 MCP 配置污染全局实例。
-   */
+  /** 创建由单个 runtime 独占的注册表，避免会话级 MCP 配置污染全局实例。 */
   static createIsolated(runtimeOptions: McpClientRuntimeOptions = {}): McpRegistry {
     return new McpRegistry(runtimeOptions);
   }
 
-  /**
-   * 注册MCP服务器
-   */
+  /** 注册MCP服务器 */
   async registerServer(
     name: string,
     config: McpServerConfig,
@@ -209,9 +197,7 @@ export class McpRegistry extends EventEmitter {
     }
   }
 
-  /**
-   * 注销MCP服务器
-   */
+  /** 注销MCP服务器 */
   async unregisterServer(name: string): Promise<void> {
     const serverInfo = this.servers.get(name);
     if (!serverInfo) {
@@ -230,9 +216,7 @@ export class McpRegistry extends EventEmitter {
     this.emit('serverUnregistered', name);
   }
 
-  /**
-   * 连接到指定服务器
-   */
+  /** 连接到指定服务器 */
   async connectServer(name: string): Promise<void> {
     const serverInfo = this.servers.get(name);
     if (!serverInfo) {
@@ -256,9 +240,7 @@ export class McpRegistry extends EventEmitter {
     }
   }
 
-  /**
-   * 断开指定服务器
-   */
+  /** 断开指定服务器 */
   async disconnectServer(name: string): Promise<void> {
     const serverInfo = this.servers.get(name);
     if (!serverInfo) {
@@ -270,10 +252,7 @@ export class McpRegistry extends EventEmitter {
     serverInfo.connectedAt = undefined;
   }
 
-  /**
-   * 重连指定服务器（用于从 ERROR 状态恢复）
-   * 这个方法可以在首次连接失败或意外断开后使用
-   */
+  /** 重连指定服务器（用于从 ERROR 状态恢复） 这个方法可以在首次连接失败或意外断开后使用 */
   async reconnectServer(name: string): Promise<void> {
     const serverInfo = this.servers.get(name);
     if (!serverInfo) {
@@ -295,15 +274,6 @@ export class McpRegistry extends EventEmitter {
       serverInfo.status = McpConnectionStatus.ERROR;
       throw error;
     }
-  }
-
-  /**
-   * 获取所有可用工具。
-   *
-   * 工具始终使用 mcp__<server>__<tool> provider 名称。
-   */
-  async getAvailableTools(): Promise<Tool[]> {
-    return [...this.projectedTools.values()];
   }
 
   getCatalogSnapshot(): {
@@ -473,19 +443,6 @@ export class McpRegistry extends EventEmitter {
     return McpTaskManager.getInstance().list(owner, serverName);
   }
 
-  getTask(taskId: string, owner: McpTaskOwner): McpTaskSnapshot | undefined {
-    return McpTaskManager.getInstance().get(taskId, owner);
-  }
-
-  waitForTask(
-    taskId: string,
-    owner: McpTaskOwner,
-    timeoutMs: number,
-    signal?: AbortSignal
-  ): Promise<McpTaskSnapshot | undefined> {
-    return McpTaskManager.getInstance().wait(taskId, owner, timeoutMs, signal);
-  }
-
   cancelTask(
     taskId: string,
     owner: McpTaskOwner,
@@ -511,53 +468,19 @@ export class McpRegistry extends EventEmitter {
     server.logging = server.client.logging;
   }
 
-  /**
-   * 根据名称查找工具
-   */
+  /** 根据名称查找工具 */
   async findTool(toolName: string): Promise<Tool | null> {
     return this.projectedTools.get(toolName) ?? null;
   }
 
-  /**
-   * 按服务器获取工具
-   */
-  getToolsByServer(serverName: string): Tool[] {
-    const serverInfo = this.servers.get(serverName);
-    if (!serverInfo || serverInfo.status !== McpConnectionStatus.CONNECTED) {
-      return [];
-    }
-
-    return serverInfo.tools.map((mcpTool) =>
-      createMcpTool(
-        serverInfo.client,
-        serverName,
-        mcpTool,
-        createMcpProviderToolName(serverName, mcpTool.name),
-        this.runtimeOptions.artifactWriter
-      )
-    );
-  }
-
-  /**
-   * 获取服务器状态
-   */
+  /** 获取服务器状态 */
   getServerStatus(name: string): McpServerInfo | null {
     return this.servers.get(name) || null;
   }
 
-  /**
-   * 获取所有服务器信息
-   */
+  /** 获取所有服务器信息 */
   getAllServers(): Map<string, McpServerInfo> {
     return new Map(this.servers);
-  }
-
-  async getServerOAuthStatus(name: string): Promise<McpOAuthStatus> {
-    const serverInfo = this.servers.get(name);
-    if (!serverInfo) {
-      throw new Error(`MCP服务器 "${name}" 未注册`);
-    }
-    return serverInfo.client.getOAuthStatus();
   }
 
   async beginOAuthLogin(
@@ -608,41 +531,7 @@ export class McpRegistry extends EventEmitter {
     this.emit('serverOAuthStatusChanged', name, 'unauthenticated');
   }
 
-  /**
-   * 刷新所有服务器工具列表
-   */
-  async refreshAllTools(): Promise<void> {
-    const refreshPromises: Promise<void>[] = [];
-
-    for (const [serverName, serverInfo] of this.servers) {
-      if (serverInfo.status === McpConnectionStatus.CONNECTED) {
-        refreshPromises.push(this.refreshServerTools(serverName));
-      }
-    }
-
-    await Promise.allSettled(refreshPromises);
-  }
-
-  /**
-   * 刷新指定服务器工具列表
-   */
-  async refreshServerTools(name: string): Promise<void> {
-    const serverInfo = this.servers.get(name);
-    if (!serverInfo || serverInfo.status !== McpConnectionStatus.CONNECTED) {
-      return;
-    }
-
-    try {
-      await serverInfo.client.refreshTools('manual');
-    } catch (error) {
-      console.warn(`刷新服务器 "${name}" 工具列表失败:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * 设置客户端事件处理器
-   */
+  /** 设置客户端事件处理器 */
   private setupClientEventHandlers(
     client: McpClient,
     serverInfo: McpServerInfo,
@@ -992,74 +881,7 @@ export class McpRegistry extends EventEmitter {
     return server;
   }
 
-  /**
-   * 自动发现MCP服务器 (基础实现，可扩展)
-   */
-  async discoverServers(): Promise<McpServerInfo[]> {
-    if (this.isDiscovering) {
-      return Array.from(this.servers.values());
-    }
-
-    this.isDiscovering = true;
-    this.emit('discoveryStarted');
-
-    try {
-      // 这里可以实现自动发现逻辑
-      // 例如扫描常见的MCP服务器安装位置
-      // 或者读取配置文件中的服务器列表
-
-      // 目前返回已注册的服务器
-      return Array.from(this.servers.values());
-    } finally {
-      this.isDiscovering = false;
-      this.emit('discoveryCompleted');
-    }
-  }
-
-  /**
-   * 批量注册服务器
-   */
-  async registerServers(servers: Record<string, McpServerConfig>): Promise<void> {
-    const registrationPromises = Object.entries(servers).map(([name, config]) =>
-      this.registerServer(name, config).catch((error) => {
-        console.warn(`注册MCP服务器 "${name}" 失败:`, error);
-        return error;
-      })
-    );
-
-    await Promise.allSettled(registrationPromises);
-  }
-
-  /**
-   * 获取统计信息
-   */
-  getStatistics() {
-    let connectedCount = 0;
-    let totalTools = 0;
-    let errorCount = 0;
-
-    for (const serverInfo of this.servers.values()) {
-      if (serverInfo.status === McpConnectionStatus.CONNECTED) {
-        connectedCount++;
-        totalTools += serverInfo.tools.length;
-      } else if (serverInfo.status === McpConnectionStatus.ERROR) {
-        errorCount++;
-      }
-    }
-
-    return {
-      totalServers: this.servers.size,
-      connectedServers: connectedCount,
-      errorServers: errorCount,
-      totalTools,
-      isDiscovering: this.isDiscovering,
-    };
-  }
-
-  /**
-   * 断开所有 MCP 服务器连接
-   * 在应用退出时调用
-   */
+  /** 断开所有 MCP 服务器连接 在应用退出时调用 */
   async disconnectAll(): Promise<void> {
     const disconnectPromises: Promise<void>[] = [];
 

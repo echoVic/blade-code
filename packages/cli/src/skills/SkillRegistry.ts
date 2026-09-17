@@ -1,8 +1,6 @@
 /**
- * SkillRegistry - Skill 注册表
- *
- * 负责发现、加载、管理所有可用的 Skills。
- * 使用 Progressive Disclosure：启动时仅加载元数据，执行时才加载完整内容。
+ * SkillRegistry - Skill 注册表 <p> 负责发现、加载、管理所有可用的 Skills。 使用 Progressive
+ * Disclosure：启动时仅加载元数据，执行时才加载完整内容。
  */
 
 import * as fs from 'node:fs/promises';
@@ -27,11 +25,7 @@ import type {
   SkillRegistryConfig,
 } from './types.js';
 
-/**
- * 默认配置
- * 注意：cwd 不在这里求值，而是在构造函数中延迟求值，
- * 因为此常量在模块加载阶段就会被执行，那时 setCwd() 可能尚未调用。
- */
+/** 默认配置 注意：cwd 不在这里求值，而是在构造函数中延迟求值， 因为此常量在模块加载阶段就会被执行，那时 setCwd() 可能尚未调用。 */
 const DEFAULT_CONFIG_BASE = {
   userSkillsDir: path.join(homedir(), '.blade', 'skills'),
   projectSkillsDir: '.blade/skills',
@@ -40,18 +34,14 @@ const DEFAULT_CONFIG_BASE = {
   claudeProjectSkillsDir: '.claude/skills',
 };
 
-/**
- * SkillRegistry 单例
- */
+/** SkillRegistry 单例 */
 const instances = new Map<string, SkillRegistry>();
 
 function registryKey(config?: SkillRegistryConfig): string {
   return path.resolve(config?.cwd ?? getCwd());
 }
 
-/**
- * Skill 注册表
- */
+/** Skill 注册表 */
 export class SkillRegistry {
   private skills: Map<string, SkillMetadata> = new Map();
   /** Plugin skills stored with namespaced names */
@@ -63,9 +53,7 @@ export class SkillRegistry {
     this.config = { ...DEFAULT_CONFIG_BASE, cwd: getCwd(), ...config };
   }
 
-  /**
-   * 获取单例实例
-   */
+  /** 获取单例实例 */
   static getInstance(config?: SkillRegistryConfig): SkillRegistry {
     const key = registryKey(config);
     let instance = instances.get(key);
@@ -79,9 +67,7 @@ export class SkillRegistry {
     return instance;
   }
 
-  /**
-   * 重置单例（用于测试）
-   */
+  /** 重置单例（用于测试） */
   static resetInstance(): void {
     instances.clear();
   }
@@ -167,9 +153,7 @@ export class SkillRegistry {
     };
   }
 
-  /**
-   * 加载内置 Skills
-   */
+  /** 加载内置 Skills */
   private loadBuiltinSkills(): void {
     // 注册 skill-creator
     this.skills.set(skillCreatorMetadata.name, skillCreatorMetadata);
@@ -177,9 +161,7 @@ export class SkillRegistry {
     this.skills.set(updateConfigMetadata.name, updateConfigMetadata);
   }
 
-  /**
-   * 扫描指定目录下的所有 skills
-   */
+  /** 扫描指定目录下的所有 skills */
   private async scanDirectory(
     dirPath: string,
     source: 'user' | 'project'
@@ -228,30 +210,22 @@ export class SkillRegistry {
     return { skills, errors };
   }
 
-  /**
-   * 获取所有已注册的 skills 元数据
-   */
+  /** 获取所有已注册的 skills 元数据 */
   getAll(): SkillMetadata[] {
     return Array.from(this.skills.values());
   }
 
-  /**
-   * 根据名称获取 skill 元数据
-   */
+  /** 根据名称获取 skill 元数据 */
   get(name: string): SkillMetadata | undefined {
     return this.skills.get(name);
   }
 
-  /**
-   * 检查 skill 是否存在
-   */
+  /** 检查 skill 是否存在 */
   has(name: string): boolean {
     return this.skills.has(name);
   }
 
-  /**
-   * 加载 skill 的完整内容（懒加载）
-   */
+  /** 加载 skill 的完整内容（懒加载） */
   async loadContent(name: string): Promise<SkillContent | null> {
     const metadata = this.skills.get(name);
     if (!metadata) return null;
@@ -265,9 +239,7 @@ export class SkillRegistry {
     return loadSkillContent(metadata);
   }
 
-  /**
-   * 加载内置 Skill 的完整内容
-   */
+  /** 加载内置 Skill 的完整内容 */
   private loadBuiltinContent(name: string): SkillContent | null {
     switch (name) {
       case 'skill-creator':
@@ -331,16 +303,12 @@ export class SkillRegistry {
     return lines.join('\n');
   }
 
-  /**
-   * 获取 skills 数量
-   */
+  /** 获取 skills 数量 */
   get size(): number {
     return this.skills.size;
   }
 
-  /**
-   * 重新扫描并刷新注册表
-   */
+  /** 重新扫描并刷新注册表 */
   async refresh(): Promise<SkillDiscoveryResult> {
     this.skills.clear();
     this.pluginSkills.clear();
@@ -401,48 +369,7 @@ export class SkillRegistry {
     this.skills.set(skill.namespacedName, skill.metadata);
   }
 
-  /**
-   * 查找插件技能
-   *
-   * Supports both:
-   * - Full namespaced name: "plugin:skill"
-   * - Short name if unique: "skill"
-   *
-   * @param name - Skill name to find
-   * @returns Plugin skill or undefined
-   */
-  findPluginSkill(name: string): PluginSkill | undefined {
-    // Try exact namespaced match first
-    const exact = this.pluginSkills.get(name);
-    if (exact) return exact;
-
-    // Try short name match (if unique)
-    const matches: PluginSkill[] = [];
-    for (const skill of this.pluginSkills.values()) {
-      if (skill.originalName === name) {
-        matches.push(skill);
-      }
-    }
-
-    // Only return if exactly one match
-    if (matches.length === 1) {
-      return matches[0];
-    }
-
-    return undefined;
-  }
-
-  /**
-   * 获取所有插件技能
-   */
-  getAllPluginSkills(): PluginSkill[] {
-    return Array.from(this.pluginSkills.values());
-  }
-
-  /**
-   * 清除所有插件技能
-   * Called when refreshing plugins
-   */
+  /** 清除所有插件技能 Called when refreshing plugins */
   clearPluginSkills(): void {
     // Remove from main skills map
     for (const skill of this.pluginSkills.values()) {
@@ -450,28 +377,9 @@ export class SkillRegistry {
     }
     this.pluginSkills.clear();
   }
-
-  /**
-   * 获取插件技能数量
-   */
-  getPluginSkillCount(): number {
-    return this.pluginSkills.size;
-  }
 }
 
-/**
- * 获取 SkillRegistry 单例
- */
+/** 获取 SkillRegistry 单例 */
 export function getSkillRegistry(config?: SkillRegistryConfig): SkillRegistry {
   return SkillRegistry.getInstance(config);
-}
-
-/**
- * 初始化并获取所有 skills
- */
-export async function discoverSkills(
-  config?: SkillRegistryConfig
-): Promise<SkillDiscoveryResult> {
-  const registry = getSkillRegistry(config);
-  return registry.initialize();
 }

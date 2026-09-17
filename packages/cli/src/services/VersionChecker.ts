@@ -1,8 +1,4 @@
-/**
- * 版本检查服务
- *
- * 启动时检查 npm registry 获取最新版本，提供交互式更新选项
- */
+/** 版本检查服务 启动时检查 npm registry 获取最新版本，提供交互式更新选项 */
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -45,9 +41,7 @@ export interface VersionCheckResult {
   error?: string;
 }
 
-/**
- * 获取当前安装的版本
- */
+/** 获取当前安装的版本 */
 async function getCurrentVersion(): Promise<string> {
   try {
     if (process.env.BLADE_VERSION) {
@@ -59,9 +53,7 @@ async function getCurrentVersion(): Promise<string> {
   }
 }
 
-/**
- * 从缓存读取版本信息
- */
+/** 从缓存读取版本信息 */
 async function readCache(): Promise<VersionCache | null> {
   try {
     const content = await fs.readFile(CACHE_FILE, 'utf-8');
@@ -78,9 +70,7 @@ async function readCache(): Promise<VersionCache | null> {
   }
 }
 
-/**
- * 写入缓存
- */
+/** 写入缓存 */
 async function writeCache(cache: VersionCache): Promise<void> {
   try {
     await fs.mkdir(CACHE_DIR, { recursive: true, mode: 0o755 });
@@ -90,9 +80,7 @@ async function writeCache(cache: VersionCache): Promise<void> {
   }
 }
 
-/**
- * 从 npm registry 获取最新版本
- */
+/** 从 npm registry 获取最新版本 */
 async function fetchLatestVersion(): Promise<string | null> {
   try {
     return await proxyFetch(
@@ -204,9 +192,7 @@ export async function checkVersion(forceCheck = false): Promise<VersionCheckResu
   };
 }
 
-/**
- * 设置跳过直到下一版本
- */
+/** 设置跳过直到下一版本 */
 export async function setSkipUntilVersion(version: string): Promise<void> {
   const cache = await readCache();
   await writeCache({
@@ -225,9 +211,7 @@ export function getUpgradeCommand(): string {
   return `npm install -g ${PACKAGE_NAME}@latest --registry https://registry.npmjs.org`;
 }
 
-/**
- * 执行升级（返回 Promise）
- */
+/** 执行升级（返回 Promise） */
 export async function performUpgrade(): Promise<{ success: boolean; message: string }> {
   const { spawn } = await import('child_process');
 
@@ -262,9 +246,7 @@ export async function performUpgrade(): Promise<{ success: boolean; message: str
   });
 }
 
-/**
- * 启动时版本检查（简化版，仅返回检查结果）
- */
+/** 启动时版本检查（简化版，仅返回检查结果） */
 export async function checkVersionOnStartup(): Promise<VersionCheckResult | null> {
   try {
     const cache = await readCache();

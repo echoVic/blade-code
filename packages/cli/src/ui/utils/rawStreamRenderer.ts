@@ -1,19 +1,11 @@
 /**
- * Raw Streaming Renderer
- *
- * 绕过 React/Ink 的渲染周期，直接通过 process.stdout.write 输出流式 tail 内容。
- *
- * 设计原理：
- * - 流式消息的 tail 部分（当前正在接收的未完成行）是最高频更新的部分
- * - 通过 Ink 渲染这部分内容会触发 React reconciliation + Ink ANSI diff，开销大
- * - 此模块直接管理一个 "raw 区域"，用 ANSI cursor save/restore 原地更新
- * - 已完成的 markdown blocks 仍由 MessageArea 的 Static 组件渲染（保持高质量格式化）
- *
- * 工作流程：
- * 1. MessageArea 检测到流式消息时调用 activate()
- * 2. 每次 streaming version 变化时，MessageArea 调用 renderTail() 而非渲染 React 组件
- * 3. renderTail() 使用 ANSI escape 直接覆写 raw 区域
- * 4. 流式结束时调用 clear() 清除 raw 区域
+ * Raw Streaming Renderer <p> 绕过 React/Ink 的渲染周期，直接通过 process.stdout.write 输出流式 tail 内容。
+ * <p> 设计原理： - 流式消息的 tail 部分（当前正在接收的未完成行）是最高频更新的部分 - 通过 Ink 渲染这部分内容会触发 React
+ * reconciliation + Ink ANSI diff，开销大 - 此模块直接管理一个 "raw 区域"，用 ANSI cursor save/restore
+ * 原地更新 - 已完成的 markdown blocks 仍由 MessageArea 的 Static 组件渲染（保持高质量格式化） <p> 工作流程： 1.
+ * MessageArea 检测到流式消息时调用 activate() 2. 每次 streaming version 变化时，MessageArea 调用
+ * renderTail() 而非渲染 React 组件 3. renderTail() 使用 ANSI escape 直接覆写 raw 区域 4. 流式结束时调用
+ * clear() 清除 raw 区域
  */
 
 import chalk from 'chalk';
@@ -54,9 +46,7 @@ const CURSOR_UP = (n: number) => (n > 0 ? `${ESC}[${n}A` : '');
 const HIDE_CURSOR = `${ESC}[?25l`;
 const SHOW_CURSOR = `${ESC}[?25h`;
 
-/**
- * 激活 raw renderer
- */
+/** 激活 raw renderer */
 export function activateRawRenderer(
   terminalWidth: number,
   terminalHeight: number
@@ -69,9 +59,7 @@ export function activateRawRenderer(
   state.isFirstRender = true;
 }
 
-/**
- * 更新终端尺寸
- */
+/** 更新终端尺寸 */
 export function updateRawRendererSize(
   terminalWidth: number,
   terminalHeight: number
@@ -229,9 +217,7 @@ export function renderTail(
   state.lastRenderedLines = outputLines;
 }
 
-/**
- * 清除 raw 区域并停用
- */
+/** 清除 raw 区域并停用 */
 export function clearRawRenderer(): void {
   if (!state.active) return;
 
@@ -267,16 +253,7 @@ export function clearRawRenderer(): void {
   state.isFirstRender = true;
 }
 
-/**
- * 检查是否处于活动状态
- */
+/** 检查是否处于活动状态 */
 export function isRawRendererActive(): boolean {
   return state.active;
-}
-
-/**
- * 获取当前 raw 区域占用的行数
- */
-export function getRawRendererLineCount(): number {
-  return state.renderedLineCount;
 }

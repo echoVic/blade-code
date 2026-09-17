@@ -1,8 +1,4 @@
-/**
- * Hook Output Parser
- *
- * 解析 Hook 命令的输出
- */
+/** Hook Output Parser 解析 Hook 命令的输出 */
 
 import { safeParseHookOutput } from './schemas/HookSchemas.js';
 import type {
@@ -14,13 +10,9 @@ import type {
   ProcessResult,
 } from './types/HookTypes.js';
 
-/**
- * 输出解析器
- */
+/** 输出解析器 */
 export class OutputParser {
-  /**
-   * 解析进程结果
-   */
+  /** 解析进程结果 */
   parse(
     result: ProcessResult,
     hook: Hook,
@@ -158,9 +150,7 @@ export class OutputParser {
     return this.parseByExitCode(result, hook, config);
   }
 
-  /**
-   * 根据退出码解析
-   */
+  /** 根据退出码解析 */
   private parseByExitCode(
     result: ProcessResult,
     hook: Hook,
@@ -272,9 +262,7 @@ export class OutputParser {
     }
   }
 
-  /**
-   * 尝试解析 JSON
-   */
+  /** 尝试解析 JSON */
   private tryParseJSON(text: string): unknown | null {
     try {
       const trimmed = text.trim();

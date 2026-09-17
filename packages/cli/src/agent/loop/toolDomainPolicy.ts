@@ -1,12 +1,7 @@
 /**
- * toolDomainPolicy — 工具结果的领域副作用处理
- *
- * 从 executeLoopGenerator 中提取的 domain side effects：
- * - TaskCreate/TaskUpdate/TaskList -> 更新任务列表
- * - Skill -> 激活 skill context
- * - ModelSwitch -> 触发模型切换
- *
- * 纯函数 / 薄封装，返回 action descriptors 或直接调用 deps 回调。
+ * toolDomainPolicy — 工具结果的领域副作用处理 <p> 从 executeLoopGenerator 中提取的 domain side effects：
+ * - TaskCreate/TaskUpdate/TaskList -> 更新任务列表 - Skill -> 激活 skill context - ModelSwitch
+ * -> 触发模型切换 <p> 纯函数 / 薄封装，返回 action descriptors 或直接调用 deps 回调。
  */
 
 import { HookManager } from '../../hooks/HookManager.js';
@@ -15,10 +10,7 @@ import type { ToolResult } from '../../tools/types/index.js';
 import type { ChatContext } from '../types.js';
 import type { DomainEvent, LoopDependencies } from './types.js';
 
-/**
- * 窄化的工具调用引用：只包含 function 类型的 tool call。
- * 由调用方在传入时断言（executeLoopGenerator 中已有此 cast）。
- */
+/** 窄化的工具调用引用：只包含 function 类型的 tool call。 由调用方在传入时断言（executeLoopGenerator 中已有此 cast）。 */
 export interface FunctionToolCallRef {
   id: string;
   type: 'function';
@@ -32,10 +24,7 @@ export interface TaskUpdateAction {
   tasks: TaskListItem[];
 }
 
-/**
- * 处理任务列表工具结果，提取任务列表。
- * 返回 TaskUpdateAction 或 null。
- */
+/** 处理任务列表工具结果，提取任务列表。 返回 TaskUpdateAction 或 null。 */
 export function handleTaskListUpdate(
   toolCall: FunctionToolCallRef,
   result: ToolResult
@@ -62,9 +51,7 @@ export function handleTaskListUpdate(
 
 // ===== Skill Activation =====
 
-/**
- * 处理 Skill 工具结果，触发 skill 激活回调。
- */
+/** 处理 Skill 工具结果，触发 skill 激活回调。 */
 export function handleSkillActivation(
   toolCall: FunctionToolCallRef,
   result: ToolResult,
@@ -86,10 +73,7 @@ export function handleSkillActivation(
 
 // ===== Model Switch =====
 
-/**
- * 处理工具结果中的模型切换请求。
- * 返回 modelId 或 undefined。
- */
+/** 处理工具结果中的模型切换请求。 返回 modelId 或 undefined。 */
 export function extractModelSwitch(result: ToolResult): string | undefined {
   const metadata = result.metadata as Record<string, unknown> | undefined;
   if (!metadata) return undefined;
@@ -201,10 +185,7 @@ export function handleSubagentLifecycle(
   return null;
 }
 
-/**
- * 处理所有工具结果的领域副作用。
- * 返回 DomainEvent（如果有）并触发 skill/model 回调。
- */
+/** 处理所有工具结果的领域副作用。 返回 DomainEvent（如果有）并触发 skill/model 回调。 */
 export async function applyToolDomainEffects(
   toolCall: FunctionToolCallRef,
   result: ToolResult,

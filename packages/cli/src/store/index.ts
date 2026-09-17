@@ -1,11 +1,6 @@
 /**
- * Blade Store - React 入口
- *
- * 遵循准则：
- * 1. 只暴露 actions - 不直接暴露 set
- * 2. 强选择器约束 - 使用选择器访问状态
- * 3. 单一数据源 - React 订阅 vanilla store
- * 4. vanilla store 对外 - 供 Agent 使用
+ * Blade Store - React 入口 <p> 遵循准则： 1. 只暴露 actions - 不直接暴露 set 2. 强选择器约束 - 使用选择器访问状态 3.
+ * 单一数据源 - React 订阅 vanilla store 4. vanilla store 对外 - 供 Agent 使用
  */
 
 import { useStore } from 'zustand';

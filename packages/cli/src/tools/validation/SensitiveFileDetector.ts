@@ -1,14 +1,9 @@
-/**
- * 敏感文件检测器
- * 识别和保护敏感文件（密钥、凭证、配置等）
- */
+/** 敏感文件检测器 识别和保护敏感文件（密钥、凭证、配置等） */
 
 import os from 'node:os';
 import path from 'node:path';
 
-/**
- * 敏感度级别
- */
+/** 敏感度级别 */
 export enum SensitivityLevel {
   /** 高度敏感：私钥、密码、凭证 */
   HIGH = 'high',
@@ -18,9 +13,7 @@ export enum SensitivityLevel {
   LOW = 'low',
 }
 
-/**
- * 敏感文件检测结果
- */
+/** 敏感文件检测结果 */
 export interface SensitiveFileCheckResult {
   /** 是否是敏感文件 */
   isSensitive: boolean;
@@ -32,9 +25,7 @@ export interface SensitiveFileCheckResult {
   reason?: string;
 }
 
-/**
- * 敏感文件模式配置
- */
+/** 敏感文件模式配置 */
 interface SensitivePattern {
   /** 文件名模式（支持通配符） */
   pattern: string | RegExp;
@@ -44,9 +35,7 @@ interface SensitivePattern {
   description: string;
 }
 
-/**
- * 敏感文件检测器
- */
+/** 敏感文件检测器 */
 export class SensitiveFileDetector {
   /** 敏感文件模式列表 */
   private static readonly SENSITIVE_PATTERNS: SensitivePattern[] = [
@@ -231,9 +220,7 @@ export class SensitiveFileDetector {
     },
   ];
 
-  /**
-   * 检查文件是否敏感
-   */
+  /** 检查文件是否敏感 */
   static check(filePath: string): SensitiveFileCheckResult {
     const normalizedPath = this.normalizePath(filePath);
     const fileName = path.basename(normalizedPath);
@@ -274,22 +261,7 @@ export class SensitiveFileDetector {
     };
   }
 
-  /**
-   * 批量检查文件列表
-   */
-  static checkMultiple(filePaths: string[]): Map<string, SensitiveFileCheckResult> {
-    const results = new Map<string, SensitiveFileCheckResult>();
-
-    for (const filePath of filePaths) {
-      results.set(filePath, this.check(filePath));
-    }
-
-    return results;
-  }
-
-  /**
-   * 获取敏感文件列表
-   */
+  /** 获取敏感文件列表 */
   static filterSensitive(
     filePaths: string[],
     minLevel: SensitivityLevel = SensitivityLevel.LOW
@@ -315,9 +287,7 @@ export class SensitiveFileDetector {
       );
   }
 
-  /**
-   * 规范化路径（处理 ~ 和相对路径）
-   */
+  /** 规范化路径（处理 ~ 和相对路径） */
   private static normalizePath(filePath: string): string {
     // 展开 ~ 为用户主目录
     if (filePath.startsWith('~/') || filePath === '~') {
@@ -328,9 +298,7 @@ export class SensitiveFileDetector {
     return path.resolve(filePath);
   }
 
-  /**
-   * 匹配模式（支持字符串和正则）
-   */
+  /** 匹配模式（支持字符串和正则） */
   private static matchPattern(text: string, pattern: string | RegExp): boolean {
     if (pattern instanceof RegExp) {
       return pattern.test(text);
@@ -339,19 +307,5 @@ export class SensitiveFileDetector {
     // 简单通配符匹配（* 匹配任意字符）
     const regexPattern = pattern.replace(/\*/g, '.*');
     return new RegExp(`^${regexPattern}$`, 'i').test(text);
-  }
-
-  /**
-   * 获取所有敏感文件模式（用于文档/调试）
-   */
-  static getSensitivePatterns(): SensitivePattern[] {
-    return [...this.SENSITIVE_PATTERNS];
-  }
-
-  /**
-   * 获取所有敏感路径模式（用于文档/调试）
-   */
-  static getSensitivePaths(): typeof SensitiveFileDetector.SENSITIVE_PATHS {
-    return [...this.SENSITIVE_PATHS];
   }
 }

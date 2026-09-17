@@ -1,7 +1,4 @@
-/**
- * Package.json 信息读取工具
- * 提供统一的包信息访问接口
- */
+/** Package.json 信息读取工具 提供统一的包信息访问接口 */
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -47,44 +44,32 @@ function readRuntimePackageInfo(): PackageInfo {
   return cachedPackageInfo;
 }
 
-/**
- * 获取包信息
- */
+/** 获取包信息 */
 export function getPackageInfo(): PackageInfo {
   return { ...readRuntimePackageInfo() };
 }
 
-/**
- * 获取版本号
- */
+/** 获取版本号 */
 export function getVersion(): string {
   return readRuntimePackageInfo().version;
 }
 
-/**
- * 获取包名
- */
+/** 获取包名 */
 export function getPackageName(): string {
   return readRuntimePackageInfo().name;
 }
 
-/**
- * 获取描述
- */
+/** 获取描述 */
 export function getDescription(): string {
   return readRuntimePackageInfo().description;
 }
 
-/**
- * 获取格式化的版本信息
- */
+/** 获取格式化的版本信息 */
 export function getFormattedVersion(): string {
   return `v${getVersion()}`;
 }
 
-/**
- * 获取版权信息
- */
+/** 获取版权信息 */
 export function getCopyright(): string {
   return `v${getVersion()} © 2025 Blade Code`;
 }

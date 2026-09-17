@@ -207,6 +207,8 @@ allowedTools:
   - Bash(git:*)  # Only allow git-related commands
 ```
 
+Restrictions apply to the logical turn that invokes the Skill, including multiple model requests and execution after same-turn Plan approval. Completion, failure, cancellation, or stream closure releases them, so the next ordinary task in the same session does not inherit stale restrictions. Rejected concurrent calls do not clear the running turn's restrictions. Historical Skill instructions remain in the conversation.
+
 ## Differences from Subagents
 
 | Feature | Skills | Subagents |

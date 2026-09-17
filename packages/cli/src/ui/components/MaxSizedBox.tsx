@@ -21,9 +21,7 @@ import {
   toCodePoints,
 } from '../utils/textUtils.js';
 
-/**
- * 最小高度，确保至少显示一行内容和截断提示
- */
+/** 最小高度，确保至少显示一行内容和截断提示 */
 export const MINIMUM_MAX_HEIGHT = 2;
 
 interface MaxSizedBoxProps {
@@ -36,9 +34,7 @@ interface MaxSizedBoxProps {
   additionalHiddenLinesCount?: number;
 }
 
-/**
- * 行数据结构
- */
+/** 行数据结构 */
 interface Row {
   /** 不换行的片段（如行号、前缀） */
   noWrapSegments: StyledText[];
@@ -77,8 +73,7 @@ export const MaxSizedBox: React.FC<MaxSizedBoxProps> = React.memo(
       MINIMUM_MAX_HEIGHT
     );
 
-    // 遍历子元素，将每个 Box 转换为布局后的行
-    // 注意：仅支持 Box 子元素，不支持顶层 Text（会丢失嵌套样式）
+    // 遍历子元素，将每个 Box 转换为布局后的行 注意：仅支持 Box 子元素，不支持顶层 Text（会丢失嵌套样式）
     function visitRows(element: React.ReactNode) {
       if (!React.isValidElement<{ children?: React.ReactNode }>(element)) {
         return;
@@ -94,8 +89,7 @@ export const MaxSizedBox: React.FC<MaxSizedBoxProps> = React.memo(
         return;
       }
 
-      // 其他元素类型（包括顶层 Text）忽略
-      // 如果需要处理纯文本，请用 <Box><Text>...</Text></Box> 包装
+      // 其他元素类型（包括顶层 Text）忽略 如果需要处理纯文本，请用 <Box><Text>...</Text></Box> 包装
     }
 
     React.Children.forEach(children, visitRows);
@@ -154,9 +148,7 @@ export const MaxSizedBox: React.FC<MaxSizedBoxProps> = React.memo(
   }
 );
 
-/**
- * 从 Box 元素中提取行数据
- */
+/** 从 Box 元素中提取行数据 */
 function visitBoxRow(element: React.ReactNode): Row {
   if (
     !React.isValidElement<{ children?: React.ReactNode }>(element) ||
@@ -231,9 +223,7 @@ function visitBoxRow(element: React.ReactNode): Row {
   return row;
 }
 
-/**
- * 将 Box 元素布局为带样式的文本行
- */
+/** 将 Box 元素布局为带样式的文本行 */
 function layoutBoxAsStyledText(
   element: React.ReactElement,
   maxWidth: number,
@@ -400,9 +390,7 @@ function layoutBoxAsStyledText(
   }
 }
 
-/**
- * 处理没有空间换行的情况 - 截断并添加省略号
- */
+/** 处理没有空间换行的情况 - 截断并添加省略号 */
 function handleNoSpaceForWrapping(
   noWrapSegments: StyledText[],
   maxWidth: number,

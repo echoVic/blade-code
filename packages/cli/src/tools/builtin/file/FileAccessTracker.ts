@@ -7,9 +7,7 @@ import { NodeError } from '../../types/index.js';
 // 创建 FileAccessTracker 专用 Logger
 const logger = createLogger(LogCategory.TOOL);
 
-/**
- * 文件访问记录
- */
+/** 文件访问记录 */
 export interface FileAccessRecord {
   filePath: string; // 文件绝对路径
   accessTime: number; // 最后访问时间戳（毫秒）- 包括 read/edit/write
@@ -17,14 +15,7 @@ export interface FileAccessRecord {
   sessionId: string; // 会话 ID
   lastOperation: 'read' | 'edit' | 'write'; // 最后操作类型
 }
-/**
- * 文件访问跟踪器
- *
- * 功能：
- * 1. 跟踪已读文件的时间戳
- * 2. 验证编辑前文件是否已通过 Read 工具读取
- * 3. 检查文件修改时间是否晚于读取时间（防止并发编辑）
- */
+/** 文件访问跟踪器 功能： 1. 跟踪已读文件的时间戳 2. 验证编辑前文件是否已通过 Read 工具读取 3. 检查文件修改时间是否晚于读取时间（防止并发编辑） */
 export class FileAccessTracker {
   // 全局单例实例
   private static instance: FileAccessTracker | null = null;
@@ -36,9 +27,7 @@ export class FileAccessTracker {
   // 私有构造函数（单例模式）
   private constructor() {}
 
-  /**
-   * 获取全局单例实例
-   */
+  /** 获取全局单例实例 */
   static getInstance(): FileAccessTracker {
     if (!FileAccessTracker.instance) {
       FileAccessTracker.instance = new FileAccessTracker();
@@ -200,8 +189,7 @@ export class FileAccessTracker {
       // 计算时间差（文件 mtime - 我们的操作时间）
       const timeDiff = stats.mtimeMs - record.mtime;
 
-      // 使用 2 秒缓冲
-      // 如果文件在我们操作后 2 秒之后被修改，判定为外部修改
+      // 使用 2 秒缓冲 如果文件在我们操作后 2 秒之后被修改，判定为外部修改
       if (timeDiff > 2000) {
         return {
           isExternal: true,
@@ -243,9 +231,7 @@ export class FileAccessTracker {
     )[0];
   }
 
-  /**
-   * 获取所有会话隔离的访问记录。
-   */
+  /** 获取所有会话隔离的访问记录。 */
   getTrackedRecords(): FileAccessRecord[] {
     return [...this.accessedFiles.values()].flatMap((records) => [...records.values()]);
   }
@@ -270,9 +256,7 @@ export class FileAccessTracker {
     }
   }
 
-  /**
-   * 清除所有访问记录
-   */
+  /** 清除所有访问记录 */
   clearAll(): void {
     this.accessedFiles.clear();
     this.pathAliases.clear();
@@ -296,23 +280,17 @@ export class FileAccessTracker {
     }
   }
 
-  /**
-   * 获取所有已跟踪的文件路径
-   */
+  /** 获取所有已跟踪的文件路径 */
   getTrackedFiles(): string[] {
     return Array.from(this.accessedFiles.keys());
   }
 
-  /**
-   * 获取跟踪的文件数量
-   */
+  /** 获取跟踪的文件数量 */
   getTrackedFileCount(): number {
     return this.accessedFiles.size;
   }
 
-  /**
-   * 重置单例实例（仅用于测试）
-   */
+  /** 重置单例实例（仅用于测试） */
   static resetInstance(): void {
     FileAccessTracker.instance = null;
   }

@@ -1,8 +1,6 @@
 /**
- * drainLoop — 消费 generator 事件流，返回最终 LoopResult
- *
- * 用于不需要逐事件处理的场景（如 subagent、slash commands）。
- * 可选传入 onEvent 回调来处理特定事件。
+ * drainLoop — 消费 generator 事件流，返回最终 LoopResult <p> 用于不需要逐事件处理的场景（如 subagent、slash
+ * commands）。 可选传入 onEvent 回调来处理特定事件。
  */
 
 import type { LoopResult } from '../types.js';

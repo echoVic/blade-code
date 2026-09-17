@@ -1,19 +1,9 @@
 /**
- * VerifyQueue — AutoVerify 的并发合并 + 短期缓存层
- *
- * 问题:
- * Agent 连续多次 Edit 会触发多次 tsc 全量扫描,重复工作且互相推迟。
- *
- * 对策:
- * 1. **并发合并**: 同 workspace、同文件版本的 verify 请求共享一个 tsc Promise
- * 2. **短期缓存**: 最近 500ms 内且输入未变化的结果可复用
- * 3. **变更排队**: 检查运行中再次编辑时，在旧检查结束后验证最新输入
- * 4. **Monorepo 感知**: workspace = 从文件向上找最近 tsconfig.json
- *
- * 不做:
- * - 不做 debounce 延迟 (调用方期望立即拿到结果; agent 下一步才能消费)
- * - 不通过 npx 下载或执行未声明的工具
- * - 不改写同步接口 (仍 await)
+ * VerifyQueue — AutoVerify 的并发合并 + 短期缓存层 <p> 问题: Agent 连续多次 Edit 会触发多次 tsc
+ * 全量扫描,重复工作且互相推迟。 <p> 对策: 1. **并发合并**: 同 workspace、同文件版本的 verify 请求共享一个 tsc Promise 2.
+ * **短期缓存**: 最近 500ms 内且输入未变化的结果可复用 3. **变更排队**: 检查运行中再次编辑时，在旧检查结束后验证最新输入 4. **Monorepo
+ * 感知**: workspace = 从文件向上找最近 tsconfig.json <p> 不做: - 不做 debounce 延迟 (调用方期望立即拿到结果; agent
+ * 下一步才能消费) - 不通过 npx 下载或执行未声明的工具 - 不改写同步接口 (仍 await)
  */
 
 import { createHash } from 'node:crypto';

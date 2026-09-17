@@ -212,13 +212,6 @@ export class PiModelCatalog {
     this.installCustomProvider(providerId);
   }
 
-  unregisterModelProvider(providerId: string): void {
-    if (!this.customProviderConfigs.has(providerId)) return;
-    this.customProviderConfigs.delete(providerId);
-    this.customProviderModels.delete(providerId);
-    this.models.deleteProvider(providerId);
-  }
-
   private requireProvider(providerId: string): void {
     if (!this.models.getProvider(providerId)) {
       throw new Error(`Unknown pi-ai provider: ${providerId}`);

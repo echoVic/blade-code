@@ -36,12 +36,11 @@ import { TaskPanel } from './TaskPanel.js';
 import { ThinkingBlock } from './ThinkingBlock.js';
 
 /**
- * 消息区域组件
- *
- * 渲染策略：
- * - 使用 Ink 的 Static 组件渲染已完成的消息（不会重新渲染）
- * - 流式消息在 Static 外部单独渲染
- * - 流式消息完成后自动移入 messages，触发 Static 更新
+
+ * 消息区域组件 <p> 渲染策略： - 使用 Ink 的 Static 组件渲染已完成的消息（不会重新渲染） - 流式消息在 Static 外部单独渲染 -
+
+ * 流式消息完成后自动移入 messages，触发 Static 更新
+
  */
 interface MessageAreaProps {
   active?: boolean;

@@ -1,7 +1,3 @@
-/**
- * Subagent 系统类型定义
- */
-
 import {
   type CommunicationStyleSelection,
   PermissionMode,
@@ -14,11 +10,6 @@ import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import type { VerificationVerdict } from '../loop/independentVerification.js';
 import type { LoopEvent } from '../loop/types.js';
 import type { SubagentIsolationMode } from './SubagentWorktreeLifecycle.js';
-
-/**
- * Claude Code permissionMode 类型
- * 参考: https://code.claude.com/docs/en/sub-agents
- */
 export type ClaudeCodePermissionMode =
   | 'default'
   | 'acceptEdits'
@@ -58,9 +49,6 @@ export function mapClaudeCodePermissionMode(
   }
 }
 
-/**
- * Subagent 背景颜色
- */
 export type SubagentColor =
   | 'red'
   | 'blue'
@@ -70,30 +58,13 @@ export type SubagentColor =
   | 'orange'
   | 'pink'
   | 'cyan';
-
-/**
- * Subagent 配置
- */
 export interface SubagentConfig {
-  /** Subagent 唯一标识符 */
   name: string;
-
-  /** 描述（给 LLM 看的能力说明） */
   description: string;
-
-  /** 系统提示模板（可选，支持变量替换） */
   systemPrompt?: string;
-
-  /** 允许的工具列表（空数组 = 所有工具） */
   tools?: string[];
-
-  /** 禁止的工具列表（优先于允许列表） */
   disallowedTools?: string[];
-
-  /** UI 背景颜色（可选，用于视觉区分） */
   color?: SubagentColor;
-
-  /** 配置文件路径（用于调试） */
   configPath?: string;
 
   /**
@@ -102,20 +73,10 @@ export interface SubagentConfig {
    * - 注意：Blade 目前不支持多模型，此字段仅用于兼容 Claude Code 配置
    */
   model?: 'sonnet' | 'opus' | 'haiku' | 'inherit' | string;
-
-  /** 权限模式（已映射为 Blade PermissionMode） */
   permissionMode?: PermissionMode;
-
-  /** 最大对话轮次 */
   maxTurns?: number;
-
-  /** 自动加载的 skills 列表 */
   skills?: string[];
-
-  /** 默认文件系统隔离模式 */
   isolation?: SubagentIsolationMode;
-
-  /** 配置来源（用于调试和优先级） */
   source?:
     | 'builtin'
     | 'claude-code-user'
@@ -134,35 +95,18 @@ export interface SubagentConfig {
  * - Phase 4 完成：旧命名回调已删除，统一走 onEvent
  */
 export interface SubagentContext {
-  /** 任务提示 */
   prompt: string;
-
-  /** 父 Agent 的会话 ID（可选，用于追溯） */
   parentSessionId?: string;
 
   /** Root Session owning Provider request admission for the full child tree. */
   providerAdmissionOwnerId?: string;
-
-  /** 父 Agent 的消息 ID（可选） */
   parentMessageId?: string;
-
-  /** 父 Agent 的权限模式（继承给子 Agent） */
   permissionMode?: PermissionMode;
-
-  /** 父 Session 当前的 durable reasoning 策略 */
   modelId?: string;
   reasoningEffort?: ReasoningEffortSelection;
-
-  /** 父 Session 当前的 provider service tier */
   serviceTier?: ServiceTierSelection;
-
-  /** 父 Session 当前的 response verbosity */
   responseVerbosity?: ResponseVerbositySelection;
-
-  /** 父 Session 当前的 communication style */
   communicationStyle?: CommunicationStyleSelection;
-
-  /** 子代理会话 ID（用于与主会话关联） */
   subagentSessionId?: string;
 
   /** Foreground cancellation boundary owned by the invoking surface. */
@@ -176,8 +120,6 @@ export interface SubagentContext {
 
   /** Resume depth from the root */
   resumeDepth?: number;
-
-  /** 子代理执行目录（默认继承父 Agent） */
   workspaceRoot?: string;
 
   /** 子代理是否已位于预创建的 managed worktree */
@@ -185,37 +127,18 @@ export interface SubagentContext {
 
   /** Resume 时继承的完整模型历史 */
   existingMessages?: Message[];
-
-  /**
-   * 统一事件回调
-   * SubagentExecutor 直接转发所有 LoopEvent。
-   */
   onEvent?: (event: LoopEvent) => void | Promise<void>;
 }
 
-/**
- * Subagent 执行结果
- */
 export interface SubagentResult {
-  /** 执行是否成功 */
   success: boolean;
-
-  /** 结果消息 */
   message: string;
-
-  /** 错误信息（如果失败） */
   error?: string;
-
-  /** 子代理会话 ID（用于关联独立 JSONL 文件） */
   agentId?: string;
 
   /** 执行结束后的完整模型历史，用于 durable resume */
   messages?: Message[];
-
-  /** 保留的隔离 worktree 路径（无改动自动清理时为空） */
   worktreePath?: string;
-
-  /** 保留的隔离 worktree 分支 */
   worktreeBranch?: string;
 
   /** 用于后台 resume 的完整 worktree lease */
@@ -229,19 +152,10 @@ export interface SubagentResult {
 
   /** Goal verifier 的有界、脱敏修复反馈 */
   verificationFeedback?: string;
-
-  /** 子代理执行期间成功修改的文件路径 */
   modifiedFiles?: string[];
-
-  /** 执行统计 */
   stats?: {
-    /** Token 使用量 */
     tokens?: number;
-
-    /** 工具调用次数 */
     toolCalls?: number;
-
-    /** 执行时长（毫秒） */
     duration?: number;
   };
 }
@@ -258,18 +172,12 @@ export interface SubagentResult {
 export interface SubagentFrontmatter {
   name: string;
   description: string;
-  /** 工具列表（逗号分隔字符串或数组），不指定则继承所有工具 */
   tools?: string[] | string;
-  /** UI 背景颜色 */
   color?: SubagentColor;
   /** 模型别名（sonnet/opus/haiku）或 'inherit' */
   model?: 'sonnet' | 'opus' | 'haiku' | 'inherit' | string;
-  /** 权限模式（Claude Code 格式，将被映射为 Blade PermissionMode） */
   permissionMode?: ClaudeCodePermissionMode;
-  /** 自动加载的 skills 列表（逗号分隔字符串或数组） */
   skills?: string[] | string;
-  /** 默认文件系统隔离模式 */
   isolation?: SubagentIsolationMode;
-  /** 许可证信息（Claude Code skills 格式） */
   license?: string;
 }

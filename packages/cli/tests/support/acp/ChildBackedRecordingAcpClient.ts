@@ -72,6 +72,18 @@ export class ChildBackedRecordingAcpClient implements acp.Client {
     this.sessionUpdates.push(params);
   }
 
+  agentText(sessionId: string): string {
+    return this.sessionUpdates
+      .filter((notification) => notification.sessionId === sessionId)
+      .flatMap((notification) =>
+        notification.update.sessionUpdate === 'agent_message_chunk' &&
+        notification.update.content.type === 'text'
+          ? [notification.update.content.text]
+          : []
+      )
+      .join('');
+  }
+
   async readTextFile(
     params: acp.ReadTextFileRequest
   ): Promise<acp.ReadTextFileResponse> {

@@ -1,7 +1,4 @@
-/**
- * /init slash command implementation
- * 分析当前项目并生成 BLADE.md 配置文件
- */
+/** /init slash command implementation 分析当前项目并生成 BLADE.md 配置文件 */
 
 import { promises as fs } from 'fs';
 import * as path from 'path';

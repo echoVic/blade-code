@@ -1,6 +1,4 @@
-/**
- * /model 命令 - 管理和切换模型配置
- */
+/** /model 命令 - 管理和切换模型配置 */
 
 import { probeModelProvider } from '../services/ProviderHealthService.js';
 import { getModelDisplayName } from '../services/pi/resolveModelConfig.js';

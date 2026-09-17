@@ -10,9 +10,7 @@ import { parseToolSchema } from '../validation/schemaErrorFormatter.js';
 import { schemaToFunctionSchema } from '../validation/schemaToJson.js';
 import { UnifiedToolInvocation } from './ToolInvocation.js';
 
-/**
- * 创建工具的工厂函数
- */
+/** 创建工具的工厂函数 */
 export function createTool<T extends TSchema>(
   config: ToolConfig<T, Static<T>>
 ): Tool<Static<T>> {
@@ -34,8 +32,7 @@ export function createTool<T extends TSchema>(
     parallelism:
       config.parallelism ?? (config.isConcurrencySafe ? 'shared' : 'exclusive'),
 
-    // strict 字段（OpenAI Structured Outputs）
-    // 优先使用 config 中的显式设置，否则默认 false
+    // strict 字段（OpenAI Structured Outputs） 优先使用 config 中的显式设置，否则默认 false
     strict: config.strict ?? false,
 
     description: config.description,
@@ -43,9 +40,7 @@ export function createTool<T extends TSchema>(
     category: config.category,
     tags: config.tags || [],
 
-    /**
-     * 获取函数声明 (用于 LLM function calling)
-     */
+    /** 获取函数声明 (用于 LLM function calling) */
     getFunctionDeclaration() {
       const jsonSchema = schemaToFunctionSchema(config.schema);
 
@@ -71,9 +66,7 @@ export function createTool<T extends TSchema>(
       };
     },
 
-    /**
-     * 获取工具元信息
-     */
+    /** 获取工具元信息 */
     getMetadata() {
       return {
         name: config.name,
@@ -90,9 +83,7 @@ export function createTool<T extends TSchema>(
       };
     },
 
-    /**
-     * 构建工具调用
-     */
+    /** 构建工具调用 */
     build(params: TParams): ToolInvocation<TParams> {
       const validatedParams = parseToolSchema(config.schema, params);
 
@@ -106,9 +97,7 @@ export function createTool<T extends TSchema>(
       );
     },
 
-    /**
-     * 一键执行
-     */
+    /** 一键执行 */
     async execute(
       params: TParams,
       signal?: AbortSignal,
@@ -122,16 +111,12 @@ export function createTool<T extends TSchema>(
       );
     },
 
-    /**
-     * [OK] 签名内容提取器（从 config 传递或提供默认实现）
-     */
+    /** [OK] 签名内容提取器（从 config 传递或提供默认实现） */
     extractSignatureContent: config.extractSignatureContent
       ? (params: TParams) => config.extractSignatureContent!(params)
       : undefined,
 
-    /**
-     * [OK] 权限规则抽象器（从 config 传递或提供默认实现）
-     */
+    /** [OK] 权限规则抽象器（从 config 传递或提供默认实现） */
     abstractPermissionRule: config.abstractPermissionRule
       ? (params: TParams) => config.abstractPermissionRule!(params)
       : undefined,

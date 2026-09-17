@@ -73,8 +73,8 @@ describe('durable token-budget handoff persistence', () => {
 
   it('commits one authority when two facades race on the same real transcript', async () => {
     const sessionId = 'handoff-race';
-    const first = new PersistentStore(workspace, 100, 'test');
-    const second = new PersistentStore(workspace, 100, 'test');
+    const first = new PersistentStore(workspace, 'test');
+    const second = new PersistentStore(workspace, 'test');
     await first.initSession(sessionId);
 
     const results = await Promise.all([
@@ -104,7 +104,7 @@ describe('durable token-budget handoff persistence', () => {
 
   it('opens a new epoch only after a valid replacement checkpoint', async () => {
     const sessionId = 'handoff-epochs';
-    const persistent = new PersistentStore(workspace, 100, 'test');
+    const persistent = new PersistentStore(workspace, 'test');
 
     const first = await persistent.recordTokenBudgetHandoff(sessionId, payload);
     await persistent.saveCompaction(sessionId, 'invalid checkpoint', {
@@ -151,7 +151,7 @@ describe('durable token-budget handoff persistence', () => {
     ],
   ])('fails closed for a %s raw record in the current epoch', async (_label, data) => {
     const sessionId = `handoff-${_label}`;
-    const persistent = new PersistentStore(workspace, 100, 'test');
+    const persistent = new PersistentStore(workspace, 'test');
     await persistent.initSession(sessionId);
     const filePath = getSessionFilePath(workspace, sessionId);
     const raw = rawHandoffEvent(sessionId, workspace, `raw-${_label}`, data);
@@ -169,7 +169,7 @@ describe('durable token-budget handoff persistence', () => {
 
   it('fails closed when the current epoch contains duplicate raw records', async () => {
     const sessionId = 'handoff-duplicate';
-    const persistent = new PersistentStore(workspace, 100, 'test');
+    const persistent = new PersistentStore(workspace, 'test');
     const created = await persistent.recordTokenBudgetHandoff(sessionId, payload);
     if (created.outcome !== 'created') throw new Error('Expected first authority');
     const duplicate = rawHandoffEvent(

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
+  assertConfiguredTestFilesExist,
   createTestExecutionStages,
   resolveTestTimeout,
   testTypes,
@@ -102,6 +103,8 @@ async function runTest(testType, options = {}, requestedFiles = []) {
     console.error('❌ 依赖 production dist 的测试不支持 --watch');
     process.exit(1);
   }
+
+  assertConfiguredTestFilesExist(config, path.join(__dirname, '..'));
 
   const baseArgs = [];
   if (options.watch) {

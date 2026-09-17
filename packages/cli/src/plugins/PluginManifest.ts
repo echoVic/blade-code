@@ -1,8 +1,7 @@
 /**
- * Blade Code Plugins System - Plugin Manifest Parser
- *
- * This module handles parsing and validation of plugin.json manifest files.
- * It supports both .blade-plugin/ and .claude-plugin/ directories.
+ * Blade Code Plugins System - Plugin Manifest Parser <p> This module handles parsing
+ * and validation of plugin.json manifest files. It supports both .blade-plugin/ and
+ * .claude-plugin/ directories.
  */
 
 import * as fs from 'node:fs/promises';
@@ -13,9 +12,7 @@ import { validatePluginManifestConstraints } from './PluginCompatibility.js';
 import { pluginManifestSchema } from './schemas.js';
 import type { ManifestSource, PluginManifest } from './types.js';
 
-/**
- * Result of parsing a plugin manifest
- */
+/** Result of parsing a plugin manifest */
 export interface ParseManifestResult {
   /** The parsed manifest */
   manifest: PluginManifest;
@@ -98,22 +95,4 @@ export async function parsePluginManifest(
 
   // No manifest found in any directory
   return null;
-}
-
-/**
- * Check if a directory is a valid plugin directory
- *
- * A valid plugin directory must contain a plugin.json in either
- * .blade-plugin/ or .claude-plugin/ subdirectory.
- *
- * @param dirPath - Path to check
- * @returns True if the directory is a valid plugin
- */
-export async function isValidPluginDir(dirPath: string): Promise<boolean> {
-  try {
-    const result = await parsePluginManifest(dirPath);
-    return result !== null;
-  } catch {
-    return false;
-  }
 }

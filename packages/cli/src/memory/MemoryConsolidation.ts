@@ -1,9 +1,7 @@
 /**
- * Memory consolidation for reusable project knowledge.
- *
- * Planning is pure and bounded. Persistence is explicit, workspace-scoped, and
- * best-effort so a memory failure never turns a completed compaction into a task
- * failure.
+ * Memory consolidation for reusable project knowledge. <p> Planning is pure and
+ * bounded. Persistence is explicit, workspace-scoped, and best-effort so a memory
+ * failure never turns a completed compaction into a task failure.
  */
 
 import type {
@@ -188,22 +186,4 @@ export async function commitMemoryConsolidation(
     );
     return { outcome: 'failed', entries: 0, topics: [] };
   }
-}
-
-/** Compatibility helper for internal callers migrating to the plan API. */
-export function extractLearnings(messages: Message[]): Map<string, string[]> {
-  const result = new Map<string, string[]>();
-  for (const entry of planMemoryConsolidation(messages).entries) {
-    const values = result.get(entry.topic) ?? [];
-    values.push(entry.content);
-    result.set(entry.topic, values);
-  }
-  return result;
-}
-
-export async function consolidateAfterCompaction(
-  discardedMessages: Message[],
-  options: MemoryConsolidationCommitOptions
-): Promise<MemoryConsolidationProjection> {
-  return commitMemoryConsolidation(planMemoryConsolidation(discardedMessages), options);
 }

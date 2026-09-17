@@ -1,6 +1,4 @@
-/**
- * Slash Commands 注册和处理中心
- */
+/** Slash Commands 注册和处理中心 */
 
 import Fuse from 'fuse.js';
 import {
@@ -66,16 +64,12 @@ const slashCommands: SlashCommandRegistry = {
   trust: trustCommand,
 };
 
-/**
- * 检测输入是否为 slash command
- */
+/** 检测输入是否为 slash command */
 export function isSlashCommand(input: string): boolean {
   return input.trim().startsWith('/');
 }
 
-/**
- * 解析 slash command
- */
+/** 解析 slash command */
 export function parseSlashCommand(input: string): { command: string; args: string[] } {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) {
@@ -89,9 +83,7 @@ export function parseSlashCommand(input: string): { command: string; args: strin
   return { command, args };
 }
 
-/**
- * 根据名称或别名查找命令
- */
+/** 根据名称或别名查找命令 */
 function findCommand(name: string): SlashCommand | undefined {
   // 先按名称查找
   if (slashCommands[name]) {
@@ -155,9 +147,7 @@ export async function initializeCustomCommands(
   return await registry.initialize(workspaceRoot);
 }
 
-/**
- * 执行 slash command
- */
+/** 执行 slash command */
 export async function executeSlashCommand(
   input: string,
   context: SlashCommandContext
@@ -263,9 +253,7 @@ export async function executeSlashCommand(
   }
 }
 
-/**
- * 获取所有注册的命令（包括自定义命令、插件命令和 User-invocable Skills）
- */
+/** 获取所有注册的命令（包括自定义命令、插件命令和 User-invocable Skills） */
 export function getRegisteredCommands(
   workspaceRoot: string = getCwd(),
   resources?: Pick<SessionAgentResources, 'commands' | 'skills'>,
@@ -311,9 +299,7 @@ export function getRegisteredCommands(
   return [...builtinCmds, ...customCmds, ...pluginCmds, ...skillCmds];
 }
 
-/**
- * 获取模糊匹配的命令建议（使用 fuse.js）
- */
+/** 获取模糊匹配的命令建议（使用 fuse.js） */
 export function getFuzzyCommandSuggestions(
   input: string,
   workspaceRoot: string = getCwd(),
@@ -409,8 +395,7 @@ export function getFuzzyCommandSuggestions(
   // 执行搜索
   const results = fuse.search(query);
 
-  // 转换为 CommandSuggestion 格式
-  // Fuse.js 的 score 越低越好（0 = 完美匹配），我们需要反转为 0-100 的分数
+  // 转换为 CommandSuggestion 格式 Fuse.js 的 score 越低越好（0 = 完美匹配），我们需要反转为 0-100 的分数
   const suggestions: CommandSuggestion[] = results.map((result) => {
     const score = result.score ?? 1;
     const matchScore = Math.round((1 - score) * 100); // 转换为 0-100 分数

@@ -1,8 +1,6 @@
 /**
- * Skills 系统类型定义
- *
- * Skills 是动态 Prompt 扩展机制，允许 AI 根据用户请求自动调用专业能力。
- * 基于文件系统的简单架构（SKILL.md + 可选脚本/模板）。
+ * Skills 系统类型定义 <p> Skills 是动态 Prompt 扩展机制，允许 AI 根据用户请求自动调用专业能力。 基于文件系统的简单架构（SKILL.md +
+ * 可选脚本/模板）。
  */
 
 /**
@@ -30,31 +28,16 @@ export interface SkillMetadata {
    */
   argumentHint?: string;
 
-  /**
-   * 是否支持用户通过 /skill-name 命令调用
-   * 默认 false（仅 AI 可调用）
-   */
+  /** 是否支持用户通过 /skill-name 命令调用 默认 false（仅 AI 可调用） */
   userInvocable?: boolean;
 
-  /**
-   * 是否禁止 AI 自动调用
-   * 为 true 时不会出现在 <available_skills> 列表，但仍可通过 /skill-name 调用
-   * 默认 false
-   */
+  /** 是否禁止 AI 自动调用 为 true 时不会出现在 <available_skills> 列表，但仍可通过 /skill-name 调用 默认 false */
   disableModelInvocation?: boolean;
 
-  /**
-   * 指定执行模型
-   * - undefined: 使用当前模型
-   * - 'inherit': 显式继承当前模型
-   * - 具体模型名: 切换到指定模型执行
-   */
+  /** 指定执行模型 - undefined: 使用当前模型 - 'inherit': 显式继承当前模型 - 具体模型名: 切换到指定模型执行 */
   model?: string;
 
-  /**
-   * 额外的触发条件描述
-   * 补充 description，帮助 AI 判断何时使用
-   */
+  /** 额外的触发条件描述 补充 description，帮助 AI 判断何时使用 */
   whenToUse?: string;
 
   /** SKILL.md 文件完整路径 */
@@ -67,9 +50,7 @@ export interface SkillMetadata {
   source: 'user' | 'project' | 'builtin';
 }
 
-/**
- * Skill 完整内容（懒加载）
- */
+/** Skill 完整内容（懒加载） */
 export interface SkillContent {
   /** 元数据 */
   metadata: SkillMetadata;
@@ -78,9 +59,7 @@ export interface SkillContent {
   instructions: string;
 }
 
-/**
- * SKILL.md 解析结果
- */
+/** SKILL.md 解析结果 */
 export interface SkillParseResult {
   /** 是否解析成功 */
   success: boolean;
@@ -92,9 +71,7 @@ export interface SkillParseResult {
   error?: string;
 }
 
-/**
- * Skill 注册表配置
- */
+/** Skill 注册表配置 */
 export interface SkillRegistryConfig {
   /** Blade 用户级 skills 目录，默认 ~/.blade/skills */
   userSkillsDir?: string;
@@ -112,9 +89,7 @@ export interface SkillRegistryConfig {
   cwd?: string;
 }
 
-/**
- * Skill 发现结果
- */
+/** Skill 发现结果 */
 export interface SkillDiscoveryResult {
   /** 发现的 skills 列表 */
   skills: SkillMetadata[];

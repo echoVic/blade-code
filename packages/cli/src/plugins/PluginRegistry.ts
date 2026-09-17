@@ -1,8 +1,7 @@
 /**
- * Blade Code Plugins System - Plugin Registry
- *
- * This module provides a singleton registry for managing loaded plugins.
- * It handles plugin discovery, loading, and provides lookup methods.
+ * Blade Code Plugins System - Plugin Registry <p> This module provides a singleton
+ * registry for managing loaded plugins. It handles plugin discovery, loading, and
+ * provides lookup methods.
  */
 
 import path from 'node:path';
@@ -21,11 +20,9 @@ import {
 } from './PluginSourcePolicy.js';
 import type {
   LoadedPlugin,
-  PluginAgent,
   PluginCommand,
   PluginDiscoveryResult,
   PluginMarketplaceRecord,
-  PluginSkill,
   PluginSource,
 } from './types.js';
 
@@ -56,9 +53,7 @@ export class PluginRegistry {
     this.workspaceRoot = workspaceRoot;
   }
 
-  /**
-   * Get the singleton instance
-   */
+  /** Get the singleton instance */
   static getInstance(workspaceRoot: string = getCwd()): PluginRegistry {
     const key = path.resolve(workspaceRoot);
     let registry = PluginRegistry.instances.get(key);
@@ -69,9 +64,7 @@ export class PluginRegistry {
     return registry;
   }
 
-  /**
-   * Reset the singleton instance (mainly for testing)
-   */
+  /** Reset the singleton instance (mainly for testing) */
   static resetInstance(): void {
     PluginRegistry.instances.clear();
   }
@@ -217,9 +210,7 @@ export class PluginRegistry {
     };
   }
 
-  /**
-   * Check if the registry has been initialized
-   */
+  /** Check if the registry has been initialized */
   isInitialized(): boolean {
     return this.initialized;
   }
@@ -237,32 +228,19 @@ export class PluginRegistry {
     };
   }
 
-  /**
-   * Get all loaded plugins
-   */
+  /** Get all loaded plugins */
   getAll(): LoadedPlugin[] {
     return Array.from(this.plugins.values());
   }
 
-  /**
-   * Get all active plugins
-   */
+  /** Get all active plugins */
   getActive(): LoadedPlugin[] {
     return Array.from(this.plugins.values()).filter((p) => p.status === 'active');
   }
 
-  /**
-   * Get a plugin by name
-   */
+  /** Get a plugin by name */
   get(name: string): LoadedPlugin | undefined {
     return this.plugins.get(name);
-  }
-
-  /**
-   * Check if a plugin exists
-   */
-  has(name: string): boolean {
-    return this.plugins.has(name);
   }
 
   async reapplyEnabledSettings(): Promise<void> {
@@ -319,9 +297,7 @@ export class PluginRegistry {
     );
   }
 
-  /**
-   * Get plugins grouped by source
-   */
+  /** Get plugins grouped by source */
   getBySource(): Record<PluginSource, LoadedPlugin[]> {
     const result: Record<PluginSource, LoadedPlugin[]> = {
       cli: [],
@@ -336,9 +312,7 @@ export class PluginRegistry {
     return result;
   }
 
-  /**
-   * Get all namespaced commands from all active plugins
-   */
+  /** Get all namespaced commands from all active plugins */
   getAllCommands(): PluginCommand[] {
     const commands: PluginCommand[] = [];
 
@@ -349,198 +323,6 @@ export class PluginRegistry {
     }
 
     return commands;
-  }
-
-  /**
-   * Get all namespaced skills from all active plugins
-   */
-  getAllSkills(): PluginSkill[] {
-    const skills: PluginSkill[] = [];
-
-    for (const plugin of this.plugins.values()) {
-      if (plugin.status === 'active') {
-        skills.push(...plugin.skills);
-      }
-    }
-
-    return skills;
-  }
-
-  /**
-   * Get all namespaced agents from all active plugins
-   */
-  getAllAgents(): PluginAgent[] {
-    const agents: PluginAgent[] = [];
-
-    for (const plugin of this.plugins.values()) {
-      if (plugin.status === 'active') {
-        agents.push(...plugin.agents);
-      }
-    }
-
-    return agents;
-  }
-
-  /**
-   * Find a command by name
-   *
-   * Supports:
-   * - Full namespaced name: "plugin:command"
-   * - Short name if unique: "command"
-   *
-   * @param name - Command name to find
-   * @returns Plugin command or undefined
-   */
-  findCommand(name: string): PluginCommand | undefined {
-    // Try exact namespaced match first
-    for (const plugin of this.plugins.values()) {
-      if (plugin.status !== 'active') continue;
-
-      for (const cmd of plugin.commands) {
-        if (cmd.namespacedName === name) {
-          return cmd;
-        }
-      }
-    }
-
-    // Try short name match (if unique)
-    const matches: PluginCommand[] = [];
-    for (const plugin of this.plugins.values()) {
-      if (plugin.status !== 'active') continue;
-
-      for (const cmd of plugin.commands) {
-        if (cmd.originalName === name) {
-          matches.push(cmd);
-        }
-      }
-    }
-
-    // Only return if exactly one match
-    if (matches.length === 1) {
-      return matches[0];
-    }
-
-    return undefined;
-  }
-
-  /**
-   * Find a skill by name
-   *
-   * @param name - Skill name (namespaced or short)
-   * @returns Plugin skill or undefined
-   */
-  findSkill(name: string): PluginSkill | undefined {
-    // Try exact namespaced match first
-    for (const plugin of this.plugins.values()) {
-      if (plugin.status !== 'active') continue;
-
-      for (const skill of plugin.skills) {
-        if (skill.namespacedName === name) {
-          return skill;
-        }
-      }
-    }
-
-    // Try short name match
-    const matches: PluginSkill[] = [];
-    for (const plugin of this.plugins.values()) {
-      if (plugin.status !== 'active') continue;
-
-      for (const skill of plugin.skills) {
-        if (skill.originalName === name) {
-          matches.push(skill);
-        }
-      }
-    }
-
-    if (matches.length === 1) {
-      return matches[0];
-    }
-
-    return undefined;
-  }
-
-  /**
-   * Find an agent by name
-   *
-   * @param name - Agent name (namespaced or short)
-   * @returns Plugin agent or undefined
-   */
-  findAgent(name: string): PluginAgent | undefined {
-    // Try exact namespaced match first
-    for (const plugin of this.plugins.values()) {
-      if (plugin.status !== 'active') continue;
-
-      for (const agent of plugin.agents) {
-        if (agent.namespacedName === name) {
-          return agent;
-        }
-      }
-    }
-
-    // Try short name match
-    const matches: PluginAgent[] = [];
-    for (const plugin of this.plugins.values()) {
-      if (plugin.status !== 'active') continue;
-
-      for (const agent of plugin.agents) {
-        if (agent.originalName === name) {
-          matches.push(agent);
-        }
-      }
-    }
-
-    if (matches.length === 1) {
-      return matches[0];
-    }
-
-    return undefined;
-  }
-
-  /**
-   * Check if a command name has multiple matches (conflict)
-   *
-   * @param shortName - Short command name
-   * @returns True if multiple plugins provide this command
-   */
-  hasCommandConflict(shortName: string): boolean {
-    let count = 0;
-
-    for (const plugin of this.plugins.values()) {
-      if (plugin.status !== 'active') continue;
-
-      for (const cmd of plugin.commands) {
-        if (cmd.originalName === shortName) {
-          count++;
-          if (count > 1) return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Get all plugins that provide a command with the given short name
-   *
-   * @param shortName - Short command name
-   * @returns Array of plugin names
-   */
-  getCommandProviders(shortName: string): string[] {
-    const providers: string[] = [];
-
-    for (const plugin of this.plugins.values()) {
-      if (plugin.status !== 'active') continue;
-
-      for (const cmd of plugin.commands) {
-        if (cmd.originalName === shortName) {
-          providers.push(plugin.manifest.name);
-          break;
-        }
-      }
-    }
-
-    return providers;
   }
 
   /**
@@ -560,22 +342,6 @@ export class PluginRegistry {
   }
 
   /**
-   * Enable a plugin
-   *
-   * @param name - Plugin name
-   * @returns True if the plugin was enabled
-   */
-  enable(name: string): boolean {
-    const plugin = this.plugins.get(name);
-    if (plugin && plugin.status === 'inactive') {
-      plugin.status = 'active';
-      logger.info(`Plugin "${name}" enabled`);
-      return true;
-    }
-    return false;
-  }
-
-  /**
    * Refresh the plugin list
    *
    * Reloads all plugins from their directories.
@@ -589,9 +355,7 @@ export class PluginRegistry {
     return this.initialize(this.workspaceRoot, this.cliPluginDirs);
   }
 
-  /**
-   * Get plugin statistics
-   */
+  /** Get plugin statistics */
   getStats(): {
     total: number;
     active: number;
@@ -626,56 +390,9 @@ export class PluginRegistry {
       agents,
     };
   }
-
-  /**
-   * Generate a formatted list of plugins for display
-   */
-  formatPluginList(): string {
-    const plugins = this.getAll();
-
-    if (plugins.length === 0) {
-      return '没有已加载的插件。';
-    }
-
-    const lines: string[] = [];
-    const bySource = this.getBySource();
-
-    if (bySource.cli.length > 0) {
-      lines.push('## CLI 指定的插件');
-      for (const p of bySource.cli) {
-        const status = p.status === 'inactive' ? ' (禁用)' : '';
-        lines.push(`- **${p.manifest.name}** v${p.manifest.version}${status}`);
-        lines.push(`  ${p.manifest.description}`);
-      }
-      lines.push('');
-    }
-
-    if (bySource.project.length > 0) {
-      lines.push('## 项目级插件');
-      for (const p of bySource.project) {
-        const status = p.status === 'inactive' ? ' (禁用)' : '';
-        lines.push(`- **${p.manifest.name}** v${p.manifest.version}${status}`);
-        lines.push(`  ${p.manifest.description}`);
-      }
-      lines.push('');
-    }
-
-    if (bySource.user.length > 0) {
-      lines.push('## 用户级插件');
-      for (const p of bySource.user) {
-        const status = p.status === 'inactive' ? ' (禁用)' : '';
-        lines.push(`- **${p.manifest.name}** v${p.manifest.version}${status}`);
-        lines.push(`  ${p.manifest.description}`);
-      }
-    }
-
-    return lines.join('\n');
-  }
 }
 
-/**
- * Convenience function to get the plugin registry instance
- */
+/** Convenience function to get the plugin registry instance */
 export function getPluginRegistry(workspaceRoot: string = getCwd()): PluginRegistry {
   return PluginRegistry.getInstance(workspaceRoot);
 }

@@ -1,9 +1,4 @@
-/**
- * 临时流式调试日志
- *
- * 专门用于调试流式响应问题，写入独立文件便于分析
- * 调试完成后删除此文件
- */
+/** 临时流式调试日志 专门用于调试流式响应问题，写入独立文件便于分析 调试完成后删除此文件 */
 
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';

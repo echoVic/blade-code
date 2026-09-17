@@ -10,6 +10,7 @@ import {
   parseAcpRemotePath,
   resolveAcpRemotePathDescendant,
 } from '../../../../src/acp/AcpRemotePath.js';
+import invalidRemotePaths from '../../../fixtures/acpInvalidRemotePaths.json';
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -194,192 +195,13 @@ describe('AcpRemotePath', () => {
       readonly expectedStyle?: 'posix' | 'win32';
       readonly reason: AcpRemotePathErrorReason;
       readonly style: 'unknown' | 'posix' | 'win32';
-    }> = [
-      {
-        label: 'not absolute relative',
-        input: 'relative/file.ts',
-        reason: 'not-absolute',
-        style: 'unknown',
-      },
-      {
-        label: 'style mismatch win32 path against posix expectation',
-        input: 'C:\\Repo\\file.ts',
-        expectedStyle: 'posix',
-        reason: 'style-mismatch',
-        style: 'posix',
-      },
-      {
-        label: 'style mismatch posix path against win32 expectation',
-        input: '/repo/file.ts',
-        expectedStyle: 'win32',
-        reason: 'style-mismatch',
-        style: 'win32',
-      },
-      {
-        label: 'drive relative path',
-        input: 'C:repo\\file.ts',
-        reason: 'drive-relative',
-        style: 'win32',
-      },
-      {
-        label: 'root relative backslash path',
-        input: '\\repo\\file.ts',
-        reason: 'root-relative',
-        style: 'win32',
-      },
-      {
-        label: 'unc namespace backslash',
-        input: '\\\\server\\share\\file.ts',
-        reason: 'unc-not-supported',
-        style: 'win32',
-      },
-      {
-        label: 'unc namespace slash',
-        input: '//server/share/file.ts',
-        reason: 'unc-not-supported',
-        style: 'win32',
-      },
-      {
-        label: 'mixed namespace prefix',
-        input: '//\\server/share/file.ts',
-        reason: 'unc-not-supported',
-        style: 'win32',
-      },
-      {
-        label: 'win32 device namespace backslash',
-        input: '\\\\?\\C:\\Repo\\file.ts',
-        reason: 'device-namespace-not-supported',
-        style: 'win32',
-      },
-      {
-        label: 'win32 device namespace slash',
-        input: '//?/C:/Repo/file.ts',
-        reason: 'device-namespace-not-supported',
-        style: 'win32',
-      },
-      {
-        label: 'posix leading double slash ambiguity',
-        input: '//repo/file.ts',
-        expectedStyle: 'posix',
-        reason: 'unc-not-supported',
-        style: 'posix',
-      },
-      {
-        label: 'posix slash backslash ambiguity',
-        input: '/\\\\repo/file.ts',
-        expectedStyle: 'posix',
-        reason: 'unc-not-supported',
-        style: 'posix',
-      },
-      {
-        label: 'win32 component trailing dot',
-        input: 'C:\\Repo\\file.ts.',
-        reason: 'trailing-dot-or-space',
-        style: 'win32',
-      },
-      {
-        label: 'win32 component trailing space',
-        input: 'C:\\Repo\\dir \\file.ts',
-        reason: 'trailing-dot-or-space',
-        style: 'win32',
-      },
-      {
-        label: 'win32 non-root trailing separator',
-        input: 'C:\\Repo\\dir\\',
-        reason: 'trailing-dot-or-space',
-        style: 'win32',
-      },
-      {
-        label: 'alternate data stream',
-        input: 'C:\\Repo\\file.ts::$DATA',
-        reason: 'alternate-data-stream',
-        style: 'win32',
-      },
-      {
-        label: 'reserved device name with extension',
-        input: 'C:\\Repo\\NUL.txt',
-        reason: 'reserved-device-name',
-        style: 'win32',
-      },
-      {
-        label: 'reserved device name takes precedence after trim',
-        input: 'C:\\Repo\\NUL. ',
-        reason: 'reserved-device-name',
-        style: 'win32',
-      },
-      {
-        label: 'reserved device name with trailing suffix',
-        input: 'C:\\Repo\\COM1.log',
-        reason: 'reserved-device-name',
-        style: 'win32',
-      },
-      {
-        label: 'reserved superscript COM variant',
-        input: 'C:\\Repo\\COM².ts',
-        reason: 'reserved-device-name',
-        style: 'win32',
-      },
-      {
-        label: 'reserved superscript LPT variant',
-        input: 'C:\\Repo\\LPT³',
-        reason: 'reserved-device-name',
-        style: 'win32',
-      },
-      {
-        label: 'short name alias spelling',
-        input: 'C:\\Repo\\PROGRA~1\\file.ts',
-        reason: 'short-name-alias',
-        style: 'win32',
-      },
-      {
-        label: 'invalid control character',
-        input: 'C:\\Repo\\bad\u0001name.ts',
-        reason: 'invalid-character',
-        style: 'win32',
-      },
-      {
-        label: 'invalid nul character',
-        input: '/repo/\u0000file.ts',
-        reason: 'invalid-character',
-        style: 'posix',
-      },
-      {
-        label: 'invalid less than',
-        input: 'C:\\Repo\\bad<name.ts',
-        reason: 'invalid-character',
-        style: 'win32',
-      },
-      {
-        label: 'invalid greater than',
-        input: 'C:\\Repo\\bad>name.ts',
-        reason: 'invalid-character',
-        style: 'win32',
-      },
-      {
-        label: 'invalid quote',
-        input: 'C:\\Repo\\bad\"name.ts',
-        reason: 'invalid-character',
-        style: 'win32',
-      },
-      {
-        label: 'invalid pipe',
-        input: 'C:\\Repo\\bad|name.ts',
-        reason: 'invalid-character',
-        style: 'win32',
-      },
-      {
-        label: 'invalid question mark',
-        input: 'C:\\Repo\\bad?name.ts',
-        reason: 'invalid-character',
-        style: 'win32',
-      },
-      {
-        label: 'invalid asterisk',
-        input: 'C:\\Repo\\bad*name.ts',
-        reason: 'invalid-character',
-        style: 'win32',
-      },
-    ];
+    }> = invalidRemotePaths as ReadonlyArray<{
+      readonly label: string;
+      readonly input: string;
+      readonly expectedStyle?: 'posix' | 'win32';
+      readonly reason: AcpRemotePathErrorReason;
+      readonly style: 'unknown' | 'posix' | 'win32';
+    }>;
 
     for (const testCase of invalidCases) {
       expect(() =>

@@ -1,10 +1,4 @@
-/**
- * TaskOutput Tool - 统一的后台任务输出获取工具
- *
- * 支持获取：
- * - 后台 shell 输出 (bash_xxx)
- * - 后台 agent 输出
- */
+/** TaskOutput Tool - 统一的后台任务输出获取工具 支持获取： - 后台 shell 输出 (bash_xxx) - 后台 agent 输出 */
 
 import path from 'node:path';
 import type { AgentSessionOwner } from '../../../agent/subagents/AgentSessionStore.js';
@@ -19,13 +13,7 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { BackgroundShellManager } from '../shell/BackgroundShellManager.js';
 import { OutputTruncator } from '../shell/OutputTruncator.js';
 
-/**
- * TaskOutput 工具
- *
- * 统一接口获取后台任务输出，支持：
- * - background shells (bash_id)
- * - async agents
- */
+/** TaskOutput 工具 统一接口获取后台任务输出，支持： - background shells (bash_id) - async agents */
 export const taskOutputTool = createTool({
   name: 'TaskOutput',
   displayName: 'Task Output',
@@ -199,9 +187,7 @@ async function handleMcpTaskOutput(
   };
 }
 
-/**
- * 处理后台 Shell 输出
- */
+/** 处理后台 Shell 输出 */
 async function handleShellOutput(
   taskId: string,
   block: boolean,
@@ -305,9 +291,7 @@ async function handleShellOutput(
   };
 }
 
-/**
- * 处理后台 Agent 输出
- */
+/** 处理后台 Agent 输出 */
 async function handleAgentOutput(
   taskId: string,
   block: boolean,
@@ -410,9 +394,7 @@ async function handleAgentOutput(
   };
 }
 
-/**
- * 等待 Shell 完成
- */
+/** 等待 Shell 完成 */
 async function waitForShellCompletion(
   taskId: string,
   timeout: number,

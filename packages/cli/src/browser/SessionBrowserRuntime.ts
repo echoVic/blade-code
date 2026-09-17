@@ -571,14 +571,20 @@ export class SessionBrowserRuntime {
       const generation = this.runtimeGeneration;
       let actionFailed = false;
       let actionError: unknown;
-      const downloadPromise =
-        options.action.kind === 'click' || coordinateAction
-          ? state.page
-              .waitForEvent('download', {
-                timeout: Math.min(timeout, BROWSER_CLICK_SETTLE_TIMEOUT_MS),
-              })
-              .catch(() => undefined)
-          : undefined;
+      const observesClickSideEffects =
+        options.action.kind === 'click' || coordinateAction;
+      const clickSettleTimeout = Math.min(timeout, BROWSER_CLICK_SETTLE_TIMEOUT_MS);
+      const downloadPromise = observesClickSideEffects
+        ? state.page
+            .waitForEvent('download', { timeout: clickSettleTimeout })
+            .catch(() => undefined)
+        : undefined;
+      const popupRegistrationPromise = observesClickSideEffects
+        ? state.page
+            .waitForEvent('popup', { timeout: clickSettleTimeout })
+            .then((popup) => this.trackDiscoveredPage(popup, state.id))
+            .catch(() => undefined)
+        : undefined;
       try {
         if (options.action.kind === 'click') {
           state.nextDialogAction = options.action.dialog?.action;
@@ -586,9 +592,10 @@ export class SessionBrowserRuntime {
           state.nextDialogAction = coordinateAction.dialog?.action;
         }
         await this.executeAction(state.page, locator, options.action, timeout, signal);
-        const download = downloadPromise
-          ? await raceWithAbort(downloadPromise, signal)
-          : undefined;
+        const [download] = await raceWithAbort(
+          Promise.all([downloadPromise, popupRegistrationPromise]),
+          signal
+        );
         if (download) {
           this.trackDownloadCancellation(state, download);
         }
@@ -961,25 +968,6 @@ export class SessionBrowserRuntime {
           return { tabs: [] };
       }
     }, options.signal);
-  }
-
-  stats(): {
-    pages: number;
-    pending: number;
-    active: boolean;
-    generation: number;
-    hasContext: boolean;
-    disposed: boolean;
-  } {
-    const gate = this.gate.stats();
-    return {
-      pages: this.pages.size,
-      pending: gate.pending,
-      active: gate.active,
-      generation: this.runtimeGeneration,
-      hasContext: this.context !== undefined,
-      disposed: this.disposed,
-    };
   }
 
   async dispose(): Promise<void> {

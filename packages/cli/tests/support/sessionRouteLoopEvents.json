@@ -1,0 +1,254 @@
+[
+  {
+    "kind": "turn_recovery",
+    "assessment": {
+      "state": "requires_attention",
+      "turnId": "turn-before-restart",
+      "inputMessageCount": 1,
+      "reason": "interrupted_tool_call"
+    }
+  },
+  {
+    "kind": "turn_start",
+    "turn": 2,
+    "maxTurns": 8
+  },
+  {
+    "kind": "compaction",
+    "phase": "start",
+    "reason": "context_limit"
+  },
+  {
+    "kind": "compaction",
+    "phase": "end",
+    "reason": "context_limit",
+    "strategy": "fallback",
+    "outcome": "fallback",
+    "preTokens": 120000,
+    "preTokenSource": "provider_plus_estimate",
+    "estimatedPendingTokens": 1250,
+    "postTokens": 2000,
+    "sampleAttempts": 2,
+    "inputReductions": 1,
+    "messagesOmitted": 2,
+    "filesOmitted": 0,
+    "imagesOmitted": 1,
+    "fallbackTargetTokens": 64000,
+    "fallbackMessagesOmitted": 8,
+    "fallbackMessagesTruncated": 1,
+    "failureReason": "insufficient_reduction",
+    "memory": {
+      "outcome": "written",
+      "entries": 1,
+      "topics": ["debugging"]
+    }
+  },
+  {
+    "kind": "model_fallback",
+    "from": {
+      "provider": "primary",
+      "model": "model-a"
+    },
+    "to": {
+      "provider": "secondary",
+      "model": "model-b"
+    },
+    "candidate": 1,
+    "candidateCount": 1,
+    "trigger": {
+      "source": "retry",
+      "reason": "server_error",
+      "statusCode": 503
+    }
+  },
+  {
+    "kind": "provider_admission",
+    "phase": "queued",
+    "requestClass": "foreground",
+    "resource": "stream",
+    "scope": "domain",
+    "reason": "capacity",
+    "queuePosition": 1,
+    "queueDepth": 1,
+    "inFlight": 4,
+    "limit": 4,
+    "waitMs": 15000,
+    "maxWaitMs": 180000,
+    "recoveryRemainingMs": 585000
+  },
+  {
+    "kind": "provider_retry",
+    "phase": "scheduled",
+    "attempt": 1,
+    "maxRetries": 2,
+    "reason": "server_error",
+    "statusCode": 503,
+    "delayMs": 750,
+    "nextRetryAt": 1750
+  },
+  {
+    "kind": "provider_circuit",
+    "phase": "waiting",
+    "reason": "server_error",
+    "statusCode": 503,
+    "retryAfterMs": 2000,
+    "nextProbeAt": 3000,
+    "openDurationMs": 2000,
+    "sampleCount": 4,
+    "failureCount": 4,
+    "recoveryRemainingMs": 598000
+  },
+  {
+    "kind": "provider_stall",
+    "phase": "detected",
+    "stallCount": 1,
+    "durationMs": 30000,
+    "warningAfterMs": 30000,
+    "timeoutMs": 300000,
+    "outputStarted": false
+  },
+  {
+    "kind": "provider_recovery",
+    "recovery": {
+      "version": 1,
+      "generation": "generation-1",
+      "revision": 1,
+      "snapshot": {
+        "activity": "retry_wait",
+        "reason": "server_error",
+        "updatedAt": 1000,
+        "retry": {
+          "attempt": 1,
+          "maxRetries": 2,
+          "delayMs": 750
+        }
+      }
+    }
+  },
+  {
+    "kind": "thinking_delta",
+    "delta": "inspect the failure"
+  },
+  {
+    "kind": "follow_up_started",
+    "queued": 2,
+    "recovered": 2,
+    "messages": [
+      {
+        "id": "already-persisted",
+        "content": "persisted",
+        "queuedAt": 1789592782341,
+        "recovered": true,
+        "persisted": true
+      },
+      {
+        "id": "not-yet-persisted",
+        "content": "not persisted",
+        "queuedAt": 1789592782341,
+        "recovered": true,
+        "persisted": false
+      }
+    ],
+    "queue": {
+      "version": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "pending": 2,
+      "mutable": 0,
+      "locked": 2,
+      "internal": 0,
+      "items": []
+    }
+  },
+  {
+    "kind": "steering_applied",
+    "messageIds": ["not-yet-persisted"],
+    "count": 1,
+    "recovered": 1,
+    "delivery": "next_turn",
+    "messages": [
+      {
+        "id": "not-yet-persisted",
+        "content": "not persisted",
+        "queuedAt": 1789592782341,
+        "recovered": true
+      }
+    ],
+    "queue": {
+      "version": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "pending": 1,
+      "mutable": 0,
+      "locked": 1,
+      "internal": 0,
+      "items": [
+        {
+          "id": "not-yet-persisted",
+          "position": 0,
+          "queuedAt": "2026-09-05T00:00:00.000Z",
+          "kind": "user",
+          "state": "locked",
+          "delivery": "recovery",
+          "mutable": false,
+          "preview": "Updated requirement",
+          "previewTruncated": false,
+          "attachmentCount": 0
+        }
+      ]
+    }
+  },
+  {
+    "kind": "follow_up_queue_changed",
+    "queue": {
+      "version": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "pending": 0,
+      "mutable": 0,
+      "locked": 0,
+      "internal": 0,
+      "items": []
+    }
+  },
+  {
+    "kind": "goal_continuation_started",
+    "goal": {
+      "version": 1,
+      "sessionId": "surface-events",
+      "goalId": "goal-recovery",
+      "objective": "finish the migration",
+      "status": "active",
+      "tokensUsed": 100,
+      "timeUsedSeconds": 2,
+      "continuationCount": 2,
+      "turnLineage": {
+        "rootTurnId": "root-turn",
+        "currentTurnId": "continuation-turn",
+        "parentTurnId": "parent-turn"
+      },
+      "prematureStop": {
+        "pattern": "internal_wait",
+        "consecutiveCount": 2,
+        "detectedAt": "2026-08-22T00:00:00.000Z"
+      },
+      "createdAt": "2026-08-22T00:00:00.000Z",
+      "updatedAt": "2026-08-22T00:00:00.000Z"
+    },
+    "continuation": 2,
+    "prematureStopPattern": "internal_wait",
+    "prematureStopCount": 2
+  },
+  {
+    "kind": "tool_result",
+    "toolCall": {
+      "id": "tool-failed-without-error-payload",
+      "type": "function",
+      "function": {
+        "name": "Bash",
+        "arguments": "{\"command\":\"false\"}"
+      }
+    },
+    "result": {
+      "success": false,
+      "llmContent": "Command exited with code 1",
+      "metadata": {
+        "summary": "Command failed"
+      }
+    }
+  }
+]

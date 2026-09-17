@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../../../src/agent/Agent.js';
+import type {
+  LoopEvent,
+  SkillExecutionContext,
+} from '../../../../src/agent/loop/types.js';
 import type { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 import type {
@@ -139,6 +143,120 @@ describe('Agent.create', () => {
     await expect(Agent.create({ sessionId: 'session-1' })).rejects.toThrow(
       'Agent.create() does not accept sessionId'
     );
+  });
+});
+
+describe('Agent Skill lifetime', () => {
+  it.each(['completed', 'failed', 'thrown', 'cancelled', 'closed'] as const)(
+    'clears a Skill only after its admitted loop is %s',
+    async (outcome) => {
+      const agent = new Agent(createConfig());
+      const internals = agent as unknown as {
+        isInitialized: boolean;
+        activeSkillContext?: SkillExecutionContext;
+        processAtMentionsForContent: (
+          message: UserMessageContent
+        ) => Promise<UserMessageContent>;
+        runLoop: (
+          message: UserMessageContent,
+          context: ChatContext
+        ) => AsyncGenerator<LoopEvent, LoopResult, void>;
+      };
+      internals.isInitialized = true;
+      internals.processAtMentionsForContent = async (message) => message;
+      const skill: SkillExecutionContext = {
+        skillName: 'only-read',
+        allowedTools: ['Read'],
+        basePath: '/tmp/skill',
+      };
+      const controller = new AbortController();
+      internals.runLoop = async function* () {
+        internals.activeSkillContext = skill;
+        yield { kind: 'turn_start', turn: 1, maxTurns: 3 };
+        if (outcome === 'thrown') throw new Error('loop failure');
+        return {
+          success: outcome === 'completed',
+          finalMessage: '',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 1 },
+        };
+      };
+      const stream = agent.chatStream('work', {
+        messages: [],
+        userId: 'skill-lifetime',
+        sessionId: 'skill-lifetime',
+        workspaceRoot: process.cwd(),
+        signal: controller.signal,
+      });
+      try {
+        await stream.next();
+        expect(internals.activeSkillContext).toBe(skill);
+        if (outcome === 'closed') {
+          await stream.return({ success: false, finalMessage: '' });
+        } else if (outcome === 'thrown') {
+          await expect(stream.next()).rejects.toThrow('loop failure');
+        } else {
+          if (outcome === 'cancelled') controller.abort();
+          await drainAgentStream(stream);
+        }
+        expect(internals.activeSkillContext).toBeUndefined();
+      } finally {
+        await stream.return({ success: false, finalMessage: '' });
+        await agent.destroy();
+      }
+    }
+  );
+
+  it('preserves Skill restrictions through approval and clears them after execution', async () => {
+    const agent = new Agent(createConfig());
+    const internals = agent as unknown as {
+      isInitialized: boolean;
+      activeSkillContext?: SkillExecutionContext;
+      processAtMentionsForContent: (
+        message: UserMessageContent
+      ) => Promise<UserMessageContent>;
+      runPlanLoop: () => AsyncGenerator<LoopEvent, LoopResult, void>;
+      runLoop: () => AsyncGenerator<LoopEvent, LoopResult, void>;
+    };
+    internals.isInitialized = true;
+    internals.processAtMentionsForContent = async (message) => message;
+    const skill: SkillExecutionContext = {
+      skillName: 'planner',
+      allowedTools: ['Read'],
+      basePath: '/tmp/skill',
+    };
+    internals.runPlanLoop = async function* () {
+      internals.activeSkillContext = skill;
+      yield { kind: 'turn_start', turn: 1, maxTurns: 3 };
+      return {
+        success: true,
+        metadata: {
+          targetMode: PermissionMode.YOLO,
+          turnsCount: 1,
+          toolCallsCount: 0,
+          duration: 1,
+        },
+      };
+    };
+    internals.runLoop = async function* () {
+      expect(internals.activeSkillContext).toBe(skill);
+      yield { kind: 'turn_start', turn: 2, maxTurns: 3 };
+      return { success: true, finalMessage: 'done' };
+    };
+    try {
+      const { result } = await drainAgentStream(
+        agent.chatStream('work', {
+          messages: [],
+          userId: 'skill-lifetime',
+          sessionId: 'skill-lifetime',
+          workspaceRoot: process.cwd(),
+          permissionMode: PermissionMode.PLAN,
+        })
+      );
+      expect(result.success).toBe(true);
+      expect(internals.activeSkillContext).toBeUndefined();
+    } finally {
+      await agent.destroy();
+    }
   });
 });
 

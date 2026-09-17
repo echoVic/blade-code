@@ -317,7 +317,6 @@ function retainWithinBudget(
 }
 
 export class ProjectRuleCatalog {
-  readonly catalogSha256: string;
   private readonly definitions: readonly ProjectRuleDefinition[];
   private readonly byId: ReadonlyMap<string, ProjectRuleDefinition>;
 
@@ -330,9 +329,6 @@ export class ProjectRuleCatalog {
       [...definitions].sort(definitionOrder).map((item) => Object.freeze({ ...item }))
     );
     this.byId = new Map(this.definitions.map((item) => [item.id, item]));
-    this.catalogSha256 = sha256(
-      this.definitions.map((item) => `${item.id}:${item.contentSha256}`).join('\n')
-    );
   }
 
   static empty(projectRoot: string): ProjectRuleCatalog {

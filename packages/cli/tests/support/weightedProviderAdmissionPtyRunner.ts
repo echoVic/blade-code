@@ -1,40 +1,20 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'bun-pty';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
+import { waitForCondition as waitFor } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   latchPtyEvidence,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyEnvironment } from './ptyInput.js';
+import { createTuiPtyHarness } from './tuiPtyHarness.js';
 import { hasVisibleWeightedProviderRejection } from './weightedProviderAdmissionPtyDriver.js';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing weighted admission PTY setting: ${name}`);
   return value;
-}
-
-function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    const timer = setInterval(() => {
-      if (predicate()) {
-        clearInterval(timer);
-        resolve();
-        return;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        clearInterval(timer);
-        reject(new Error(message));
-      }
-    }, 50);
-  });
 }
 
 async function waitForPendingByteSidecar(
@@ -115,11 +95,10 @@ async function main(): Promise<void> {
   const sessionId = required('BLADE_WEIGHTED_ADMISSION_PTY_SESSION_ID');
   const secret = process.env.BLADE_WEIGHTED_ADMISSION_PTY_SECRET ?? '';
   const childEnv = createTuiPtyEnvironment();
-  const terminal = spawn(
-    '/usr/bin/env',
-    [
-      'node',
-      cliEntry,
+  const pty = createTuiPtyHarness({
+    cliEntry,
+    workspace,
+    args: [
       '--trust-workspace',
       '--permission-mode',
       'yolo',
@@ -128,23 +107,11 @@ async function main(): Promise<void> {
       '--resume',
       sessionId,
     ],
-    {
-      name: 'xterm-256color',
-      cwd: workspace,
-      cols: 120,
-      rows: 40,
-      env: childEnv,
-    }
-  );
+    env: childEnv,
+  });
+  const { terminal } = pty;
   let output = '';
   let childFailureVisible = false;
-  let exited = false;
-  const exitPromise = new Promise<void>((resolve) => {
-    terminal.onExit(() => {
-      exited = true;
-      resolve();
-    });
-  });
   terminal.onData((chunk) => {
     output = appendBoundedPtyEvidence(output, chunk);
     childFailureVisible = latchPtyEvidence(
@@ -194,17 +161,7 @@ async function main(): Promise<void> {
     );
     process.exitCode = 1;
   } finally {
-    terminal.write('\u0004');
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 500)),
-    ]);
-    if (!exited) terminal.kill('SIGTERM');
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-    ]);
-    if (!exited) terminal.kill('SIGKILL');
+    await pty.close();
   }
 }
 

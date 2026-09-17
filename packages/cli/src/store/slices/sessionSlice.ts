@@ -1,12 +1,6 @@
 /**
- * Session Slice - 会话状态管理
- *
- * 职责：
- * - 会话 ID 管理
- * - 消息历史管理
- * - 错误状态
- *
- * 注意：isThinking 已合并到 commandSlice.isProcessing
+ * Session Slice - 会话状态管理 <p> 职责： - 会话 ID 管理 - 消息历史管理 - 错误状态 <p> 注意：isThinking 已合并到
+ * commandSlice.isProcessing
  */
 
 import type { StateCreator } from 'zustand';
@@ -39,9 +33,7 @@ const STREAMING_LINE_BUFFER_LIMIT = 2000;
 // 仅在 finalizeStreamingMessage 时读取
 let streamingChunksBuffer: string[] = [];
 
-/**
- * 获取并清空流式 chunks 缓冲区（供 finalize 使用）
- */
+/** 获取并清空流式 chunks 缓冲区（供 finalize 使用） */
 export function drainStreamingChunksBuffer(): string[] {
   const chunks = streamingChunksBuffer;
   streamingChunksBuffer = [];
@@ -62,9 +54,7 @@ export function resetConversationProjection(): void {
   conversationProjection = { messages: [], streamingText: new Map() };
 }
 
-/**
- * 初始 Token 使用量
- */
+/** 初始 Token 使用量 */
 const initialTokenUsage: TokenUsage = {
   inputTokens: 0,
   outputTokens: 0,
@@ -78,9 +68,7 @@ const initialTokenUsage: TokenUsage = {
   estimatedCostUsd: 0,
 };
 
-/**
- * 初始会话状态
- */
+/** 初始会话状态 */
 const initialSessionState: SessionState = {
   sessionId: createSessionId('tui'),
   workspaceRoot: getCwd(),
@@ -115,9 +103,7 @@ const initialSessionState: SessionState = {
   actionStationarity: null,
 };
 
-/**
- * 创建 Session Slice
- */
+/** 创建 Session Slice */
 export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> = (
   set,
   get
@@ -125,9 +111,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
   ...initialSessionState,
 
   actions: {
-    /**
-     * 添加消息（通用方法）
-     */
+    /** 添加消息（通用方法） */
     addMessage: (message: SessionMessage) => {
       set((state) => ({
         session: {
@@ -138,9 +122,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       }));
     },
 
-    /**
-     * 添加用户消息
-     */
+    /** 添加用户消息 */
     addUserMessage: (content: string) => {
       const message: SessionMessage = {
         id: `user-${Date.now()}-${Math.random()}`,
@@ -225,9 +207,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       }));
     },
 
-    /**
-     * 添加工具消息
-     */
+    /** 添加工具消息 */
     addToolMessage: (content: string, metadata?: ToolMessageMetadata) => {
       const message: SessionMessage = {
         id: `tool-${Date.now()}-${Math.random()}`,
@@ -239,37 +219,28 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       get().session.actions.addMessage(message);
     },
 
-    /**
-     * 设置压缩状态
-     */
+    /** 设置压缩状态 */
     setCompacting: (isCompacting: boolean) => {
       set((state) => ({
         session: { ...state.session, isCompacting },
       }));
     },
 
-    /**
-     * 设置当前命令
-     */
+    /** 设置当前命令 */
     setCommand: (command: string | null) => {
       set((state) => ({
         session: { ...state.session, currentCommand: command },
       }));
     },
 
-    /**
-     * 设置错误
-     */
+    /** 设置错误 */
     setError: (error: string | null) => {
       set((state) => ({
         session: { ...state.session, error },
       }));
     },
 
-    /**
-     * 清除消息
-     * 同时递增 clearCount 以强制 UI 的 Static 组件重新挂载
-     */
+    /** 清除消息 同时递增 clearCount 以强制 UI 的 Static 组件重新挂载 */
     clearMessages: () => {
       clearAllMarkdownCache();
       set((state) => ({
@@ -294,9 +265,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       }));
     },
 
-    /**
-     * 重置会话（保持 sessionId 和 actions）
-     */
+    /** 重置会话（保持 sessionId 和 actions） */
     resetSession: () => {
       clearAllMarkdownCache();
       set((state) => ({
@@ -316,9 +285,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       }));
     },
 
-    /**
-     * 恢复会话
-     */
+    /** 恢复会话 */
     restoreSession: (
       sessionId: string,
       messages: SessionMessage[],
@@ -347,9 +314,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       }));
     },
 
-    /**
-     * 更新 Token 使用量
-     */
+    /** 更新 Token 使用量 */
     updateTokenUsage: (usage: TokenUsageUpdate) => {
       set((state) => {
         const prev = state.session.tokenUsage;
@@ -410,9 +375,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       }));
     },
 
-    /**
-     * 重置 Token 使用量
-     */
+    /** 重置 Token 使用量 */
     resetTokenUsage: () => {
       set((state) => ({
         session: {
@@ -424,9 +387,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
 
     // ==================== Thinking 相关 actions ====================
 
-    /**
-     * 设置当前 thinking 内容（用于流式接收）
-     */
+    /** 设置当前 thinking 内容（用于流式接收） */
     setCurrentThinkingContent: (content: string | null) => {
       if (get().session.currentThinkingContent === content) {
         return;
@@ -436,9 +397,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       }));
     },
 
-    /**
-     * 追加 thinking 内容（用于流式接收增量）
-     */
+    /** 追加 thinking 内容（用于流式接收增量） */
     appendThinkingContent: (delta: string) => {
       set((state) => ({
         session: {
@@ -448,18 +407,14 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       }));
     },
 
-    /**
-     * 设置 thinking 内容是否展开
-     */
+    /** 设置 thinking 内容是否展开 */
     setThinkingExpanded: (expanded: boolean) => {
       set((state) => ({
         session: { ...state.session, thinkingExpanded: expanded },
       }));
     },
 
-    /**
-     * 切换 thinking 内容展开/折叠状态
-     */
+    /** 切换 thinking 内容展开/折叠状态 */
     toggleThinkingExpanded: () => {
       set((state) => ({
         session: {
@@ -471,18 +426,14 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
 
     // ==================== 历史消息折叠相关 actions ====================
 
-    /**
-     * 设置历史消息是否全部展开
-     */
+    /** 设置历史消息是否全部展开 */
     setHistoryExpanded: (expanded: boolean) => {
       set((state) => ({
         session: { ...state.session, historyExpanded: expanded },
       }));
     },
 
-    /**
-     * 切换历史消息展开/折叠状态
-     */
+    /** 切换历史消息展开/折叠状态 */
     toggleHistoryExpanded: () => {
       set((state) => ({
         session: {
@@ -492,19 +443,14 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       }));
     },
 
-    /**
-     * 设置保持展开的最近消息数量
-     */
+    /** 设置保持展开的最近消息数量 */
     setExpandedMessageCount: (count: number) => {
       set((state) => ({
         session: { ...state.session, expandedMessageCount: count },
       }));
     },
 
-    /**
-     * 增加 clearCount（用于强制 Static 组件重新挂载）
-     * 主要用于终端 resize 时刷新显示，避免重渲染问题
-     */
+    /** 增加 clearCount（用于强制 Static 组件重新挂载） 主要用于终端 resize 时刷新显示，避免重渲染问题 */
     incrementClearCount: () => {
       set((state) => ({
         session: {
@@ -662,9 +608,7 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       });
     },
 
-    /**
-     * 清理流式转最终渲染标记
-     */
+    /** 清理流式转最终渲染标记 */
     clearFinalizingStreamingMessageId: () => {
       set((state) => ({
         session: { ...state.session, finalizingStreamingMessageId: null },

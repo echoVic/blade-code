@@ -65,8 +65,10 @@ Deterministic tests use two real temporary directories to load native and plugin
 
 Real API qualification includes:
 
-- GPT dual `SessionRuntime` concurrently calling respective plugin commands;
-- GPT calling respective plugin commands in dual-cwd Sessions within the same ACP connection;
+- DeepSeek Flash dual `SessionRuntime` instances concurrently call their respective
+  plugin commands;
+- DeepSeek Flash calls the respective plugin commands in dual-cwd Sessions within the
+  same ACP connection;
 - DeepSeek Flash/Pro completing Read/Edit/Bash via production CLI `--agents -> Task`;
 - Production Web GUI binding and trusting two projects A/B, calling `plugin-a:reveal` and `plugin-b:reveal` respectively in independent worktrees, maintaining independent projections after switching back, and a fresh tab having zero console errors.
 

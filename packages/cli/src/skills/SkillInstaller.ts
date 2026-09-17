@@ -57,17 +57,13 @@ export function skillNameFromRepositoryUrl(url: string): string {
   return path.posix.basename(pathname.replace(/\/+$/, '')).replace(/\.git$/, '');
 }
 
-/**
- * 官方 Skills 仓库信息
- */
+/** 官方 Skills 仓库信息 */
 const OFFICIAL_SKILLS_REPO = {
   url: 'https://github.com/anthropics/skills.git',
   branch: 'main',
 };
 
-/**
- * SkillInstaller 类
- */
+/** SkillInstaller 类 */
 export class SkillInstaller {
   private skillsDir: string;
 
@@ -75,9 +71,7 @@ export class SkillInstaller {
     this.skillsDir = skillsDir || path.join(homedir(), '.blade', 'skills');
   }
 
-  /**
-   * 检查 git 是否可用
-   */
+  /** 检查 git 是否可用 */
   private async isGitAvailable(): Promise<boolean> {
     try {
       await this.runGit(['--version'], 5000);
@@ -114,8 +108,7 @@ export class SkillInstaller {
       // 确保目录存在
       await fs.mkdir(this.skillsDir, { recursive: true, mode: 0o755 });
 
-      // 使用 git clone --depth 1 --filter 克隆指定目录
-      // 方法：克隆整个仓库（浅克隆），然后只复制需要的目录
+      // 使用 git clone --depth 1 --filter 克隆指定目录 方法：克隆整个仓库（浅克隆），然后只复制需要的目录
       await this.runGit(
         [
           'clone',
@@ -317,9 +310,7 @@ export class SkillInstaller {
     }
   }
 
-  /**
-   * 安装所有官方 Skills
-   */
+  /** 安装所有官方 Skills */
   async installAllOfficialSkills(): Promise<{ installed: string[]; failed: string[] }> {
     const { url, branch } = OFFICIAL_SKILLS_REPO;
     const tempDir = path.join(this.skillsDir, `.tmp-all-${Date.now()}`);
@@ -402,9 +393,7 @@ export class SkillInstaller {
   }
 }
 
-/**
- * 获取 SkillInstaller 单例
- */
+/** 获取 SkillInstaller 单例 */
 let installerInstance: SkillInstaller | null = null;
 
 export function getSkillInstaller(skillsDir?: string): SkillInstaller {

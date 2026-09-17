@@ -1,6 +1,4 @@
-/**
- * pathHelpers 工具函数测试
- */
+/** pathHelpers 工具函数测试 */
 
 import { describe, expect, it } from 'vitest';
 import { endsWithSeparator, splitPath } from '../../../../src/utils/pathHelpers.js';

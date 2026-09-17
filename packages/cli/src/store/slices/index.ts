@@ -1,6 +1,4 @@
-/**
- * Slices 导出
- */
+/** Slices 导出 */
 
 export { createAppSlice } from './appSlice.js';
 export { createCommandSlice } from './commandSlice.js';

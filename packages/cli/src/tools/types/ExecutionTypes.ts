@@ -60,10 +60,7 @@ export interface ConfirmationResponse {
   openExternalUrl?: boolean;
 }
 
-/**
- * 确认处理器接口
- * 由 UI 层实现,用于处理需要用户确认的工具调用
- */
+/** 确认处理器接口 由 UI 层实现,用于处理需要用户确认的工具调用 */
 export interface ConfirmationHandler {
   /**
    * 请求用户确认
@@ -89,9 +86,7 @@ export interface ToolProgressUpdate {
   };
 }
 
-/**
- * 执行上下文
- */
+/** 执行上下文 */
 export interface ExecutionContext {
   userId?: string;
   sessionId?: string;
@@ -129,9 +124,7 @@ export interface ExecutionContext {
   deferredToolManager?: DeferredToolManager;
 }
 
-/**
- * 权限行为
- */
+/** 权限行为 */
 export type PermissionBehavior = 'allow' | 'ask' | 'deny';
 
 /**
@@ -162,9 +155,7 @@ export interface PermissionDecision {
   matchedRule?: string;
 }
 
-/**
- * 执行历史记录
- */
+/** 执行历史记录 */
 export interface ExecutionHistoryEntry {
   executionId: string;
   toolName: string;

@@ -52,7 +52,6 @@ const deterministicSeed: PairedAcpFixtureSeed = async (context) => {
   });
   const persistent = new PersistentStore(
     projectPath,
-    100,
     undefined,
     createRemoteSessionStateStorage(projectPath, descriptor)
   );
@@ -111,6 +110,20 @@ describe('session surface qualification harness', () => {
     );
   });
 
+  it('centralizes production ACP child transport ownership', async () => {
+    const source = await readFile(
+      path.resolve(
+        import.meta.dirname,
+        '../../support/acp/createBladeAcpChildHarness.ts'
+      ),
+      'utf8'
+    );
+
+    expect(source).toContain("[options.cliEntry, ...(options.args ?? []), '--acp']");
+    expect(source).toContain('new acp.ClientSideConnection');
+    expect(source).toContain("child.kill('SIGKILL')");
+  });
+
   it('keeps compaction memory qualification on every production surface', async () => {
     const integrationPath = path.resolve(
       import.meta.dirname,
@@ -139,7 +152,7 @@ describe('session surface qualification harness', () => {
     expect(integration).toContain('page.reload');
     expect(integration).toContain('BLADE_STORAGE_ROOT');
     expect(integration).toContain('HOME');
-    expect(acpRunner).toContain("[input.cliEntry, '--acp']");
+    expect(acpRunner).toContain('createBladeAcpChildHarness');
     expect(acpRunner).toContain('blade/compaction');
     expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
     expect(ptyRunner).toContain('正在压缩上下文');
@@ -170,7 +183,7 @@ describe('session surface qualification harness', () => {
     expect(integration).toContain('execution_host_failure_count');
     expect(integration).toContain('page.reload');
     expect(integration).toContain('data-blade-goal-execution-host-failure');
-    expect(acpRunner).toContain("[input.cliEntry, '--acp']");
+    expect(acpRunner).toContain('createBladeAcpChildHarness');
     expect(acpRunner).toContain('blade/goal');
     expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");
     expect(ptyRunner).toContain('exec-host:timeout:1');
@@ -201,7 +214,7 @@ describe('session surface qualification harness', () => {
     expect(integration).toContain('root_turn_id');
     expect(integration).toContain('data-blade-goal-root-turn');
     expect(integration).toContain('page.reload');
-    expect(acpRunner).toContain("[input.cliEntry, '--acp']");
+    expect(acpRunner).toContain('createBladeAcpChildHarness');
     expect(acpRunner).toContain('blade/goalContinuation');
     expect(acpRunner).toContain('turnLineage');
     expect(ptyRunner).toContain("import { spawn } from 'bun-pty'");

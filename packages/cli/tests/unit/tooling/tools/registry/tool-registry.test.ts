@@ -233,7 +233,7 @@ describe('ToolRegistry', () => {
     expect(registry.getDeferredToolsListing()).toContain('UpdateGoal');
   });
 
-  it('注册内置工具后应可查询、分类和打标签', () => {
+  it('注册内置工具后应可查询并发布事件', () => {
     const tool = createMockTool('alpha', {
       category: 'filesystem',
       tags: ['fs', 'read'],
@@ -244,8 +244,6 @@ describe('ToolRegistry', () => {
     registry.register(tool);
 
     expect(registry.get('alpha')).toBe(tool);
-    expect(registry.getByCategory('filesystem')).toContain(tool);
-    expect(registry.getByTag('fs')).toContain(tool);
     expect(eventSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'builtin',
@@ -271,15 +269,13 @@ describe('ToolRegistry', () => {
     );
   });
 
-  it('可以注销内置工具并更新索引', () => {
+  it('可以注销内置工具', () => {
     const tool = createMockTool('beta', { category: 'network', tags: ['http'] });
     registry.register(tool);
 
     const result = registry.unregister('beta');
     expect(result).toBe(true);
     expect(registry.get('beta')).toBeUndefined();
-    expect(registry.getByCategory('network')).not.toContain(tool);
-    expect(registry.getByTag('http')).not.toContain(tool);
   });
 
   it('支持 MCP 工具注册与批量移除', () => {
@@ -442,24 +438,6 @@ describe('ToolRegistry', () => {
     expect(registry.search('writes')).toContain(writeTool);
     expect(registry.search('filesystem')).toContain(readTool);
     expect(registry.search('fs')).toHaveLength(2);
-  });
-
-  it('统计信息应区分内置与 MCP 工具', () => {
-    registry.register(createMockTool('builtin-one', { category: 'alpha' }));
-    registry.register(
-      createMockTool('builtin-two', { category: 'beta', tags: ['beta-tag'] })
-    );
-    registry.registerMcpTool(
-      createMockTool('mcp__srv__tool', { category: 'alpha', tags: ['beta-tag'] })
-    );
-
-    const stats = registry.getStats();
-    expect(stats.totalTools).toBe(3);
-    expect(stats.builtinTools).toBe(2);
-    expect(stats.mcpTools).toBe(1);
-    expect(stats.categories).toBe(2);
-    expect(stats.tags).toBeGreaterThanOrEqual(2);
-    expect(stats.toolsByCategory.alpha).toBe(2);
   });
 
   it('始终暴露 worktree 生命周期工具并延迟普通扩展工具', () => {

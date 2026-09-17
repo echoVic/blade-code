@@ -1,8 +1,4 @@
-/**
- * Blade 权限检查器
- * 实现 allow/ask/deny 三级权限控制
- * 支持精确匹配、前缀匹配、通配符匹配和 glob 模式
- */
+/** Blade 权限检查器 实现 allow/ask/deny 三级权限控制 支持精确匹配、前缀匹配、通配符匹配和 glob 模式 */
 
 import picomatch from 'picomatch';
 import {
@@ -12,9 +8,7 @@ import {
 } from '../utils/shell/commandNormalizer.js';
 import type { PermissionConfig } from './types.js';
 
-/**
- * 权限检查结果
- */
+/** 权限检查结果 */
 export enum PermissionResult {
   /** 允许执行 */
   ALLOW = 'allow',
@@ -24,9 +18,7 @@ export enum PermissionResult {
   DENY = 'deny',
 }
 
-/**
- * 权限检查详情
- */
+/** 权限检查详情 */
 export interface PermissionCheckResult {
   /** 检查结果 */
   result: PermissionResult;
@@ -38,9 +30,7 @@ export interface PermissionCheckResult {
   reason?: string;
 }
 
-/**
- * 工具调用描述
- */
+/** 工具调用描述 */
 export interface ToolInvocationDescriptor {
   /** 工具名称 */
   toolName: string;
@@ -55,15 +45,11 @@ export interface ToolInvocationDescriptor {
   };
 }
 
-/**
- * 权限检查器
- */
+/** 权限检查器 */
 export class PermissionChecker {
   constructor(private config: PermissionConfig) {}
 
-  /**
-   * 检查工具调用权限
-   */
+  /** 检查工具调用权限 */
   check(descriptor: ToolInvocationDescriptor): PermissionCheckResult {
     const signature = PermissionChecker.buildSignature(descriptor);
 
@@ -208,9 +194,7 @@ export class PermissionChecker {
     }
   }
 
-  /**
-   * 匹配规则列表
-   */
+  /** 匹配规则列表 */
   private matchRules(
     signature: string,
     rules: string[]
@@ -281,8 +265,7 @@ export class PermissionChecker {
         return 'wildcard';
       }
 
-      // Bash 的抽象规则以 "固定命令前缀 *" 表示同一命令族。
-      // 固定部分可能包含反斜杠或其他 glob 元字符，必须按 shell 文本字面量匹配。
+      // Bash 的抽象规则以 "固定命令前缀 *" 表示同一命令族。 固定部分可能包含反斜杠或其他 glob 元字符，必须按 shell 文本字面量匹配。
       if (sigToolName === 'Bash' && ruleParams.endsWith(' *')) {
         return sigParams.startsWith(ruleParams.slice(0, -1)) ? 'wildcard' : null;
       }
@@ -302,19 +285,13 @@ export class PermissionChecker {
     return null;
   }
 
-  /**
-   * 提取参数部分
-   * 注意：使用 [\s\S] 而不是 . 以匹配包含换行符的多行参数
-   */
+  /** 提取参数部分 注意：使用 [\s\S] 而不是 . 以匹配包含换行符的多行参数 */
   private extractParams(signature: string): string {
     const match = signature.match(/\(([\s\S]*)\)$/);
     return match ? match[1] : '';
   }
 
-  /**
-   * 匹配参数
-   * 支持对参数值进行 glob 匹配
-   */
+  /** 匹配参数 支持对参数值进行 glob 匹配 */
   private matchParams(sigParams: string, ruleParams: string): boolean {
     if (!sigParams || !ruleParams) {
       return false;
@@ -340,8 +317,7 @@ export class PermissionChecker {
         return true;
       }
 
-      // Glob 模式匹配
-      // 使用 bash: true 让 * 匹配包括 / 在内的所有字符
+      // Glob 模式匹配 使用 bash: true 让 * 匹配包括 / 在内的所有字符
       if (
         ruleParams.includes('*') ||
         ruleParams.includes('{') ||
@@ -374,8 +350,7 @@ export class PermissionChecker {
           continue;
         }
 
-        // 否则使用 picomatch 进行 glob 匹配
-        // 使用 bash: true 让 * 匹配包括 / 和空格在内的所有字符
+        // 否则使用 picomatch 进行 glob 匹配 使用 bash: true 让 * 匹配包括 / 和空格在内的所有字符
         const isMatch = picomatch.isMatch(sigValue, ruleValue, {
           dot: true,
           bash: true,
@@ -392,10 +367,7 @@ export class PermissionChecker {
     return true;
   }
 
-  /**
-   * 解析参数对
-   * 支持嵌套的花括号和括号
-   */
+  /** 解析参数对 支持嵌套的花括号和括号 */
   private parseParamPairs(params: string): Record<string, string> {
     const pairs: Record<string, string> = {};
 
@@ -414,9 +386,7 @@ export class PermissionChecker {
     return pairs;
   }
 
-  /**
-   * 智能分割字符串,忽略括号和花括号内的分隔符
-   */
+  /** 智能分割字符串,忽略括号和花括号内的分隔符 */
   private smartSplit(str: string, delimiter: string): string[] {
     const result: string[] = [];
     let current = '';
@@ -534,38 +504,13 @@ export class PermissionChecker {
     return -1;
   }
 
-  /**
-   * 从签名中提取工具名称
-   */
+  /** 从签名中提取工具名称 */
   private extractToolName(signature: string): string | null {
     const match = signature.match(/^([A-Za-z0-9_]+)(\(|$)/);
     return match ? match[1] : null;
   }
 
-  /**
-   * 检查是否允许执行 (不需要确认)
-   */
-  isAllowed(descriptor: ToolInvocationDescriptor): boolean {
-    return this.check(descriptor).result === PermissionResult.ALLOW;
-  }
-
-  /**
-   * 检查是否被拒绝
-   */
-  isDenied(descriptor: ToolInvocationDescriptor): boolean {
-    return this.check(descriptor).result === PermissionResult.DENY;
-  }
-
-  /**
-   * 检查是否需要确认
-   */
-  needsConfirmation(descriptor: ToolInvocationDescriptor): boolean {
-    return this.check(descriptor).result === PermissionResult.ASK;
-  }
-
-  /**
-   * 更新权限配置
-   */
+  /** 更新权限配置 */
   updateConfig(config: Partial<PermissionConfig>): void {
     if (config.allow) {
       this.config.allow = [...this.config.allow, ...config.allow];
@@ -576,19 +521,5 @@ export class PermissionChecker {
     if (config.deny) {
       this.config.deny = [...this.config.deny, ...config.deny];
     }
-  }
-
-  /**
-   * 替换整个权限配置
-   */
-  replaceConfig(config: PermissionConfig): void {
-    this.config = { ...config };
-  }
-
-  /**
-   * 获取当前权限配置
-   */
-  getConfig(): PermissionConfig {
-    return { ...this.config };
   }
 }

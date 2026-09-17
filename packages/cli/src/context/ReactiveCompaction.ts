@@ -1,7 +1,5 @@
 /**
- * ReactiveCompaction — 反应式紧急压缩
- *
- * 当 LLM 返回 413 (prompt_too_long) 错误时触发的紧急压缩。
+ * ReactiveCompaction — 反应式紧急压缩 <p> 当 LLM 返回 413 (prompt_too_long) 错误时触发的紧急压缩。
  * 每轮最多尝试一次，作为最后一道防线。
  */
 
@@ -66,10 +64,7 @@ export class ReactiveCompaction {
     return !this.hasAttempted;
   }
 
-  /**
-   * 尝试反应式压缩。每轮最多一次。
-   * 先尝试 snip（轻量），再尝试 LLM 压缩（重量）。
-   */
+  /** 尝试反应式压缩。每轮最多一次。 先尝试 snip（轻量），再尝试 LLM 压缩（重量）。 */
   async tryReactiveCompact(
     messages: Message[],
     options: ReactiveCompactOptions

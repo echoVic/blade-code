@@ -1,59 +1,16 @@
-import { access } from 'node:fs/promises';
-import { spawn } from 'bun-pty';
-import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
+import { waitForCondition as waitFor, waitForInboxRemoval } from './asyncTestUtils.js';
 import {
   appendBoundedPtyEvidence,
   latchPtyMarker,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { createTuiPtyEnvironment } from './ptyInput.js';
+import { createTuiPtyHarness } from './tuiPtyHarness.js';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing background completion PTY setting: ${name}`);
   return value;
-}
-
-function waitFor(
-  predicate: () => boolean,
-  message: string,
-  timeoutMs: number
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    const timer = setInterval(() => {
-      if (predicate()) {
-        clearInterval(timer);
-        resolve();
-        return;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        clearInterval(timer);
-        reject(new Error(message));
-      }
-    }, 50);
-  });
-}
-
-async function waitForInboxRemoval(
-  workspace: string,
-  sessionId: string,
-  timeoutMs: number
-): Promise<void> {
-  const inboxPath = getSessionInboxFilePath(workspace, sessionId);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      await access(inboxPath);
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        return;
-      }
-      throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error('TUI background completion was not durably acknowledged');
 }
 
 async function main(): Promise<void> {
@@ -64,11 +21,10 @@ async function main(): Promise<void> {
   const secret = process.env.BLADE_BACKGROUND_COMPLETION_PTY_SECRET ?? '';
   const expectedParent = `BACKGROUND_PARENT_FINAL:${childMarker}`;
   const childEnv = createTuiPtyEnvironment();
-  const terminal = spawn(
-    '/usr/bin/env',
-    [
-      'node',
-      cliEntry,
+  const pty = createTuiPtyHarness({
+    cliEntry,
+    workspace,
+    args: [
       '--trust-workspace',
       '--permission-mode',
       'yolo',
@@ -77,25 +33,13 @@ async function main(): Promise<void> {
       '--resume',
       sessionId,
     ],
-    {
-      name: 'xterm-256color',
-      cwd: workspace,
-      cols: 120,
-      rows: 40,
-      env: childEnv,
-    }
-  );
+    env: childEnv,
+  });
+  const { terminal } = pty;
   let output = '';
   let sawProviderAdmission = false;
   let sawChildMarker = false;
   let sawParentFinal = false;
-  let exited = false;
-  const exitPromise = new Promise<void>((resolve) => {
-    terminal.onExit(() => {
-      exited = true;
-      resolve();
-    });
-  });
   terminal.onData((chunk) => {
     output = appendBoundedPtyEvidence(output, chunk);
     sawProviderAdmission = latchPtyMarker(
@@ -145,17 +89,7 @@ async function main(): Promise<void> {
     );
     process.exitCode = 1;
   } finally {
-    terminal.write('\u0004');
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 500)),
-    ]);
-    if (!exited) terminal.kill('SIGTERM');
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-    ]);
-    if (!exited) terminal.kill('SIGKILL');
+    await pty.close();
   }
 }
 

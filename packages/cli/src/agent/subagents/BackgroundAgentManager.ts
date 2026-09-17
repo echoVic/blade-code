@@ -1,11 +1,4 @@
-/**
- * 后台 Agent 管理器
- *
- * 管理在后台运行的 subagent：
- * - 启动后台 agent
- * - 跟踪状态和输出
- * - 支持等待完成、恢复、终止
- */
+/** 后台 Agent 管理器 管理在后台运行的 subagent： - 启动后台 agent - 跟踪状态和输出 - 支持等待完成、恢复、终止 */
 
 import { stat } from 'node:fs/promises';
 import type {
@@ -146,9 +139,7 @@ function lastAssistantText(messages: readonly Message[]): string {
   return '';
 }
 
-/**
- * 后台 Agent 运行时信息
- */
+/** 后台 Agent 运行时信息 */
 interface BackgroundAgentRuntime {
   /** Agent ID */
   id: string;
@@ -163,9 +154,7 @@ interface BackgroundAgentRuntime {
   startTime: number;
 }
 
-/**
- * 启动后台 Agent 的选项
- */
+/** 启动后台 Agent 的选项 */
 export interface StartBackgroundAgentOptions {
   /** Subagent 配置 */
   config: SubagentConfig;
@@ -262,9 +251,7 @@ export interface ResumeAgentResult {
   source: AgentSession;
 }
 
-/**
- * 后台 Agent 管理器
- */
+/** 后台 Agent 管理器 */
 export class BackgroundAgentManager {
   private static instance: BackgroundAgentManager | null = null;
 
@@ -584,9 +571,7 @@ export class BackgroundAgentManager {
     return id;
   }
 
-  /**
-   * 执行 Agent（内部方法）
-   */
+  /** 执行 Agent（内部方法） */
   private async executeAgent(
     agentId: string,
     config: SubagentConfig,
@@ -896,9 +881,7 @@ export class BackgroundAgentManager {
     }
   }
 
-  /**
-   * 获取 Agent 状态
-   */
+  /** 获取 Agent 状态 */
   getAgent(
     agentId: string,
     owner?: AgentSessionOwner | string
@@ -911,9 +894,7 @@ export class BackgroundAgentManager {
     return isAgentSessionOwnedBy(session, owner) ? session : undefined;
   }
 
-  /**
-   * 检查 Agent 是否正在运行
-   */
+  /** 检查 Agent 是否正在运行 */
   isRunning(agentId: string): boolean {
     return this.runningAgents.has(agentId);
   }
@@ -1063,9 +1044,7 @@ export class BackgroundAgentManager {
     return { agentId: resumedId, source: session };
   }
 
-  /**
-   * 取消/终止 Agent
-   */
+  /** 取消/终止 Agent */
   killAgent(agentId: string, owner?: AgentSessionOwner): boolean {
     if (owner && !this.getAgent(agentId, owner)) return false;
     const runtime = this.runningAgents.get(agentId);
@@ -1090,9 +1069,7 @@ export class BackgroundAgentManager {
     return true;
   }
 
-  /**
-   * 列出所有后台 Agent
-   */
+  /** 列出所有后台 Agent */
   listAll(): AgentSession[] {
     return this.sessionStore.listSessions();
   }
@@ -1107,34 +1084,16 @@ export class BackgroundAgentManager {
       );
   }
 
-  /**
-   * 列出运行中的 Agent
-   */
-  listRunning(): AgentSession[] {
-    return this.sessionStore.listRunningSessions();
-  }
-
-  /**
-   * 获取运行中 Agent 的数量
-   */
+  /** 获取运行中 Agent 的数量 */
   getRunningCount(): number {
     return this.runningAgents.size;
   }
 
-  /**
-   * 终止所有运行中的 Agent
-   */
+  /** 终止所有运行中的 Agent */
   killAll(): void {
     for (const [agentId] of this.runningAgents) {
       this.killAgent(agentId);
     }
-  }
-
-  /**
-   * 清理过期会话
-   */
-  cleanupExpiredSessions(maxAgeMs?: number): number {
-    return this.sessionStore.cleanupExpiredSessions(maxAgeMs);
   }
 
   cleanupExpiredSessionsForParent(

@@ -1,7 +1,4 @@
-/**
- * Diff 渲染组件 - 渲染 unified diff 格式的差异
- * 支持交互式展开/折叠
- */
+/** Diff 渲染组件 - 渲染 unified diff 格式的差异 支持交互式展开/折叠 */
 
 import { Box, Text } from 'ink';
 import React, { useState } from 'react';
@@ -20,9 +17,7 @@ interface DiffRendererProps {
 /** 展开时显示的最大行数上限，防止性能问题 */
 const MAX_EXPANDED_LINES = 400;
 
-/**
- * 解析 unified diff 格式的 patch
- */
+/** 解析 unified diff 格式的 patch */
 function parsePatch(patch: string): Array<{
   type: 'context' | 'add' | 'remove' | 'header';
   content: string;
@@ -96,9 +91,7 @@ function parsePatch(patch: string): Array<{
   return result;
 }
 
-/**
- * DiffRenderer 组件
- */
+/** DiffRenderer 组件 */
 export const DiffRenderer: React.FC<DiffRendererProps> = React.memo(
   ({
     patch,

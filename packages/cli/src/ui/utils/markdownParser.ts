@@ -1,7 +1,4 @@
-/**
- * Markdown 解析器
- * 将文本解析为结构化块，供 MessageRenderer 使用
- */
+/** Markdown 解析器 将文本解析为结构化块，供 MessageRenderer 使用 */
 
 export const MARKDOWN_PATTERNS = {
   codeBlock: /^```(\w+)?\s*$/,
@@ -48,13 +45,7 @@ export interface ParsedBlock {
   blockquoteLines?: string[];
 }
 
-/**
- * 解析 Markdown 内容为结构化块
- *
- * 嵌套代码块处理策略：
- * - 使用嵌套深度计数器跟踪代码块层级
- * - 只有当深度归零时才真正结束代码块
- */
+/** 解析 Markdown 内容为结构化块 嵌套代码块处理策略： - 使用嵌套深度计数器跟踪代码块层级 - 只有当深度归零时才真正结束代码块 */
 export function parseMarkdown(content: string): ParsedBlock[] {
   const blocks: ParsedBlock[] = [];
   const lines = content.split(/\r?\n/);

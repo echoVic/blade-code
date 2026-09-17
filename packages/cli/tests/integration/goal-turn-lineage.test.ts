@@ -9,6 +9,7 @@ import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { resetProjectionDbCache } from '../../src/context/storage/sqlite/projection.js';
 import { GoalStore } from '../../src/goals/GoalStore.js';
 import type { GoalTurnLineage } from '../../src/goals/types.js';
+import { reserveLoopbackPort as reservePort } from '../support/asyncTestUtils.js';
 import {
   captureForegroundGuiLauncherIdentity,
   isExpectedBrowserRequestFailure,
@@ -162,20 +163,6 @@ async function assertDurableLineage(
     if (previous === undefined) delete process.env.BLADE_STORAGE_ROOT;
     else process.env.BLADE_STORAGE_ROOT = previous;
   }
-}
-
-async function reservePort(): Promise<number> {
-  const server = createNetServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('No Web port');
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve()))
-  );
-  return address.port;
 }
 
 async function waitForHttp(origin: string): Promise<void> {

@@ -6,17 +6,13 @@ import { FocusId } from '../../store/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 
-/**
- * 问题选项类型
- */
+/** 问题选项类型 */
 interface QuestionOption {
   label: string;
   description: string;
 }
 
-/**
- * 问题类型
- */
+/** 问题类型 */
 interface Question {
   question: string;
   header: string;
@@ -24,18 +20,14 @@ interface Question {
   options: QuestionOption[];
 }
 
-/**
- * QuestionPrompt Props
- */
+/** QuestionPrompt Props */
 interface QuestionPromptProps {
   questions: Question[];
   onComplete: (answers: Record<string, string | string[]>) => void;
   onCancel: () => void;
 }
 
-/**
- * 单个选项组件
- */
+/** 单个选项组件 */
 const OptionItem = React.memo<{
   option: { label: string; description: string; value: string };
   index: number;
@@ -57,9 +49,7 @@ const OptionItem = React.memo<{
   </Box>
 ));
 
-/**
- * 答案摘要组件（用于 Submit 界面）
- */
+/** 答案摘要组件（用于 Submit 界面） */
 const AnswerSummary = React.memo<{
   questions: Question[];
   answers: Record<string, string | string[]>;
@@ -83,15 +73,10 @@ const AnswerSummary = React.memo<{
   </Box>
 ));
 
-/**
- * 阶段类型
- */
+/** 阶段类型 */
 type Phase = 'answering' | 'submit';
 
-/**
- * QuestionPrompt 组件
- * 显示结构化问题并收集用户答案
- */
+/** QuestionPrompt 组件 显示结构化问题并收集用户答案 */
 export const QuestionPrompt: React.FC<QuestionPromptProps> = React.memo(
   ({ questions, onComplete, onCancel }) => {
     const { stdout } = useStdout();

@@ -191,17 +191,26 @@ export async function startRecordingProviderProxy(
     holdBodyIncludes?: string;
     holdMs?: number;
     onHold?: (requestNumber: number) => void | Promise<void>;
-    inject503Once?: { path: string; retryAfterMs?: number };
+    injectFailureOnce?: {
+      path: string;
+      status?: number;
+      retryAfterMs?: number;
+      body?: unknown;
+    };
     firstRequestJsonOnly?: { prompt: string };
     stopSequenceOnce?: { requestNumber: number; stop: string; prompt?: string };
   } = {}
 ): Promise<RecordingProviderProxy> {
-  const injection = options.inject503Once;
+  const injection = options.injectFailureOnce;
   if (
     injection !== undefined &&
     (!injection.path.startsWith('/') ||
       injection.path.includes('?') ||
       injection.path.includes('#') ||
+      (injection.status !== undefined &&
+        (!Number.isSafeInteger(injection.status) ||
+          injection.status < 400 ||
+          injection.status > 599)) ||
       (injection.retryAfterMs !== undefined &&
         (!Number.isSafeInteger(injection.retryAfterMs) || injection.retryAfterMs < 0)))
   ) {
@@ -270,15 +279,17 @@ export async function startRecordingProviderProxy(
         recordLifecycle({ requestNumber, phase: 'body_read' });
 
         if (injectFailure) {
-          response.statusCode = 503;
+          response.statusCode = injection.status ?? 503;
           response.setHeader('content-type', 'application/json');
           if (injection.retryAfterMs !== undefined) {
             response.setHeader('retry-after-ms', String(injection.retryAfterMs));
           }
           response.end(
-            JSON.stringify({
-              error: { message: 'Qualification proxy injected Provider failure' },
-            })
+            JSON.stringify(
+              injection.body ?? {
+                error: { message: 'Qualification proxy injected Provider failure' },
+              }
+            )
           );
           recordLifecycle({ requestNumber, phase: 'downstream_ended' });
           return;

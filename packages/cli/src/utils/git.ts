@@ -1,12 +1,6 @@
 /**
- * Git 工具函数集
- *
- * 提供完整的 Git 操作支持，包括：
- * - 验证函数：检测 Git 安装、仓库状态
- * - 查询函数：分支、提交、状态查询
- * - 操作函数：暂存、提交
+ * Git 工具函数集 <p> 提供完整的 Git 操作支持，包括： - 验证函数：检测 Git 安装、仓库状态 - 查询函数：分支、提交、状态查询 - 操作函数：暂存、提交
  * - Diff 函数：获取差异，带大小限制
- *
  */
 
 import { type ExecFileException, execFile, spawn } from 'child_process';
@@ -24,9 +18,7 @@ interface GitExecResult {
   stderr: string;
 }
 
-/**
- * 执行 Git 命令（不抛出异常）
- */
+/** 执行 Git 命令（不抛出异常） */
 async function gitExec(cwd: string, args: string[]): Promise<GitExecResult> {
   return new Promise((resolve) => {
     execFile(
@@ -46,17 +38,13 @@ async function gitExec(cwd: string, args: string[]): Promise<GitExecResult> {
   });
 }
 
-/**
- * 执行 Git 命令并返回布尔值
- */
+/** 执行 Git 命令并返回布尔值 */
 async function gitCheck(cwd: string, args: string[]): Promise<boolean> {
   const { code } = await gitExec(cwd, args);
   return code === 0;
 }
 
-/**
- * 执行 Git 命令并返回输出字符串
- */
+/** 执行 Git 命令并返回输出字符串 */
 async function gitOutput(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await gitExec(cwd, args);
   return stdout.trim();
@@ -66,9 +54,7 @@ async function gitOutput(cwd: string, args: string[]): Promise<string> {
 // Validation Functions
 // ============================================================================
 
-/**
- * 检查 Git 是否已安装
- */
+/** 检查 Git 是否已安装 */
 async function _isGitInstalled(): Promise<boolean> {
   try {
     await execFileAsync('git', ['--version']);
@@ -78,9 +64,7 @@ async function _isGitInstalled(): Promise<boolean> {
   }
 }
 
-/**
- * 检查目录是否在 Git 仓库中
- */
+/** 检查目录是否在 Git 仓库中 */
 export async function isGitRepository(cwd: string): Promise<boolean> {
   return gitCheck(cwd, ['rev-parse', '--is-inside-work-tree']);
 }
@@ -89,24 +73,18 @@ export async function isGitRepository(cwd: string): Promise<boolean> {
 // Query Functions
 // ============================================================================
 
-/**
- * 检查是否有未提交的更改
- */
+/** 检查是否有未提交的更改 */
 export async function hasUncommittedChanges(cwd: string): Promise<boolean> {
   const output = await gitOutput(cwd, ['status', '--porcelain']);
   return output.length > 0;
 }
 
-/**
- * 获取当前分支名
- */
+/** 获取当前分支名 */
 export async function getCurrentBranch(cwd: string): Promise<string> {
   return gitOutput(cwd, ['branch', '--show-current']);
 }
 
-/**
- * 获取最近的提交信息
- */
+/** 获取最近的提交信息 */
 export async function getRecentCommitMessages(
   cwd: string,
   count = 10
@@ -118,9 +96,7 @@ export async function getRecentCommitMessages(
 // Action Functions
 // ============================================================================
 
-/**
- * 暂存所有更改
- */
+/** 暂存所有更改 */
 export async function stageAll(cwd: string): Promise<void> {
   const { code, stderr } = await gitExec(cwd, ['add', '.']);
   if (code !== 0) {
@@ -227,9 +203,7 @@ export interface GitStatus {
   authorLog: string;
 }
 
-/**
- * 获取完整的 Git 状态信息
- */
+/** 获取完整的 Git 状态信息 */
 export async function getGitStatus(opts: { cwd: string }): Promise<GitStatus | null> {
   const { cwd } = opts;
   if (!(await isGitRepository(cwd))) {
@@ -260,9 +234,7 @@ export async function getGitStatus(opts: { cwd: string }): Promise<GitStatus | n
   };
 }
 
-/**
- * 将 Git 状态格式化为 LLM 友好的字符串
- */
+/** 将 Git 状态格式化为 LLM 友好的字符串 */
 export function getLlmGitStatus(status: GitStatus | null): string | null {
   if (!status) {
     return null;
@@ -287,18 +259,12 @@ ${status.authorLog || '(no recent commits)'}
 // Diff Functions
 // ============================================================================
 
-/**
- * 获取暂存文件列表（带状态）
- */
+/** 获取暂存文件列表（带状态） */
 export async function getStagedFileList(cwd: string): Promise<string> {
   return gitOutput(cwd, ['diff', '--cached', '--name-status']);
 }
 
-/**
- * 获取暂存区的 diff
- * - 排除锁文件和大文件
- * - 限制大小为 100KB
- */
+/** 获取暂存区的 diff - 排除锁文件和大文件 - 限制大小为 100KB */
 export async function getStagedDiff(cwd: string): Promise<string> {
   // 排除锁文件和常见大文件类型
   const excludePatterns = [

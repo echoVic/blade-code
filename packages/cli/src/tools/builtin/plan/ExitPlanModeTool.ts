@@ -7,10 +7,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
 
-/**
- * ExitPlanMode tool
- * Presents the full plan in Plan mode and requests user approval
- */
+/** ExitPlanMode tool Presents the full plan in Plan mode and requests user approval */
 export const exitPlanModeTool = createTool({
   name: 'ExitPlanMode',
   displayName: 'Exit Plan Mode',

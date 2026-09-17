@@ -1,8 +1,7 @@
 /**
- * Blade Code Plugins System - Plugin Integrator
- *
- * This module is responsible for integrating loaded plugins into
- * the existing subsystems (commands, skills, agents, hooks, MCP).
+ * Blade Code Plugins System - Plugin Integrator <p> This module is responsible for
+ * integrating loaded plugins into the existing subsystems (commands, skills, agents,
+ * hooks, MCP).
  */
 
 import path from 'node:path';
@@ -57,9 +56,7 @@ function cloneHookConfig(config: Readonly<HookConfig>): HookConfig {
   return cloned;
 }
 
-/**
- * Integration result for a single plugin
- */
+/** Integration result for a single plugin */
 interface PluginIntegrationResult {
   pluginName: string;
   commandsRegistered: number;
@@ -71,9 +68,7 @@ interface PluginIntegrationResult {
   errors: string[];
 }
 
-/**
- * Overall integration result
- */
+/** Overall integration result */
 interface IntegrationResult {
   plugins: PluginIntegrationResult[];
   totalCommands: number;
@@ -267,9 +262,7 @@ class PluginIntegrator {
     return count;
   }
 
-  /**
-   * Integrate skills from a plugin
-   */
+  /** Integrate skills from a plugin */
   private integrateSkills(plugin: LoadedPlugin): number {
     let count = 0;
 
@@ -281,9 +274,7 @@ class PluginIntegrator {
     return count;
   }
 
-  /**
-   * Integrate agents from a plugin
-   */
+  /** Integrate agents from a plugin */
   private integrateAgents(plugin: LoadedPlugin): number {
     let count = 0;
 
@@ -354,9 +345,7 @@ class PluginIntegrator {
     this.hookManager.loadConfig(effective, this.workspaceRoot);
   }
 
-  /**
-   * Integrate MCP servers from a plugin
-   */
+  /** Integrate MCP servers from a plugin */
   private integrateMcp(plugin: LoadedPlugin): number {
     // SessionRuntime resolves these definitions for its exact workspace and
     // connects them through an isolated registry.
@@ -364,9 +353,7 @@ class PluginIntegrator {
   }
 }
 
-/**
- * Convenience function to integrate all plugins
- */
+/** Convenience function to integrate all plugins */
 export async function integrateAllPlugins(
   workspaceRoot: string = getCwd()
 ): Promise<IntegrationResult> {
@@ -374,9 +361,7 @@ export async function integrateAllPlugins(
   return integrator.integrateAll();
 }
 
-/**
- * Convenience function to clear all plugin resources
- */
+/** Convenience function to clear all plugin resources */
 export function clearAllPluginResources(workspaceRoot: string = getCwd()): void {
   const integrator = new PluginIntegrator(workspaceRoot);
   integrator.clearAllPluginResources();

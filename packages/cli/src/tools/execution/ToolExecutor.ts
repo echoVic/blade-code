@@ -88,7 +88,6 @@ interface ToolExecutorEventMap {
       timestamp: number;
     },
   ];
-  historyClear: [event: { timestamp: number }];
 }
 
 type PreToolUseHookRunner = (
@@ -628,96 +627,8 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     return result;
   }
 
-  async executeAll(
-    requests: Array<{
-      toolName: string;
-      params: Record<string, unknown>;
-      context: ExecutionContext;
-    }>
-  ): Promise<ToolResult[]> {
-    return Promise.all(
-      requests.map((request) =>
-        this.execute(request.toolName, request.params, request.context)
-      )
-    );
-  }
-
-  async executeParallel(
-    requests: Array<{
-      toolName: string;
-      params: Record<string, unknown>;
-      context: ExecutionContext;
-    }>,
-    maxConcurrency = 5
-  ): Promise<ToolResult[]> {
-    const limit = maxConcurrency > 0 ? maxConcurrency : Number.POSITIVE_INFINITY;
-    if (!Number.isFinite(limit) || limit >= requests.length) {
-      return this.executeAll(requests);
-    }
-
-    const results: ToolResult[] = new Array(requests.length);
-    let nextIndex = 0;
-    const worker = async (): Promise<void> => {
-      while (nextIndex < requests.length) {
-        const currentIndex = nextIndex++;
-        const request = requests[currentIndex];
-        results[currentIndex] = await this.execute(
-          request.toolName,
-          request.params,
-          request.context
-        );
-      }
-    };
-    await Promise.all(
-      Array.from({ length: Math.min(limit, requests.length) }, () => worker())
-    );
-    return results;
-  }
-
-  getSchedulerStats() {
-    return this.scheduler.getStats();
-  }
-
-  getAdmissionStats() {
-    return this.scheduler.getAdmissionStats();
-  }
-
   getExecutionHistory(limit?: number): ExecutionHistoryEntry[] {
     return limit ? this.executionHistory.slice(-limit) : [...this.executionHistory];
-  }
-
-  clearHistory(): void {
-    this.executionHistory.length = 0;
-    this.emit('historyClear', { timestamp: Date.now() });
-  }
-
-  getStats(): ExecutionStats {
-    const stats: ExecutionStats = {
-      totalExecutions: this.executionHistory.length,
-      successfulExecutions: 0,
-      failedExecutions: 0,
-      averageDuration: 0,
-      toolUsage: new Map(),
-      recentExecutions: this.executionHistory.slice(-10),
-    };
-    let totalDuration = 0;
-
-    for (const entry of this.executionHistory) {
-      if (entry.result.success) {
-        stats.successfulExecutions++;
-      } else {
-        stats.failedExecutions++;
-      }
-      totalDuration += entry.endTime - entry.startTime;
-      stats.toolUsage.set(
-        entry.toolName,
-        (stats.toolUsage.get(entry.toolName) || 0) + 1
-      );
-    }
-
-    stats.averageDuration =
-      stats.totalExecutions > 0 ? totalDuration / stats.totalExecutions : 0;
-    return stats;
   }
 
   getRegistry(): ToolRegistry {
@@ -926,13 +837,4 @@ function hasClassifiedSideEffectOutcome(result: ToolResult): boolean {
       Object.hasOwn(result.metadata, 'finalization_failed') &&
       result.metadata.finalization_failed === true)
   );
-}
-
-export interface ExecutionStats {
-  totalExecutions: number;
-  successfulExecutions: number;
-  failedExecutions: number;
-  averageDuration: number;
-  toolUsage: Map<string, number>;
-  recentExecutions: ExecutionHistoryEntry[];
 }

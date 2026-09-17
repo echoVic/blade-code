@@ -1,8 +1,6 @@
 /**
- * ACP (Agent Client Protocol) 集成模块
- *
- * 提供 Blade 作为 ACP Agent 的能力，使其可以被 Zed、JetBrains、Neovim 等编辑器调用。
- *
+ * ACP (Agent Client Protocol) 集成模块 <p> 提供 Blade 作为 ACP Agent 的能力，使其可以被
+ * Zed、JetBrains、Neovim 等编辑器调用。
  */
 
 import { Readable, Writable } from 'node:stream';

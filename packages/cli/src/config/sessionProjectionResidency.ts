@@ -8,7 +8,6 @@ export const MAX_SESSION_PROJECTION_IDLE_MS = 24 * 60 * 60_000;
 
 export const SESSION_PROJECTION_SWEEP_MS = 30_000;
 export const SESSION_PROJECTION_DRAIN_MS = 30_000;
-export const MAX_SESSION_PROJECTION_WAKE_ENTRIES = 256;
 
 export function isValidResidentSessionProjectionLimit(value: number): boolean {
   return (

@@ -116,9 +116,3 @@ export function createAcpRemoteConnectionPathIdentity(
     .update(remotePath.collisionIdentity)
     .digest('hex')}`;
 }
-
-export function isAcpRemoteMutationRecoveryLease(
-  lease: AcpRemoteMutationLease | AcpRemoteMutationRecoveryLease | undefined
-): lease is AcpRemoteMutationRecoveryLease {
-  return lease !== undefined && 'finish' in lease;
-}

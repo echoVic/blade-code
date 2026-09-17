@@ -33,9 +33,4 @@ export class TeamCoordinator {
     );
     return { completedTaskIds, unblockedTasks };
   }
-
-  async isComplete(): Promise<boolean> {
-    const tasks = await this.taskGraph.listTasks();
-    return tasks.length > 0 && tasks.every((task) => task.status === 'completed');
-  }
 }

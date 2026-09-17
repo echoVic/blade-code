@@ -1,15 +1,8 @@
-/**
- * 文件系统服务
- *
- * 抽象文件操作，支持本地和远程（ACP）两种实现。
- * 工具层统一通过此接口访问文件系统。
- */
+/** 文件系统服务 抽象文件操作，支持本地和远程（ACP）两种实现。 工具层统一通过此接口访问文件系统。 */
 
 import * as fs from 'fs/promises';
 
-/**
- * 文件统计信息
- */
+/** 文件统计信息 */
 export interface FileStat {
   size: number;
   isDirectory: boolean;
@@ -17,9 +10,7 @@ export interface FileStat {
   mtime: Date;
 }
 
-/**
- * 文件系统服务接口
- */
+/** 文件系统服务接口 */
 export interface FileSystemService {
   // 基础操作
   readTextFile(filePath: string): Promise<string>;
@@ -35,9 +26,7 @@ export interface FileSystemService {
   ): Promise<void>;
 }
 
-/**
- * 本地文件系统服务（默认实现）
- */
+/** 本地文件系统服务（默认实现） */
 export class LocalFileSystemService implements FileSystemService {
   async readTextFile(filePath: string): Promise<string> {
     return fs.readFile(filePath, 'utf-8');
@@ -89,10 +78,7 @@ export class LocalFileSystemService implements FileSystemService {
 
 // ==================== 服务获取 ====================
 
-/**
- * 当前活跃的文件系统服务
- * 默认使用本地文件系统，ACP 模式下会被替换
- */
+/** 当前活跃的文件系统服务 默认使用本地文件系统，ACP 模式下会被替换 */
 let currentFileSystemService: FileSystemService = new LocalFileSystemService();
 
 /**

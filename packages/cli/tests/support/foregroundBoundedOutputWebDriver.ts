@@ -1,3 +1,8 @@
+import {
+  ensureYoloMode,
+  isExpectedBrowserRequestFailure,
+  observeBrowserFaults,
+} from './webTestUtils.js';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -9,6 +14,7 @@ import {
   processIdentityMatches,
 } from '../../src/utils/process/ProcessIdentity.js';
 import type { ForegroundBoundedOutputFixture } from '../integration/real-api/foregroundBoundedOutputFixture.js';
+import { reserveLoopbackPort as reservePort } from './asyncTestUtils.js';
 
 const GUI_LAUNCHER_IDENTITY_TIMEOUT_MS = 2_000;
 const GUI_LAUNCHER_IDENTITY_RETRY_MS = 25;
@@ -22,23 +28,7 @@ export interface ForegroundBoundedOutputWebEvidence {
   browserFaults: string[];
 }
 
-interface BrowserRequestFailure {
-  url: string;
-  resourceType: string;
-  errorText: string;
-  refreshing: boolean;
-  closing: boolean;
-}
-
-export function isExpectedBrowserRequestFailure(
-  failure: BrowserRequestFailure
-): boolean {
-  if (failure.closing) return true;
-  const aborted = /ERR_ABORTED|NS_BINDING_ABORTED|cancelled/i.test(failure.errorText);
-  if (!aborted) return false;
-  if (new URL(failure.url).pathname.endsWith('/events')) return true;
-  return failure.refreshing && failure.resourceType === 'document';
-}
+export { isExpectedBrowserRequestFailure } from './webTestUtils.js';
 
 export function isTerminalForegroundWebRunStatus(status: unknown): boolean {
   return (
@@ -63,24 +53,6 @@ export function parseForegroundGuiReadyLine(
   } catch {
     return undefined;
   }
-}
-
-async function reservePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve());
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Unable to reserve browser qualification port');
-  }
-  const port = address.port;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-  return port;
 }
 
 function appendTail(current: string, chunk: Buffer | string): string {
@@ -592,27 +564,7 @@ export async function runForegroundBoundedOutputWebDriver(input: {
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext();
     const page = await context.newPage();
-    page.on('pageerror', (error) => faults.push(`pageerror:${error.message}`));
-    page.on('console', (message) => {
-      if (message.type() === 'error') faults.push(`console:${message.text()}`);
-    });
-    page.on('response', (browserResponse) => {
-      if (browserResponse.status() >= 400) {
-        faults.push(`http:${browserResponse.status()}:${browserResponse.url()}`);
-      }
-    });
-    page.on('requestfailed', (request) => {
-      const failure = {
-        url: request.url(),
-        resourceType: request.resourceType(),
-        errorText: request.failure()?.errorText ?? 'unknown',
-        refreshing,
-        closing,
-      };
-      if (!isExpectedBrowserRequestFailure(failure)) {
-        faults.push(`requestfailed:${failure.errorText}:${failure.url}`);
-      }
-    });
+    observeBrowserFaults(page, faults, () => ({ refreshing, closing }));
 
     const navigation = new URL(origin);
     navigation.searchParams.set('session', sessionId);
@@ -620,19 +572,7 @@ export async function runForegroundBoundedOutputWebDriver(input: {
     await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
     const composer = page.locator('textarea[data-blade-composer]');
     await composer.waitFor({ state: 'visible' });
-    const permissionMode = page.locator('[data-blade-permission-mode]');
-    await permissionMode.waitFor({ state: 'visible' });
-    if ((await permissionMode.getAttribute('data-blade-permission-mode')) !== 'yolo') {
-      await permissionMode.click();
-      await page.locator('[data-blade-permission-option="yolo"]').click();
-      await page.locator('[data-blade-yolo-confirm]').click();
-      await page.waitForFunction(
-        () =>
-          document
-            .querySelector('[data-blade-permission-mode]')
-            ?.getAttribute('data-blade-permission-mode') === 'yolo'
-      );
-    }
+    await ensureYoloMode(page);
     await composer.fill(input.fixture.localPrompt);
     await composer.press('Enter');
     const marker = `BOUNDED_FOREGROUND_OK_${input.fixture.stdoutTail.replace(

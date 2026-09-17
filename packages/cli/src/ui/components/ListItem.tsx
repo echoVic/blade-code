@@ -1,7 +1,4 @@
-/**
- * Markdown 列表项渲染器
- * 支持有序列表和无序列表，以及嵌套列表
- */
+/** Markdown 列表项渲染器 支持有序列表和无序列表，以及嵌套列表 */
 
 import { Box, Text } from 'ink';
 import React from 'react';

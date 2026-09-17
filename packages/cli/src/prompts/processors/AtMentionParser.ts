@@ -20,14 +20,10 @@ export class AtMentionParser {
    */
   private static readonly PATTERN = /@"([^"]+)"|@([^\s]+)/g;
 
-  /**
-   * 行号范围模式：#L10 或 #L10-20
-   */
+  /** 行号范围模式：#L10 或 #L10-20 */
   private static readonly LINE_RANGE_PATTERN = /#L(\d+)(?:-(\d+))?$/;
 
-  /**
-   * Glob 通配符模式：检测 *, ?, [ 等字符
-   */
+  /** Glob 通配符模式：检测 *, ?, [ 等字符 */
   private static readonly GLOB_PATTERN = /[*?[\]]/;
 
   /**

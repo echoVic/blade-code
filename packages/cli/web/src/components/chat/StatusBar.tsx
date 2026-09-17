@@ -236,6 +236,7 @@ export function StatusBar() {
       <div className="flex-1" />
 
       {(recoveryLabel ||
+        pendingResume ||
         (isStreaming &&
           phaseLabel &&
           (!turnActivity?.snapshot || actionStationarity))) && (

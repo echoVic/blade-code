@@ -33,8 +33,8 @@ describe('PersistentStore session initialization', () => {
 
   it('commits one session_created event across concurrent facades', async () => {
     const sessionId = 'concurrent-first-write';
-    const left = new PersistentStore(workspaceRoot, 100, 'test');
-    const right = new PersistentStore(workspaceRoot, 100, 'test');
+    const left = new PersistentStore(workspaceRoot, 'test');
+    const right = new PersistentStore(workspaceRoot, 'test');
 
     await Promise.all(
       Array.from({ length: 16 }, (_, index) =>
@@ -59,7 +59,7 @@ describe('PersistentStore session initialization', () => {
   it('validates initialization once before ordinary hot-path appends', async () => {
     const sessionId = 'hot-path';
     const readAll = vi.spyOn(JSONLStore.prototype, 'readAll');
-    const store = new PersistentStore(workspaceRoot, 100, 'test');
+    const store = new PersistentStore(workspaceRoot, 'test');
 
     await store.initSession(sessionId);
     await store.saveMessage(sessionId, 'user', 'first');
@@ -72,7 +72,7 @@ describe('PersistentStore session initialization', () => {
   it('does not cache a failed validation and retries after repair', async () => {
     const sessionId = 'retry-after-corruption';
     const filePath = getSessionFilePath(workspaceRoot, sessionId);
-    const store = new PersistentStore(workspaceRoot, 100, 'test');
+    const store = new PersistentStore(workspaceRoot, 'test');
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, '{"type":\n', 'utf8');
 
@@ -89,7 +89,7 @@ describe('PersistentStore session initialization', () => {
 
   it('invalidates the positive cache when the facade deletes a session', async () => {
     const sessionId = 'delete-and-recreate';
-    const store = new PersistentStore(workspaceRoot, 100, 'test');
+    const store = new PersistentStore(workspaceRoot, 'test');
 
     await store.initSession(sessionId);
     await store.deleteSession(sessionId);
@@ -105,7 +105,7 @@ describe('PersistentStore session initialization', () => {
 
   it('bounds positive initialization state with LRU revalidation', async () => {
     const readAll = vi.spyOn(JSONLStore.prototype, 'readAll');
-    const store = new PersistentStore(workspaceRoot, 100, 'test');
+    const store = new PersistentStore(workspaceRoot, 'test');
 
     for (let index = 0; index <= initializationCacheCapacity; index++) {
       await store.initSession(`bounded-${index}`);

@@ -1,9 +1,6 @@
 /**
- * TokenBudget — 递减收益检测
- *
- * 跟踪 LLM 续写模式，当检测到递减收益时建议停止：
- * - 连续 N 次续写（max output recovery）且每次增量很小
- * - Token 使用率接近预算上限
+ * TokenBudget — 递减收益检测 <p> 跟踪 LLM 续写模式，当检测到递减收益时建议停止： - 连续 N 次续写（max output
+ * recovery）且每次增量很小 - Token 使用率接近预算上限
  */
 
 export interface BudgetTracker {
@@ -50,9 +47,7 @@ export function checkTokenBudget(tracker: BudgetTracker): 'continue' | 'stop' {
   return 'continue';
 }
 
-/**
- * 创建初始 BudgetTracker
- */
+/** 创建初始 BudgetTracker */
 export function createBudgetTracker(opts: {
   budget: number;
   isSubagent?: boolean;
@@ -66,9 +61,7 @@ export function createBudgetTracker(opts: {
   };
 }
 
-/**
- * 记录一次 LLM 输出
- */
+/** 记录一次 LLM 输出 */
 export function recordOutput(
   tracker: BudgetTracker,
   outputTokens: number,

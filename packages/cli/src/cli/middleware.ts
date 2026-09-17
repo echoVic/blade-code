@@ -5,18 +5,13 @@ import type { GlobalOptions } from './types.js';
 
 const logger = createLogger(LogCategory.GENERAL);
 
-/**
- * Yargs 中间件
- * 处理全局逻辑，如权限验证、配置加载等
- */
+/** Yargs 中间件 处理全局逻辑，如权限验证、配置加载等 */
 
 import type { MiddlewareFunction } from 'yargs';
 import { parseCliAgents } from './agents.js';
 import { applyCliSettingsToArguments, loadCliSettings } from './settings.js';
 
-/**
- * 权限验证中间件
- */
+/** 权限验证中间件 */
 export const validatePermissions: MiddlewareFunction = (argv) => {
   // 处理 --yolo 快捷方式
   if (argv.yolo) {
@@ -61,10 +56,7 @@ export const validatePermissions: MiddlewareFunction = (argv) => {
   }
 };
 
-/**
- * 配置加载中间件
- * 所有命令（包括 UI 模式）都会执行，负责初始化 ConfigManager 和 Store
- */
+/** 配置加载中间件 所有命令（包括 UI 模式）都会执行，负责初始化 ConfigManager 和 Store */
 export const loadConfiguration: MiddlewareFunction = async (argv) => {
   const cliSettings = await loadCliSettings(
     typeof argv.settings === 'string' ? argv.settings : undefined
@@ -119,9 +111,7 @@ function validateSessionOptions(argv: Record<string, unknown>): void {
   }
 }
 
-/**
- * 输出格式验证中间件
- */
+/** 输出格式验证中间件 */
 export const validateOutput: MiddlewareFunction = (argv) => {
   if (argv.jsonSchema && argv.outputSchema) {
     throw new Error('--json-schema cannot be combined with --output-schema');

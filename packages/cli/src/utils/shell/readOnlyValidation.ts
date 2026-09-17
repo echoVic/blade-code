@@ -1,12 +1,9 @@
 /**
- * Read-Only Command Validation
- *
- * Three-tier validation for determining if a Bash command is read-only:
- * 1. Simple regex matching (cat, head, wc, etc.)
- * 2. Custom regex matching (echo, pwd, find, ls, cd, etc.)
- * 3. Flag-level whitelist validation (git, gh, docker, rg, etc.)
- *
- * Ref: Claude Code's readOnlyCommandValidation.ts + BashTool/readOnlyValidation.ts
+ * Read-Only Command Validation <p> Three-tier validation for determining if a Bash
+ * command is read-only: 1. Simple regex matching (cat, head, wc, etc.) 2. Custom regex
+ * matching (echo, pwd, find, ls, cd, etc.) 3. Flag-level whitelist validation (git, gh,
+ * docker, rg, etc.) <p> Ref: Claude Code's readOnlyCommandValidation.ts +
+ * BashTool/readOnlyValidation.ts
  */
 
 import {
@@ -30,6 +27,21 @@ export interface CommandConfig {
   regex?: RegExp;
   /** Whether -- stops flag parsing (default: true) */
   respectsDoubleDash?: boolean;
+}
+
+type FlagSpec = Partial<Record<FlagArgType, string>>;
+
+function flags(
+  spec: FlagSpec,
+  ...sharedGroups: readonly Readonly<Record<string, FlagArgType>>[]
+): Record<string, FlagArgType> {
+  const result: Record<string, FlagArgType> = Object.assign({}, ...sharedGroups);
+  for (const argType of ['none', 'number', 'string'] as const) {
+    const names = spec[argType]?.trim();
+    if (!names) continue;
+    for (const name of names.split(/\s+/)) result[name] = argType;
+  }
+  return result;
 }
 
 // ============================================================
@@ -102,125 +114,93 @@ const GIT_FORMAT_FLAGS: Record<string, FlagArgType> = {
 
 export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
   'git diff': {
-    safeFlags: {
-      ...GIT_STAT_FLAGS,
-      ...GIT_COLOR_FLAGS,
-      ...GIT_PATCH_FLAGS,
-      '--cached': 'none',
-      '--staged': 'none',
-      '--no-index': 'none',
-      '--diff-filter': 'string',
-      '--word-diff': 'none',
-      '--word-diff-regex': 'string',
-      '-U': 'number',
-      '--unified': 'number',
-      '--compact-summary': 'none',
-      '--ignore-space-change': 'none',
-      '-b': 'none',
-      '--ignore-all-space': 'none',
-      '-w': 'none',
-      '--ignore-blank-lines': 'none',
-      '--src-prefix': 'string',
-      '--dst-prefix': 'string',
-      '--no-prefix': 'none',
-      '-R': 'none',
-      '--relative': 'none',
-      '--histogram': 'none',
-      '--patience': 'none',
-      '--minimal': 'none',
-      '--check': 'none',
-      '--ext-diff': 'none',
-      '--binary': 'none',
-      '--abbrev': 'none',
-      '--full-index': 'none',
-      '--break-rewrites': 'none',
-      '-B': 'none',
-      '--find-renames': 'none',
-      '-M': 'none',
-      '--find-copies': 'none',
-      '-C': 'none',
-      '--diff-algorithm': 'string',
-    },
+    safeFlags: flags(
+      {
+        none: `
+        --cached --staged --no-index --word-diff --compact-summary
+        --ignore-space-change -b --ignore-all-space -w
+        --ignore-blank-lines --no-prefix -R --relative --histogram
+        --patience --minimal --check --ext-diff --binary --abbrev
+        --full-index --break-rewrites -B --find-renames -M
+        --find-copies -C
+      `,
+        number: '-U --unified',
+        string: `
+        --diff-filter --word-diff-regex --src-prefix --dst-prefix
+        --diff-algorithm
+      `,
+      },
+      GIT_STAT_FLAGS,
+      GIT_COLOR_FLAGS,
+      GIT_PATCH_FLAGS
+    ),
   },
 
   'git log': {
-    safeFlags: {
-      ...GIT_REF_SELECTION_FLAGS,
-      ...GIT_DATE_FILTER_FLAGS,
-      ...GIT_LOG_DISPLAY_FLAGS,
-      ...GIT_COUNT_FLAGS,
-      ...GIT_STAT_FLAGS,
-      ...GIT_COLOR_FLAGS,
-      ...GIT_PATCH_FLAGS,
-      ...GIT_AUTHOR_FILTER_FLAGS,
-      ...GIT_FORMAT_FLAGS,
-      '--follow': 'none',
-      '--first-parent': 'none',
-      '--merges': 'none',
-      '--no-merges': 'none',
-      '--reverse': 'none',
-      '--ancestry-path': 'none',
-      '--simplify-by-decoration': 'none',
-      '--abbrev-commit': 'none',
-      '--no-abbrev-commit': 'none',
-      '--abbrev': 'number',
-      '--topo-order': 'none',
-      '--diff-filter': 'string',
-      '--skip': 'number',
-      '--left-right': 'none',
-      '--cherry-pick': 'none',
-      '--cherry-mark': 'none',
-      '--cherry': 'none',
-      '--walk-reflogs': 'none',
-      '-g': 'none',
-      '--boundary': 'none',
-      '--source': 'none',
-    },
+    safeFlags: flags(
+      {
+        none: `
+        --follow --first-parent --merges --no-merges --reverse
+        --ancestry-path --simplify-by-decoration --abbrev-commit
+        --no-abbrev-commit --topo-order --left-right --cherry-pick
+        --cherry-mark --cherry --walk-reflogs -g --boundary --source
+      `,
+        number: '--abbrev --skip',
+        string: '--diff-filter',
+      },
+      GIT_REF_SELECTION_FLAGS,
+      GIT_DATE_FILTER_FLAGS,
+      GIT_LOG_DISPLAY_FLAGS,
+      GIT_COUNT_FLAGS,
+      GIT_STAT_FLAGS,
+      GIT_COLOR_FLAGS,
+      GIT_PATCH_FLAGS,
+      GIT_AUTHOR_FILTER_FLAGS,
+      GIT_FORMAT_FLAGS
+    ),
   },
 
   'git show': {
-    safeFlags: {
-      ...GIT_STAT_FLAGS,
-      ...GIT_COLOR_FLAGS,
-      ...GIT_PATCH_FLAGS,
-      ...GIT_FORMAT_FLAGS,
-      '--abbrev-commit': 'none',
-      '--no-abbrev-commit': 'none',
-      '--abbrev': 'number',
-      '-U': 'number',
-      '--unified': 'number',
-      '--diff-filter': 'string',
-      '--word-diff': 'none',
-      '--word-diff-regex': 'string',
-      '--compact-summary': 'none',
-    },
+    safeFlags: flags(
+      {
+        none: `
+        --abbrev-commit --no-abbrev-commit --word-diff
+        --compact-summary
+      `,
+        number: '--abbrev -U --unified',
+        string: '--diff-filter --word-diff-regex',
+      },
+      GIT_STAT_FLAGS,
+      GIT_COLOR_FLAGS,
+      GIT_PATCH_FLAGS,
+      GIT_FORMAT_FLAGS
+    ),
   },
 
   'git shortlog': {
-    safeFlags: {
-      ...GIT_REF_SELECTION_FLAGS,
-      ...GIT_DATE_FILTER_FLAGS,
-      ...GIT_COUNT_FLAGS,
-      ...GIT_AUTHOR_FILTER_FLAGS,
-      '-s': 'none',
-      '--summary': 'none',
-      '-n': 'number',
-      '--numbered': 'none',
-      '-e': 'none',
-      '--email': 'none',
-      '--group': 'string',
-      '--format': 'string',
-    },
+    safeFlags: flags(
+      {
+        none: '-s --summary --numbered -e --email',
+        number: '-n',
+        string: '--group --format',
+      },
+      GIT_REF_SELECTION_FLAGS,
+      GIT_DATE_FILTER_FLAGS,
+      GIT_COUNT_FLAGS,
+      GIT_AUTHOR_FILTER_FLAGS
+    ),
   },
 
   'git reflog': {
-    safeFlags: {
-      ...GIT_LOG_DISPLAY_FLAGS,
-      ...GIT_COUNT_FLAGS,
-      ...GIT_COLOR_FLAGS,
-      ...GIT_FORMAT_FLAGS,
-      '--date': 'string',
-    },
+    safeFlags: flags(
+      {
+        string: '--date',
+      },
+      GIT_LOG_DISPLAY_FLAGS,
+      GIT_COUNT_FLAGS,
+      GIT_COLOR_FLAGS,
+      GIT_FORMAT_FLAGS
+    ),
     isDangerousCallback: (_raw, args) => {
       // reflog expire, delete, exists are dangerous
       const dangerousSubs = new Set(['expire', 'delete', 'exists']);
@@ -232,144 +212,77 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
   },
 
   'git stash list': {
-    safeFlags: {
-      ...GIT_LOG_DISPLAY_FLAGS,
-      ...GIT_COLOR_FLAGS,
-      ...GIT_FORMAT_FLAGS,
-    },
+    safeFlags: flags({}, GIT_LOG_DISPLAY_FLAGS, GIT_COLOR_FLAGS, GIT_FORMAT_FLAGS),
   },
 
   'git stash show': {
-    safeFlags: {
-      ...GIT_STAT_FLAGS,
-      ...GIT_COLOR_FLAGS,
-      ...GIT_PATCH_FLAGS,
-      '-U': 'number',
-      '--unified': 'number',
-      '--include-untracked': 'none',
-      '-u': 'none',
-    },
+    safeFlags: flags(
+      {
+        none: '--include-untracked -u',
+        number: '-U --unified',
+      },
+      GIT_STAT_FLAGS,
+      GIT_COLOR_FLAGS,
+      GIT_PATCH_FLAGS
+    ),
   },
 
   'git ls-remote': {
-    safeFlags: {
-      '--heads': 'none',
-      '--tags': 'none',
-      '--refs': 'none',
-      '--quiet': 'none',
-      '-q': 'none',
-      '--get-url': 'none',
-      '--sort': 'string',
-      '--symref': 'none',
-    },
+    safeFlags: flags({
+      none: '--heads --tags --refs --quiet -q --get-url --symref',
+      string: '--sort',
+    }),
   },
 
   'git status': {
-    safeFlags: {
-      '--short': 'none',
-      '-s': 'none',
-      '--branch': 'none',
-      '-b': 'none',
-      '--porcelain': 'none',
-      '--long': 'none',
-      '--verbose': 'none',
-      '-v': 'none',
-      '--untracked-files': 'none',
-      '-u': 'none',
-      '--ignored': 'none',
-      '--ignore-submodules': 'none',
-      '--column': 'none',
-      '--no-column': 'none',
-      '--ahead-behind': 'none',
-      '--no-ahead-behind': 'none',
-      '--renames': 'none',
-      '--no-renames': 'none',
-      '--show-stash': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        --short -s --branch -b --porcelain --long --verbose -v
+        --untracked-files -u --ignored --ignore-submodules --column
+        --no-column --ahead-behind --no-ahead-behind --renames
+        --no-renames --show-stash
+      `,
+    }),
   },
 
   'git blame': {
-    safeFlags: {
-      '-L': 'string',
-      '--line-porcelain': 'none',
-      '--porcelain': 'none',
-      '-p': 'none',
-      '--show-name': 'none',
-      '--show-number': 'none',
-      '-n': 'none',
-      '--show-email': 'none',
-      '-e': 'none',
-      '-w': 'none',
-      '-M': 'none',
-      '-C': 'none',
-      '--date': 'string',
-      '--color-lines': 'none',
-      '--color-by-age': 'none',
-      '--abbrev': 'number',
-      '-s': 'none',
-      '--score-debug': 'none',
-      '--first-parent': 'none',
-      '--root': 'none',
-      '--since': 'string',
-    },
+    safeFlags: flags({
+      none: `
+        --line-porcelain --porcelain -p --show-name --show-number -n
+        --show-email -e -w -M -C --color-lines --color-by-age -s
+        --score-debug --first-parent --root
+      `,
+      number: '--abbrev',
+      string: '-L --date --since',
+    }),
   },
 
   'git ls-files': {
-    safeFlags: {
-      '--cached': 'none',
-      '-c': 'none',
-      '--deleted': 'none',
-      '-d': 'none',
-      '--modified': 'none',
-      '-m': 'none',
-      '--others': 'none',
-      '-o': 'none',
-      '--ignored': 'none',
-      '-i': 'none',
-      '--stage': 'none',
-      '-s': 'none',
-      '--unmerged': 'none',
-      '-u': 'none',
-      '--killed': 'none',
-      '-k': 'none',
-      '--exclude': 'string',
-      '-x': 'string',
-      '--exclude-from': 'string',
-      '-X': 'string',
-      '--exclude-per-directory': 'string',
-      '--exclude-standard': 'none',
-      '--error-unmatch': 'none',
-      '--full-name': 'none',
-      '--recurse-submodules': 'none',
-      '-z': 'none',
-      '--eol': 'none',
-      '--deduplicate': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        --cached -c --deleted -d --modified -m --others -o --ignored
+        -i --stage -s --unmerged -u --killed -k --exclude-standard
+        --error-unmatch --full-name --recurse-submodules -z --eol
+        --deduplicate
+      `,
+      string: '--exclude -x --exclude-from -X --exclude-per-directory',
+    }),
   },
 
   'git config --get': {
-    safeFlags: {
-      '--global': 'none',
-      '--system': 'none',
-      '--local': 'none',
-      '--worktree': 'none',
-      '--get-regexp': 'none',
-      '--list': 'none',
-      '-l': 'none',
-      '--show-origin': 'none',
-      '--show-scope': 'none',
-      '-z': 'none',
-      '--null': 'none',
-      '--name-only': 'none',
-      '--type': 'string',
-      '--default': 'string',
-    },
+    safeFlags: flags({
+      none: `
+        --global --system --local --worktree --get-regexp --list -l
+        --show-origin --show-scope -z --null --name-only
+      `,
+      string: '--type --default',
+    }),
   },
 
   'git remote show': {
-    safeFlags: {
-      '-n': 'none',
-    },
+    safeFlags: flags({
+      none: '-n',
+    }),
     isDangerousCallback: (_raw, args) => {
       // Must have exactly one alphanumeric remote name
       const nonFlags = args.filter((a) => !a.startsWith('-'));
@@ -379,10 +292,9 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
   },
 
   'git remote': {
-    safeFlags: {
-      '-v': 'none',
-      '--verbose': 'none',
-    },
+    safeFlags: flags({
+      none: '-v --verbose',
+    }),
     isDangerousCallback: (_raw, args) => {
       // Only bare `git remote` or `git remote -v` is safe
       // Any positional arg (add/remove/rename/set-url) is dangerous
@@ -392,211 +304,107 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
   },
 
   'git merge-base': {
-    safeFlags: {
-      '--all': 'none',
-      '--octopus': 'none',
-      '--is-ancestor': 'none',
-      '--independent': 'none',
-      '--fork-point': 'none',
-    },
+    safeFlags: flags({
+      none: '--all --octopus --is-ancestor --independent --fork-point',
+    }),
   },
 
   'git rev-parse': {
-    safeFlags: {
-      '--verify': 'none',
-      '--quiet': 'none',
-      '-q': 'none',
-      '--short': 'none',
-      '--symbolic': 'none',
-      '--symbolic-full-name': 'none',
-      '--abbrev-ref': 'none',
-      '--show-toplevel': 'none',
-      '--show-cdup': 'none',
-      '--show-prefix': 'none',
-      '--show-superproject-working-tree': 'none',
-      '--git-dir': 'none',
-      '--git-common-dir': 'none',
-      '--git-path': 'string',
-      '--is-inside-git-dir': 'none',
-      '--is-inside-work-tree': 'none',
-      '--is-bare-repository': 'none',
-      '--is-shallow-repository': 'none',
-      '--absolute-git-dir': 'none',
-      '--resolve-git-dir': 'string',
-      '--all': 'none',
-      '--branches': 'none',
-      '--tags': 'none',
-      '--remotes': 'none',
-      '--glob': 'string',
-      '--exclude': 'string',
-    },
+    safeFlags: flags({
+      none: `
+        --verify --quiet -q --short --symbolic --symbolic-full-name
+        --abbrev-ref --show-toplevel --show-cdup --show-prefix
+        --show-superproject-working-tree --git-dir --git-common-dir
+        --is-inside-git-dir --is-inside-work-tree
+        --is-bare-repository --is-shallow-repository
+        --absolute-git-dir --all --branches --tags --remotes
+      `,
+      string: '--git-path --resolve-git-dir --glob --exclude',
+    }),
   },
 
   'git rev-list': {
-    safeFlags: {
-      ...GIT_REF_SELECTION_FLAGS,
-      ...GIT_DATE_FILTER_FLAGS,
-      ...GIT_COUNT_FLAGS,
-      '--count': 'none',
-      '--objects': 'none',
-      '--no-walk': 'none',
-      '--first-parent': 'none',
-      '--merges': 'none',
-      '--no-merges': 'none',
-      '--reverse': 'none',
-      '--ancestry-path': 'none',
-      '--topo-order': 'none',
-      '--left-right': 'none',
-      '--cherry-pick': 'none',
-      '--cherry-mark': 'none',
-      '--cherry': 'none',
-      '--boundary': 'none',
-      '--abbrev-commit': 'none',
-      '--abbrev': 'number',
-      '--header': 'none',
-      '--skip': 'number',
-    },
+    safeFlags: flags(
+      {
+        none: `
+        --count --objects --no-walk --first-parent --merges
+        --no-merges --reverse --ancestry-path --topo-order
+        --left-right --cherry-pick --cherry-mark --cherry --boundary
+        --abbrev-commit --header
+      `,
+        number: '--abbrev --skip',
+      },
+      GIT_REF_SELECTION_FLAGS,
+      GIT_DATE_FILTER_FLAGS,
+      GIT_COUNT_FLAGS
+    ),
   },
 
   'git describe': {
-    safeFlags: {
-      '--all': 'none',
-      '--tags': 'none',
-      '--contains': 'none',
-      '--abbrev': 'number',
-      '--long': 'none',
-      '--first-parent': 'none',
-      '--always': 'none',
-      '--match': 'string',
-      '--exclude': 'string',
-      '--exact-match': 'none',
-      '--dirty': 'none',
-      '--broken': 'none',
-      '--candidates': 'number',
-      '--debug': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        --all --tags --contains --long --first-parent --always
+        --exact-match --dirty --broken --debug
+      `,
+      number: '--abbrev --candidates',
+      string: '--match --exclude',
+    }),
   },
 
   'git cat-file': {
-    safeFlags: {
-      '-t': 'none',
-      '-s': 'none',
-      '-e': 'none',
-      '-p': 'none',
-      '--batch': 'none',
-      '--batch-check': 'none',
-      '--batch-all-objects': 'none',
-      '--textconv': 'none',
-      '--filters': 'none',
-      '--allow-unknown-type': 'none',
-      '--buffer': 'none',
-      '--unordered': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        -t -s -e -p --batch --batch-check --batch-all-objects
+        --textconv --filters --allow-unknown-type --buffer
+        --unordered
+      `,
+    }),
   },
 
   'git for-each-ref': {
-    safeFlags: {
-      '--format': 'string',
-      '--sort': 'string',
-      '--count': 'number',
-      '--shell': 'none',
-      '--perl': 'none',
-      '--python': 'none',
-      '--tcl': 'none',
-      '--points-at': 'string',
-      '--merged': 'string',
-      '--no-merged': 'string',
-      '--contains': 'string',
-      '--no-contains': 'string',
-    },
+    safeFlags: flags({
+      none: '--shell --perl --python --tcl',
+      number: '--count',
+      string: `
+        --format --sort --points-at --merged --no-merged --contains
+        --no-contains
+      `,
+    }),
   },
 
   'git grep': {
-    safeFlags: {
-      '-i': 'none',
-      '--ignore-case': 'none',
-      '-w': 'none',
-      '--word-regexp': 'none',
-      '-v': 'none',
-      '--invert-match': 'none',
-      '-n': 'none',
-      '--line-number': 'none',
-      '-l': 'none',
-      '--files-with-matches': 'none',
-      '--name-only': 'none',
-      '-L': 'none',
-      '--files-without-match': 'none',
-      '-c': 'none',
-      '--count': 'none',
-      '--color': 'none',
-      '--no-color': 'none',
-      '-e': 'string',
-      '-f': 'string',
-      '--and': 'none',
-      '--or': 'none',
-      '--not': 'none',
-      '--all-match': 'none',
-      '-E': 'none',
-      '--extended-regexp': 'none',
-      '-G': 'none',
-      '--basic-regexp': 'none',
-      '-P': 'none',
-      '--perl-regexp': 'none',
-      '-F': 'none',
-      '--fixed-strings': 'none',
-      '--cached': 'none',
-      '--untracked': 'none',
-      '--no-index': 'none',
-      '--recurse-submodules': 'none',
-      '--max-depth': 'number',
-      '-h': 'none',
-      '--no-filename': 'none',
-      '-H': 'none',
-      '--full-name': 'none',
-      '-z': 'none',
-      '--break': 'none',
-      '--heading': 'none',
-      '-p': 'none',
-      '--show-function': 'none',
-      '-W': 'none',
-      '--function-context': 'none',
-      '--threads': 'number',
-      '-O': 'string',
-      '--open-files-in-pager': 'none',
-      '-A': 'number',
-      '-B': 'number',
-      '-C': 'number',
-      '--context': 'number',
-    },
+    safeFlags: flags({
+      none: `
+        -i --ignore-case -w --word-regexp -v --invert-match -n
+        --line-number -l --files-with-matches --name-only -L
+        --files-without-match -c --count --color --no-color --and
+        --or --not --all-match -E --extended-regexp -G
+        --basic-regexp -P --perl-regexp -F --fixed-strings --cached
+        --untracked --no-index --recurse-submodules -h --no-filename
+        -H --full-name -z --break --heading -p --show-function -W
+        --function-context --open-files-in-pager
+      `,
+      number: '--max-depth --threads -A -B -C --context',
+      string: '-e -f -O',
+    }),
   },
 
   'git worktree list': {
-    safeFlags: {
-      '--porcelain': 'none',
-      '-z': 'none',
-      '-v': 'none',
-      '--verbose': 'none',
-      '--expire': 'string',
-    },
+    safeFlags: flags({
+      none: '--porcelain -z -v --verbose',
+      string: '--expire',
+    }),
   },
 
   'git tag': {
-    safeFlags: {
-      '-l': 'none',
-      '--list': 'none',
-      '-n': 'number',
-      '--sort': 'string',
-      '--column': 'none',
-      '--no-column': 'none',
-      '--contains': 'string',
-      '--no-contains': 'string',
-      '--merged': 'string',
-      '--no-merged': 'string',
-      '--points-at': 'string',
-      '--format': 'string',
-      '--color': 'none',
-      '--no-color': 'none',
-    },
+    safeFlags: flags({
+      none: '-l --list --column --no-column --color --no-color',
+      number: '-n',
+      string: `
+        --sort --contains --no-contains --merged --no-merged
+        --points-at --format
+      `,
+    }),
     isDangerousCallback: (_raw, args) => {
       // Safe only with -l/--list flag or no positional args
       const hasListFlag = args.some((a) => a === '-l' || a === '--list');
@@ -608,31 +416,17 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
   },
 
   'git branch': {
-    safeFlags: {
-      '-l': 'none',
-      '--list': 'none',
-      '-a': 'none',
-      '--all': 'none',
-      '-r': 'none',
-      '--remotes': 'none',
-      '-v': 'none',
-      '--verbose': 'none',
-      '-vv': 'none',
-      '--sort': 'string',
-      '--format': 'string',
-      '--color': 'none',
-      '--no-color': 'none',
-      '--column': 'none',
-      '--no-column': 'none',
-      '--contains': 'string',
-      '--no-contains': 'string',
-      '--merged': 'string',
-      '--no-merged': 'string',
-      '--points-at': 'string',
-      '--abbrev': 'number',
-      '--no-abbrev': 'none',
-      '--show-current': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        -l --list -a --all -r --remotes -v --verbose -vv --color
+        --no-color --column --no-column --no-abbrev --show-current
+      `,
+      number: '--abbrev',
+      string: `
+        --sort --format --contains --no-contains --merged
+        --no-merged --points-at
+      `,
+    }),
     isDangerousCallback: (_raw, args) => {
       // Safe with --list, -a, -r, --show-current, or bare git branch
       const listFlags = new Set([
@@ -700,205 +494,188 @@ const GH_COMMON_FLAGS: Record<string, FlagArgType> = {
 
 export const GH_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
   'gh pr view': {
-    safeFlags: { ...GH_COMMON_FLAGS },
+    safeFlags: flags({}, GH_COMMON_FLAGS),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh pr list': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--state': 'string',
-      '-s': 'string',
-      '--author': 'string',
-      '--label': 'string',
-      '--base': 'string',
-      '--head': 'string',
-      '--search': 'string',
-      '--assignee': 'string',
-      '--draft': 'none',
-    },
+    safeFlags: flags(
+      {
+        none: '--draft',
+        string: `
+        --state -s --author --label --base --head --search
+        --assignee
+      `,
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh pr diff': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--color': 'string',
-      '--patch': 'none',
-      '--name-only': 'none',
-    },
+    safeFlags: flags(
+      {
+        none: '--patch --name-only',
+        string: '--color',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh pr checks': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--watch': 'none',
-      '--fail-fast': 'none',
-      '--required': 'none',
-    },
+    safeFlags: flags(
+      {
+        none: '--watch --fail-fast --required',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh pr status': {
-    safeFlags: { ...GH_COMMON_FLAGS },
+    safeFlags: flags({}, GH_COMMON_FLAGS),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh issue view': {
-    safeFlags: { ...GH_COMMON_FLAGS },
+    safeFlags: flags({}, GH_COMMON_FLAGS),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh issue list': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--state': 'string',
-      '-s': 'string',
-      '--author': 'string',
-      '--label': 'string',
-      '--search': 'string',
-      '--assignee': 'string',
-      '--milestone': 'string',
-    },
+    safeFlags: flags(
+      {
+        string: '--state -s --author --label --search --assignee --milestone',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh issue status': {
-    safeFlags: { ...GH_COMMON_FLAGS },
+    safeFlags: flags({}, GH_COMMON_FLAGS),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh repo view': {
-    safeFlags: { ...GH_COMMON_FLAGS },
+    safeFlags: flags({}, GH_COMMON_FLAGS),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh run list': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--workflow': 'string',
-      '-w': 'string',
-      '--branch': 'string',
-      '-b': 'string',
-      '--status': 'string',
-      '-s': 'string',
-      '--user': 'string',
-      '-u': 'string',
-      '--event': 'string',
-      '-e': 'string',
-    },
+    safeFlags: flags(
+      {
+        string: '--workflow -w --branch -b --status -s --user -u --event -e',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh run view': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--log': 'none',
-      '--log-failed': 'none',
-      '--exit-status': 'none',
-      '--verbose': 'none',
-      '-v': 'none',
-      '--job': 'string',
-      '-j': 'string',
-    },
+    safeFlags: flags(
+      {
+        none: '--log --log-failed --exit-status --verbose -v',
+        string: '--job -j',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh auth status': {
-    safeFlags: { '--hostname': 'string', '-h': 'string', '--active': 'none' },
+    safeFlags: flags({
+      none: '--active',
+      string: '--hostname -h',
+    }),
     isDangerousCallback: (_raw, args) => {
       // Block --show-token / -t (leaks credentials)
       return args.some((a) => a === '--show-token' || a === '-t');
     },
   },
   'gh release list': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--exclude-drafts': 'none',
-      '--exclude-pre-releases': 'none',
-    },
+    safeFlags: flags(
+      {
+        none: '--exclude-drafts --exclude-pre-releases',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh release view': {
-    safeFlags: { ...GH_COMMON_FLAGS },
+    safeFlags: flags({}, GH_COMMON_FLAGS),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh workflow list': {
-    safeFlags: { ...GH_COMMON_FLAGS, '--all': 'none', '-a': 'none' },
+    safeFlags: flags(
+      {
+        none: '--all -a',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh workflow view': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--yaml': 'none',
-      '-y': 'none',
-      '--ref': 'string',
-      '-r': 'string',
-    },
+    safeFlags: flags(
+      {
+        none: '--yaml -y',
+        string: '--ref -r',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh label list': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--search': 'string',
-      '--sort': 'string',
-      '--order': 'string',
-    },
+    safeFlags: flags(
+      {
+        string: '--search --sort --order',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh search repos': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--language': 'string',
-      '--topic': 'string',
-      '--sort': 'string',
-      '--order': 'string',
-      '--match': 'string',
-      '--owner': 'string',
-      '--visibility': 'string',
-    },
+    safeFlags: flags(
+      {
+        string: `
+        --language --topic --sort --order --match --owner
+        --visibility
+      `,
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh search issues': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--sort': 'string',
-      '--order': 'string',
-      '--match': 'string',
-      '--state': 'string',
-      '--label': 'string',
-      '--language': 'string',
-      '--author': 'string',
-      '--assignee': 'string',
-      '--repo': 'string',
-    },
+    safeFlags: flags(
+      {
+        string: `
+        --sort --order --match --state --label --language --author
+        --assignee --repo
+      `,
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh search prs': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--sort': 'string',
-      '--order': 'string',
-      '--match': 'string',
-      '--state': 'string',
-      '--label': 'string',
-      '--language': 'string',
-      '--author': 'string',
-      '--assignee': 'string',
-      '--repo': 'string',
-    },
+    safeFlags: flags(
+      {
+        string: `
+        --sort --order --match --state --label --language --author
+        --assignee --repo
+      `,
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh search commits': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--sort': 'string',
-      '--order': 'string',
-      '--author': 'string',
-      '--committer': 'string',
-      '--repo': 'string',
-    },
+    safeFlags: flags(
+      {
+        string: '--sort --order --author --committer --repo',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
   'gh search code': {
-    safeFlags: {
-      ...GH_COMMON_FLAGS,
-      '--language': 'string',
-      '--filename': 'string',
-      '--extension': 'string',
-      '--repo': 'string',
-      '--match': 'string',
-    },
+    safeFlags: flags(
+      {
+        string: '--language --filename --extension --repo --match',
+      },
+      GH_COMMON_FLAGS
+    ),
     isDangerousCallback: ghIsDangerousCallback,
   },
 };
@@ -909,159 +686,52 @@ export const GH_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
 
 export const DOCKER_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
   'docker logs': {
-    safeFlags: {
-      '--follow': 'none',
-      '-f': 'none',
-      '--tail': 'number',
-      '-n': 'number',
-      '--timestamps': 'none',
-      '-t': 'none',
-      '--since': 'string',
-      '--until': 'string',
-      '--details': 'none',
-    },
+    safeFlags: flags({
+      none: '--follow -f --timestamps -t --details',
+      number: '--tail -n',
+      string: '--since --until',
+    }),
   },
   'docker inspect': {
-    safeFlags: {
-      '--format': 'string',
-      '-f': 'string',
-      '--type': 'string',
-      '--size': 'none',
-      '-s': 'none',
-    },
+    safeFlags: flags({
+      none: '--size -s',
+      string: '--format -f --type',
+    }),
   },
 };
 
 export const RIPGREP_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
   rg: {
-    safeFlags: {
-      // Pattern flags
-      '-e': 'string',
-      '--regexp': 'string',
-      '-F': 'none',
-      '--fixed-strings': 'none',
-      '-i': 'none',
-      '--ignore-case': 'none',
-      '-S': 'none',
-      '--smart-case': 'none',
-      '-s': 'none',
-      '--case-sensitive': 'none',
-      '-v': 'none',
-      '--invert-match': 'none',
-      '-w': 'none',
-      '--word-regexp': 'none',
-      '-x': 'none',
-      '--line-regexp': 'none',
-      '-P': 'none',
-      '--pcre2': 'none',
-      '--engine': 'string',
-      // Search options
-      '-m': 'number',
-      '--max-count': 'number',
-      '--max-depth': 'number',
-      '--maxdepth': 'number',
-      '-d': 'number',
-      '--max-filesize': 'string',
-      '--mmap': 'none',
-      '--no-mmap': 'none',
-      '-U': 'none',
-      '--multiline': 'none',
-      '--multiline-dotall': 'none',
-      '--crlf': 'none',
-      '--no-crlf': 'none',
-      // Output options
-      '-c': 'none',
-      '--count': 'none',
-      '--count-matches': 'none',
-      '-l': 'none',
-      '--files-with-matches': 'none',
-      '--files-without-match': 'none',
-      '-o': 'none',
-      '--only-matching': 'none',
-      '--vimgrep': 'none',
-      '-r': 'string',
-      '--replace': 'string',
-      // File filtering
-      '-t': 'string',
-      '--type': 'string',
-      '-T': 'string',
-      '--type-not': 'string',
-      '-g': 'string',
-      '--glob': 'string',
-      '--iglob': 'string',
-      '--type-add': 'string',
-      '--type-clear': 'string',
-      // Display
-      '-A': 'number',
-      '--after-context': 'number',
-      '-B': 'number',
-      '--before-context': 'number',
-      '-C': 'number',
-      '--context': 'number',
-      '--color': 'string',
-      '--colors': 'string',
-      '-n': 'none',
-      '--line-number': 'none',
-      '-N': 'none',
-      '--no-line-number': 'none',
-      '-H': 'none',
-      '--with-filename': 'none',
-      '--no-filename': 'none',
-      '-p': 'none',
-      '--pretty': 'none',
-      '--heading': 'none',
-      '--no-heading': 'none',
-      '--column': 'none',
-      '--no-column': 'none',
-      '--byte-offset': 'none',
-      '--trim': 'none',
-      // Misc
-      '-j': 'number',
-      '--threads': 'number',
-      '--sort': 'string',
-      '--sortr': 'string',
-      '--stats': 'none',
-      '--no-ignore': 'none',
-      '--no-ignore-vcs': 'none',
-      '--no-ignore-parent': 'none',
-      '--no-ignore-global': 'none',
-      '--hidden': 'none',
-      '--no-hidden': 'none',
-      '-L': 'none',
-      '--follow': 'none',
-      '--one-file-system': 'none',
-      '--null': 'none',
-      '-0': 'none',
-      '--path-separator': 'string',
-      '--no-config': 'none',
-      '--no-ignore-dot': 'none',
-      '--no-ignore-exclude': 'none',
-      '--no-unicode': 'none',
-      '--pcre2-version': 'none',
-      '-q': 'none',
-      '--quiet': 'none',
-      '--help': 'none',
-      '-h': 'none',
-      '--version': 'none',
-      '-V': 'none',
-      '--': 'none',
-      '--json': 'none',
-      '--auto-hybrid-regex': 'none',
-      '--binary': 'none',
-      '--block-buffered': 'none',
-      '--line-buffered': 'none',
-      '--debug': 'none',
-      '--dfa-size-limit': 'string',
-      '--encoding': 'string',
-      '-E': 'string',
-      '--no-messages': 'none',
-      '--regex-size-limit': 'string',
-      '--search-zip': 'none',
-      '-z': 'none',
-      '--type-list': 'none',
-      '--unrestricted': 'none',
-      '-u': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        -F --fixed-strings -i --ignore-case -S --smart-case -s
+        --case-sensitive -v --invert-match -w --word-regexp -x
+        --line-regexp -P --pcre2 --mmap --no-mmap -U --multiline
+        --multiline-dotall --crlf --no-crlf -c --count
+        --count-matches -l --files-with-matches
+        --files-without-match -o --only-matching --vimgrep -n
+        --line-number -N --no-line-number -H --with-filename
+        --no-filename -p --pretty --heading --no-heading --column
+        --no-column --byte-offset --trim --stats --no-ignore
+        --no-ignore-vcs --no-ignore-parent --no-ignore-global
+        --hidden --no-hidden -L --follow --one-file-system --null -0
+        --no-config --no-ignore-dot --no-ignore-exclude --no-unicode
+        --pcre2-version -q --quiet --help -h --version -V -- --json
+        --auto-hybrid-regex --binary --block-buffered
+        --line-buffered --debug --no-messages --search-zip -z
+        --type-list --unrestricted -u
+      `,
+      number: `
+        -m --max-count --max-depth --maxdepth -d -A --after-context
+        -B --before-context -C --context -j --threads
+      `,
+      string: `
+        -e --regexp --engine --max-filesize -r --replace -t --type
+        -T --type-not -g --glob --iglob --type-add --type-clear
+        --color --colors --sort --sortr --path-separator
+        --dfa-size-limit --encoding -E --regex-size-limit
+      `,
+    }),
   },
 };
 
@@ -1078,214 +748,88 @@ const COMMAND_ALLOWLIST: Record<string, CommandConfig> = {
 
   // Additional safe commands with flag validation
   file: {
-    safeFlags: {
-      '-b': 'none',
-      '--brief': 'none',
-      '-i': 'none',
-      '--mime': 'none',
-      '--mime-type': 'none',
-      '--mime-encoding': 'none',
-      '-L': 'none',
-      '-h': 'none',
-      '--no-dereference': 'none',
-      '-z': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        -b --brief -i --mime --mime-type --mime-encoding -L -h
+        --no-dereference -z
+      `,
+    }),
   },
   sort: {
-    safeFlags: {
-      '-r': 'none',
-      '--reverse': 'none',
-      '-n': 'none',
-      '--numeric-sort': 'none',
-      '-u': 'none',
-      '--unique': 'none',
-      '-k': 'string',
-      '--key': 'string',
-      '-t': 'string',
-      '--field-separator': 'string',
-      '-f': 'none',
-      '--ignore-case': 'none',
-      '-s': 'none',
-      '--stable': 'none',
-      '-h': 'none',
-      '--human-numeric-sort': 'none',
-      '-V': 'none',
-      '--version-sort': 'none',
-      '-g': 'none',
-      '--general-numeric-sort': 'none',
-      '-M': 'none',
-      '--month-sort': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        -r --reverse -n --numeric-sort -u --unique -f --ignore-case
+        -s --stable -h --human-numeric-sort -V --version-sort -g
+        --general-numeric-sort -M --month-sort
+      `,
+      string: '-k --key -t --field-separator',
+    }),
   },
   grep: {
-    safeFlags: {
-      '-i': 'none',
-      '--ignore-case': 'none',
-      '-v': 'none',
-      '--invert-match': 'none',
-      '-c': 'none',
-      '--count': 'none',
-      '-l': 'none',
-      '--files-with-matches': 'none',
-      '-L': 'none',
-      '--files-without-match': 'none',
-      '-n': 'none',
-      '--line-number': 'none',
-      '-H': 'none',
-      '--with-filename': 'none',
-      '-h': 'none',
-      '--no-filename': 'none',
-      '-r': 'none',
-      '-R': 'none',
-      '--recursive': 'none',
-      '-E': 'none',
-      '--extended-regexp': 'none',
-      '-F': 'none',
-      '--fixed-strings': 'none',
-      '-P': 'none',
-      '--perl-regexp': 'none',
-      '-w': 'none',
-      '--word-regexp': 'none',
-      '-x': 'none',
-      '--line-regexp': 'none',
-      '-A': 'number',
-      '--after-context': 'number',
-      '-B': 'number',
-      '--before-context': 'number',
-      '-C': 'number',
-      '--context': 'number',
-      '-m': 'number',
-      '--max-count': 'number',
-      '--color': 'string',
-      '--colour': 'string',
-      '-e': 'string',
-      '--regexp': 'string',
-      '--include': 'string',
-      '--exclude': 'string',
-      '--exclude-dir': 'string',
-      '-o': 'none',
-      '--only-matching': 'none',
-      '-q': 'none',
-      '--quiet': 'none',
-      '--silent': 'none',
-      '-s': 'none',
-      '--no-messages': 'none',
-      '-Z': 'none',
-      '--null': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        -i --ignore-case -v --invert-match -c --count -l
+        --files-with-matches -L --files-without-match -n
+        --line-number -H --with-filename -h --no-filename -r -R
+        --recursive -E --extended-regexp -F --fixed-strings -P
+        --perl-regexp -w --word-regexp -x --line-regexp -o
+        --only-matching -q --quiet --silent -s --no-messages -Z
+        --null
+      `,
+      number: `
+        -A --after-context -B --before-context -C --context -m
+        --max-count
+      `,
+      string: `
+        --color --colour -e --regexp --include --exclude
+        --exclude-dir
+      `,
+    }),
   },
   tree: {
-    safeFlags: {
-      '-L': 'number',
-      '-d': 'none',
-      '-a': 'none',
-      '-f': 'none',
-      '-i': 'none',
-      '-l': 'none',
-      '-s': 'none',
-      '-h': 'none',
-      '-p': 'none',
-      '-u': 'none',
-      '-g': 'none',
-      '-D': 'none',
-      '-r': 'none',
-      '-t': 'none',
-      '--noreport': 'none',
-      '--dirsfirst': 'none',
-      '-C': 'none',
-      '--color': 'none',
-      '-n': 'none',
-      '-I': 'string',
-      '-P': 'string',
-      '--charset': 'string',
-      '-o': 'string',
-      '--prune': 'none',
-      '-J': 'none',
-      '-X': 'none',
-      '-H': 'string',
-    },
+    safeFlags: flags({
+      none: `
+        -d -a -f -i -l -s -h -p -u -g -D -r -t --noreport
+        --dirsfirst -C --color -n --prune -J -X
+      `,
+      number: '-L',
+      string: '-I -P --charset -o -H',
+    }),
   },
   date: {
-    safeFlags: {
-      '-u': 'none',
-      '--utc': 'none',
-      '-d': 'string',
-      '--date': 'string',
-      '-I': 'none',
-      '--iso-8601': 'none',
-      '-R': 'none',
-      '--rfc-2822': 'none',
-      '--rfc-3339': 'string',
-    },
+    safeFlags: flags({
+      none: '-u --utc -I --iso-8601 -R --rfc-2822',
+      string: '-d --date --rfc-3339',
+    }),
   },
   ps: {
-    safeFlags: {
-      '-e': 'none',
-      '-f': 'none',
-      '-l': 'none',
-      '-a': 'none',
-      '-u': 'none',
-      '-x': 'none',
-      '-o': 'string',
-      '--sort': 'string',
-      '-p': 'string',
-      '--pid': 'string',
-      '-C': 'string',
-      '--forest': 'none',
-      '-H': 'none',
-      '--headers': 'none',
-      '--no-headers': 'none',
-      '-w': 'none',
-      '--width': 'number',
-    },
+    safeFlags: flags({
+      none: '-e -f -l -a -u -x --forest -H --headers --no-headers -w',
+      number: '--width',
+      string: '-o --sort -p --pid -C',
+    }),
   },
   lsof: {
-    safeFlags: {
-      '-i': 'string',
-      '-p': 'string',
-      '-n': 'none',
-      '-P': 'none',
-      '-t': 'none',
-      '-c': 'string',
-      '-u': 'string',
-      '-d': 'string',
-      '-a': 'none',
-    },
+    safeFlags: flags({
+      none: '-n -P -t -a',
+      string: '-i -p -c -u -d',
+    }),
   },
   netstat: {
-    safeFlags: {
-      '-t': 'none',
-      '-u': 'none',
-      '-l': 'none',
-      '-n': 'none',
-      '-p': 'none',
-      '-a': 'none',
-      '-r': 'none',
-      '-s': 'none',
-      '-e': 'none',
-      '-o': 'none',
-      '-i': 'none',
-    },
+    safeFlags: flags({
+      none: '-t -u -l -n -p -a -r -s -e -o -i',
+    }),
   },
   man: {
-    safeFlags: {
-      '-k': 'string',
-      '--apropos': 'string',
-      '-f': 'string',
-      '--whatis': 'string',
-    },
+    safeFlags: flags({
+      string: '-k --apropos -f --whatis',
+    }),
   },
   sed: {
-    safeFlags: {
-      '-n': 'none',
-      '--quiet': 'none',
-      '--silent': 'none',
-      '-E': 'none',
-      '-r': 'none',
-      '--regexp-extended': 'none',
-      '-e': 'string',
-      '--expression': 'string',
-    },
+    safeFlags: flags({
+      none: '-n --quiet --silent -E -r --regexp-extended',
+      string: '-e --expression',
+    }),
     isDangerousCallback: (_raw, args) => {
       // sed is read-only only with -n (suppress output) and p/d/s patterns
       // Reject -i (in-place edit) and w command
@@ -1298,183 +842,79 @@ const COMMAND_ALLOWLIST: Record<string, CommandConfig> = {
     },
   },
   base64: {
-    safeFlags: {
-      '-d': 'none',
-      '--decode': 'none',
-      '-w': 'number',
-      '--wrap': 'number',
-      '-i': 'none',
-      '--ignore-garbage': 'none',
-    },
+    safeFlags: flags({
+      none: '-d --decode -i --ignore-garbage',
+      number: '-w --wrap',
+    }),
   },
   sha256sum: {
-    safeFlags: {
-      '-c': 'none',
-      '--check': 'none',
-      '-b': 'none',
-      '--binary': 'none',
-      '-t': 'none',
-      '--text': 'none',
-      '--tag': 'none',
-      '--status': 'none',
-      '-w': 'none',
-      '--warn': 'none',
-      '--strict': 'none',
-      '--quiet': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        -c --check -b --binary -t --text --tag --status -w --warn
+        --strict --quiet
+      `,
+    }),
   },
   sha1sum: {
-    safeFlags: {
-      '-c': 'none',
-      '--check': 'none',
-      '-b': 'none',
-      '--binary': 'none',
-      '--tag': 'none',
-      '--status': 'none',
-    },
+    safeFlags: flags({
+      none: '-c --check -b --binary --tag --status',
+    }),
   },
   md5sum: {
-    safeFlags: {
-      '-c': 'none',
-      '--check': 'none',
-      '-b': 'none',
-      '--binary': 'none',
-      '--tag': 'none',
-      '--status': 'none',
-    },
+    safeFlags: flags({
+      none: '-c --check -b --binary --tag --status',
+    }),
   },
   hostname: {
-    safeFlags: {
-      '-s': 'none',
-      '-f': 'none',
-      '--fqdn': 'none',
-      '-d': 'none',
-      '-i': 'none',
-      '-I': 'none',
-      '-a': 'none',
-    },
+    safeFlags: flags({
+      none: '-s -f --fqdn -d -i -I -a',
+    }),
   },
   pgrep: {
-    safeFlags: {
-      '-l': 'none',
-      '-a': 'none',
-      '-f': 'none',
-      '-x': 'none',
-      '-n': 'none',
-      '-o': 'none',
-      '-c': 'none',
-      '-d': 'string',
-      '-u': 'string',
-      '-U': 'string',
-      '-P': 'string',
-      '-G': 'string',
-      '-t': 'string',
-    },
+    safeFlags: flags({
+      none: '-l -a -f -x -n -o -c',
+      string: '-d -u -U -P -G -t',
+    }),
   },
   ss: {
-    safeFlags: {
-      '-t': 'none',
-      '-u': 'none',
-      '-l': 'none',
-      '-n': 'none',
-      '-p': 'none',
-      '-a': 'none',
-      '-r': 'none',
-      '-s': 'none',
-      '-e': 'none',
-      '-o': 'none',
-      '-i': 'none',
-      '-4': 'none',
-      '-6': 'none',
-      '-m': 'none',
-      '-Z': 'none',
-      '-K': 'none',
-    },
+    safeFlags: flags({
+      none: '-t -u -l -n -p -a -r -s -e -o -i -4 -6 -m -Z -K',
+    }),
   },
   fd: {
-    safeFlags: {
-      '-t': 'string',
-      '--type': 'string',
-      '-e': 'string',
-      '--extension': 'string',
-      '-E': 'string',
-      '--exclude': 'string',
-      '-d': 'number',
-      '--max-depth': 'number',
-      '-H': 'none',
-      '--hidden': 'none',
-      '-I': 'none',
-      '--no-ignore': 'none',
-      '-s': 'none',
-      '--case-sensitive': 'none',
-      '-i': 'none',
-      '--ignore-case': 'none',
-      '-a': 'none',
-      '--absolute-path': 'none',
-      '-l': 'none',
-      '--list-details': 'none',
-      '-L': 'none',
-      '--follow': 'none',
-      '-p': 'none',
-      '--full-path': 'none',
-      '-0': 'none',
-      '--print0': 'none',
-      '-1': 'none',
-      '--color': 'string',
-      '--glob': 'none',
-      '-g': 'none',
-      '-F': 'none',
-      '--fixed-strings': 'none',
-      '--prune': 'none',
-      '-u': 'none',
-      '--unrestricted': 'none',
-      '-S': 'string',
-      '--size': 'string',
-      '--changed-within': 'string',
-      '--changed-before': 'string',
-      '-j': 'number',
-      '--threads': 'number',
-    },
+    safeFlags: flags({
+      none: `
+        -H --hidden -I --no-ignore -s --case-sensitive -i
+        --ignore-case -a --absolute-path -l --list-details -L
+        --follow -p --full-path -0 --print0 -1 --glob -g -F
+        --fixed-strings --prune -u --unrestricted
+      `,
+      number: '-d --max-depth -j --threads',
+      string: `
+        -t --type -e --extension -E --exclude --color -S --size
+        --changed-within --changed-before
+      `,
+    }),
   },
   fdfind: {
-    safeFlags: {
-      '-t': 'string',
-      '--type': 'string',
-      '-e': 'string',
-      '--extension': 'string',
-      '-E': 'string',
-      '--exclude': 'string',
-      '-d': 'number',
-      '--max-depth': 'number',
-      '-H': 'none',
-      '--hidden': 'none',
-      '-I': 'none',
-      '--no-ignore': 'none',
-      '-s': 'none',
-      '--case-sensitive': 'none',
-      '-i': 'none',
-      '--ignore-case': 'none',
-      '-a': 'none',
-      '--absolute-path': 'none',
-      '-l': 'none',
-      '--list-details': 'none',
-      '-L': 'none',
-      '--follow': 'none',
-      '-p': 'none',
-      '--full-path': 'none',
-      '-0': 'none',
-      '--print0': 'none',
-      '-1': 'none',
-      '--color': 'string',
-      '--glob': 'none',
-      '-g': 'none',
-      '-F': 'none',
-      '--fixed-strings': 'none',
-    },
+    safeFlags: flags({
+      none: `
+        -H --hidden -I --no-ignore -s --case-sensitive -i
+        --ignore-case -a --absolute-path -l --list-details -L
+        --follow -p --full-path -0 --print0 -1 --glob -g -F
+        --fixed-strings
+      `,
+      number: '-d --max-depth',
+      string: '-t --type -e --extension -E --exclude --color',
+    }),
   },
-  tput: { safeFlags: { '-S': 'none' } },
-  help: { safeFlags: {} },
-  info: { safeFlags: {} },
+  tput: {
+    safeFlags: flags({
+      none: '-S',
+    }),
+  },
+  help: { safeFlags: flags({}) },
+  info: { safeFlags: flags({}) },
 };
 
 // ============================================================
@@ -1592,9 +1032,7 @@ const READONLY_COMMAND_REGEXES: RegExp[] = [
 // Flag validation engine
 // ============================================================
 
-/**
- * Validate flag argument value against expected type.
- */
+/** Validate flag argument value against expected type. */
 function validateFlagArgument(value: string, argType: FlagArgType): boolean {
   switch (argType) {
     case 'none':
@@ -1607,16 +1045,15 @@ function validateFlagArgument(value: string, argType: FlagArgType): boolean {
 }
 
 /**
- * Validate that all flags in a token list are in the whitelist.
- *
- * Handles:
- * - --flag=value (split on =)
- * - -n 5 (flag with next-token argument)
- * - Combined short flags -rn (all must be 'none' type)
- * - Git numeric shorthand -<number>
- * - -- (end of options separator)
- *
- * Returns true if all flags are safe.
+
+ * Validate that all flags in a token list are in the whitelist. <p> Handles: -
+
+ * --flag=value (split on =) - -n 5 (flag with next-token argument) - Combined short
+
+ * flags -rn (all must be 'none' type) - Git numeric shorthand -<number> - -- (end of
+
+ * options separator) <p> Returns true if all flags are safe.
+
  */
 export function validateFlags(
   tokens: string[],
@@ -1724,8 +1161,7 @@ export function validateFlags(
       }
     }
 
-    // Combined short flags: -rn, -la, etc.
-    // All flags in the bundle must be 'none' type
+    // Combined short flags: -rn, -la, etc. All flags in the bundle must be 'none' type
     if (/^-[A-Za-z]{2,}$/.test(flag)) {
       let allNone = true;
       for (let j = 1; j < flag.length; j++) {
@@ -1815,9 +1251,7 @@ export function isCommandSafeViaFlagParsing(command: string): boolean {
   return true;
 }
 
-/**
- * Check if command matches any readonly regex pattern (Tier 1 + 2).
- */
+/** Check if command matches any readonly regex pattern (Tier 1 + 2). */
 function matchesReadonlyRegex(command: string): boolean {
   for (const regex of READONLY_COMMAND_REGEXES) {
     if (regex.test(command)) return true;

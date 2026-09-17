@@ -1,8 +1,4 @@
-/**
- * IDE 安装器模块
- *
- * 检测和安装 IDE 扩展
- */
+/** IDE 安装器模块 检测和安装 IDE 扩展 */
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -17,9 +13,7 @@ export interface InstalledIde {
 }
 
 export class IdeInstaller {
-  /**
-   * 获取已安装的 IDE 列表
-   */
+  /** 获取已安装的 IDE 列表 */
   static async getInstalledIdes(): Promise<InstalledIde[]> {
     const ides: InstalledIde[] = [];
 
@@ -38,9 +32,7 @@ export class IdeInstaller {
     return ides;
   }
 
-  /**
-   * 检查指定 IDE 是否已安装
-   */
+  /** 检查指定 IDE 是否已安装 */
   static async isIdeInstalled(ideId: string): Promise<boolean> {
     switch (ideId) {
       case 'vscode':
@@ -54,42 +46,7 @@ export class IdeInstaller {
     }
   }
 
-  /**
-   * 安装 Blade Code 扩展到 VS Code
-   */
-  static async installExtension(
-    ideId: string
-  ): Promise<{ success: boolean; message: string }> {
-    let command: string;
-
-    switch (ideId) {
-      case 'vscode':
-        command = 'code --install-extension blade-code.blade-code';
-        break;
-      case 'vscode-insiders':
-        command = 'code-insiders --install-extension blade-code.blade-code';
-        break;
-      case 'cursor':
-        command = 'cursor --install-extension blade-code.blade-code';
-        break;
-      default:
-        return { success: false, message: '不支持的 IDE: ' + ideId };
-    }
-
-    try {
-      await execAsync(command);
-      return { success: true, message: '扩展安装成功' };
-    } catch (error) {
-      return {
-        success: false,
-        message: '安装失败: ' + (error instanceof Error ? error.message : '未知错误'),
-      };
-    }
-  }
-
-  /**
-   * 检测 VS Code
-   */
+  /** 检测 VS Code */
   private static async checkVsCode(): Promise<InstalledIde | null> {
     try {
       const { stdout } = await execAsync('code --version');
@@ -104,9 +61,7 @@ export class IdeInstaller {
     }
   }
 
-  /**
-   * 检测 VS Code Insiders
-   */
+  /** 检测 VS Code Insiders */
   private static async checkVsCodeInsiders(): Promise<InstalledIde | null> {
     try {
       const { stdout } = await execAsync('code-insiders --version');
@@ -121,9 +76,7 @@ export class IdeInstaller {
     }
   }
 
-  /**
-   * 检测 Cursor
-   */
+  /** 检测 Cursor */
   private static async checkCursor(): Promise<InstalledIde | null> {
     try {
       const { stdout } = await execAsync('cursor --version');

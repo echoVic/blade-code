@@ -1,15 +1,9 @@
-/**
- * 路径安全检查工具
- *
- * 提供路径归一化、边界检查、受限路径检测等安全功能
- */
+/** 路径安全检查工具 提供路径归一化、边界检查、受限路径检测等安全功能 */
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-/**
- * 受限路径列表（禁止访问的目录）
- */
+/** 受限路径列表（禁止访问的目录） */
 const RESTRICTED_PATHS = [
   '.git',
   '.claude',
@@ -21,9 +15,7 @@ const RESTRICTED_PATHS = [
   '.env.test',
 ];
 
-/**
- * 路径安全检查错误
- */
+/** 路径安全检查错误 */
 export class PathSecurityError extends Error {
   constructor(
     message: string,
@@ -34,9 +26,7 @@ export class PathSecurityError extends Error {
   }
 }
 
-/**
- * 路径安全检查工具
- */
+/** 路径安全检查工具 */
 export class PathSecurity {
   /**
    * 归一化路径（转为绝对路径）
@@ -222,12 +212,7 @@ export class PathSecurity {
     );
   }
 
-  /**
-   * 检查目标路径及其最近存在祖先的真实路径是否仍在工作区内。
-   *
-   * 目标文件可以尚未创建，因此逐级向上解析，避免通过工作区内的
-   * 符号链接把新文件写到工作区外。
-   */
+  /** 检查目标路径及其最近存在祖先的真实路径是否仍在工作区内。 目标文件可以尚未创建，因此逐级向上解析，避免通过工作区内的 符号链接把新文件写到工作区外。 */
   static async isWithinWorkspaceResolved(
     inputPath: string,
     workspaceRoot: string

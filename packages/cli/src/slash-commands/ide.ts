@@ -1,11 +1,6 @@
 /**
- * /ide 斜杠命令 - 管理 IDE 集成
- *
- * 子命令：
- * - /ide          显示 IDE 连接状态
- * - /ide status   显示详细状态和打开的文件
- * - /ide connect  连接到 IDE
- * - /ide install  安装 VS Code 插件
+ * /ide 斜杠命令 - 管理 IDE 集成 <p> 子命令： - /ide 显示 IDE 连接状态 - /ide status 显示详细状态和打开的文件 - /ide
+ * connect 连接到 IDE - /ide install 安装 VS Code 插件
  */
 
 import { existsSync, readFileSync } from 'fs';
@@ -36,9 +31,7 @@ let ideConnectionStatus = IdeConnectionStatus.Disconnected;
 let connectedIdeName: string | null = null;
 let idePort: number | null = null;
 
-/**
- * 获取 IDE 连接状态消息
- */
+/** 获取 IDE 连接状态消息 */
 function getStatusMessage(): { type: 'info' | 'error'; content: string } {
   switch (ideConnectionStatus) {
     case IdeConnectionStatus.Connected:
@@ -59,9 +52,7 @@ function getStatusMessage(): { type: 'info' | 'error'; content: string } {
   }
 }
 
-/**
- * 从端口文件读取信息
- */
+/** 从端口文件读取信息 */
 function readPortFile(): PortFileInfo | null {
   try {
     if (existsSync(PORT_FILE_PATH)) {
@@ -74,9 +65,7 @@ function readPortFile(): PortFileInfo | null {
   return null;
 }
 
-/**
- * 检测端口
- */
+/** 检测端口 */
 function detectIdePort(): number | null {
   // 优先从环境变量读取
   const envPort = process.env.BLADE_IDE_PORT;
@@ -93,9 +82,7 @@ function detectIdePort(): number | null {
   return null;
 }
 
-/**
- * 处理 status 子命令
- */
+/** 处理 status 子命令 */
 async function handleStatus(): Promise<string> {
   const lines: string[] = [];
 
@@ -144,9 +131,7 @@ async function handleStatus(): Promise<string> {
   return lines.join('\n');
 }
 
-/**
- * 处理 connect 子命令
- */
+/** 处理 connect 子命令 */
 async function handleConnect(): Promise<string> {
   const port = detectIdePort();
 
@@ -207,9 +192,7 @@ async function handleConnect(): Promise<string> {
   }
 }
 
-/**
- * 处理 install 子命令
- */
+/** 处理 install 子命令 */
 async function handleInstall(): Promise<string> {
   const lines: string[] = [];
 
@@ -246,9 +229,7 @@ async function handleInstall(): Promise<string> {
   return lines.join('\n');
 }
 
-/**
- * 处理 disconnect 子命令
- */
+/** 处理 disconnect 子命令 */
 async function handleDisconnect(): Promise<string> {
   if (ideConnectionStatus === IdeConnectionStatus.Disconnected) {
     return '[WARN] 当前未连接到任何 IDE';

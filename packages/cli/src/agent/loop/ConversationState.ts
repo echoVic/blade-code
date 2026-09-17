@@ -111,11 +111,6 @@ export class ConversationState {
     return this._history.length;
   }
 
-  /** 获取 history 引用（用于压缩服务读取） */
-  get history(): Message[] {
-    return this._history;
-  }
-
   /** 获取 pending 引用（用于调试） */
   get pending(): ReadonlyArray<Message> {
     return this._pending;
@@ -125,30 +120,14 @@ export class ConversationState {
     return this._contextRevision;
   }
 
-  /**
-   * 组装完整的 LLM 消息数组
-   *
-   * = systemMessages + history + pending
-   */
+  /** 组装完整的 LLM 消息数组 = systemMessages + history + pending */
   toLLMMessages(): Message[] {
     return [...this.systemMessages, ...this._history, ...this._pending];
-  }
-
-  /** toLLMMessages 的别名，与计划 API 保持一致 */
-  getMessagesForLLM(): Message[] {
-    return this.toLLMMessages();
   }
 
   /** 返回 history 的副本 */
   getHistory(): Message[] {
     return this._history;
-  }
-
-  /**
-   * 追加消息到 pending（当前轮次的 assistant/tool/user 消息）
-   */
-  appendPending(msg: Message): void {
-    this._pending.push(msg);
   }
 
   /** 追加用户消息到 pending */
@@ -184,10 +163,7 @@ export class ConversationState {
     );
   }
 
-  /**
-   * 追加控制消息到 pending。
-   * role === 'system' 时抛出异常（根系统提示只能通过构造函数设置）。
-   */
+  /** 追加控制消息到 pending。 role === 'system' 时抛出异常（根系统提示只能通过构造函数设置）。 */
   appendControl(role: string, msg: Message): void {
     if (role === 'system') {
       throw new Error(
@@ -228,10 +204,7 @@ export class ConversationState {
     this._history.push(msg);
   }
 
-  /**
-   * 将 pending 提交到 history 并清空 pending。
-   * 在每轮工具执行结束后、进入下一轮 LLM 调用前调用。
-   */
+  /** 将 pending 提交到 history 并清空 pending。 在每轮工具执行结束后、进入下一轮 LLM 调用前调用。 */
   commitPending(): void {
     if (this._pending.length > 0) {
       this._history.push(...this._pending);
@@ -299,12 +272,5 @@ export class ConversationState {
   writeback(): void {
     this.commitPending();
     this.context.messages = [...this._contextualSystemMessages, ...this._history];
-  }
-
-  /**
-   * 是否有根系统提示（用于压缩重建逻辑）
-   */
-  get hasSystemPrompt(): boolean {
-    return this.systemMessages.length > 0;
   }
 }

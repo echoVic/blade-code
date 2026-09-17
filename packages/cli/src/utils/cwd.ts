@@ -1,10 +1,6 @@
 /**
- * 统一的 CWD 访问层
- *
- * 参考 Claude Code 的 utils/cwd.ts 设计：
- * - AsyncLocalStorage 支持子代理 cwd 覆写
- * - getCwd() 是所有模块获取工作目录的唯一入口
- * - 替代直接调用 process.cwd()
+ * 统一的 CWD 访问层 <p> 参考 Claude Code 的 utils/cwd.ts 设计： - AsyncLocalStorage 支持子代理 cwd 覆写 -
+ * getCwd() 是所有模块获取工作目录的唯一入口 - 替代直接调用 process.cwd()
  */
 
 import { AsyncLocalStorage } from 'async_hooks';
@@ -21,16 +17,12 @@ export function runWithCwdOverride<T>(cwd: string, fn: () => T): T {
   return cwdOverrideStorage.run(cwd, fn);
 }
 
-/**
- * 获取当前工作目录（优先 AsyncLocalStorage 覆写，否则全局 STATE）
- */
+/** 获取当前工作目录（优先 AsyncLocalStorage 覆写，否则全局 STATE） */
 export function pwd(): string {
   return cwdOverrideStorage.getStore() ?? getCwdState();
 }
 
-/**
- * 安全获取当前工作目录，异常时回退到 originalCwd
- */
+/** 安全获取当前工作目录，异常时回退到 originalCwd */
 export function getCwd(): string {
   try {
     return pwd();

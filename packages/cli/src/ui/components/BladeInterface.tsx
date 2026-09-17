@@ -92,16 +92,10 @@ import { TranscriptPager } from './TranscriptPager.js';
 // 创建 BladeInterface 专用 Logger
 const logger = createLogger(LogCategory.UI);
 
-/**
- * BladeInterface 组件的 props 类型
- * 直接继承 AppProps，保持所有字段类型不变（包括 debug 的过滤器功能）
- */
+/** BladeInterface 组件的 props 类型 直接继承 AppProps，保持所有字段类型不变（包括 debug 的过滤器功能） */
 interface BladeInterfaceProps extends AppProps {}
 
-/**
- * Blade Code 主界面组件
- * 负责应用初始化、主界面渲染和所有业务逻辑的协调
- */
+/** Blade Code 主界面组件 负责应用初始化、主界面渲染和所有业务逻辑的协调 */
 export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   debug,
   continue: continueSession, // continue 是 js 保留字
@@ -162,8 +156,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   // 权限模式
   const permissionMode = usePermissionMode();
 
-  // 主题同步：统一在此处将 Store 中的主题名同步到 themeManager
-  // 避免在每个 useTheme 选择器中触发副作用
+  // 主题同步：统一在此处将 Store 中的主题名同步到 themeManager 避免在每个 useTheme 选择器中触发副作用
   const themeName = useThemeName();
   useEffect(() => {
     if (themeManager.getCurrentThemeName() !== themeName) {
@@ -175,8 +168,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
   }, [themeName]);
 
-  // ==================== Custom Hooks ====================
-  // 从 status 派生布尔值
+  // ==================== Custom Hooks ==================== 从 status 派生布尔值
   const readyForChat = initializationStatus === 'ready';
   const requiresSetup = initializationStatus === 'needsSetup';
   const isInitializing = initializationStatus === 'idle';
@@ -724,8 +716,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     closeModal();
   });
 
-  // ==================== Effects ====================
-  // 焦点管理：根据不同状态切换焦点
+  // ==================== Effects ==================== 焦点管理：根据不同状态切换焦点
   useEffect(() => {
     if (requiresSetup) {
       // ModelConfigWizard (setup 模式) 显示时，焦点转移到向导
