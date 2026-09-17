@@ -12,18 +12,20 @@ import { isRealApiTestEnabled, resolveForkQualificationModels } from './testConf
 
 const models = resolveForkQualificationModels();
 const claude = models.find((model) => model.id === 'claude');
-const gpt = models.find((model) => model.id === 'gpt');
+const deepseek = models.find((model) => model.id === 'deepseek');
 
 describe.skipIf(!isRealApiTestEnabled())(
   'cross-provider fallback trajectory (real API)',
   () => {
-    it.skipIf(!claude || !gpt)(
-      'moves a pre-output Claude timeout to an independently authenticated GPT channel',
+    it.skipIf(!claude || !deepseek)(
+      'moves a pre-output Claude timeout to an independently authenticated DeepSeek channel',
       async () => {
-        if (!claude || !gpt) throw new Error('Claude and GPT models are required');
+        if (!claude || !deepseek) {
+          throw new Error('Claude and DeepSeek models are required');
+        }
 
         const primaryId = 'real-claude-primary';
-        const fallbackId = 'real-gpt-fallback';
+        const fallbackId = 'real-deepseek-fallback';
         const primaryCredential = getModelApiKeyEnvironmentVariable(primaryId);
         const fallbackCredential = getModelApiKeyEnvironmentVariable(fallbackId);
         const originalPrimary = process.env[primaryCredential];
@@ -41,18 +43,18 @@ describe.skipIf(!isRealApiTestEnabled())(
           },
           fallbackModels: [
             {
-              provider: gpt.provider,
-              model: gpt.model,
+              provider: deepseek.provider,
+              model: deepseek.model,
               configId: fallbackId,
             },
           ],
         };
         const fallback: ModelConfig = {
           id: fallbackId,
-          provider: gpt.provider,
-          model: gpt.model,
+          provider: deepseek.provider,
+          model: deepseek.model,
           overrides: {
-            baseUrl: gpt.baseURL,
+            baseUrl: deepseek.baseURL,
             maxOutputTokens: 64,
             timeout: 30_000,
             streamIdleTimeout: 30_000,
@@ -61,7 +63,7 @@ describe.skipIf(!isRealApiTestEnabled())(
 
         try {
           process.env[primaryCredential] = claude.apiKey;
-          process.env[fallbackCredential] = gpt.apiKey;
+          process.env[fallbackCredential] = deepseek.apiKey;
           const resolved = resolveModelConfig(
             primary,
             {
@@ -97,20 +99,24 @@ describe.skipIf(!isRealApiTestEnabled())(
             chunks.push(chunk);
           }
 
-          expect(resolved.chat.fallbackModels?.[0]?.channel?.apiKey).toBe(gpt.apiKey);
-          expect(resolved.chat.fallbackModels?.[0]?.channel?.baseUrl).toBe(gpt.baseURL);
+          expect(resolved.chat.fallbackModels?.[0]?.channel?.apiKey).toBe(
+            deepseek.apiKey
+          );
+          expect(resolved.chat.fallbackModels?.[0]?.channel?.baseUrl).toBe(
+            deepseek.baseURL
+          );
           expect(chunks.filter((chunk) => chunk.modelFallback)).toHaveLength(1);
           expect(chunks.find((chunk) => chunk.modelFallback)?.modelFallback).toEqual({
             from: { provider: claude.provider, model: claude.model },
-            to: { provider: gpt.provider, model: gpt.model },
+            to: { provider: deepseek.provider, model: deepseek.model },
             candidate: 1,
             candidateCount: 1,
             trigger: { source: 'stall', reason: 'timeout' },
           });
           expect(JSON.stringify(chunks)).not.toContain(claude.apiKey);
-          expect(JSON.stringify(chunks)).not.toContain(gpt.apiKey);
+          expect(JSON.stringify(chunks)).not.toContain(deepseek.apiKey);
           expect(JSON.stringify(chunks)).not.toContain(claude.baseURL);
-          expect(JSON.stringify(chunks)).not.toContain(gpt.baseURL);
+          expect(JSON.stringify(chunks)).not.toContain(deepseek.baseURL);
           expect(chunks.some((chunk) => chunk.providerRetry?.phase === 'attempt')).toBe(
             false
           );

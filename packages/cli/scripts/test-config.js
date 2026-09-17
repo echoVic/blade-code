@@ -1,3 +1,6 @@
+import { statSync } from 'node:fs';
+import path from 'node:path';
+
 export const testTypes = {
   unit: {
     name: '单元测试',
@@ -15,6 +18,19 @@ export const testTypes = {
     project: 'real-api',
     timeout: 60 * 60 * 1_000,
     requiresProductionBuild: true,
+    files: [
+      'tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts',
+      'tests/integration/real-api/agent-trajectory.test.ts',
+      'tests/integration/real-api/browser-tool-trajectory.test.ts',
+      'tests/integration/real-api/cross-provider-fallback-trajectory.test.ts',
+      'tests/integration/real-api/durable-interaction-recovery-trajectory.test.ts',
+      'tests/integration/real-api/goal-mode-trajectory.test.ts',
+      'tests/integration/real-api/goal-paused-usage-trajectory.test.ts',
+      'tests/integration/real-api/release-coding-trajectory.test.ts',
+      'tests/integration/real-api/structured-output-trajectory.test.ts',
+      'tests/integration/real-api/task-list-team-trajectory.test.ts',
+      'tests/integration/real-api/workspace-agent-resources-trajectory.test.ts',
+    ],
     env: {
       REAL_API_TEST: '1',
     },
@@ -52,7 +68,8 @@ export const testTypes = {
     timeout: 120_000,
     requiresProductionBuild: true,
     files: [
-      'tests/unit/cli/headless-events.test.ts',
+      'tests/unit/cli/headless-boundaries.test.ts',
+      'tests/unit/cli/headless-event-contract.test.ts',
       'tests/integration/cli/blade-help.test.ts',
       'tests/unit/agent-runtime/context/jsonl-recovery.test.ts',
       'tests/unit/agent-runtime/agent/active-turn-mailbox.test.ts',
@@ -96,6 +113,20 @@ export const testTypes = {
     projectSequence: ['!performance', 'performance'],
   },
 };
+
+export function assertConfiguredTestFilesExist(config, rootDirectory) {
+  for (const file of config.files ?? []) {
+    let exists = false;
+    try {
+      exists = statSync(path.resolve(rootDirectory, file)).isFile();
+    } catch {
+      // Report one stable configuration error below.
+    }
+    if (!exists) {
+      throw new Error(`${config.name} contains missing test file: ${file}`);
+    }
+  }
+}
 
 export function resolveTestTimeout(config, options) {
   return options.coverage

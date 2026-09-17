@@ -81,8 +81,9 @@ workspace registry，证明 Session 工具仍保持原快照且对方资源零�
 
 真实 API 资格包括：
 
-- GPT 双 `SessionRuntime` 并发调用各自 plugin command；
-- GPT 在同一 ACP connection 的双 cwd Session 中分别调用各自 plugin command；
+- DeepSeek Flash 双 `SessionRuntime` 并发调用各自 plugin command；
+- DeepSeek Flash 在同一 ACP connection 的双 cwd Session 中分别调用各自 plugin
+  command；
 - DeepSeek Flash/Pro 通过生产 CLI `--agents -> Task` 完成 Read/Edit/Bash；
 - production Web GUI 绑定并信任 A/B 两项目，在独立 worktree 中分别调用
   `plugin-a:reveal` 与 `plugin-b:reveal`，回切后投影保持独立，fresh tab 无 console

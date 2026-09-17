@@ -66,17 +66,17 @@ const qualificationModels = isRealApiTestEnabled()
   ? resolveForkQualificationModels(process.env)
   : [];
 const execFileAsync = promisify(execFile);
-const gpt = qualificationModels.find((model) => model.id === 'gpt');
 const deepseek = qualificationModels.find((model) => model.id === 'deepseek');
 const deepseekFlash = qualificationModels.find(
   (model) => model.id === 'deepseek' && model.model === 'deepseek-v4-flash'
 );
+const durableRecoveryModel = deepseekFlash ?? deepseek;
 if (isRealApiTestEnabled() && isReleaseMatrix() && !deepseekFlash) {
   throw new Error(
     'DeepSeek Flash is required for the production Chromium qualification'
   );
 }
-const describeReal = gpt && deepseek ? describe.sequential : describe.skip;
+const describeReal = durableRecoveryModel ? describe.sequential : describe.skip;
 
 interface WebRecoveryWaitInput {
   controller: SessionRouteController;
@@ -1737,10 +1737,30 @@ describe('durable ACP recovery diagnostics', () => {
 
     expect(regressionSlice).toContain(webTitle);
     expect(regressionSlice).toContain(regressionTitle);
+    expect(regressionSlice).not.toContain('GPT qualification channel');
+    expect(regressionSlice).not.toContain('buildRealApiRuntimeConfig(gpt)');
     expect(regressionSlice).not.toContain(acpSurfaceTitle);
     expect(regressionSlice).not.toContain(ptySurfaceTitle);
     expect(surfaceSlice).toContain(acpSurfaceTitle);
     expect(surfaceSlice).toContain(ptySurfaceTitle);
+  });
+
+  it('reuses the deterministic channel seed for in-process Web recovery', async () => {
+    const source = await readFile(import.meta.filename, 'utf8');
+    const webTitle = 'restarts from a durable Web question and performs a real Write';
+    const acpTitle =
+      'replays a durable ACP question on session/load and resumes automatically';
+    const webIndex = source.lastIndexOf(webTitle);
+    const acpIndex = source.indexOf(acpTitle, webIndex);
+
+    expect(webIndex).toBeGreaterThanOrEqual(0);
+    expect(acpIndex).toBeGreaterThan(webIndex);
+
+    const webCell = source.slice(webIndex, acpIndex);
+    expect(webCell).toContain('seedDurablePendingChannelQuestion({');
+    expect(webCell).toContain("finalMarker: 'INTERACTION_RECOVERED'");
+    expect(webCell).toContain("allowedTools: ['Write']");
+    expect(webCell).not.toContain('Set content to the selected label');
   });
 
   it('requires a single forwarded request number to prove real 2xx downstream completion', () => {
@@ -3178,7 +3198,9 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
   });
 
   it('restarts from a durable Web question and performs a real Write', async () => {
-    if (!gpt) throw new Error('GPT qualification channel is unavailable');
+    if (!durableRecoveryModel) {
+      throw new Error('DeepSeek qualification channel is unavailable');
+    }
     const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-interaction-'));
     const workspace = path.join(root, 'workspace');
     const storageRoot = path.join(root, 'storage');
@@ -3186,8 +3208,9 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
     const sessionId = `interaction-web-${Date.now()}`;
     const originalConfig = getState().config.config;
     const config = buildDurableInteractionRecoveryConfig({
-      ...buildRealApiRuntimeConfig(gpt),
+      ...buildRealApiRuntimeConfig(durableRecoveryModel),
       permissionMode: PermissionMode.DEFAULT,
+      allowedTools: ['Write'],
     });
     const controller = createSessionRouteController();
     const app = new Hono();
@@ -3203,63 +3226,19 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
         selectedModelId: config.currentModelId,
         permissionMode: 'yolo',
       });
-      const store = new PersistentStore(workspace);
-      await store.saveMessage(
+      const seed = await seedDurablePendingChannelQuestion({
         sessionId,
-        'user',
-        [
-          'A structured Channel question will be recovered after a process restart.',
-          `After the recovered answer, call Write exactly once with file_path=${JSON.stringify(
-            target
-          )}.`,
-          'Set content to the selected label followed by exactly one newline.',
-          'That Write is the only allowed tool call. Never call AskUserQuestion again.',
-          'Do not emit assistant text or end the turn before Write succeeds.',
-          'After Write succeeds, reply exactly INTERACTION_RECOVERED.',
-        ].join(' ')
-      );
-      const toolCallId = await store.saveToolUse(sessionId, 'AskUserQuestion', {
-        questions: [
-          {
-            header: 'Channel',
-            question: 'Which release channel?',
-            multiSelect: false,
-            options: [
-              { label: 'Stable', description: 'Stable release' },
-              { label: 'Canary', description: 'Canary release' },
-            ],
-          },
-        ],
+        workspace,
+        target,
+        finalInstruction: 'After Write succeeds, reply exactly INTERACTION_RECOVERED.',
+        finalMarker: 'INTERACTION_RECOVERED',
       });
-      const request = await SessionInteractionService.request(
-        {
-          sessionId,
-          projectPath: workspace,
-          toolCallId,
-          toolName: 'AskUserQuestion',
-        },
-        {
-          type: 'askUserQuestion',
-          message: 'Choose a release channel',
-          questions: [
-            {
-              header: 'Channel',
-              question: 'Which release channel?',
-              multiSelect: false,
-              options: [
-                { label: 'Stable', description: 'Stable release' },
-                { label: 'Canary', description: 'Canary release' },
-              ],
-            },
-          ],
-        }
-      );
       await expect(
         SessionService.findSessionMetadata(sessionId, workspace)
       ).resolves.toMatchObject({
         pendingInteraction: {
           type: 'question',
-          requestId: request.requestId,
+          requestId: seed.requestId,
         },
       });
 
@@ -3271,7 +3250,7 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
       });
       const response = await runWithCwdOverride(workspace, () =>
         app.request(
-          `/permissions/${request.requestId}?sessionId=${sessionId}&projectPath=${encodeURIComponent(
+          `/permissions/${seed.requestId}?sessionId=${sessionId}&projectPath=${encodeURIComponent(
             workspace
           )}`,
           {
@@ -3293,7 +3272,7 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
         'utf8'
       );
       const metadata = await SessionService.findSessionMetadata(sessionId, workspace);
-      assertNoSecrets({ metadata, transcript }, [gpt.apiKey]);
+      assertNoSecrets({ metadata, transcript }, [durableRecoveryModel.apiKey]);
       const targetContent = await readOptionalFile(target);
       const diagnostic = await buildWebRecoveryDiagnosticBounded(
         {

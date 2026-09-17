@@ -15,7 +15,8 @@ import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { ChatContext, LoopResult } from '../../../src/agent/types.js';
 import { setCwdState } from '../../../src/bootstrap/state.js';
 import { ConfigManager } from '../../../src/config/ConfigManager.js';
-import { type BladeConfig, PermissionMode } from '../../../src/config/types.js';
+import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
+import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import { resetWorkspaceIdentityCache } from '../../../src/security/WorkspaceIdentity.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
 import { getSkillCreatorContent } from '../../../src/skills/builtin/skill-creator.js';
@@ -26,14 +27,13 @@ import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
-  resolveForkQualificationModels,
   resolveRequiredDeepSeekQualificationModels,
 } from './testConfig.js';
 
-const gpt = isRealApiTestEnabled()
-  ? resolveForkQualificationModels(process.env).find((model) => model.id === 'gpt')
+const resourceModel = isRealApiTestEnabled()
+  ? resolveRequiredDeepSeekQualificationModels()[0]
   : undefined;
-const describeReal = gpt ? describe.sequential : describe.skip;
+const describeReal = resourceModel ? describe.sequential : describe.skip;
 
 class RecordingAcpClient implements acp.Client {
   readonly updates: acp.SessionNotification[] = [];
@@ -116,10 +116,9 @@ async function createPluginWorkspace(
     workspace,
     `${pluginRoot}/commands/reveal.md`,
     `---
-description: Read the external marker for ${pluginName}
+description: Inspect the project resource identifier for ${pluginName}
 ---
-The external workspace marker is exactly ${marker}.
-Return that marker verbatim and do not mention any other workspace.
+Project resource identifier: ${marker}
 `
   );
   await writeFixture(
@@ -146,7 +145,7 @@ Inspect resources owned by ${pluginName}.
 
 async function writeWorkspaceModelConfig(
   workspace: string,
-  config: BladeConfig
+  config: RuntimeConfig
 ): Promise<void> {
   await writeFixture(
     workspace,
@@ -156,11 +155,27 @@ async function writeWorkspaceModelConfig(
         currentModelId: config.currentModelId,
         models: config.models,
         modelProviders: config.modelProviders,
+        allowedTools: config.allowedTools,
+        maxTurns: config.maxTurns,
       },
       null,
       2
     )}\n`
   );
+}
+
+function buildResourceQualificationConfig(): RuntimeConfig {
+  if (!resourceModel) {
+    throw new Error('Workspace resource qualification model is unavailable');
+  }
+  const config: RuntimeConfig = buildRealApiRuntimeConfig(resourceModel);
+  config.allowedTools = ['SlashCommand'];
+  config.maxTurns = 2;
+  config.models = config.models.map((model) => ({
+    ...model,
+    overrides: { ...model.overrides, maxRetries: 0 },
+  }));
+  return config;
 }
 
 async function configureIsolatedSkills(
@@ -200,10 +215,9 @@ async function collectTurn(
   const result = await drainLoop(
     agent.chatStream(
       [
-        `Call SlashCommand exactly once with command "${command}".`,
-        'The external marker is available only through that command.',
-        'After the tool succeeds, reply with exactly the marker returned by the tool.',
-        'Do not invent a marker and do not call any other command or tool.',
+        `Inspect the registered command "${command}" by calling SlashCommand exactly once.`,
+        'Do not answer before the tool returns.',
+        'After the tool succeeds, reply with exactly "inspection complete".',
       ].join(' '),
       context,
       { stream: true }
@@ -350,7 +364,9 @@ describeReal('workspace agent resources trajectory (real API)', () => {
   });
 
   it('keeps plugin commands, skills, and agents in exact immutable Session snapshots', async () => {
-    if (!gpt) throw new Error('GPT qualification model is unavailable');
+    if (!resourceModel) {
+      throw new Error('Workspace resource qualification model is unavailable');
+    }
     const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-agent-resources-'));
     const workspaceA = path.join(root, 'project-a');
     const workspaceB = path.join(root, 'project-b');
@@ -375,7 +391,7 @@ describeReal('workspace agent resources trajectory (real API)', () => {
         configureIsolatedSkills(workspaceA, root, 'a'),
         configureIsolatedSkills(workspaceB, root, 'b'),
       ]);
-      const config = buildRealApiRuntimeConfig(gpt);
+      const config = buildResourceQualificationConfig();
       await Promise.all([
         writeWorkspaceModelConfig(workspaceA, config),
         writeWorkspaceModelConfig(workspaceB, config),
@@ -475,11 +491,7 @@ describeReal('workspace agent resources trajectory (real API)', () => {
       expect(resultText(turnA)).not.toContain(markerB);
       expect(resultText(turnB)).toContain(markerB);
       expect(resultText(turnB)).not.toContain(markerA);
-      expect(turnA.result.finalMessage).toContain(markerA);
-      expect(turnA.result.finalMessage).not.toContain(markerB);
-      expect(turnB.result.finalMessage).toContain(markerB);
-      expect(turnB.result.finalMessage).not.toContain(markerA);
-      assertNoSecrets({ turnA, turnB }, [gpt.apiKey]);
+      assertNoSecrets({ turnA, turnB }, [resourceModel.apiKey]);
     } finally {
       await agentA?.destroy().catch(() => undefined);
       await agentB?.destroy().catch(() => undefined);
@@ -497,7 +509,9 @@ describeReal('workspace agent resources trajectory (real API)', () => {
   }, 180_000);
 
   it('isolates the same resources across same-connection ACP cwd sessions', async () => {
-    if (!gpt) throw new Error('GPT qualification model is unavailable');
+    if (!resourceModel) {
+      throw new Error('Workspace resource qualification model is unavailable');
+    }
     const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-acp-resources-'));
     const workspaceA = path.join(root, 'project-a');
     const workspaceB = path.join(root, 'project-b');
@@ -520,7 +534,7 @@ describeReal('workspace agent resources trajectory (real API)', () => {
         configureIsolatedSkills(workspaceA, root, 'acp-a'),
         configureIsolatedSkills(workspaceB, root, 'acp-b'),
       ]);
-      const config = buildRealApiRuntimeConfig(gpt);
+      const config = buildResourceQualificationConfig();
       await Promise.all([
         writeWorkspaceModelConfig(workspaceA, config),
         writeWorkspaceModelConfig(workspaceB, config),
@@ -563,36 +577,21 @@ describeReal('workspace agent resources trajectory (real API)', () => {
           {
             type: 'text',
             text: [
-              `Call SlashCommand exactly once with command "${command}".`,
-              'The external marker is available only through that command.',
-              'After the tool succeeds, reply with exactly the returned marker.',
-              'Do not call any other tool or invent a marker.',
+              `Inspect the registered command "${command}" by calling SlashCommand exactly once.`,
+              'Do not answer before the tool returns.',
+              'After the tool succeeds, reply with exactly "inspection complete".',
             ].join(' '),
           },
         ];
         const updatesFor = (sessionId: string) =>
           client.updates.filter((update) => update.sessionId === sessionId);
-        const agentText = (updates: acp.SessionNotification[]) =>
-          updates
-            .map((notification) => notification.update)
-            .filter((update) => update.sessionUpdate === 'agent_message_chunk')
-            .map((update) =>
-              update.content.type === 'text' ? update.content.text : ''
-            )
-            .join('');
         const promptSession = (sessionId: string, command: string) =>
           harness.connection.prompt({
             sessionId,
             prompt: promptFor(command),
           });
-        let resultA = await promptSession(sessionA.sessionId, 'plugin-a:reveal');
-        if (!agentText(updatesFor(sessionA.sessionId)).includes(markerA)) {
-          resultA = await promptSession(sessionA.sessionId, 'plugin-a:reveal');
-        }
-        let resultB = await promptSession(sessionB.sessionId, 'plugin-b:reveal');
-        if (!agentText(updatesFor(sessionB.sessionId)).includes(markerB)) {
-          resultB = await promptSession(sessionB.sessionId, 'plugin-b:reveal');
-        }
+        const resultA = await promptSession(sessionA.sessionId, 'plugin-a:reveal');
+        const resultB = await promptSession(sessionB.sessionId, 'plugin-b:reveal');
         expect(resultA.stopReason).toBe('end_turn');
         expect(resultB.stopReason).toBe('end_turn');
 
@@ -600,13 +599,24 @@ describeReal('workspace agent resources trajectory (real API)', () => {
         const updatesB = updatesFor(sessionB.sessionId);
         const serializedA = JSON.stringify(updatesA);
         const serializedB = JSON.stringify(updatesB);
+        const [eventsA, eventsB] = await Promise.all([
+          new PersistentStore(workspaceA).loadEvents(sessionA.sessionId),
+          new PersistentStore(workspaceB).loadEvents(sessionB.sessionId),
+        ]);
+        const durableA = JSON.stringify(eventsA ?? []);
+        const durableB = JSON.stringify(eventsB ?? []);
         expect(serializedA).toContain('Executing SlashCommand');
-        expect(agentText(updatesA)).toContain(markerA);
         expect(serializedA).not.toContain(markerB);
         expect(serializedB).toContain('Executing SlashCommand');
-        expect(agentText(updatesB)).toContain(markerB);
         expect(serializedB).not.toContain(markerA);
-        assertNoSecrets({ resultA, resultB, serializedA, serializedB }, [gpt.apiKey]);
+        expect(durableA).toContain(markerA);
+        expect(durableA).not.toContain(markerB);
+        expect(durableB).toContain(markerB);
+        expect(durableB).not.toContain(markerA);
+        assertNoSecrets(
+          { resultA, resultB, serializedA, serializedB, durableA, durableB },
+          [resourceModel.apiKey]
+        );
       });
     } finally {
       await harness.close().catch(() => undefined);

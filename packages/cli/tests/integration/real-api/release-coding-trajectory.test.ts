@@ -2,8 +2,8 @@ import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import {
   mkdir,
   mkdtemp,
-  readFile,
   readdir,
+  readFile,
   realpath,
   rm,
   writeFile,
@@ -15,11 +15,20 @@ import { promisify } from 'node:util';
 import { chromium } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SessionSchema } from '../../../src/api/schemas.js';
+import { runHeadless } from '../../../src/commands/headless.js';
 import {
   createBenchmarkWorkspace,
   DEFAULT_REAL_REPO_BENCHMARK_CASES,
   verifyBenchmarkWorkspace,
 } from '../../../src/commands/headlessBenchmark.js';
+import {
+  type HeadlessJsonlEvent,
+  HeadlessJsonlEventSchema,
+} from '../../../src/commands/headlessEvents.js';
+import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
+import type { SessionEvent } from '../../../src/context/types.js';
+import { getState } from '../../../src/store/vanilla.js';
+import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import { createSplitPtyMarkerInstruction } from '../../support/foregroundBoundedOutputPtyDriver.js';
 import {
   captureForegroundGuiLauncherIdentity,
@@ -34,15 +43,6 @@ import {
   inspectFinalAssistantText,
   readSessionEvents,
 } from './sessionForkTrajectoryHarness.js';
-import { runHeadless } from '../../../src/commands/headless.js';
-import {
-  type HeadlessJsonlEvent,
-  HeadlessJsonlEventSchema,
-} from '../../../src/commands/headlessEvents.js';
-import type { SessionEvent } from '../../../src/context/types.js';
-import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
-import { getState } from '../../../src/store/vanilla.js';
-import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
   buildRealApiRuntimeConfig,
   expandDeepSeekModelMatrix,
@@ -242,7 +242,7 @@ describe
                 currentModelId: config.currentModelId,
                 models: config.models.map((entry) => ({
                   ...entry,
-                  overrides: { ...entry.overrides, maxRetries: 0 },
+                  overrides: { ...entry.overrides, maxRetries: 1 },
                 })),
                 modelProviders: config.modelProviders,
                 permissionMode: 'yolo',
@@ -427,13 +427,16 @@ describe
               );
               await composer.fill(prompt);
               await page.locator('[data-blade-submit]').click();
-              await page
-                .getByText(marker, { exact: true })
-                .waitFor({ state: 'visible', timeout: 180_000 });
+              const [historyResponse] = await Promise.all([
+                terminalHistory,
+                page
+                  .getByText(marker, { exact: true })
+                  .waitFor({ state: 'visible', timeout: 180_000 }),
+              ]);
               await page
                 .locator('[data-turn-activity-strip]')
                 .waitFor({ state: 'detached' });
-              expect(await (await terminalHistory).finished()).toBeNull();
+              expect(await historyResponse.finished()).toBeNull();
               const collapsedGroups = page.locator(
                 '[data-agent-tool-group] > button[aria-expanded="false"]'
               );

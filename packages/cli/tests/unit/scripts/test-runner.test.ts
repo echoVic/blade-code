@@ -3,7 +3,11 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { resolveTestTimeout, testTypes } from '../../../scripts/test-config.js';
+import {
+  assertConfiguredTestFilesExist,
+  resolveTestTimeout,
+  testTypes,
+} from '../../../scripts/test-config.js';
 import {
   createTestProcessEnvironment,
   isolateManagedGitAttributionEnvironment,
@@ -256,6 +260,19 @@ describe('real API setup import boundary', () => {
 describe.skipIf(process.platform === 'win32')('test runner process ownership', () => {
   it('allows the complete serial real API matrix to run for one hour', () => {
     expect(testTypes.realApi.timeout).toBe(60 * 60 * 1000);
+    expect(testTypes.realApi.files).toEqual([
+      'tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts',
+      'tests/integration/real-api/agent-trajectory.test.ts',
+      'tests/integration/real-api/browser-tool-trajectory.test.ts',
+      'tests/integration/real-api/cross-provider-fallback-trajectory.test.ts',
+      'tests/integration/real-api/durable-interaction-recovery-trajectory.test.ts',
+      'tests/integration/real-api/goal-mode-trajectory.test.ts',
+      'tests/integration/real-api/goal-paused-usage-trajectory.test.ts',
+      'tests/integration/real-api/release-coding-trajectory.test.ts',
+      'tests/integration/real-api/structured-output-trajectory.test.ts',
+      'tests/integration/real-api/task-list-team-trajectory.test.ts',
+      'tests/integration/real-api/workspace-agent-resources-trajectory.test.ts',
+    ]);
   });
 
   it('keeps a focused release-blocking matrix with a ninety minute budget', () => {
@@ -299,6 +316,44 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
 
   it('keeps wall-clock performance tests out of the coverage matrix', () => {
     expect(testTypes.all.coverageExcludedProjects).toEqual(['performance']);
+  });
+
+  it('points the headless gate at the current event contract suite', () => {
+    expect(testTypes.headlessCore.files).toContain(
+      'tests/unit/cli/headless-boundaries.test.ts'
+    );
+    expect(testTypes.headlessCore.files).toContain(
+      'tests/unit/cli/headless-event-contract.test.ts'
+    );
+    expect(testTypes.headlessCore.files).not.toContain(
+      'tests/unit/cli/headless-events.test.ts'
+    );
+  });
+
+  it('fails before Vitest when an explicit inventory contains a missing file', () => {
+    const root = path.resolve(import.meta.dirname, '../../..');
+    expect(() =>
+      assertConfiguredTestFilesExist(
+        {
+          name: 'broken inventory',
+          files: ['tests/unit/cli/does-not-exist.test.ts'],
+        },
+        root
+      )
+    ).toThrow(
+      'broken inventory contains missing test file: tests/unit/cli/does-not-exist.test.ts'
+    );
+  });
+
+  it('accepts every committed explicit test inventory', () => {
+    const root = path.resolve(import.meta.dirname, '../../..');
+    expect(() => assertConfiguredTestFilesExist(testTypes.realApi, root)).not.toThrow();
+    expect(() =>
+      assertConfiguredTestFilesExist(testTypes.realApiQualification, root)
+    ).not.toThrow();
+    expect(() =>
+      assertConfiguredTestFilesExist(testTypes.headlessCore, root)
+    ).not.toThrow();
   });
 
   it('resolves the Vitest CLI through its public package metadata', async () => {

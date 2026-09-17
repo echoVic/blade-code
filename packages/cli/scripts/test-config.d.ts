@@ -15,6 +15,11 @@ export const testTypes: Record<string, TestTypeConfig> & {
   realApiQualification: TestTypeConfig;
 };
 
+export function assertConfiguredTestFilesExist(
+  config: Pick<TestTypeConfig, 'name' | 'files'>,
+  rootDirectory: string
+): void;
+
 export function resolveTestTimeout(
   config: Pick<TestTypeConfig, 'timeout' | 'coverageTimeout'>,
   options: { coverage?: boolean }
