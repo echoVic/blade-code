@@ -223,6 +223,34 @@ describe('SessionHistoryController', () => {
     await controller.close();
   });
 
+  it('loads a bounded remote view and prepends one distinct older page', async () => {
+    const historyPage = vi.fn(async () =>
+      createHistoryPage(['one', 'three'], { snapshot: 'history-snapshot' })
+    );
+    const service = createService({ historyPage });
+    const { SessionHistoryController } = await import(
+      '../../../../src/ui/services/SessionHistoryController.js'
+    );
+    const controller = new SessionHistoryController({ serviceFactory: () => service });
+
+    await controller.open(createRemoteSummary());
+    await controller.loadOlder(actionTarget(controller.getState()));
+
+    expect(controller.getState().status).toBe('ready');
+    expect(controller.getState().messages.map((message) => message.content)).toEqual([
+      'message one',
+      'message three',
+      'message four',
+    ]);
+    expect(historyPage).toHaveBeenCalledWith(createRemoteLocator(), {
+      cursor: 'older-1',
+      expectedSnapshot: 'history-snapshot',
+      limit: 50,
+    });
+
+    await controller.close();
+  });
+
   it('retains the newly loaded older window when history exceeds five hundred messages', async () => {
     const currentIds = Array.from({ length: 450 }, (_, index) => `current-${index}`);
     const olderIds = Array.from({ length: 100 }, (_, index) => `older-${index}`);
@@ -269,6 +297,54 @@ describe('SessionHistoryController', () => {
         message: 'This action is unavailable in history-only mode.',
       },
     });
+    await controller.close();
+  });
+
+  it('forks through the surface service and keeps the child history-only', async () => {
+    const close = vi.fn(async () => undefined);
+    const firstFork = vi.fn(async () => createOpenResult('unexpected-child'));
+    const first = createService({ close, fork: firstFork });
+    const fork = vi.fn(async () => createOpenResult('remote-child'));
+    const second = createService({ fork });
+    const services = [first, second];
+    const { SessionHistoryController } = await import(
+      '../../../../src/ui/services/SessionHistoryController.js'
+    );
+    const controller = new SessionHistoryController({
+      serviceFactory: () => services.shift()!,
+    });
+
+    await controller.open(createRemoteSummary());
+    await controller.fork(actionTarget(controller.getState()));
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(firstFork).not.toHaveBeenCalled();
+    expect(fork).toHaveBeenCalledWith(createRemoteLocator());
+    expect(controller.getState().session?.locator).toEqual(
+      createRemoteLocator('remote-child')
+    );
+    expect(controller.getState().session?.capabilities.turn.start).toBe(false);
+    expect(controller.getState().status).toBe('ready');
+
+    await controller.close();
+  });
+
+  it('activates a remote fork intent directly as the history-only child', async () => {
+    const open = vi.fn(async () => createOpenResult());
+    const fork = vi.fn(async () => createOpenResult('remote-child'));
+    const service = createService({ open, fork });
+    const { SessionHistoryController } = await import(
+      '../../../../src/ui/services/SessionHistoryController.js'
+    );
+    const controller = new SessionHistoryController({ serviceFactory: () => service });
+
+    await controller.activate(createRemoteSummary(), 'fork');
+
+    expect(open).not.toHaveBeenCalled();
+    expect(fork).toHaveBeenCalledWith(createRemoteLocator());
+    expect(controller.getState().session?.locator.sessionId).toBe('remote-child');
+    expect(controller.getState().session?.capabilities.turn.start).toBe(false);
+
     await controller.close();
   });
 
@@ -320,6 +396,35 @@ describe('SessionHistoryController', () => {
     await controller.close();
   });
 
+  it('rejects a stale fork action while an older page is loading', async () => {
+    const deferred = createDeferred<SessionSurfaceHistoryPage>();
+    const historyPage = vi.fn(() => deferred.promise);
+    const fork = vi.fn(async () => createOpenResult('unexpected-child'));
+    const first = createService({ historyPage });
+    const second = createService({ fork });
+    const services = [first, second];
+    const { SessionHistoryController } = await import(
+      '../../../../src/ui/services/SessionHistoryController.js'
+    );
+    const controller = new SessionHistoryController({
+      serviceFactory: () => services.shift()!,
+    });
+    await controller.open(createRemoteSummary());
+
+    const target = actionTarget(controller.getState());
+    const paging = controller.loadOlder(target);
+    expect(controller.getState().status).toBe('loading-older');
+    await controller.fork(target);
+
+    expect(fork).not.toHaveBeenCalled();
+    deferred.resolve(
+      createHistoryPage(['one', 'two'], { snapshot: 'history-snapshot' })
+    );
+    await paging;
+    expect(controller.getState().status).toBe('ready');
+    await controller.close();
+  });
+
   it('rejects callbacks captured by a replaced history view', async () => {
     const first = createService();
     const historyPage = vi.fn(async () => createHistoryPage(['older']));
@@ -351,6 +456,109 @@ describe('SessionHistoryController', () => {
 
     expect(historyPage).not.toHaveBeenCalled();
     expect(fork).not.toHaveBeenCalled();
+    expect(controller.getState().session?.locator.sessionId).toBe('remote-session-2');
+    await controller.close();
+  });
+
+  it('clears the previous viewer before waiting for its service to close', async () => {
+    const closing = createDeferred<void>();
+    const first = createService({ close: () => closing.promise });
+    const second = createService({
+      open: async () => createOpenResult('remote-session-2'),
+    });
+    const services = [first, second];
+    const { SessionHistoryController } = await import(
+      '../../../../src/ui/services/SessionHistoryController.js'
+    );
+    const controller = new SessionHistoryController({
+      serviceFactory: () => services.shift()!,
+    });
+
+    await controller.open(createRemoteSummary());
+    const switching = controller.open(createRemoteSummary('remote-session-2'));
+
+    expect(controller.getState()).toMatchObject({
+      status: 'loading',
+      session: createRemoteSummary('remote-session-2'),
+      messages: [],
+    });
+
+    closing.resolve(undefined);
+    await switching;
+    await controller.close();
+  });
+
+  it('waits for an in-flight closeView before opening a replacement service', async () => {
+    const closing = createDeferred<void>();
+    const first = createService({ close: () => closing.promise });
+    const open = vi.fn(async () => createOpenResult('remote-session-2'));
+    const second = createService({ open });
+    const services = [first, second];
+    const { SessionHistoryController } = await import(
+      '../../../../src/ui/services/SessionHistoryController.js'
+    );
+    const controller = new SessionHistoryController({
+      serviceFactory: () => services.shift()!,
+    });
+    await controller.open(createRemoteSummary());
+
+    const closingView = controller.closeView();
+    const reopening = controller.open(createRemoteSummary('remote-session-2'));
+    await Promise.resolve();
+
+    expect(open).not.toHaveBeenCalled();
+    closing.resolve(undefined);
+    await Promise.all([closingView, reopening]);
+    expect(open).toHaveBeenCalledOnce();
+    await controller.close();
+  });
+
+  it('waits for an existing closeView when the owner closes concurrently', async () => {
+    const closing = createDeferred<void>();
+    const service = createService({ close: () => closing.promise });
+    const { SessionHistoryController } = await import(
+      '../../../../src/ui/services/SessionHistoryController.js'
+    );
+    const controller = new SessionHistoryController({ serviceFactory: () => service });
+    await controller.open(createRemoteSummary());
+
+    const closingView = controller.closeView();
+    let ownerClosed = false;
+    const closingOwner = controller.close().then(() => {
+      ownerClosed = true;
+    });
+    await Promise.resolve();
+
+    expect(ownerClosed).toBe(false);
+    closing.resolve(undefined);
+    await Promise.all([closingView, closingOwner]);
+    expect(ownerClosed).toBe(true);
+  });
+
+  it('does not poison later operations when a service close rejects', async () => {
+    const closeError = new Error('close failed');
+    const first = createService({
+      close: vi.fn(async () => {
+        throw closeError;
+      }),
+    });
+    const open = vi.fn(async () => createOpenResult('remote-session-2'));
+    const second = createService({ open });
+    const services = [first, second];
+    const { SessionHistoryController } = await import(
+      '../../../../src/ui/services/SessionHistoryController.js'
+    );
+    const controller = new SessionHistoryController({
+      serviceFactory: () => services.shift()!,
+    });
+    await controller.open(createRemoteSummary());
+
+    await expect(controller.closeView()).rejects.toBe(closeError);
+    await expect(
+      controller.open(createRemoteSummary('remote-session-2'))
+    ).resolves.toBeUndefined();
+
+    expect(open).toHaveBeenCalledOnce();
     expect(controller.getState().session?.locator.sessionId).toBe('remote-session-2');
     await controller.close();
   });
@@ -407,6 +615,58 @@ describe('SessionHistoryController', () => {
 
     await controller.close();
   });
+
+  it('does not publish state to React listeners during owner shutdown', async () => {
+    const service = createService();
+    const { SessionHistoryController } = await import(
+      '../../../../src/ui/services/SessionHistoryController.js'
+    );
+    const controller = new SessionHistoryController({ serviceFactory: () => service });
+    await controller.open(createRemoteSummary());
+    const listener = vi.fn();
+    controller.subscribe(listener);
+
+    await controller.close();
+
+    expect(listener).not.toHaveBeenCalled();
+    expect(controller.getState().status).toBe('idle');
+  });
+});
+
+describe('session history modal state', () => {
+  it('opens and closes beside an unchanged live local session', async () => {
+    const { getState, vanillaStore } = await import('../../../../src/store/vanilla.js');
+    const before = getState().session;
+    vanillaStore.setState((state) => ({
+      ...state,
+      session: {
+        ...state.session,
+        sessionId: 'live-local-session',
+        workspaceRoot: '/workspace/live',
+        messages: [
+          { id: 'local-message', role: 'user', content: 'draft context', timestamp: 1 },
+        ],
+      },
+    }));
+    const liveSession = getState().session;
+
+    getState().app.actions.showSessionHistoryViewer(createRemoteSummary(), 'resume');
+
+    expect(getState().app.activeModal).toBe('sessionHistoryViewer');
+    expect(getState().app.sessionHistoryViewerData).toEqual({
+      intent: 'resume',
+      session: createRemoteSummary(),
+    });
+    expect(getState().session).toBe(liveSession);
+
+    getState().app.actions.closeModal();
+
+    expect(getState().app.activeModal).toBe('none');
+    expect(getState().app.sessionHistoryViewerData).toBeUndefined();
+    expect(getState().session).toBe(liveSession);
+
+    vanillaStore.setState((state) => ({ ...state, session: before }));
+  });
 });
 
 describe('SessionHistoryViewer', () => {
@@ -458,6 +718,127 @@ describe('SessionHistoryViewer', () => {
     container.remove();
   });
 
+  it('renders an explicit remote history-only surface without private identity', () => {
+    expect(container.textContent).toContain('Remote history');
+    expect(container.textContent).toContain('C:\\Remote\\Repo');
+    expect(container.textContent).toContain('Remote · offline · History only');
+    expect(container.textContent).toContain(
+      'Open this Session from its ACP owner to continue.'
+    );
+    expect(container.textContent).toContain('Files and terminal are unavailable');
+    expect(container.textContent).not.toContain(REMOTE_WORKSPACE_REF);
+  });
+
+  it('renders loading, forking, and truncation status explicitly', async () => {
+    const { SessionHistoryViewer } = await import(
+      '../../../../src/ui/components/SessionHistoryViewer.js'
+    );
+    act(() => {
+      root.render(
+        <SessionHistoryViewer
+          state={{
+            ...readyState,
+            status: 'loading',
+            messages: [],
+            truncated: true,
+          }}
+          onLoadOlder={onLoadOlder}
+          onFork={onFork}
+          onClose={onClose}
+        />
+      );
+    });
+    expect(container.textContent).toContain('Loading Session history…');
+    expect(container.textContent).toContain('History content was truncated.');
+
+    act(() => {
+      root.render(
+        <SessionHistoryViewer
+          state={{ ...readyState, status: 'forking' }}
+          onLoadOlder={onLoadOlder}
+          onFork={onFork}
+          onClose={onClose}
+        />
+      );
+    });
+    expect(container.textContent).toContain('Forking Session history…');
+  });
+
+  it('searches only loaded history and copies the current transcript line', async () => {
+    act(() => {
+      inputHandler?.('/', {});
+      inputHandler?.('two', {});
+      inputHandler?.('', { return: true });
+    });
+
+    expect(container.textContent).toContain('/two 1/1 · loaded pages only');
+    expect(onLoadOlder).not.toHaveBeenCalled();
+
+    act(() => {
+      inputHandler?.('y', {});
+    });
+    await act(async () => undefined);
+
+    expect(clipboard.copyTranscriptText).toHaveBeenCalledOnce();
+    expect(clipboard.copyTranscriptText.mock.calls[0]?.[0]).toContain('message two');
+  });
+
+  it('starts copy selection on the newest loaded message', async () => {
+    act(() => {
+      inputHandler?.('y', {});
+    });
+    await act(async () => undefined);
+
+    expect(clipboard.copyTranscriptText).toHaveBeenCalledWith(
+      'message two',
+      expect.any(Object)
+    );
+  });
+
+  it('pins copy selection to the newest message after the initial load', async () => {
+    const { SessionHistoryViewer } = await import(
+      '../../../../src/ui/components/SessionHistoryViewer.js'
+    );
+    act(() => root.unmount());
+    root = ReactDOM.createRoot(container);
+    act(() => {
+      root.render(
+        <SessionHistoryViewer
+          state={{
+            viewGeneration: 0,
+            status: 'loading',
+            session: createRemoteSummary(),
+            messages: [],
+            truncated: false,
+          }}
+          onLoadOlder={onLoadOlder}
+          onFork={onFork}
+          onClose={onClose}
+        />
+      );
+    });
+    act(() => {
+      root.render(
+        <SessionHistoryViewer
+          state={readyState}
+          onLoadOlder={onLoadOlder}
+          onFork={onFork}
+          onClose={onClose}
+        />
+      );
+    });
+
+    act(() => {
+      inputHandler?.('y', {});
+    });
+    await act(async () => undefined);
+
+    expect(clipboard.copyTranscriptText).toHaveBeenCalledWith(
+      'message two',
+      expect.any(Object)
+    );
+  });
+
   it('requests one older page only when navigation reaches the loaded top', () => {
     act(() => {
       inputHandler?.('g', {});
@@ -466,6 +847,18 @@ describe('SessionHistoryViewer', () => {
     });
 
     expect(onLoadOlder).toHaveBeenCalledOnce();
+  });
+
+  it('routes fork and close without exposing interactive actions', () => {
+    act(() => {
+      inputHandler?.('f', {});
+      inputHandler?.('', { escape: true });
+    });
+
+    expect(onFork).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toContain('Send prompt');
+    expect(container.textContent).not.toContain('Open terminal');
   });
 
   it('shows unavailable history actions and blocks their handlers by capability', async () => {
@@ -534,5 +927,49 @@ describe('SessionHistoryViewer', () => {
     });
 
     expect(onLoadOlder).toHaveBeenCalledTimes(2);
+  });
+
+  it('blocks stale pagination and fork callbacks while an operation is active', async () => {
+    const { SessionHistoryViewer } = await import(
+      '../../../../src/ui/components/SessionHistoryViewer.js'
+    );
+    act(() => {
+      root.render(
+        <SessionHistoryViewer
+          state={{ ...readyState, status: 'forking' }}
+          onLoadOlder={onLoadOlder}
+          onFork={onFork}
+          onClose={onClose}
+        />
+      );
+    });
+
+    act(() => {
+      inputHandler?.('g', {});
+      inputHandler?.('', { pageUp: true });
+      inputHandler?.('f', {});
+    });
+
+    expect(onLoadOlder).not.toHaveBeenCalled();
+    expect(onFork).not.toHaveBeenCalled();
+  });
+
+  it('does not register history actions while another modal owns focus', async () => {
+    const { SessionHistoryViewer } = await import(
+      '../../../../src/ui/components/SessionHistoryViewer.js'
+    );
+    focus.current = 'confirmation-prompt';
+    act(() => {
+      root.render(
+        <SessionHistoryViewer
+          state={readyState}
+          onLoadOlder={onLoadOlder}
+          onFork={onFork}
+          onClose={onClose}
+        />
+      );
+    });
+
+    expect(inputHandler).toBeUndefined();
   });
 });

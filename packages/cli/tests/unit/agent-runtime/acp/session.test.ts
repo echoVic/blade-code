@@ -196,6 +196,67 @@ describe('AcpSession', () => {
     vi.useRealTimers();
   });
 
+  it('owns initialization, settings, projections, replay, and cleanup', async () => {
+    await session.initialize();
+    expect(mocks.createRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        workspaceRoot: '/workspace',
+        userShellExecutor: expect.objectContaining({ execute: expect.any(Function) }),
+      })
+    );
+    expect(session.getMode()).toBe('default');
+    expect(session.isIdleForResidency()).toBe(true);
+
+    await session.setMode('auto-edit');
+    await session.setModel('model-2');
+    await session.setReasoningEffort('low');
+    await session.setServiceTier('standard');
+    await session.setResponseVerbosity('high');
+    await session.setCommunicationStyle('pragmatic');
+    expect(session.getMode()).toBe('auto-edit');
+    expect(agent.switchModel).toHaveBeenCalledWith('model-2');
+    expect(runtime.refresh).toHaveBeenCalledTimes(4);
+    expect(session.getModelConfiguration()).toMatchObject({
+      currentModelId: 'model-1',
+    });
+
+    await session.replayHistory();
+    session.sendAvailableCommandsDelayed();
+    await vi.advanceTimersByTimeAsync(500);
+    Bus.publish({ sessionId: 'session-1', projectPath: '/workspace' }, 'task.status', {
+      taskStatus: 'running',
+      taskStartedAt: '2026-09-16T00:00:00.000Z',
+      taskQueuePosition: 1,
+      taskQueueDepth: 2,
+      taskConcurrencyLimit: 3,
+      taskInFlight: 1,
+    });
+    await vi.runAllTimersAsync();
+
+    expect(mocks.sessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ sessionUpdate: 'current_mode_update' }),
+      })
+    );
+    expect(mocks.sessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ sessionUpdate: 'user_message_chunk' }),
+      })
+    );
+    expect(mocks.sessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ sessionUpdate: 'agent_message_chunk' }),
+      })
+    );
+
+    await session.destroy();
+    await session.destroy();
+    expect(agent.destroy).toHaveBeenCalledOnce();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(mocks.destroyService).toHaveBeenCalledOnce();
+  });
+
   it('projects the complete loop event surface through ACP updates', async () => {
     agent.chatStream.mockImplementation(async function* () {
       for (const event of comprehensiveLoopEvents()) yield event;
@@ -323,5 +384,111 @@ describe('AcpSession', () => {
       })
     ).rejects.toThrow('ACP prompt text exceeds');
     expect(agent.chatStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('projects user shell lifecycle and retains its model context', async () => {
+    runtime.executeUserShellCommand.mockImplementation(
+      async (
+        _command: string,
+        options: { onEvent: (event: object) => Promise<void> }
+      ) => {
+        await options.onEvent({
+          type: 'started',
+          executionId: 'shell-1',
+          command: 'pwd',
+          auxiliary: false,
+        });
+        await options.onEvent({
+          type: 'output',
+          executionId: 'shell-1',
+          stream: 'stdout',
+          chunk: '/workspace\n',
+          streamedBytes: 11,
+          streamTruncated: false,
+          auxiliary: false,
+        });
+        const record = {
+          version: 1 as const,
+          command: 'pwd',
+          status: 'completed' as const,
+          exitCode: 0,
+          durationMs: 5,
+          stdout: '/workspace',
+          stderr: '',
+          stdoutOmittedBytes: 0,
+          stderrOmittedBytes: 0,
+          binaryOutput: false,
+          truncated: false,
+        };
+        await options.onEvent({
+          type: 'completed',
+          executionId: 'shell-1',
+          messageId: 'shell-message',
+          record,
+          auxiliary: false,
+        });
+        return {
+          executionId: 'shell-1',
+          messageId: 'shell-message',
+          record,
+          modelContent: '<user_shell_command>pwd</user_shell_command>',
+          auxiliary: false,
+        };
+      }
+    );
+    await session.initialize();
+    mocks.sessionUpdate.mockClear();
+
+    await expect(
+      session.prompt({
+        sessionId: 'session-1',
+        prompt: [{ type: 'text', text: '! pwd' }],
+      })
+    ).resolves.toEqual({ stopReason: 'end_turn' });
+
+    expect(runtime.executeUserShellCommand).toHaveBeenCalledWith(
+      'pwd',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+    expect(
+      mocks.sessionUpdate.mock.calls.map(
+        ([notification]) =>
+          (notification as { update: { sessionUpdate: string } }).update.sessionUpdate
+      )
+    ).toEqual(expect.arrayContaining(['tool_call', 'tool_call_update']));
+  });
+
+  it.each([
+    ['mode', () => session.setMode('yolo'), () => mocks.setPermissionMode],
+    ['model', () => session.setModel('model-2'), () => mocks.updateMetadata],
+    [
+      'reasoning',
+      () => session.setReasoningEffort('medium'),
+      () => mocks.updateMetadata,
+    ],
+    ['service tier', () => session.setServiceTier('fast'), () => mocks.updateMetadata],
+    [
+      'verbosity',
+      () => session.setResponseVerbosity('high'),
+      () => mocks.updateMetadata,
+    ],
+    [
+      'communication style',
+      () => session.setCommunicationStyle('pragmatic'),
+      () => mocks.updateMetadata,
+    ],
+  ])('keeps %s changes atomic when persistence fails', async (_, change, target) => {
+    await session.initialize();
+    target().mockRejectedValueOnce(new Error('persistence failed'));
+
+    await expect(change()).rejects.toThrow('persistence failed');
+
+    if (_ === 'model') {
+      expect(agent.switchModel).toHaveBeenNthCalledWith(2, 'model-1');
+    } else if (_ !== 'mode') {
+      expect(runtime.refresh).toHaveBeenCalledTimes(2);
+    } else {
+      expect(session.getMode()).toBe('default');
+    }
   });
 });

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../src/agent/runtime/SessionRuntime.js';
+import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import { BackgroundShellManager } from '../../src/tools/builtin/shell/BackgroundShellManager.js';
 import { bashTool } from '../../src/tools/builtin/shell/bash.js';
 import { killShellTool } from '../../src/tools/builtin/shell/killShell.js';
@@ -59,6 +60,63 @@ afterEach(async () => {
 describe.skipIf(process.platform === 'win32')(
   'background task session isolation',
   () => {
+    it('projects runtime-owned recovery state and immutable configuration', async () => {
+      const runtime = new SessionRuntime(DEFAULT_CONFIG, {
+        sessionId: 'runtime-state',
+        workspaceRoot: os.tmpdir(),
+        taskIsolation: 'local',
+      });
+
+      expect(runtime.sessionId).toBe('runtime-state');
+      expect(runtime.workspaceRoot).toBe(os.tmpdir());
+      expect(runtime.executionRoot).toBe(os.tmpdir());
+      expect(runtime.resourceRoot).toBe(os.tmpdir());
+      expect(runtime.projectRoot).toBe(os.tmpdir());
+      expect(runtime.isRemoteWorkspace()).toBe(false);
+      expect(runtime.isTaskSession()).toBe(true);
+      expect(runtime.getConfig()).toBe(DEFAULT_CONFIG);
+      expect(runtime.getModelResources().projectRoot).toBe(os.tmpdir());
+      expect(runtime.getLspResources().projectRoot).toBe(os.tmpdir());
+      expect(runtime.getModelById('missing')).toBeUndefined();
+      expect(() => runtime.getAgentResources()).toThrow(
+        'Session agent resources are unavailable before initialization'
+      );
+
+      const recovery = runtime.beginProviderRecovery();
+      runtime.observeProviderRecovery(recovery, {
+        kind: 'provider_retry',
+        phase: 'scheduled',
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'server_error',
+        delayMs: 10,
+      });
+      expect(runtime.getProviderRecoveryProjection()).toMatchObject({
+        generation: recovery.id,
+        revision: 1,
+        snapshot: { activity: 'retry_wait' },
+      });
+      runtime.clearProviderRecovery(recovery);
+      expect(runtime.getProviderRecoveryProjection().snapshot).toBeNull();
+
+      const activity = runtime.beginTurnActivity();
+      runtime.observeTurnActivity(activity, {
+        kind: 'turn_start',
+        turn: 1,
+        maxTurns: 4,
+      });
+      expect(runtime.getTurnActivityProjection()).toMatchObject({
+        generation: activity.id,
+        revision: 1,
+        snapshot: { phase: 'thinking' },
+      });
+      runtime.clearTurnActivity(activity);
+      expect(runtime.getTurnActivityProjection().snapshot).toBeNull();
+
+      await runtime.dispose();
+      await runtime.dispose();
+    });
+
     it('binds background Bash to the calling session', async () => {
       const started = await bashTool
         .build({

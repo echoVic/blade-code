@@ -1165,4 +1165,111 @@ describe('executeLoopGenerator streaming tool policy', () => {
         .map((event) => ('function' in event.toolCall ? event.toolCall.id : ''))
     ).toEqual(['fallback-task']);
   });
+
+  it('covers non-streaming completion, provider failure, and disabled chat', async () => {
+    const chat = vi
+      .fn<IChatService['chat']>()
+      .mockResolvedValueOnce({
+        content: 'complete',
+        reasoningContent: 'reasoned',
+        usage: {
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+          cacheReadInputTokens: 2,
+          cacheCreationInputTokens: 1,
+          costUsd: 0.01,
+        },
+        finishReason: 'stop',
+      })
+      .mockRejectedValueOnce(new Error('provider unavailable'));
+    const chatService: IChatService = {
+      chat,
+      async *streamChat() {
+        if (Date.now() < 0) yield {};
+        throw new Error('non-streaming test must not stream');
+      },
+      getConfig: () => ({
+        provider: 'openai-compatible',
+        apiKey: 'test-key',
+        baseUrl: 'https://example.invalid/v1',
+        model: 'test-model',
+        maxContextTokens: 64_000,
+        maxOutputTokens: 4_096,
+      }),
+      updateConfig: () => undefined,
+    };
+    const dependencies: LoopDependencies = {
+      chatService,
+      toolExecutor: new ToolExecutor(new ToolRegistry(), {
+        permissionMode: PermissionMode.YOLO,
+      }),
+      executionEngine: undefined,
+      config: DEFAULT_CONFIG,
+      runtimeOptions: {},
+      currentModelMaxContextTokens: 64_000,
+      applySkillToolRestrictions: (tools) => tools,
+    };
+    const context = (): ChatContext => ({
+      messages: [],
+      userId: 'non-streaming-user',
+      sessionId: 'non-streaming-session',
+      workspaceRoot: process.cwd(),
+      permissionMode: PermissionMode.YOLO,
+    });
+
+    const completed = await drain(
+      executeLoopGenerator(
+        dependencies,
+        'complete this',
+        context(),
+        { stream: false },
+        undefined
+      )
+    );
+    expect(completed.result).toMatchObject({
+      success: true,
+      finalMessage: 'complete',
+    });
+    expect(completed.events.map((event) => event.kind)).toEqual(
+      expect.arrayContaining([
+        'turn_start',
+        'thinking_delta',
+        'content_delta',
+        'token_usage',
+        'stream_end',
+      ])
+    );
+
+    const failed = await drain(
+      executeLoopGenerator(
+        dependencies,
+        'fail this',
+        context(),
+        { stream: false },
+        undefined
+      )
+    );
+    expect(failed.result).toMatchObject({
+      success: false,
+      error: { type: 'api_error', message: 'provider unavailable' },
+    });
+
+    const disabled = await drain(
+      executeLoopGenerator(
+        { ...dependencies, runtimeOptions: { maxTurns: 0 } },
+        'disabled',
+        context(),
+        { stream: false },
+        undefined
+      )
+    );
+    expect(disabled.events).toEqual([]);
+    expect(disabled.result).toMatchObject({
+      success: false,
+      error: { type: 'chat_disabled' },
+      metadata: { turnsCount: 0, toolCallsCount: 0 },
+    });
+    expect(chat).toHaveBeenCalledTimes(2);
+  });
 });

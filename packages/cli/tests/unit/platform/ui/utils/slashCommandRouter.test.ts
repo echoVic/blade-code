@@ -142,7 +142,7 @@ function createLocalSurfaceSummary(metadata: SessionMetadata): SessionSurfaceSum
   };
 }
 
-function _createRemoteSurfaceSummary(): SessionSurfaceSummary {
+function createRemoteSurfaceSummary(): SessionSurfaceSummary {
   return {
     ...createLocalSurfaceSummary(createSessionMetadata()),
     locator: {
@@ -304,6 +304,86 @@ describe('processSlashCommand', () => {
       );
     });
 
+    it('应在释放当前 Agent owner 后通过 lifecycle 归档当前会话', async () => {
+      executeSlashCommand.mockResolvedValue({ success: true });
+      const metadata = createSessionMetadata({
+        sessionId: 'session-owner',
+        projectPath: '/workspace',
+      });
+      sessionServiceMocks.archiveSession.mockResolvedValue(metadata);
+
+      await processSlashCommand(
+        createResolvedInput('/archive'),
+        createMockAppActions(),
+        createMockSessionActions(),
+        new AbortController().signal,
+        cleanupAgent,
+        'session-owner',
+        [],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '/workspace'
+      );
+
+      const context = executeSlashCommand.mock.calls[0]?.[1];
+      await context.lifecycle?.archiveCurrent();
+      expect(cleanupAgent).toHaveBeenCalledOnce();
+      expect(sessionServiceMocks.archiveSession).toHaveBeenCalledWith(
+        'session-owner',
+        '/workspace'
+      );
+      expect(cleanupAgent.mock.invocationCallOrder[0]).toBeLessThan(
+        sessionServiceMocks.archiveSession.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('应将 Session MCP boundary 传给 slash command handler', async () => {
+      executeSlashCommand.mockResolvedValue({ success: true });
+      const mcp = {
+        getCatalog: vi.fn(),
+        refresh: vi.fn(),
+        getPrompt: vi.fn(),
+        complete: vi.fn(),
+        listTasks: vi.fn(),
+        getTask: vi.fn(),
+        cancelTask: vi.fn(),
+        getLogs: vi.fn(),
+        setLoggingLevel: vi.fn(),
+        getInstructions: vi.fn(),
+      };
+
+      await processSlashCommand(
+        createResolvedInput('/mcp prompts'),
+        createMockAppActions(),
+        createMockSessionActions(),
+        new AbortController().signal,
+        async () => undefined,
+        'session-owner',
+        [],
+        undefined,
+        undefined,
+        mcp,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '/workspace'
+      );
+
+      expect(executeSlashCommand).toHaveBeenCalledWith(
+        '/mcp prompts',
+        expect.objectContaining({
+          sessionId: 'session-owner',
+          mcp,
+        })
+      );
+    });
+
     it('取消手动压缩只累计已返回用量，不替换或重置上下文', async () => {
       executeSlashCommand.mockResolvedValueOnce({
         success: false,
@@ -342,6 +422,52 @@ describe('processSlashCommand', () => {
       expect(sessionActions.setCompactedContext).not.toHaveBeenCalled();
       expect(sessionActions.resetContextUsage).not.toHaveBeenCalled();
       expect(sessionActions.addAssistantMessage).not.toHaveBeenCalled();
+    });
+
+    it('keeps real store context occupancy when cancelled sampling returns usage', async () => {
+      const actions = realSessionActions();
+      actions.resetTokenUsage();
+      actions.updateTokenUsage({
+        inputTokens: 60_000,
+        outputTokens: 100,
+        totalTokens: 60_100,
+        maxContextTokens: 128_000,
+        costUsd: 0.125,
+      });
+      executeSlashCommand.mockResolvedValueOnce({
+        success: false,
+        message: 'compact_cancelled',
+        data: {
+          usage: {
+            promptTokens: 100,
+            completionTokens: 20,
+            totalTokens: 120,
+            costUsd: 0.25,
+          },
+          maxContextTokens: 64_000,
+        },
+      });
+      try {
+        await processSlashCommand(
+          createResolvedInput('/compact'),
+          createMockAppActions(),
+          actions,
+          new AbortController().signal,
+          async () => undefined,
+          'session-owner'
+        );
+        expect(getState().session.tokenUsage).toMatchObject({
+          inputTokens: 60_000,
+          outputTokens: 100,
+          totalTokens: 60_100,
+          maxContextTokens: 128_000,
+          totalInputTokens: 60_100,
+          totalOutputTokens: 120,
+          estimatedCostUsd: 0.375,
+        });
+      } finally {
+        actions.resetTokenUsage();
+      }
     });
 
     it('手动压缩后应接管下一轮模型上下文', async () => {
@@ -393,6 +519,55 @@ describe('processSlashCommand', () => {
       });
       expect(sessionActions.resetContextUsage).toHaveBeenCalledOnce();
     });
+
+    it('压缩缩减不足时仍应用 fallback context 并累计 Provider usage', async () => {
+      const compactedMessages = [
+        { role: 'user' as const, content: 'bounded fallback' },
+      ];
+      executeSlashCommand.mockResolvedValue({
+        success: false,
+        message: 'compact_fallback',
+        data: {
+          compactedMessages,
+          maxContextTokens: 128000,
+          usage: {
+            promptTokens: 7000,
+            completionTokens: 9000,
+            totalTokens: 16000,
+            costUsd: 0.25,
+          },
+          failureReason: 'insufficient_reduction',
+        },
+      });
+      const sessionActions = createMockSessionActions();
+
+      const result = await processSlashCommand(
+        createResolvedInput('/compact'),
+        createMockAppActions(),
+        sessionActions,
+        new AbortController().signal,
+        async () => undefined,
+        'session-owner'
+      );
+
+      expect(result).toEqual({
+        type: 'handled',
+        commandResult: { success: true },
+      });
+      expect(sessionActions.setCompactedContext).toHaveBeenCalledWith(
+        compactedMessages
+      );
+      expect(sessionActions.updateTokenUsage).toHaveBeenCalledWith({
+        inputTokens: 7000,
+        outputTokens: 9000,
+        totalTokens: 16000,
+        maxContextTokens: 128000,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 0.25,
+      });
+      expect(sessionActions.resetContextUsage).toHaveBeenCalledOnce();
+    });
   });
 
   // ==================== 场景 1: invoke_custom_command ====================
@@ -430,6 +605,46 @@ describe('processSlashCommand', () => {
       expect(result.result.agentInput.text).toContain('Custom Command: /deploy');
       expect(result.result.agentInput.text).toContain('Run the deployment pipeline');
       expect(result.result.agentInput.text).not.toBe('/deploy staging');
+    });
+  });
+
+  // ==================== 场景 2: invoke_plugin_command ====================
+
+  describe('/plugin:cmd — UI 显示原始命令，Agent 收到展开后的 prompt', () => {
+    it('应该分离 UI 显示和 Agent 输入', async () => {
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: {
+          action: 'invoke_plugin_command',
+          commandName: 'lint',
+          pluginName: 'code-quality',
+          processedContent: 'Run ESLint on all TypeScript files',
+          config: {},
+        },
+      });
+
+      const sessionActions = createMockSessionActions();
+      const result = await processSlashCommand(
+        createResolvedInput('/lint src/'),
+        createMockAppActions(),
+        sessionActions,
+        new AbortController().signal,
+        cleanupAgent
+      );
+
+      expect(result.type).toBe('continue_as_agent');
+      if (result.type !== 'continue_as_agent') return;
+
+      // UI 显示原始命令
+      expect(sessionActions.addUserMessage).toHaveBeenCalledWith('/lint src/');
+      expect(result.result.userDisplayMessage).toBe('/lint src/');
+
+      // Agent 收到展开后的 prompt
+      expect(result.result.agentInput.text).toContain('Plugin Command: /lint');
+      expect(result.result.agentInput.text).toContain('plugin "code-quality"');
+      expect(result.result.agentInput.text).toContain(
+        'Run ESLint on all TypeScript files'
+      );
     });
   });
 
@@ -637,6 +852,43 @@ describe('processSlashCommand', () => {
       expect(appActions.setTasks).toHaveBeenCalledWith([]);
     });
 
+    it('structured select_session action should show the selector with fork intent', async () => {
+      const sessions = [
+        createSessionMetadata({ sessionId: 'ordinary-session' }),
+        createSessionMetadata({
+          sessionId: 'forked-session',
+          relationType: 'fork',
+          rootId: 'root-fork',
+        }),
+      ];
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: {
+          action: 'select_session',
+          intent: 'fork',
+          sessions,
+        },
+      });
+
+      const appActions = createMockAppActions();
+      const result = await processSlashCommand(
+        createResolvedInput('/fork'),
+        appActions,
+        createMockSessionActions(),
+        new AbortController().signal,
+        cleanupAgent
+      );
+
+      expect(result).toEqual({
+        type: 'handled',
+        commandResult: { success: true },
+      });
+      expect(appActions.showSessionSelector).toHaveBeenCalledWith(
+        sessions.map(createLocalSurfaceSummary),
+        'fork'
+      );
+    });
+
     it('structured activate_session action should delegate to activateSessionSelection', async () => {
       const session = createSessionMetadata();
       activationMocks.activateSessionSelection.mockResolvedValue({
@@ -715,6 +967,197 @@ describe('processSlashCommand', () => {
       ).toBeLessThan(acknowledge.mock.invocationCallOrder[0]!);
     });
 
+    it('does not acknowledge a failed local resume or a successful fork', async () => {
+      const session = createSessionMetadata();
+      const summary = createLocalSurfaceSummary(session);
+      const acknowledge = vi.fn(async (_summary: SessionSurfaceSummary) => undefined);
+      const setVisibleLocator = vi.fn(
+        async (_locator: SessionSurfaceSummary['locator'] | undefined) => undefined
+      );
+      const sessionSurfaces = {
+        list: async () => [summary],
+        acknowledge,
+        setVisibleLocator,
+      };
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: { action: 'activate_session', intent: 'resume', session },
+      });
+      activationMocks.activateSessionSelection.mockRejectedValueOnce(
+        new Error('restore failed')
+      );
+
+      await expect(
+        processSlashCommand(
+          createResolvedInput('/resume parent-session'),
+          createMockAppActions(),
+          createMockSessionActions(),
+          new AbortController().signal,
+          cleanupAgent,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          process.cwd(),
+          undefined,
+          sessionSurfaces
+        )
+      ).rejects.toThrow('restore failed');
+      expect(acknowledge).not.toHaveBeenCalled();
+
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: { action: 'activate_session', intent: 'fork', session },
+      });
+      activationMocks.activateSessionSelection.mockResolvedValueOnce({
+        sessionId: 'forked-session',
+        messages: [],
+        projectPath: session.projectPath,
+      });
+      await processSlashCommand(
+        createResolvedInput('/fork parent-session'),
+        createMockAppActions(),
+        createMockSessionActions(),
+        new AbortController().signal,
+        cleanupAgent,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        process.cwd(),
+        undefined,
+        sessionSurfaces
+      );
+      expect(acknowledge).not.toHaveBeenCalled();
+      expect(setVisibleLocator).toHaveBeenCalledWith({
+        version: 2,
+        sessionId: 'forked-session',
+        workspace: { kind: 'local', projectPath: session.projectPath },
+      });
+    });
+
+    it('keeps a committed local activation successful when attention projection fails', async () => {
+      const session = createSessionMetadata();
+      const summary = createLocalSurfaceSummary(session);
+      activationMocks.activateSessionSelection.mockResolvedValue({
+        sessionId: session.sessionId,
+        messages: [],
+        projectPath: session.projectPath,
+      });
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: { action: 'activate_session', intent: 'resume', session },
+      });
+
+      await expect(
+        processSlashCommand(
+          createResolvedInput('/resume parent-session'),
+          createMockAppActions(),
+          createMockSessionActions(),
+          new AbortController().signal,
+          cleanupAgent,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          process.cwd(),
+          undefined,
+          {
+            list: async () => [summary],
+            acknowledge: async () => {
+              throw new Error('attention unavailable');
+            },
+          }
+        )
+      ).resolves.toEqual({
+        type: 'handled',
+        commandResult: { success: true },
+      });
+    });
+
+    it('routes a remote surface to the history viewer without local activation', async () => {
+      const session = createRemoteSurfaceSummary();
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: { action: 'activate_session', intent: 'resume', session },
+      });
+      const appActions = createMockAppActions();
+
+      const result = await processSlashCommand(
+        createResolvedInput('/resume remote-session'),
+        appActions,
+        createMockSessionActions(),
+        new AbortController().signal,
+        cleanupAgent
+      );
+
+      expect(result).toEqual({
+        type: 'handled',
+        commandResult: { success: true },
+      });
+      expect(appActions.showSessionHistoryViewer).toHaveBeenCalledWith(
+        session,
+        'resume'
+      );
+      expect(activationMocks.activateSessionSelection).not.toHaveBeenCalled();
+      expect(cleanupAgent).not.toHaveBeenCalled();
+    });
+
+    it('does not route failed structured select_session results as handled success', async () => {
+      const sessions = [createSessionMetadata({ sessionId: 'ordinary-session' })];
+      executeSlashCommand.mockResolvedValue({
+        success: false,
+        error: 'blocked',
+        data: {
+          action: 'select_session',
+          intent: 'fork',
+          sessions,
+        },
+      });
+
+      const appActions = createMockAppActions();
+      const sessionActions = createMockSessionActions();
+      const result = await processSlashCommand(
+        createResolvedInput('/fork'),
+        appActions,
+        sessionActions,
+        new AbortController().signal,
+        cleanupAgent
+      );
+
+      expect(appActions.showSessionSelector).not.toHaveBeenCalled();
+      expect(activationMocks.activateSessionSelection).not.toHaveBeenCalled();
+      expect(sessionActions.addAssistantMessage).toHaveBeenCalledWith('blocked');
+      expect(result).toEqual({
+        type: 'handled',
+        commandResult: {
+          success: false,
+          output: undefined,
+          error: 'blocked',
+          metadata: {
+            action: 'select_session',
+            intent: 'fork',
+            sessions,
+          },
+        },
+      });
+    });
+
     it('does not route failed structured activate_session results as handled success', async () => {
       const session = createSessionMetadata();
       executeSlashCommand.mockResolvedValue({
@@ -755,6 +1198,30 @@ describe('processSlashCommand', () => {
       });
     });
 
+    it('propagates activation helper failures instead of faking handled success', async () => {
+      const session = createSessionMetadata();
+      const expectedError = new Error('activation failed');
+      activationMocks.activateSessionSelection.mockRejectedValue(expectedError);
+      executeSlashCommand.mockResolvedValue({
+        success: true,
+        data: {
+          action: 'activate_session',
+          intent: 'fork',
+          session,
+        },
+      });
+
+      await expect(
+        processSlashCommand(
+          createResolvedInput('/fork parent-session'),
+          createMockAppActions(),
+          createMockSessionActions(),
+          new AbortController().signal,
+          cleanupAgent
+        )
+      ).rejects.toThrow(expectedError);
+    });
+
     it('legacy show_session_selector messages remain compatible with default resume intent', async () => {
       const sessions = [createSessionMetadata()];
       executeSlashCommand.mockResolvedValue({
@@ -786,6 +1253,29 @@ describe('processSlashCommand', () => {
   // ==================== 错误处理 ====================
 
   describe('错误处理', () => {
+    it('slash command 失败时应该显示错误消息', async () => {
+      executeSlashCommand.mockResolvedValue({
+        success: false,
+        error: 'Unknown command: /foobar',
+      });
+
+      const sessionActions = createMockSessionActions();
+      const result = await processSlashCommand(
+        createResolvedInput('/foobar'),
+        createMockAppActions(),
+        sessionActions,
+        new AbortController().signal,
+        cleanupAgent
+      );
+
+      expect(result.type).toBe('handled');
+      if (result.type !== 'handled') return;
+      expect(result.commandResult.success).toBe(false);
+      expect(sessionActions.addAssistantMessage).toHaveBeenCalledWith(
+        'Unknown command: /foobar'
+      );
+    });
+
     it('成功的 slash command 有 message 时应该显示', async () => {
       executeSlashCommand.mockResolvedValue({
         success: true,
@@ -812,8 +1302,111 @@ describe('processSlashCommand', () => {
 // ==================== 类型守卫测试 ====================
 
 describe('类型守卫函数', () => {
+  describe('isInvokeSkillAction', () => {
+    it('有效的 invoke_skill 数据应该返回 true', () => {
+      expect(
+        isInvokeSkillAction({
+          action: 'invoke_skill',
+          skillName: 'tdd',
+          skillArgs: 'arg',
+        })
+      ).toBe(true);
+    });
+
+    it('null 应该返回 false', () => {
+      expect(isInvokeSkillAction(null)).toBe(false);
+    });
+
+    it('缺少 skillName 应该返回 false', () => {
+      expect(isInvokeSkillAction({ action: 'invoke_skill' })).toBe(false);
+    });
+  });
+
+  describe('isInvokeCustomCommandAction', () => {
+    it('有效数据应该返回 true', () => {
+      expect(
+        isInvokeCustomCommandAction({
+          action: 'invoke_custom_command',
+          commandName: 'deploy',
+          processedContent: 'content',
+          config: {},
+        })
+      ).toBe(true);
+    });
+
+    it('缺少 processedContent 应该返回 false', () => {
+      expect(
+        isInvokeCustomCommandAction({
+          action: 'invoke_custom_command',
+          commandName: 'deploy',
+        })
+      ).toBe(false);
+    });
+  });
+
+  describe('isInvokePluginCommandAction', () => {
+    it('有效数据应该返回 true', () => {
+      expect(
+        isInvokePluginCommandAction({
+          action: 'invoke_plugin_command',
+          commandName: 'lint',
+          processedContent: 'content',
+          config: {},
+        })
+      ).toBe(true);
+    });
+
+    it('action 不匹配应该返回 false', () => {
+      expect(
+        isInvokePluginCommandAction({
+          action: 'invoke_skill',
+          commandName: 'lint',
+          processedContent: 'content',
+        })
+      ).toBe(false);
+    });
+  });
+
+  describe('isInvokeOnceModelAction', () => {
+    it('有效数据应该返回 true', () => {
+      expect(
+        isInvokeOnceModelAction({
+          action: 'invoke_once_model',
+          modelId: 'gpt-4o',
+          prompt: 'hello',
+        })
+      ).toBe(true);
+    });
+
+    it('缺少 prompt 应该返回 false', () => {
+      expect(
+        isInvokeOnceModelAction({
+          action: 'invoke_once_model',
+          modelId: 'gpt-4o',
+        })
+      ).toBe(false);
+    });
+  });
+
   describe('isSessionSelectionAction', () => {
     const session = createSessionMetadata();
+
+    it('accepts both valid structured session selection actions', () => {
+      expect(
+        isSessionSelectionAction({
+          action: 'select_session',
+          intent: 'fork',
+          sessions: [session],
+        })
+      ).toBe(true);
+      expect(
+        isSessionSelectionAction({
+          action: 'activate_session',
+          intent: 'resume',
+          session,
+        })
+      ).toBe(true);
+    });
 
     it('rejects unknown actions and missing required fields', () => {
       expect(

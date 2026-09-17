@@ -1,7 +1,13 @@
 /**
- * Agent核心类 - 无状态设计 <p> 设计原则： 1. Agent 本身不保存任何会话状态（sessionId, messages 等） 2. 所有状态通过
- * context 参数传入 3. Agent 实例可以每次命令创建，用完即弃 4. 历史连续性由外部 SessionContext 保证 <p> 负责：LLM
- * 交互、工具执行、循环检测
+ * Agent核心类 - 无状态设计
+ *
+ * 设计原则：
+ * 1. Agent 本身不保存任何会话状态（sessionId, messages 等）
+ * 2. 所有状态通过 context 参数传入
+ * 3. Agent 实例可以每次命令创建，用完即弃
+ * 4. 历史连续性由外部 SessionContext 保证
+ *
+ * 负责：LLM 交互、工具执行、循环检测
  */
 
 import { randomUUID } from 'node:crypto';
@@ -99,7 +105,10 @@ function isTerminalProviderAdmissionRejection(result: LoopResult): boolean {
   );
 }
 
-/** Skill 执行上下文 用于跟踪当前活动的 Skill 及其工具限制 */
+/**
+ * Skill 执行上下文
+ * 用于跟踪当前活动的 Skill 及其工具限制
+ */
 interface SkillExecutionContext {
   skillName: string;
   allowedTools?: string[];
@@ -112,7 +121,8 @@ export class Agent {
   private isInitialized = false;
   private activeTask?: AgentTask;
   private toolExecutor: ToolExecutor;
-  // systemPrompt 已移除 - 改为从 context 参数传入（无状态设计） sessionId 已移除 - 改为从 context 参数传入（无状态设计）
+  // systemPrompt 已移除 - 改为从 context 参数传入（无状态设计）
+  // sessionId 已移除 - 改为从 context 参数传入（无状态设计）
 
   // 核心组件
   private chatService!: IChatService;
@@ -193,7 +203,9 @@ export class Agent {
     // sessionId 不再存储在 Agent 内部，改为从 context 传入
   }
 
-  /** 创建默认的工具执行器 */
+  /**
+   * 创建默认的工具执行器
+   */
   private createDefaultToolExecutor(): ToolExecutor {
     const registry = new ToolRegistry();
     // 合并基础权限配置和运行时覆盖
@@ -281,7 +293,10 @@ export class Agent {
     await this.switchModelIfNeeded(modelId);
   }
 
-  /** 快速创建并初始化 Agent 实例（静态工厂方法） 使用 Store 获取配置 */
+  /**
+   * 快速创建并初始化 Agent 实例（静态工厂方法）
+   * 使用 Store 获取配置
+   */
   static async create(options: AgentOptions = {}): Promise<Agent> {
     if (options.sessionId) {
       throw new Error(
@@ -322,7 +337,8 @@ export class Agent {
       mergedOptions.toolBlacklist = config.disallowedTools;
     }
 
-    // 4. 创建并初始化 Agent 将 options 作为运行时参数传递
+    // 4. 创建并初始化 Agent
+    // 将 options 作为运行时参数传递
     const agent = new Agent(config, mergedOptions);
     await agent.initialize();
 
@@ -362,7 +378,9 @@ export class Agent {
     return agent;
   }
 
-  /** 初始化Agent */
+  /**
+   * 初始化Agent
+   */
   public async initialize(): Promise<void> {
     if (this.isInitialized) {
       return;
@@ -413,7 +431,9 @@ export class Agent {
     }
   }
 
-  /** 执行任务 */
+  /**
+   * 执行任务
+   */
   public async executeTask(task: AgentTask): Promise<AgentResponse> {
     if (!this.isInitialized) {
       throw new Error('Agent未初始化');
@@ -1038,56 +1058,60 @@ export class Agent {
 
           // 选择对应模式的 generator
           let result: LoopResult;
-          if (currentContext.permissionMode === 'plan') {
-            result = yield* this.runPlanLoop(
-              currentMessage,
-              currentContext,
-              loopOptions
-            );
-          } else {
-            result = yield* this.runLoop(currentMessage, currentContext, loopOptions);
-          }
-
-          // Plan 模式批准后切换模式并重新执行
-          if (
-            result.success &&
-            result.metadata?.targetMode &&
-            currentContext.permissionMode === 'plan'
-          ) {
-            const targetMode = result.metadata.targetMode as PermissionMode;
-            const planContent = result.metadata.planContent as string | undefined;
-            logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
-
-            if (this.sessionRuntime && currentContext.sessionId) {
-              await SessionService.setSessionPermissionMode(
-                currentContext.sessionId,
-                this.sessionRuntime.workspaceRoot,
-                targetMode
+          try {
+            if (currentContext.permissionMode === 'plan') {
+              result = yield* this.runPlanLoop(
+                currentMessage,
+                currentContext,
+                loopOptions
               );
+            } else {
+              result = yield* this.runLoop(currentMessage, currentContext, loopOptions);
             }
-            await currentContext.onPermissionModeChange?.(targetMode);
 
-            currentContext = {
-              ...currentContext,
-              permissionMode: targetMode,
-            };
-            let messageWithPlan: UserMessageContent = currentMessage;
-            if (planContent) {
-              const planSuffix = `\n\n<approved-plan>\n${planContent}\n</approved-plan>\n\nIMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
-              if (typeof currentMessage === 'string') {
-                messageWithPlan = currentMessage + planSuffix;
-              } else {
-                messageWithPlan = [
-                  ...currentMessage,
-                  { type: 'text', text: planSuffix },
-                ];
+            // Plan 模式批准后切换模式并重新执行
+            if (
+              result.success &&
+              result.metadata?.targetMode &&
+              currentContext.permissionMode === 'plan'
+            ) {
+              const targetMode = result.metadata.targetMode as PermissionMode;
+              const planContent = result.metadata.planContent as string | undefined;
+              logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
+
+              if (this.sessionRuntime && currentContext.sessionId) {
+                await SessionService.setSessionPermissionMode(
+                  currentContext.sessionId,
+                  this.sessionRuntime.workspaceRoot,
+                  targetMode
+                );
               }
-            }
+              await currentContext.onPermissionModeChange?.(targetMode);
 
-            result = yield* this.runLoop(messageWithPlan, currentContext, {
-              ...loopOptions,
-              inputMessageId: undefined,
-            });
+              currentContext = {
+                ...currentContext,
+                permissionMode: targetMode,
+              };
+              let messageWithPlan: UserMessageContent = currentMessage;
+              if (planContent) {
+                const planSuffix = `\n\n<approved-plan>\n${planContent}\n</approved-plan>\n\nIMPORTANT: Execute according to the approved plan above. Follow the steps exactly as specified.`;
+                if (typeof currentMessage === 'string') {
+                  messageWithPlan = currentMessage + planSuffix;
+                } else {
+                  messageWithPlan = [
+                    ...currentMessage,
+                    { type: 'text', text: planSuffix },
+                  ];
+                }
+              }
+
+              result = yield* this.runLoop(messageWithPlan, currentContext, {
+                ...loopOptions,
+                inputMessageId: undefined,
+              });
+            }
+          } finally {
+            this.clearSkillContext();
           }
 
           if (!this.sessionRuntime || !ownedHandle) {
@@ -1286,8 +1310,13 @@ export class Agent {
     return drainLoop(this.chatStream(message, context, options));
   }
 
-  /** 运行 Plan 模式循环 - 专门处理 Plan 模式的逻辑 Plan 模式特点：只读调研、系统化研究方法论、最终输出实现计划 */
-  /** Plan 模式入口 - 准备 Plan 专用配置后调用通用循环 */
+  /**
+   * 运行 Plan 模式循环 - 专门处理 Plan 模式的逻辑
+   * Plan 模式特点：只读调研、系统化研究方法论、最终输出实现计划
+   */
+  /**
+   * Plan 模式入口 - 准备 Plan 专用配置后调用通用循环
+   */
   private async *runPlanLoop(
     message: UserMessageContent,
     context: ChatContext,
@@ -1317,7 +1346,8 @@ export class Agent {
         : { projectInstructionSourcePath: this.sessionRuntime?.projectRoot }),
     });
 
-    // Plan 模式差异 2: 在用户消息中注入 system-reminder 处理多模态消息：提取文本部分添加 reminder
+    // Plan 模式差异 2: 在用户消息中注入 system-reminder
+    // 处理多模态消息：提取文本部分添加 reminder
     let messageWithReminder: UserMessageContent;
     if (typeof message === 'string') {
       messageWithReminder = createPlanModeReminder(message);
@@ -1348,7 +1378,9 @@ export class Agent {
     return yield* this.executeLoop(messageWithReminder, context, options, systemPrompt);
   }
 
-  /** 普通模式入口 - 准备普通模式配置后调用通用循环 */
+  /**
+   * 普通模式入口 - 准备普通模式配置后调用通用循环
+   */
   private async *runLoop(
     message: UserMessageContent,
     context: ChatContext,
@@ -1363,7 +1395,9 @@ export class Agent {
     return yield* this.executeLoop(message, context, options, systemPrompt);
   }
 
-  /** 按需构建系统提示词（用于未传入 context.systemPrompt 的场景） */
+  /**
+   * 按需构建系统提示词（用于未传入 context.systemPrompt 的场景）
+   */
   private async buildSystemPromptOnDemand(context: ChatContext): Promise<string> {
     const replacePrompt = this.runtimeOptions.systemPrompt;
     const appendPrompt = this.runtimeOptions.appendSystemPrompt;
@@ -1393,7 +1427,9 @@ export class Agent {
     return result.prompt;
   }
 
-  /** 核心执行循环 — 返回 AsyncGenerator 事件流 */
+  /**
+   * 核心执行循环 — 返回 AsyncGenerator 事件流
+   */
   private executeLoop(
     message: UserMessageContent,
     context: ChatContext,
@@ -1473,7 +1509,9 @@ export class Agent {
     return events;
   }
 
-  /** 构建 LoopDependencies（从 Agent 实例注入到 generator） */
+  /**
+   * 构建 LoopDependencies（从 Agent 实例注入到 generator）
+   */
   private buildLoopDependencies(): import('./loop/types.js').LoopDependencies {
     return {
       chatService: this.chatService,
@@ -1510,7 +1548,9 @@ export class Agent {
     };
   }
 
-  /** 带系统提示的聊天接口 */
+  /**
+   * 带系统提示的聊天接口
+   */
   public async chatWithSystem(systemPrompt: string, message: string): Promise<string> {
     if (!this.isInitialized) {
       throw new Error('Agent未初始化');
@@ -1525,22 +1565,30 @@ export class Agent {
     return response.content;
   }
 
-  /** 获取当前活动任务 */
+  /**
+   * 获取当前活动任务
+   */
   public getActiveTask(): AgentTask | undefined {
     return this.activeTask;
   }
 
-  /** 获取Chat服务 */
+  /**
+   * 获取Chat服务
+   */
   public getChatService(): IChatService {
     return this.chatService;
   }
 
-  /** 获取上下文管理器 - 返回执行引擎的上下文管理功能 */
+  /**
+   * 获取上下文管理器 - 返回执行引擎的上下文管理功能
+   */
   public getContextManager(): ContextManager | undefined {
     return this.executionEngine?.getContextManager();
   }
 
-  /** 获取Agent状态统计 */
+  /**
+   * 获取Agent状态统计
+   */
   public getStats(): Record<string, unknown> {
     return {
       initialized: this.isInitialized,
@@ -1552,17 +1600,23 @@ export class Agent {
     };
   }
 
-  /** 获取可用工具列表 */
+  /**
+   * 获取可用工具列表
+   */
   public getAvailableTools(): Tool[] {
     return this.toolExecutor ? this.toolExecutor.getRegistry().getAll() : [];
   }
 
-  /** 获取工具注册表（用于子 Agent 工具隔离） */
+  /**
+   * 获取工具注册表（用于子 Agent 工具隔离）
+   */
   public getToolRegistry(): ToolRegistry {
     return this.toolExecutor.getRegistry();
   }
 
-  /** 应用工具白名单（仅保留指定工具） */
+  /**
+   * 应用工具白名单（仅保留指定工具）
+   */
   public applyToolWhitelist(whitelist: string[]): void {
     const registry = this.toolExecutor.getRegistry();
     const allTools = registry.getAll();
@@ -1591,7 +1645,9 @@ export class Agent {
     logger.debug(`Applied tool blacklist: ${blacklist.join(', ')}`);
   }
 
-  /** 获取工具统计信息 */
+  /**
+   * 获取工具统计信息
+   */
   public getToolStats() {
     const tools = this.getAvailableTools();
     const toolsByKind = new Map<string, number>();
@@ -1608,7 +1664,9 @@ export class Agent {
     };
   }
 
-  /** 销毁Agent */
+  /**
+   * 销毁Agent
+   */
   public async destroy(): Promise<void> {
     if (this.destroyPromise) return this.destroyPromise;
 
@@ -1644,17 +1702,23 @@ export class Agent {
       this.sessionRuntime.getCurrentModelMaxContextTokens();
   }
 
-  /** 生成任务ID */
+  /**
+   * 生成任务ID
+   */
   private generateTaskId(): string {
     return `task_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   }
 
-  /** 日志记录 */
+  /**
+   * 日志记录
+   */
   private log(message: string, data?: unknown): void {
     logger.debug(`[MainAgent] ${message}`, data || '');
   }
 
-  /** 错误记录 */
+  /**
+   * 错误记录
+   */
   private error(message: string, error?: unknown): void {
     logger.error(`[MainAgent] ${message}`, error || '');
   }
@@ -1710,7 +1774,9 @@ export class Agent {
     }
   }
 
-  /** 注册内置工具 */
+  /**
+   * 注册内置工具
+   */
   private async registerBuiltinTools(): Promise<void> {
     try {
       // 使用默认 sessionId（因为注册时还没有会话上下文）
@@ -1743,7 +1809,9 @@ export class Agent {
     }
   }
 
-  /** 注册 MCP 工具 */
+  /**
+   * 注册 MCP 工具
+   */
   private async registerMcpTools(): Promise<void> {
     try {
       const mcpServers = await resolveWorkspaceMcpConfig({
@@ -1831,7 +1899,9 @@ export class Agent {
     }
   }
 
-  /** 加载 subagent 配置 */
+  /**
+   * 加载 subagent 配置
+   */
   private async loadSubagents(): Promise<void> {
     const resources = await resolveWorkspaceAgentResources(getCwd());
     this.agentResources = snapshotWorkspaceAgentResources(resources);
@@ -1872,7 +1942,8 @@ export class Agent {
       if (tool.name === 'ReadPromptArtifact') {
         return true;
       }
-      // 检查工具名称是否在 allowed-tools 列表中 支持精确匹配和通配符模式（如 Bash(git:*)）
+      // 检查工具名称是否在 allowed-tools 列表中
+      // 支持精确匹配和通配符模式（如 Bash(git:*)）
       return allowedTools.some((allowed) => {
         // 精确匹配
         if (allowed === tool.name) {
@@ -1896,7 +1967,10 @@ export class Agent {
     return filteredTools;
   }
 
-  /** 清除 Skill 执行上下文 当 Skill 执行完成或需要重置时调用 */
+  /**
+   * 清除 Skill 执行上下文
+   * 当 Skill 执行完成或需要重置时调用
+   */
   public clearSkillContext(): void {
     if (this.activeSkillContext) {
       logger.debug(`Skill "${this.activeSkillContext.skillName}" deactivated`);
@@ -1971,7 +2045,9 @@ export class Agent {
     }
   }
 
-  /** 构建附件文本块（供 processAtMentionsForContent 使用） */
+  /**
+   * 构建附件文本块（供 processAtMentionsForContent 使用）
+   */
   private buildAttachmentText(attachments: Attachment[]): string {
     const contextBlocks: string[] = [];
     const errors: string[] = [];

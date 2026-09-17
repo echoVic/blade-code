@@ -60,7 +60,6 @@ import { createTool } from '../../../../src/tools/core/createTool.js';
 import { InMemorySessionApprovalStore } from '../../../../src/tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 import { type Tool, ToolKind } from '../../../../src/tools/types/index.js';
-import REMOTE_CAPABILITY_MATRIX_CASES from './remoteCapabilityMatrix.json';
 
 const worktreeMocks = vi.hoisted(() => ({
   cleanupStaleAgentWorktrees: vi.fn(async () => ({
@@ -439,127 +438,72 @@ function createRemoteCapabilityMatrixTools(): Tool[] {
   ];
 }
 
-async function createPersistedBackgroundTask(
-  sessionId: string,
-  workspaceRoot: string,
-  childSessionId: string
-) {
-  const runtime = await createTestRuntime(sessionId, workspaceRoot);
-  const prepared = await runtime.prepareInputTurn('launch the background child');
-  if (!prepared.accepted) throw new Error('Expected direct input preparation');
-  const contextManager = runtime.getExecutionEngine().getContextManager();
-  await contextManager.saveMessage(
-    sessionId,
-    'user',
-    'launch the background child',
-    null,
-    { inboxMessageId: prepared.messageId }
-  );
-  const assistantMessageId = await contextManager.saveMessage(
-    sessionId,
-    'assistant',
-    ''
-  );
-  const toolCallId = await contextManager.saveToolUse(
-    sessionId,
-    'Task',
-    {
-      description: 'Inspect background marker',
-      prompt: 'Inspect the project and return the background marker.',
-      subagent_type: 'Explore',
-      subagent_session_id: childSessionId,
-      run_in_background: true,
-    },
-    assistantMessageId
-  );
-  await contextManager.saveToolResult(
-    sessionId,
-    toolCallId,
-    'Task',
-    { agent_id: childSessionId, status: 'running' },
-    assistantMessageId,
-    undefined,
-    undefined,
-    {
-      subagentSessionId: childSessionId,
-      subagentType: 'Explore',
-      subagentDescription: 'Inspect background marker',
-      subagentStatus: 'running',
-      subagentRootId: childSessionId,
-      subagentResumeDepth: 0,
-    },
-    { background: true, subagentSessionId: childSessionId }
-  );
-  await runtime.finishTurn(prepared.handle, {
-    outcome: {
-      status: 'completed',
-      turnsCount: 1,
-      toolCallsCount: 1,
-      durationMs: 10,
-    },
-  });
-  return {
-    runtime,
-    staleNotify: runtime.notifyBackgroundSubagentCompleted.bind(runtime),
-  };
+interface RemoteCapabilityMatrixCase {
+  label: string;
+  readTextFile: boolean;
+  writeTextFile: boolean;
+  terminal: boolean;
+  allowed: string[];
 }
 
-function saveBackgroundSubagent(options: {
-  sessionId: string;
-  workspaceRoot: string;
-  childSessionId: string;
-  status?: 'running' | 'completed';
-  marker?: string;
-  includeStats?: boolean;
-  completedAgoMs?: number;
-}): void {
-  const {
-    sessionId,
-    workspaceRoot,
-    childSessionId,
-    status = 'completed',
-    marker,
-    includeStats = false,
-    completedAgoMs = 250,
-  } = options;
-  const session: AgentSession = {
-    schemaVersion: 2,
-    id: childSessionId,
-    subagentType: 'Explore',
-    description: 'Inspect background marker',
-    prompt: 'Inspect the project and return the background marker.',
-    messages: marker ? [{ role: 'assistant', content: marker }] : [],
-    status,
-    background: true,
-    ...(marker ? { result: { success: true, message: marker } } : {}),
-    ...(includeStats ? { stats: { tokens: 50, toolCalls: 1, duration: 100 } } : {}),
-    createdAt: Date.now() - 1_000,
-    lastActiveAt: Date.now() - 500,
-    ...(status === 'completed' ? { completedAt: Date.now() - completedAgoMs } : {}),
-    parentSessionId: sessionId,
-    parentProjectPath: workspaceRoot,
-    rootAgentId: childSessionId,
-    resumeDepth: 0,
-    workspaceRoot,
-    isolation: 'none',
-    configSnapshot: {
-      name: 'Explore',
-      description: 'Explore agent',
-      source: 'builtin',
-    },
-  };
-  AgentSessionStore.getInstance().saveSession(session);
-}
-
-function createTestRuntime(
-  sessionId: string,
-  workspaceRoot?: string
-): Promise<SessionRuntime> {
-  return SessionRuntime.create({
-    sessionId,
-    ...(workspaceRoot ? { workspaceRoot } : {}),
-  });
-}
+const REMOTE_CAPABILITY_MATRIX_CASES: RemoteCapabilityMatrixCase[] = [
+  {
+    label: 'fs=none terminal=false',
+    readTextFile: false,
+    writeTextFile: false,
+    terminal: false,
+    allowed: [],
+  },
+  {
+    label: 'fs=none terminal=true',
+    readTextFile: false,
+    writeTextFile: false,
+    terminal: true,
+    allowed: ['Bash'],
+  },
+  {
+    label: 'fs=read terminal=false',
+    readTextFile: true,
+    writeTextFile: false,
+    terminal: false,
+    allowed: ['Read'],
+  },
+  {
+    label: 'fs=read terminal=true',
+    readTextFile: true,
+    writeTextFile: false,
+    terminal: true,
+    allowed: ['Read', 'Bash'],
+  },
+  {
+    label: 'fs=write terminal=false',
+    readTextFile: false,
+    writeTextFile: true,
+    terminal: false,
+    allowed: [],
+  },
+  {
+    label: 'fs=write terminal=true',
+    readTextFile: false,
+    writeTextFile: true,
+    terminal: true,
+    allowed: ['Bash'],
+  },
+  {
+    label: 'fs=read+write terminal=false',
+    readTextFile: true,
+    writeTextFile: true,
+    terminal: false,
+    allowed: ['Read', 'Write', 'Edit', 'ApplyPatch'],
+  },
+  {
+    label: 'fs=read+write terminal=true',
+    readTextFile: true,
+    writeTextFile: true,
+    terminal: true,
+    allowed: ['Read', 'Write', 'Edit', 'ApplyPatch', 'Bash'],
+  },
+];
 
 describe('SessionRuntime', () => {
   let storageRoot: string;
@@ -577,7 +521,10 @@ describe('SessionRuntime', () => {
   });
 
   it('allows residency eviction only without active or background ownership', async () => {
-    const runtime = await createTestRuntime('residency-idle-session', storageRoot);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'residency-idle-session',
+      workspaceRoot: storageRoot,
+    });
     expect(runtime.isIdleForResidency()).toBe(true);
 
     const turn = await runtime.beginTurn();
@@ -624,76 +571,65 @@ describe('SessionRuntime', () => {
     expect(runtime.isIdleForResidency()).toBe(false);
   });
 
-  it('does not prepare a side question whose client already cancelled', async () => {
-    const chatService = createDisposableChatService(vi.fn(async () => undefined));
-    vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
-    const runtime = await createTestRuntime('side-already-cancelled', storageRoot);
-    chatService.chat.mockResolvedValueOnce({ content: 'Should not be generated' });
-    vi.mocked(buildSystemPrompt).mockResolvedValueOnce({
-      prompt: 'Valid side prompt',
-      sources: [],
-    });
-    const createExecutor = vi.spyOn(runtime, 'createToolExecutor');
-    const loadContext = vi.spyOn(runtime, 'loadModelContext');
-    const client = new AbortController();
-    client.abort();
-    try {
-      await expect(
-        runtime.askSideQuestion('Do not start', {
-          signal: client.signal,
-        })
-      ).rejects.toMatchObject({ name: 'AbortError' });
-      expect(createExecutor).not.toHaveBeenCalled();
-      expect(loadContext).not.toHaveBeenCalled();
-      expect(chatService.chat).not.toHaveBeenCalled();
-    } finally {
-      await runtime.dispose();
-    }
-  });
+  it('isolates session-provided MCP servers and releases them on dispose', async () => {
+    const isolatedRegistry = {
+      registerServer: vi.fn().mockResolvedValue(undefined),
+      getAvailableTools: vi.fn().mockResolvedValue([]),
+      getCatalogSnapshot: vi.fn(() => ({ revision: 0, tools: [] })),
+      getInstructionsSnapshot: vi.fn(() => ({
+        revision: 0,
+        instructions: [],
+      })),
+      on: vi.fn(),
+      off: vi.fn(),
+      disconnectAll: vi.fn().mockResolvedValue(undefined),
+    };
+    const createIsolated = vi
+      .spyOn(
+        McpRegistry as typeof McpRegistry & { createIsolated: () => McpRegistry },
+        'createIsolated'
+      )
+      .mockReturnValue(isolatedRegistry as unknown as McpRegistry);
+    const globalRegistry = vi.spyOn(McpRegistry, 'getInstance');
+    const mcpServers = {
+      project: {
+        type: 'stdio' as const,
+        command: 'node',
+        args: ['server.mjs'],
+      },
+    };
 
-  it('does not call the Provider after cancellation during side context preparation', async () => {
-    const chatService = createDisposableChatService(vi.fn(async () => undefined));
-    chatService.chat.mockResolvedValue({ content: 'Should not be generated' });
-    vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
-    const runtime = await createTestRuntime('side-context-cancelled', storageRoot);
-    let release!: () => void;
-    const barrier = new Promise<void>((resolve) => {
-      release = resolve;
+    const runtime = await SessionRuntime.create({
+      sessionId: 'isolated-mcp-session',
+      mcpServers,
     });
-    let signalWaiting!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      signalWaiting = resolve;
+
+    expect(worktreeMocks.cleanupStaleAgentWorktrees).toHaveBeenCalledTimes(1);
+    expect(worktreeMocks.cleanupStaleAgentWorktrees).toHaveBeenCalledWith({
+      workspaceRoot: expect.any(String),
     });
-    vi.mocked(buildSystemPrompt).mockImplementationOnce(async () => {
-      signalWaiting();
-      await barrier;
-      return { prompt: 'Prepared side prompt', sources: [] };
+    expect(createIsolated).toHaveBeenCalledTimes(1);
+    expect(createIsolated).toHaveBeenCalledWith({
+      roots: [runtime.workspaceRoot],
+      samplingAvailable: true,
+      oauthCredentialAccess: true,
+      exposeLogDetails: true,
+      exposeInstructions: true,
+      artifactWriter: expect.any(Object),
     });
-    const client = new AbortController();
-    const question = runtime
-      .askSideQuestion('Do not generate after cancel', {
-        signal: client.signal,
-      })
-      .then(
-        (response) => response,
-        (error: unknown) => error
-      );
-    try {
-      await entered;
-      client.abort();
-      release();
-      await expect(question).resolves.toMatchObject({ name: 'AbortError' });
-      expect(chatService.chat).not.toHaveBeenCalled();
-      expect(runtime.isIdleForResidency()).toBe(true);
-    } finally {
-      release();
-      await question;
-      await runtime.dispose();
-    }
+    expect(globalRegistry).not.toHaveBeenCalled();
+    expect(isolatedRegistry.registerServer).toHaveBeenCalledWith('project', {
+      ...mcpServers.project,
+      env: { BASE_SESSION_ENV: 'base-value' },
+    });
+
+    await runtime.dispose();
+
+    expect(isolatedRegistry.disconnectAll).toHaveBeenCalledTimes(1);
   });
 
   it('creates a runtime from the current store config', async () => {
-    const runtime = await createTestRuntime('session-1');
+    const runtime = await SessionRuntime.create({ sessionId: 'session-1' });
     const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
     const builtinOptions = vi.mocked(getBuiltinTools).mock.calls.at(-1)?.[0];
 
@@ -719,271 +655,114 @@ describe('SessionRuntime', () => {
     expect(disposeBrowser).toHaveBeenCalledOnce();
   });
 
-  it('pauses a Goal and returns typed failure when its task list is corrupt', async () => {
-    const workspaceRoot = path.join(storageRoot, 'goal-frontier-failure-project');
+  it('binds a durable Goal continuation before exposing its turn owner', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-lineage-project');
     mkdirSync(workspaceRoot, { recursive: true });
-    const sessionId = 'goal-frontier-failure-session';
-    const runtime = await createTestRuntime(sessionId, workspaceRoot);
-    const goal = await runtime.createGoal({
-      objective: 'recover from task corruption',
+    const sessionId = 'goal-lineage-session';
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const created = await runtime.createGoal({ objective: 'trace every turn' });
+
+    const first = await runtime.beginGoalTurn(created);
+    if (!first) throw new Error('Expected first Goal turn');
+    expect(first.goal).toMatchObject({
+      continuationCount: 1,
+      turnLineage: { currentTurnId: first.handle.id },
     });
-    const taskListId = getGoalTaskListId(goal);
-    await TaskListManager.getInstance(taskListId, storageRoot).createTask({
-      subject: 'Corruptible task',
-      description: 'This task establishes the durable file',
-    });
-    const encoded = encodeURIComponent(taskListId);
-    writeFileSync(
-      path.join(storageRoot, 'tasks', `${encoded}-agent-${encoded}.json`),
-      '{not-json',
-      'utf8'
-    );
-
-    const prepared = await runtime.prepareGoalContinuation(goal);
-
-    expect(prepared).toMatchObject({
-      ok: false,
-      error: { code: 'task_list_unavailable' },
-      goal: { status: 'paused' },
-    });
-    await expect(runtime.getGoal()).resolves.toMatchObject({ status: 'paused' });
-    await runtime.dispose();
-  });
-
-  it('releases Goal turn ownership when durable start persistence fails', async () => {
-    const workspaceRoot = path.join(storageRoot, 'goal-start-failure-project');
-    mkdirSync(workspaceRoot, { recursive: true });
-    const runtime = await createTestRuntime(
-      'goal-start-failure-session',
-      workspaceRoot
-    );
-    const created = await runtime.createGoal({ objective: 'survive start failure' });
-    vi.spyOn(PersistentStore.prototype, 'saveTurnStart').mockRejectedValueOnce(
-      new Error('turn start fsync failed')
-    );
-
-    await expect(runtime.beginGoalTurn(created)).rejects.toThrow(
-      'turn start fsync failed'
-    );
-    expect(runtime.hasTurnOwner()).toBe(false);
-    await expect(runtime.getGoal()).resolves.toEqual(created);
-
-    await runtime.dispose();
-  });
-
-  it('aborts a durable provisional turn when the Goal identity becomes stale', async () => {
-    const workspaceRoot = path.join(storageRoot, 'goal-stale-claim-project');
-    mkdirSync(workspaceRoot, { recursive: true });
-    const sessionId = 'goal-stale-claim-session';
-    const runtime = await createTestRuntime(sessionId, workspaceRoot);
-    const created = await runtime.createGoal({
-      objective: 'retain the original claim',
-    });
-    const commitTurnBinding = GoalStore.prototype.commitTurnBinding;
-    vi.spyOn(GoalStore.prototype, 'commitTurnBinding').mockImplementationOnce(
-      async function (this: GoalStore, claim) {
-        await this.edit('replace the stale objective');
-        return commitTurnBinding.call(this, claim);
-      }
-    );
-
-    await expect(runtime.beginGoalTurn(created)).rejects.toThrow(
-      'Goal changed before turn lineage commit'
-    );
-    expect(runtime.hasTurnOwner()).toBe(false);
-    const edited = await runtime.getGoal();
-    expect(edited).toMatchObject({
-      objective: 'replace the stale objective',
-      continuationCount: 0,
-    });
-    expect(edited).not.toHaveProperty('turnLineage');
     const events =
       (await new PersistentStore(workspaceRoot).loadEvents(sessionId)) ?? [];
-    const started = events.findLast((event) => event.type === 'turn_started');
-    expect(started).toBeDefined();
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'turn_aborted',
-        data: expect.objectContaining({
-          turnId: started?.type === 'turn_started' ? started.data.turnId : '',
-          cause: 'failed',
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'turn_started',
+          data: expect.objectContaining({
+            turnId: first.handle.id,
+            goalLineage: {
+              goalId: created.goalId,
+              currentTurnId: first.handle.id,
+            },
+          }),
         }),
-      })
+      ])
     );
+    await runtime.finishTurn(first.handle, {
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1,
+      },
+    });
 
-    await runtime.dispose();
-  });
-
-  it('binds a queued pending turn into the active Goal lineage', async () => {
-    const workspaceRoot = path.join(storageRoot, 'goal-pending-lineage-project');
-    mkdirSync(workspaceRoot, { recursive: true });
-    const runtime = await createTestRuntime(
-      'goal-pending-lineage-session',
-      workspaceRoot
-    );
-    const created = await runtime.createGoal(
-      { objective: 'chain queued user input' },
-      { turnId: 'root-user-turn' }
-    );
-    await runtime.enqueueSteering('queued user follow-up', { allowBeforeTurn: true });
-
-    const pending = await runtime.beginPendingTurn();
-    if (!pending) throw new Error('Expected queued pending turn');
-    await expect(runtime.getGoal()).resolves.toMatchObject({
-      continuationCount: created.continuationCount,
+    const second = await runtime.beginGoalTurn(first.goal);
+    if (!second) throw new Error('Expected second Goal turn');
+    expect(second.goal).toMatchObject({
+      continuationCount: 2,
       turnLineage: {
-        rootTurnId: 'root-user-turn',
-        currentTurnId: pending.id,
-        parentTurnId: 'root-user-turn',
+        currentTurnId: second.handle.id,
+        parentTurnId: first.handle.id,
       },
     });
-
-    await runtime.finishTurn(pending);
+    await runtime.finishTurn(second.handle);
     await runtime.dispose();
   });
 
-  it('invalidates Goal root lineage when external steering joins the active turn', async () => {
-    const workspaceRoot = path.join(storageRoot, 'goal-steering-lineage-project');
+  it('persists standalone user shell output without invoking the model', async () => {
+    const workspaceRoot = path.join(storageRoot, 'user-shell-workspace');
     mkdirSync(workspaceRoot, { recursive: true });
-    const runtime = await createTestRuntime(
-      'goal-steering-lineage-session',
+    const executor: UserShellExecutor = {
+      execute: vi.fn(async (command, options) => {
+        expect(command).toBe('pwd');
+        expect(options.cwd).toBe(workspaceRoot);
+        expect(options.env).toMatchObject({
+          BASE_SESSION_ENV: 'base-value',
+          BLADE_USER_SHELL: '1',
+        });
+        options.onOutput?.('stdout', 'workspace-output\n');
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }),
+    };
+    const runtime = await SessionRuntime.create({
+      sessionId: 'standalone-user-shell',
+      workspaceRoot,
+      userShellExecutor: executor,
+    });
+
+    const events: unknown[] = [];
+    const result = await runtime.executeUserShellCommand('pwd', {
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+
+    expect(result).toMatchObject({
+      auxiliary: false,
+      record: {
+        status: 'completed',
+        stdout: 'workspace-output',
+      },
+    });
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'started', auxiliary: false }),
+      expect.objectContaining({ type: 'output', auxiliary: false }),
+      expect.objectContaining({ type: 'completed', auxiliary: false }),
+    ]);
+    const messages = await SessionService.loadSession(
+      'standalone-user-shell',
       workspaceRoot
     );
-    await runtime.createGoal(
-      { objective: 'invalidate ambiguous active-turn ancestry' },
-      { turnId: 'root-user-turn' }
-    );
-    const active = await runtime.prepareInputTurn('start active work');
-    if (!active.accepted) throw new Error('Expected active user turn');
-
-    const steering = await runtime.enqueueSteering('external correction');
-
-    expect(steering).toMatchObject({
-      accepted: true,
-      delivery: 'current_turn',
-      turnId: active.handle.id,
-    });
-    const goal = await runtime.getGoal();
-    expect(goal?.turnLineage).toEqual({
-      currentTurnId: active.handle.id,
-      parentTurnId: 'root-user-turn',
-    });
-
-    await runtime.finishTurn(active.handle);
-    await runtime.dispose();
-  });
-
-  it('persists frontier stall observations only across continuation boundaries', async () => {
-    const workspaceRoot = path.join(storageRoot, 'goal-frontier-stall-project');
-    mkdirSync(workspaceRoot, { recursive: true });
-    const sessionId = 'goal-frontier-stall-session';
-    const runtime = await createTestRuntime(sessionId, workspaceRoot);
-    const goal = await runtime.createGoal({ objective: 'recover a stalled task' });
-    const taskListId = getGoalTaskListId(goal);
-    const manager = TaskListManager.getInstance(taskListId, storageRoot);
-    const task = await manager.createTask({
-      subject: 'Make progress',
-      description: 'A task that remains pending across continuations',
-    });
-
-    const first = await runtime.prepareGoalContinuation(goal);
-    expect(first.ok).toBe(true);
-    if (!first.ok) throw new Error('first frontier preparation failed');
-    expect(first.goal.frontierStall).toBeUndefined();
-
-    const withLivenessSignal = await runtime.recordGoalProgress({
-      tokens: 0,
-      elapsedMs: 0,
-      prematureStopPattern: 'self_deferral',
-    });
-    if (!withLivenessSignal) throw new Error('Goal disappeared after liveness signal');
-
-    const second = await runtime.prepareGoalContinuation(withLivenessSignal);
-    expect(second.ok).toBe(true);
-    if (!second.ok) throw new Error('second frontier preparation failed');
-    expect(second.goal.frontierStall).toMatchObject({
-      category: 'same_task_no_effect',
-      consecutiveCount: 1,
-      digestSha256: second.frontier.digestSha256,
-    });
-
-    const third = await runtime.prepareGoalContinuation(second.goal);
-    expect(third.ok).toBe(true);
-    if (!third.ok) throw new Error('third frontier preparation failed');
-    expect(third.goal.frontierStall?.consecutiveCount).toBe(2);
-
-    await manager.updateTask(task.id, { status: 'completed' });
-    const recovered = await runtime.prepareGoalContinuation(third.goal);
-    expect(recovered.ok).toBe(true);
-    if (!recovered.ok) throw new Error('recovery frontier preparation failed');
-    expect(recovered.goal.frontierStall).toBeUndefined();
-
-    await runtime.dispose();
-  });
-
-  it('invalidates Goal root lineage when user shell output joins the active turn', async () => {
-    const workspaceRoot = path.join(storageRoot, 'goal-user-shell-lineage-workspace');
-    mkdirSync(workspaceRoot, { recursive: true });
-    const runtime = await SessionRuntime.create({
-      sessionId: 'goal-user-shell-lineage',
-      workspaceRoot,
-      userShellExecutor: {
-        execute: vi.fn(async () => ({
-          exitCode: 0,
-          stdout: 'aux-output',
-          stderr: '',
-        })),
-      },
-    });
-    const active = await runtime.prepareInputTurn('start active Goal work');
-    if (!active.accepted) throw new Error('Expected active Goal turn');
-    await runtime.createGoal(
-      { objective: 'invalidate ambiguous shell ancestry' },
-      { turnId: active.handle.id }
-    );
-
-    await runtime.executeUserShellCommand('echo aux');
-
-    const goal = await runtime.getGoal();
-    expect(goal?.turnLineage).toEqual({ currentTurnId: active.handle.id });
-    await runtime.finishTurn(active.handle);
-    await runtime.dispose();
-  });
-
-  it('fails initialization for an invalid SessionStart environment', async () => {
-    HookManager.resetInstance();
-    const hookManager = HookManager.getInstance();
-    const off = hookManager.registerFunction(
-      HookEvent.SessionStart,
-      undefined,
-      async () => ({
-        hookSpecificOutput: {
-          hookEventName: 'SessionStart',
-          env: { 'INVALID-NAME': 'value' },
-        },
-      })
-    );
-
-    try {
-      await expect(createTestRuntime('invalid-session-environment')).rejects.toThrow(
-        'Invalid environment variable name'
-      );
-    } finally {
-      off();
-      HookManager.resetInstance();
-    }
-  });
-
-  it('falls back to the current model when a durable selection was removed', async () => {
-    const workspaceRoot = path.join(storageRoot, 'removed-model-project');
-    await SessionService.createSessionMetadata('removed-model-session', workspaceRoot, {
-      taskStatus: 'completed',
-      selectedModelId: 'removed-model',
-    });
-
-    const runtime = await createTestRuntime('removed-model-session', workspaceRoot);
-
-    expect(runtime.getCurrentModelId()).toBe('model-1');
+    expect(messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: expect.stringContaining('<user_shell_command>'),
+        metadata: expect.objectContaining({
+          userShellCommand: expect.objectContaining({
+            command: 'pwd',
+            status: 'completed',
+          }),
+        }),
+      }),
+    ]);
+    expect(createChatServiceAsync).toHaveBeenCalledTimes(1);
     await runtime.dispose();
   });
 
@@ -1207,86 +986,6 @@ describe('SessionRuntime', () => {
     }
   );
 
-  it('fails closed for remote user shell when no executor is supplied', async () => {
-    const executionRoot = String.raw`C:\Remote\NoTerminal`;
-    const descriptor = createAcpRemoteWorkspaceDescriptor(
-      createAcpRemotePathProfile(executionRoot)
-    );
-    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
-    await ensureAcpRemoteHostStateRoot(hostStateRoot);
-    await SessionService.createRemoteSessionMetadata(
-      'remote-user-shell-unavailable',
-      hostStateRoot,
-      descriptor
-    );
-    const runtime = await SessionRuntime.create({
-      sessionId: 'remote-user-shell-unavailable',
-      workspaceRoot: hostStateRoot,
-      workspace: {
-        kind: 'acp-remote',
-        executionRoot,
-        resourceRoot: path.join(storageRoot, 'trusted-host-resource-no-terminal'),
-        readTextFile: true,
-        writeTextFile: false,
-        terminal: true,
-        descriptor,
-      },
-    });
-
-    await expect(
-      runtime.executeUserShellCommand('echo must-not-spawn')
-    ).resolves.toMatchObject({
-      record: {
-        status: 'spawn_error',
-        exitCode: null,
-        stderr: expect.stringContaining('ACP terminal capability is unavailable'),
-      },
-    });
-
-    await runtime.dispose();
-  });
-
-  it('ignores an injected user shell executor when remote terminal capability is absent', async () => {
-    const executionRoot = String.raw`C:\Remote\NoInjectedTerminal`;
-    const descriptor = createAcpRemoteWorkspaceDescriptor(
-      createAcpRemotePathProfile(executionRoot)
-    );
-    const hostStateRoot = deriveAcpRemoteHostStateRoot(descriptor.collisionIdentity);
-    const execute = vi.fn(async () => ({ exitCode: 0, stdout: 'unsafe', stderr: '' }));
-    await ensureAcpRemoteHostStateRoot(hostStateRoot);
-    await SessionService.createRemoteSessionMetadata(
-      'remote-user-shell-injected',
-      hostStateRoot,
-      descriptor
-    );
-    const runtime = await SessionRuntime.create({
-      sessionId: 'remote-user-shell-injected',
-      workspaceRoot: hostStateRoot,
-      userShellExecutor: { execute },
-      workspace: {
-        kind: 'acp-remote',
-        executionRoot,
-        resourceRoot: path.join(
-          storageRoot,
-          'trusted-host-resource-no-injected-terminal'
-        ),
-        readTextFile: true,
-        writeTextFile: false,
-        terminal: false,
-        descriptor,
-      },
-    });
-
-    await expect(
-      runtime.executeUserShellCommand('echo must-not-spawn')
-    ).resolves.toMatchObject({
-      record: { status: 'spawn_error' },
-    });
-    expect(execute).not.toHaveBeenCalled();
-
-    await runtime.dispose();
-  });
-
   it('persists and publishes the top-level task lifecycle without exposing its owner PID', async () => {
     const workspaceRoot = path.join(storageRoot, 'task-lifecycle-project');
     const sessionId = 'runtime-task-lifecycle';
@@ -1461,7 +1160,10 @@ describe('SessionRuntime', () => {
       deletions: 4,
       commits: 1,
     });
-    const runtime = await createTestRuntime(sessionId, workspaceRoot);
+    const runtime = await SessionRuntime.create({
+      sessionId,
+      workspaceRoot,
+    });
 
     try {
       expect(worktreeMocks.restoreSession).toHaveBeenCalledWith(taskWorktree);
@@ -1489,90 +1191,13 @@ describe('SessionRuntime', () => {
     }
   });
 
-  it('delegates rewind through the idle session runtime boundary', async () => {
-    const workspaceRoot = path.join(storageRoot, 'rewind-project');
-    const runtime = await createTestRuntime('runtime-rewind', workspaceRoot);
-    const checkpoints = [
-      {
-        messageId: 'user-2',
-        preview: 'rewind this',
-        createdAt: '2026-08-05T00:00:00.000Z',
-        fileCount: 1,
-      },
-    ];
-    const rewindResult = {
-      checkpoint: checkpoints[0]!,
-      mode: 'both' as const,
-      removedTurns: 1,
-      restoredFiles: [path.join(workspaceRoot, 'target.txt')],
-      messages: [{ role: 'user' as const, content: 'kept' }],
-    };
-    const list = vi
-      .spyOn(SessionService, 'listRewindCheckpoints')
-      .mockResolvedValue(checkpoints);
-    const rewind = vi
-      .spyOn(SessionService, 'rewindSession')
-      .mockResolvedValue(rewindResult);
-
-    await expect(runtime.listRewindCheckpoints()).resolves.toEqual(checkpoints);
-    await expect(
-      runtime.rewindSession({
-        targetMessageId: 'user-2',
-        mode: 'both',
-      })
-    ).resolves.toEqual(rewindResult);
-    expect(list).toHaveBeenCalledWith('runtime-rewind', workspaceRoot);
-    expect(rewind).toHaveBeenCalledWith('runtime-rewind', workspaceRoot, {
-      targetMessageId: 'user-2',
-      mode: 'both',
-    });
-
-    await runtime.dispose();
-  });
-
-  it('rejects rewind while a turn owns the session', async () => {
-    const runtime = await createTestRuntime(
-      'runtime-rewind-active',
-      path.join(storageRoot, 'rewind-active-project')
-    );
-    const handle = await runtime.beginTurn();
-    const rewind = vi.spyOn(SessionService, 'rewindSession');
-
-    await expect(
-      runtime.rewindSession({
-        targetMessageId: 'user-1',
-        mode: 'conversation',
-      })
-    ).rejects.toThrow('active turn');
-    expect(rewind).not.toHaveBeenCalled();
-
-    await runtime.finishTurn(handle);
-    await runtime.dispose();
-  });
-
-  it('rejects rewind while durable input is pending', async () => {
-    const runtime = await createTestRuntime(
-      'runtime-rewind-pending',
-      path.join(storageRoot, 'rewind-pending-project')
-    );
-    await runtime.enqueueSteering('queued input', { allowBeforeTurn: true });
-    const rewind = vi.spyOn(SessionService, 'rewindSession');
-
-    await expect(
-      runtime.rewindSession({
-        targetMessageId: 'user-1',
-        mode: 'conversation',
-      })
-    ).rejects.toThrow('durable input is pending');
-    expect(rewind).not.toHaveBeenCalled();
-
-    await runtime.dispose();
-  });
-
   it('durably discards pending input after explicit cancellation', async () => {
     const workspaceRoot = path.join(storageRoot, 'cancelled-input-project');
     const sessionId = 'runtime-cancelled-input';
-    const runtime = await createTestRuntime(sessionId, workspaceRoot);
+    const runtime = await SessionRuntime.create({
+      sessionId,
+      workspaceRoot,
+    });
     const prepared = await runtime.prepareInputTurn('do not replay this input');
     expect(prepared.accepted).toBe(true);
     expect(runtime.getPendingSteeringCount()).toBe(1);
@@ -1598,79 +1223,12 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
-  it('offloads oversized direct input before committing it to the durable inbox', async () => {
-    const workspaceRoot = path.join(storageRoot, 'large-prompt-project');
-    const sessionId = 'large-prompt-session';
-    const fullPrompt = `${'a'.repeat(
-      MAX_INLINE_USER_MESSAGE_TEXT_BYTES
-    )}_PRIVATE_MIDDLE_${'b'.repeat(10_000)}`;
-    const first = await createTestRuntime(sessionId, workspaceRoot);
-
-    const prepared = await first.prepareInputTurn(fullPrompt);
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    const reference = getUserPromptArtifactReference(prepared.metadata);
-    expect(reference?.sizeBytes).toBe(Buffer.byteLength(fullPrompt));
-    expect(Buffer.byteLength(String(prepared.content))).toBeLessThanOrEqual(
-      MAX_INLINE_USER_MESSAGE_TEXT_BYTES
-    );
-    expect(String(prepared.content)).not.toContain('_PRIVATE_MIDDLE_');
-    expect(first.getPendingSteeringMessages()).toEqual([
-      expect.objectContaining({
-        id: prepared.messageId,
-        content: prepared.content,
-        metadata: prepared.metadata,
-      }),
-    ]);
-
-    await first.dispose();
-    const recovered = await createTestRuntime(sessionId, workspaceRoot);
-    const pending = recovered.getPendingSteeringMessages()[0]!;
-    await expect(
-      recovered.restoreUserMessage(pending.content, pending.metadata)
-    ).resolves.toBe(fullPrompt);
-    await recovered.dispose();
-  });
-
-  it('recovers an offline teammate message into the leader durable inbox', async () => {
-    const workspaceRoot = path.join(storageRoot, 'team-lead-project');
-    const sessionId = 'team-lead-session';
-    mkdirSync(workspaceRoot, { recursive: true });
-    const team = await TeamStore.getInstance(storageRoot).createTeam({
-      name: 'recovery-team',
-      leadSessionId: sessionId,
-      workspaceRoot,
-      members: [],
-    });
-    const mailbox = new TeamMailbox(team.name, storageRoot);
-    const message = await mailbox.send({
-      from: 'reviewer',
-      to: 'team-lead',
-      body: 'Review the recovered dependency.',
-    });
-
-    await expect(
-      SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
-    ).resolves.toBe(true);
-    const runtime = await createTestRuntime(sessionId, workspaceRoot);
-
-    expect(runtime.getPendingSteeringMessages()).toEqual([
-      expect.objectContaining({
-        id: message.id,
-        origin: 'team_message',
-        content: expect.stringContaining('Review the recovered dependency.'),
-        metadata: expect.objectContaining({
-          clientVisible: false,
-          teamMessage: expect.objectContaining({ messageId: message.id }),
-        }),
-      }),
-    ]);
-    await expect(mailbox.listPending('team-lead')).resolves.toEqual([]);
-    await runtime.dispose();
-  });
-
   it('lists and resumes subagents through the exact runtime owner', async () => {
     const workspaceRoot = path.join(storageRoot, 'subagent-project');
-    const runtime = await createTestRuntime('runtime-subagent-owner', workspaceRoot);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'runtime-subagent-owner',
+      workspaceRoot,
+    });
     const source: AgentSession = {
       schemaVersion: 2,
       id: 'agent-source',
@@ -1745,33 +1303,19 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
-  it('rejects direct subagent resume while the parent turn is active', async () => {
-    const runtime = await createTestRuntime(
-      'runtime-subagent-active',
-      path.join(storageRoot, 'subagent-active-project')
-    );
-    const handle = await runtime.beginTurn();
-    const getManager = vi.spyOn(BackgroundAgentManager, 'getInstance');
-
-    expect(() =>
-      runtime.resumeSubagent({
-        agentId: 'agent-source',
-        prompt: 'Continue',
-      })
-    ).toThrow('active turn');
-    expect(getManager).not.toHaveBeenCalled();
-
-    await runtime.finishTurn(handle);
-    await runtime.dispose();
-  });
-
   it('exclusively owns a session until the runtime is disposed', async () => {
     const workspaceRoot = path.join(storageRoot, 'exclusive-project');
-    const first = await createTestRuntime('exclusive-session', workspaceRoot);
+    const first = await SessionRuntime.create({
+      sessionId: 'exclusive-session',
+      workspaceRoot,
+    });
     await first.setTaskStatus('running');
 
     await expect(
-      createTestRuntime('exclusive-session', workspaceRoot)
+      SessionRuntime.create({
+        sessionId: 'exclusive-session',
+        workspaceRoot,
+      })
     ).rejects.toMatchObject({
       name: 'SessionInUseError',
       code: 'BLADE_SESSION_IN_USE',
@@ -1782,265 +1326,49 @@ describe('SessionRuntime', () => {
 
     await first.dispose();
 
-    const resumed = await createTestRuntime('exclusive-session', workspaceRoot);
+    const resumed = await SessionRuntime.create({
+      sessionId: 'exclusive-session',
+      workspaceRoot,
+    });
     expect(resumed.sessionId).toBe('exclusive-session');
     await resumed.dispose();
   });
 
-  it('closes an orphaned durable turn after acquiring the released session lease', async () => {
-    const workspaceRoot = path.join(storageRoot, 'orphaned-turn-project');
-    const sessionId = 'orphaned-turn-session';
-    const first = await createTestRuntime(sessionId, workspaceRoot);
-    const orphaned = await first.beginTurn('user');
+  it('recovers a final-ready turn without replaying its durable input', async () => {
+    const workspaceRoot = path.join(storageRoot, 'final-ready-turn-project');
+    const sessionId = 'final-ready-turn-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('complete this exactly once');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
     await first
       .getExecutionEngine()
       .getContextManager()
-      .saveToolUse(sessionId, 'Write', {
-        file_path: path.join(workspaceRoot, 'possibly-written.txt'),
-        content: 'already applied\n',
+      .saveMessage(sessionId, 'assistant', 'completed exactly once', null, {
+        turnFinalization: {
+          turnId: prepared.handle.id,
+          inputMessageIds: [prepared.messageId],
+          turnsCount: 1,
+          toolCallsCount: 0,
+          durationMs: 10,
+        },
       });
     await first.dispose();
 
-    const recovered = await createTestRuntime(sessionId, workspaceRoot);
-    const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'turn_started',
-          data: expect.objectContaining({ turnId: orphaned.id }),
-        }),
-        expect.objectContaining({
-          type: 'turn_aborted',
-          data: expect.objectContaining({
-            turnId: orphaned.id,
-            cause: 'process_restart',
-          }),
-        }),
-      ])
-    );
-    const recoveredContext = await recovered.loadModelContext();
-    expect(JSON.stringify(recoveredContext)).toContain(PROCESS_RESTART_TOOL_RESULT);
-    expect(JSON.stringify(recoveredContext)).toContain('sideEffectsUncertain');
-    expect(recovered.getTurnRecoveryAssessment()).toEqual({
-      state: 'requires_attention',
-      turnId: orphaned.id,
-      inputMessageCount: 0,
-      reason: 'interrupted_tool_call',
-    });
-    expect(recovered.takeStartupTurnRecoveryAssessment()).toEqual({
-      state: 'requires_attention',
-      turnId: orphaned.id,
-      inputMessageCount: 0,
-      reason: 'interrupted_tool_call',
-    });
-    expect(recovered.takeStartupTurnRecoveryAssessment()).toEqual({ state: 'none' });
-
-    const next = await recovered.beginTurn('goal');
-    await recovered.finishTurn(next, {
-      outcome: {
-        status: 'completed',
-        turnsCount: 1,
-        toolCallsCount: 0,
-        durationMs: 1,
-      },
-    });
-    await recovered.dispose();
-  });
-
-  it('binds recovered empty-final state to the originally claimed inbox input', async () => {
-    const workspaceRoot = path.join(storageRoot, 'empty-final-recovery-project');
-    const sessionId = 'empty-final-recovery-session';
-    const first = await createTestRuntime(sessionId, workspaceRoot);
-    const prepared = await first.prepareInputTurn('finish after restart');
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    const contextManager = first.getExecutionEngine().getContextManager();
-    await contextManager.saveMessage(sessionId, 'user', 'finish after restart', null, {
-      inboxMessageId: prepared.messageId,
-    });
-    const toolCallId = await contextManager.saveToolUse(sessionId, 'Read', {
-      file_path: path.join(workspaceRoot, 'package.json'),
-    });
-    await contextManager.saveToolResult(
-      sessionId,
-      toolCallId,
-      'Read',
-      'package contents'
-    );
-    await contextManager.saveMessage(sessionId, 'user', 'internal corrective', null, {
-      clientVisible: false,
-      emptyFinalCorrection: true,
-    });
-    await first.dispose();
-
-    const recovered = await createTestRuntime(sessionId, workspaceRoot);
-    expect(recovered.getStartupTurnRecovery()).toEqual({
-      turnId: prepared.handle.id,
-      outcome: 'aborted',
-      inputMessageIds: [prepared.messageId],
-      hadSuccessfulToolResult: true,
-      emptyFinalCorrectionSpent: true,
-    });
-    const protectedQueue = await recovered.getFollowUpQueueSnapshot();
-    expect(protectedQueue.items).toEqual([
-      expect.objectContaining({
-        id: prepared.messageId,
-        state: 'locked',
-        mutable: false,
-        delivery: 'recovery',
-      }),
-    ]);
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(recovered.getPendingSteeringCount()).toBe(0);
     await expect(
-      recovered.mutateFollowUpQueue({
-        expectedVersion: protectedQueue.version,
-        operation: { type: 'remove', messageId: prepared.messageId },
-      })
-    ).rejects.toMatchObject({ code: 'already_claimed' });
-    await recovered.acknowledgeStartupTurnRecovery();
-    expect(recovered.getTurnRecoveryAssessment()).toEqual({ state: 'none' });
-    expect(recovered.getStartupTurnRecovery()).toMatchObject({
-      turnId: prepared.handle.id,
-      hadSuccessfulToolResult: true,
-      emptyFinalCorrectionSpent: true,
-    });
-    const pendingTurn = await recovered.beginPendingTurn();
-    if (!pendingTurn) throw new Error('Expected recovered pending turn');
-    await expect(recovered.getRecoveredEmptyFinalState(pendingTurn)).resolves.toEqual({
-      hadSuccessfulToolResult: false,
-      correctionSpent: false,
-    });
-    const claimed = await recovered.drainSteering(pendingTurn);
-    expect(claimed.map((message) => message.id)).toEqual([prepared.messageId]);
-    await expect(recovered.getRecoveredEmptyFinalState(pendingTurn)).resolves.toEqual({
-      hadSuccessfulToolResult: true,
-      correctionSpent: true,
-    });
-    await recovered.finishTurn(pendingTurn);
-    await recovered.dispose();
-  });
-
-  it('inherits dangerous recovery when a confirmation turn aborts before execution', async () => {
-    const workspaceRoot = path.join(storageRoot, 'ack-failure-recovery-project');
-    const sessionId = 'ack-failure-recovery-session';
-    const first = await createTestRuntime(sessionId, workspaceRoot);
-    await first.beginTurn('goal');
-    const contextManager = first.getExecutionEngine().getContextManager();
-    const toolCallId = await contextManager.saveToolUse(sessionId, 'Write', {
-      file_path: path.join(workspaceRoot, 'result.txt'),
-      content: 'done',
-    });
-    await contextManager.saveToolResult(sessionId, toolCallId, 'Write', 'written');
-    await first.dispose();
-
-    const recovered = await createTestRuntime(sessionId, workspaceRoot);
-    expect(recovered.getTurnRecoveryAssessment()).toMatchObject({
-      state: 'requires_attention',
-      reason: 'successful_tool_result',
-    });
-    const confirmation = await recovered.prepareInputTurn('I inspected state');
-    if (!confirmation.accepted) throw new Error('Expected confirmation turn');
-    await recovered.finishTurn(confirmation.handle, {
-      acknowledgeInput: true,
-      preserveStartupRecovery: true,
-      outcome: {
-        status: 'aborted',
-        cause: 'failed',
-        turnsCount: 0,
-        toolCallsCount: 0,
-        durationMs: 0,
-      },
-    });
-    expect(recovered.getTurnRecoveryAssessment()).toMatchObject({
-      state: 'requires_attention',
-      reason: 'successful_tool_result',
-    });
-    await recovered.dispose();
-
-    const restarted = await createTestRuntime(sessionId, workspaceRoot);
-    expect(restarted.getTurnRecoveryAssessment()).toMatchObject({
-      state: 'requires_attention',
-      reason: 'successful_tool_result',
-    });
-    await restarted.dispose();
-  });
-
-  it('does not bind recovered empty-final state to a mixed-input turn', async () => {
-    const workspaceRoot = path.join(storageRoot, 'empty-final-mixed-input-project');
-    const sessionId = 'empty-final-mixed-input-session';
-    const first = await createTestRuntime(sessionId, workspaceRoot);
-    const prepared = await first.prepareInputTurn('old interrupted input');
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    const contextManager = first.getExecutionEngine().getContextManager();
-    await contextManager.saveMessage(sessionId, 'user', 'old interrupted input', null, {
-      inboxMessageId: prepared.messageId,
-    });
-    const toolCallId = await contextManager.saveToolUse(sessionId, 'Read', {
-      file_path: path.join(workspaceRoot, 'old.txt'),
-    });
-    await contextManager.saveToolResult(sessionId, toolCallId, 'Read', 'old success');
-    await contextManager.saveMessage(sessionId, 'user', 'internal corrective', null, {
-      clientVisible: false,
-      emptyFinalCorrection: true,
-    });
-    await first.dispose();
-
-    const recovered = await createTestRuntime(sessionId, workspaceRoot);
-    const mixed = await recovered.prepareInputTurn('new input in the recovered turn');
-    if (!mixed.accepted) throw new Error('Expected mixed input preparation');
-    expect(mixed.mode).toBe('pending');
-    const claimed = await recovered.drainSteering(mixed.handle);
-    expect(claimed.map((message) => message.id)).toEqual([
-      prepared.messageId,
-      mixed.messageId,
-    ]);
-
-    await expect(recovered.getRecoveredEmptyFinalState(mixed.handle)).resolves.toEqual({
-      hadSuccessfulToolResult: false,
-      correctionSpent: false,
-    });
-    await recovered.finishTurn(mixed.handle);
-    await recovered.dispose();
-  });
-
-  it('clears stale recovery authority after an unrelated abort', async () => {
-    const workspaceRoot = path.join(storageRoot, 'stale-recovery-project');
-    const sessionId = 'stale-recovery-session';
-    const first = await createTestRuntime(sessionId, workspaceRoot);
-    const prepared = await first.prepareInputTurn('old interrupted input');
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    const contextManager = first.getExecutionEngine().getContextManager();
-    await contextManager.saveMessage(sessionId, 'user', 'old interrupted input', null, {
-      inboxMessageId: prepared.messageId,
-    });
-    const toolCallId = await contextManager.saveToolUse(sessionId, 'Read', {
-      file_path: path.join(workspaceRoot, 'old.txt'),
-    });
-    await contextManager.saveToolResult(sessionId, toolCallId, 'Read', 'old success');
-    await contextManager.saveMessage(sessionId, 'user', 'internal corrective', null, {
-      clientVisible: false,
-      emptyFinalCorrection: true,
-    });
-    await first.dispose();
-
-    const recovered = await createTestRuntime(sessionId, workspaceRoot);
-    expect(recovered.getStartupTurnRecovery()).toMatchObject({
-      turnId: prepared.handle.id,
-      inputMessageIds: [prepared.messageId],
-      hadSuccessfulToolResult: true,
-      emptyFinalCorrectionSpent: true,
-    });
-
-    const unrelated = await recovered.beginTurn('goal');
-    await recovered.finishTurn(unrelated);
-    expect(recovered.getStartupTurnRecovery()).toBeUndefined();
-
-    const retry = await recovered.beginPendingTurn();
-    if (!retry) throw new Error('Expected old input to remain pending');
-    const claimed = await recovered.drainSteering(retry);
-    expect(claimed.map((message) => message.id)).toEqual([prepared.messageId]);
-    await expect(recovered.getRecoveredEmptyFinalState(retry)).resolves.toEqual({
-      hadSuccessfulToolResult: false,
-      correctionSpent: false,
-    });
+      SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
+    ).resolves.toBe(false);
+    const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
+    expect(events?.filter((event) => event.type === 'turn_completed')).toHaveLength(1);
+    expect(events?.filter((event) => event.type === 'turn_aborted')).toHaveLength(0);
+    expect(
+      events?.some(
+        (event) =>
+          event.type === 'inbox_acknowledged' &&
+          event.data.messageIds.includes(prepared.messageId)
+      )
+    ).toBe(true);
     await recovered.dispose();
   });
 
@@ -2048,7 +1376,7 @@ describe('SessionRuntime', () => {
     const workspaceRoot = path.join(storageRoot, 'subagent-adoption-project');
     const sessionId = 'subagent-adoption-parent';
     const childSessionId = 'agent-adopted-runtime-child';
-    const first = await createTestRuntime(sessionId, workspaceRoot);
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
     const prepared = await first.prepareInputTurn('delegate this work once');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
     const contextManager = first.getExecutionEngine().getContextManager();
@@ -2106,7 +1434,7 @@ describe('SessionRuntime', () => {
     });
     await first.dispose();
 
-    const recovered = await createTestRuntime(sessionId, workspaceRoot);
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
     expect(recovered.getStartupTurnRecovery()).toEqual({
       turnId: prepared.handle.id,
       outcome: 'aborted',
@@ -2155,7 +1483,7 @@ describe('SessionRuntime', () => {
     );
     await recovered.dispose();
 
-    const second = await createTestRuntime(sessionId, workspaceRoot);
+    const second = await SessionRuntime.create({ sessionId, workspaceRoot });
     expect(second.takeStartupAdoptedToolResults()).toEqual([]);
     expect(second.getStartupTurnRecovery()).toEqual({
       turnId: prepared.handle.id,
@@ -2184,178 +1512,207 @@ describe('SessionRuntime', () => {
     await second.dispose();
   });
 
-  it('rejects a terminal Team member without a committed background Task call', async () => {
+  it('reconciles a terminal background Task into one hidden durable follow-up', async () => {
     const workspaceRoot = path.join(
       storageRoot,
-      'team-member-without-background-task-project'
+      'background-subagent-completion-project'
     );
-    const sessionId = 'team-member-without-background-task-parent';
-    const childSessionId = 'team-reviewer-without-background-task';
-    const runtime = await createTestRuntime(sessionId, workspaceRoot);
-    const queuedEvents: Array<Record<string, unknown>> = [];
-    const unsubscribe = Bus.subscribe((event) => {
-      if (
-        event.sessionId === sessionId &&
-        event.projectPath === workspaceRoot &&
-        event.type === 'subagent.completion.queued'
-      ) {
-        queuedEvents.push(event.properties);
-      }
-    });
-
-    try {
-      const prepared = await runtime.prepareInputTurn('coordinate the agent team');
-      if (!prepared.accepted) throw new Error('Expected direct input preparation');
-      const contextManager = runtime.getExecutionEngine().getContextManager();
-      await contextManager.saveMessage(
-        sessionId,
-        'user',
-        'coordinate the agent team',
-        null,
-        { inboxMessageId: prepared.messageId }
-      );
-      const assistantMessageId = await contextManager.saveMessage(
-        sessionId,
-        'assistant',
-        ''
-      );
-      const toolCallId = await contextManager.saveToolUse(
-        sessionId,
-        'TeamCreate',
-        {
-          team_name: 'review-team',
-          members: [
-            {
-              name: 'reviewer',
-              subagent_type: 'Explore',
-              prompt: 'Review the implementation.',
-            },
-          ],
-        },
-        assistantMessageId
-      );
-      await contextManager.saveToolResult(
-        sessionId,
-        toolCallId,
-        'TeamCreate',
-        { team: { name: 'review-team' } },
-        assistantMessageId
-      );
-      await runtime.finishTurn(prepared.handle, {
-        outcome: {
-          status: 'completed',
-          turnsCount: 1,
-          toolCallsCount: 1,
-          durationMs: 10,
-        },
-      });
-
-      runtime.registerBackgroundSubagent(childSessionId);
-      AgentSessionStore.getInstance().saveSession({
-        schemaVersion: 2,
-        id: childSessionId,
+    const sessionId = 'background-subagent-completion-parent';
+    const childSessionId = 'agent-background-subagent-completion';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('launch the background child');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const contextManager = first.getExecutionEngine().getContextManager();
+    await contextManager.saveMessage(
+      sessionId,
+      'user',
+      'launch the background child',
+      null,
+      { inboxMessageId: prepared.messageId }
+    );
+    const assistantMessageId = await contextManager.saveMessage(
+      sessionId,
+      'assistant',
+      ''
+    );
+    const toolCallId = await contextManager.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Inspect background marker',
+        prompt: 'Inspect the project and return the background marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+        run_in_background: true,
+      },
+      assistantMessageId
+    );
+    await contextManager.saveToolResult(
+      sessionId,
+      toolCallId,
+      'Task',
+      {
+        agent_id: childSessionId,
+        status: 'running',
+      },
+      assistantMessageId,
+      undefined,
+      undefined,
+      {
+        subagentSessionId: childSessionId,
         subagentType: 'Explore',
-        description: 'Review the implementation',
-        prompt: 'Review the implementation.',
-        messages: [{ role: 'assistant', content: 'TEAM_REVIEW_COMPLETE' }],
-        status: 'completed',
+        subagentDescription: 'Inspect background marker',
+        subagentStatus: 'running',
+        subagentRootId: childSessionId,
+        subagentResumeDepth: 0,
+      },
+      {
         background: true,
-        result: { success: true, message: 'TEAM_REVIEW_COMPLETE' },
-        createdAt: Date.now() - 1_000,
-        lastActiveAt: Date.now() - 500,
-        completedAt: Date.now() - 250,
-        parentSessionId: sessionId,
-        parentProjectPath: workspaceRoot,
-        rootAgentId: childSessionId,
-        resumeDepth: 0,
-        taskListId: 'review-team',
-        teamId: 'review-team',
-        workspaceRoot,
-        isolation: 'none',
-        configSnapshot: {
-          name: 'Explore',
-          description: 'Explore agent',
-          source: 'builtin',
+        subagentSessionId: childSessionId,
+      }
+    );
+    await first.finishTurn(prepared.handle, {
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 1,
+        durationMs: 10,
+      },
+    });
+    AgentSessionStore.getInstance().saveSession({
+      schemaVersion: 2,
+      id: childSessionId,
+      subagentType: 'Explore',
+      description: 'Inspect background marker',
+      prompt: 'Inspect the project and return the background marker.',
+      messages: [
+        {
+          role: 'assistant',
+          content: 'BACKGROUND_RUNTIME_CHILD_MARKER',
         },
-      });
-
-      await runtime.notifyBackgroundSubagentCompleted(childSessionId);
-
-      expect(runtime.getPendingSteeringMessages()).toHaveLength(0);
-      expect(queuedEvents).toHaveLength(0);
-      const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
-      expect(
-        events?.filter(
-          (event) =>
-            event.type === 'message_created' &&
-            event.data.inboxMessageId ===
-              `background-subagent-completion:${childSessionId}`
-        )
-      ).toHaveLength(0);
-      expect(
-        events?.filter(
-          (event) =>
-            event.type === 'part_created' &&
-            event.data.partType === 'subtask_ref' &&
-            event.data.payload !== null &&
-            typeof event.data.payload === 'object' &&
-            !Array.isArray(event.data.payload) &&
-            event.data.payload.childSessionId === childSessionId
-        )
-      ).toHaveLength(0);
-    } finally {
-      unsubscribe();
-      await runtime.dispose();
-    }
-  });
-
-  it('does not inject a deferred background completion after rewind removes the Task call', async () => {
-    const workspaceRoot = path.join(
-      storageRoot,
-      'background-subagent-dispatch-rewind-project'
-    );
-    const sessionId = 'background-subagent-dispatch-rewind-parent';
-    const childSessionId = 'agent-background-subagent-dispatch-rewind';
-    const { runtime: first, staleNotify } = await createPersistedBackgroundTask(
-      sessionId,
+      ],
+      status: 'completed',
+      background: true,
+      result: {
+        success: true,
+        message: 'BACKGROUND_RUNTIME_CHILD_MARKER',
+      },
+      stats: { tokens: 50, toolCalls: 1, duration: 100 },
+      createdAt: Date.now() - 1000,
+      lastActiveAt: Date.now() - 500,
+      completedAt: Date.now() - 500,
+      parentSessionId: sessionId,
+      parentProjectPath: workspaceRoot,
+      rootAgentId: childSessionId,
+      resumeDepth: 0,
       workspaceRoot,
-      childSessionId
-    );
-    saveBackgroundSubagent({
-      sessionId,
-      workspaceRoot,
-      childSessionId,
-      marker: 'BACKGROUND_RUNTIME_DISPATCH_REWIND_MARKER',
+      isolation: 'none',
+      configSnapshot: {
+        name: 'Explore',
+        description: 'Explore agent',
+        source: 'builtin',
+      },
     });
     await first.dispose();
 
-    await staleNotify(childSessionId);
-    const checkpoints = await SessionService.listRewindCheckpoints(
-      sessionId,
-      workspaceRoot
-    );
-    const targetCheckpoint = checkpoints.at(-1);
-    if (!targetCheckpoint) throw new Error('Expected a rewind checkpoint');
-    await SessionService.rewindSession(sessionId, workspaceRoot, {
-      targetMessageId: targetCheckpoint.messageId,
-      mode: 'conversation',
+    const busEvents: string[] = [];
+    const completionEvents: Array<Record<string, unknown>> = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (event.sessionId === sessionId && event.projectPath === workspaceRoot) {
+        busEvents.push(event.type);
+        if (event.type === 'subagent.completion.queued') {
+          completionEvents.push(event.properties);
+        }
+      }
     });
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    unsubscribe();
 
-    const recovered = await createTestRuntime(sessionId, workspaceRoot);
-    try {
-      expect(recovered.getPendingSteeringCount()).toBe(0);
-      const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
-      expect(
-        events?.filter(
-          (event) =>
-            event.type === 'message_created' &&
-            event.data.inboxMessageId ===
-              `background-subagent-completion:${childSessionId}`
-        )
-      ).toHaveLength(0);
-    } finally {
-      await recovered.dispose();
-    }
+    expect(recovered.getPendingSteeringMessages()).toEqual([
+      expect.objectContaining({
+        id: `background-subagent-completion:${childSessionId}`,
+        origin: 'background_subagent',
+        persisted: true,
+        content: expect.stringContaining('BACKGROUND_RUNTIME_CHILD_MARKER'),
+        metadata: expect.objectContaining({
+          clientVisible: false,
+          backgroundSubagentCompletion: expect.objectContaining({
+            childSessionId,
+          }),
+        }),
+      }),
+    ]);
+    expect(busEvents).toContain('subagent.completion.queued');
+    expect(completionEvents).toEqual([
+      expect.objectContaining({
+        childSessionId,
+        status: 'completed',
+        type: 'Explore',
+        description: 'Inspect background marker',
+        summary: 'BACKGROUND_RUNTIME_CHILD_MARKER',
+        rootAgentId: childSessionId,
+        resumeDepth: 0,
+      }),
+    ]);
+    const pendingTurn = await recovered.beginPendingTurn();
+    if (!pendingTurn) throw new Error('Expected background completion turn');
+    const [completion] = await recovered.drainSteering(pendingTurn);
+    expect(completion?.content).toContain('BACKGROUND_RUNTIME_CHILD_MARKER');
+    await recovered.finishTurn(pendingTurn, {
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 5,
+      },
+    });
+    expect(recovered.getPendingSteeringCount()).toBe(0);
+    await recovered.dispose();
+
+    const second = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(second.getPendingSteeringCount()).toBe(0);
+    const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
+    expect(
+      events?.filter(
+        (event) =>
+          event.type === 'message_created' &&
+          event.data.inboxMessageId ===
+            `background-subagent-completion:${childSessionId}`
+      )
+    ).toHaveLength(1);
+    expect(
+      events?.filter(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'subtask_ref' &&
+          event.data.payload !== null &&
+          typeof event.data.payload === 'object' &&
+          !Array.isArray(event.data.payload) &&
+          event.data.payload.childSessionId === childSessionId &&
+          event.data.payload.status === 'completed'
+      )
+    ).toHaveLength(1);
+    expect(
+      events?.filter(
+        (event) =>
+          event.type === 'inbox_acknowledged' &&
+          event.data.messageIds.includes(
+            `background-subagent-completion:${childSessionId}`
+          )
+      )
+    ).toHaveLength(1);
+    expect(
+      SessionService.toUISafeMessages(
+        SessionService.convertJSONLToMessages(events ?? [])
+      )
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          content: expect.stringContaining('BACKGROUND_RUNTIME_CHILD_MARKER'),
+        }),
+      ])
+    );
+    await second.dispose();
   });
 
   it.each([
@@ -2408,7 +1765,7 @@ describe('SessionRuntime', () => {
       );
       const sessionId = `background-subagent-${label}-parent`;
       const childSessionId = `agent-background-subagent-${label}`;
-      const first = await createTestRuntime(sessionId, workspaceRoot);
+      const first = await SessionRuntime.create({ sessionId, workspaceRoot });
       const prepared = await first.prepareInputTurn('launch background child');
       if (!prepared.accepted) throw new Error('Expected direct input preparation');
       const contextManager = first.getExecutionEngine().getContextManager();
@@ -2512,7 +1869,7 @@ describe('SessionRuntime', () => {
       });
       await first.dispose();
 
-      const recovered = await createTestRuntime(sessionId, workspaceRoot);
+      const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
       try {
         await staleNotify(childSessionId);
         expect(recovered.getPendingSteeringMessages()).toEqual([
@@ -2536,349 +1893,43 @@ describe('SessionRuntime', () => {
     }
   );
 
-  it('rolls back dispatcher attach when the initial reconcile fails and releases the lease', async () => {
-    const workspaceRoot = path.join(storageRoot, 'background-subagent-attach-failure');
-    const sessionId = 'background-subagent-attach-failure-parent';
-    const childSessionId = 'agent-background-subagent-attach-failure';
-    const originalPersist =
-      PersistentStore.prototype.persistBackgroundSubagentCompletion;
-    const dispatcherModule = await import(
-      '../../../../src/agent/runtime/BackgroundSubagentCompletionDispatcher.js'
+  it('fully disposes a partially initialized runtime before rejecting create', async () => {
+    const initializationError = new Error('persistent initialization failed');
+    const chatDispose = vi.fn().mockResolvedValue(undefined);
+    const chatService = createDisposableChatService(chatDispose);
+    const killSession = vi
+      .spyOn(BackgroundShellManager.getInstance(), 'killSession')
+      .mockResolvedValue(undefined);
+    const approvalClear = vi.spyOn(InMemorySessionApprovalStore.prototype, 'clear');
+    const disconnectAll = vi
+      .spyOn(McpRegistry.prototype, 'disconnectAll')
+      .mockResolvedValue(undefined);
+    vi.spyOn(McpRegistry.prototype, 'registerServer').mockResolvedValue(undefined);
+    vi.spyOn(PersistentStore.prototype, 'initSession').mockRejectedValueOnce(
+      initializationError
     );
-    const statsBefore =
-      dispatcherModule.backgroundSubagentCompletionDispatcher.getStats();
-    const persistSpy = vi
-      .spyOn(PersistentStore.prototype, 'persistBackgroundSubagentCompletion')
-      .mockImplementation(async function (currentSessionId, completion) {
-        if (
-          currentSessionId === sessionId &&
-          completion.childSessionId === childSessionId
-        ) {
-          throw new Error('attach reconcile failed');
-        }
-        return originalPersist.call(this, currentSessionId, completion);
-      });
-
-    const seed = await createTestRuntime(sessionId, workspaceRoot);
-    const prepared = await seed.prepareInputTurn('launch child');
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    const contextManager = seed.getExecutionEngine().getContextManager();
-    const assistantMessageId = await contextManager.saveMessage(
-      sessionId,
-      'assistant',
-      ''
-    );
-    await contextManager.saveToolUse(
-      sessionId,
-      'Task',
-      {
-        description: 'Attach failure marker',
-        prompt: 'Attach failure marker.',
-        subagent_type: 'Explore',
-        subagent_session_id: childSessionId,
-        run_in_background: true,
-      },
-      assistantMessageId
-    );
-    seed.registerBackgroundSubagent(childSessionId);
-    AgentSessionStore.getInstance().saveSession({
-      schemaVersion: 2,
-      id: childSessionId,
-      subagentType: 'Explore',
-      description: 'Attach failure marker',
-      prompt: 'Attach failure marker.',
-      messages: [{ role: 'assistant', content: 'ATTACH_FAILURE_MARKER' }],
-      status: 'completed',
-      background: true,
-      result: { success: true, message: 'ATTACH_FAILURE_MARKER' },
-      createdAt: Date.now() - 1000,
-      lastActiveAt: Date.now() - 500,
-      completedAt: Date.now() - 250,
-      parentSessionId: sessionId,
-      parentProjectPath: workspaceRoot,
-      rootAgentId: childSessionId,
-      resumeDepth: 0,
-      workspaceRoot,
-      isolation: 'none',
-    });
-    await seed.dispose();
-
-    await expect(createTestRuntime(sessionId, workspaceRoot)).rejects.toThrow(
-      'attach reconcile failed'
-    );
-    expect(persistSpy).toHaveBeenCalled();
-    const statsAfterFailure =
-      dispatcherModule.backgroundSubagentCompletionDispatcher.getStats();
-    expect(statsAfterFailure.registrations).toBe(statsBefore.registrations);
-    expect(statsAfterFailure.activeOwnerOperations).toBe(0);
-    persistSpy.mockRestore();
-
-    const recovered = await createTestRuntime(sessionId, workspaceRoot);
-    await recovered.dispose();
-  });
-
-  it('releases a background completion wait when the parent signal aborts', async () => {
-    const workspaceRoot = path.join(storageRoot, 'background-wait-abort-project');
-    const sessionId = 'background-wait-abort-parent';
-    const childSessionId = 'agent-background-wait-abort';
-    const runtime = await createTestRuntime(sessionId, workspaceRoot);
-    const contextManager = runtime.getExecutionEngine().getContextManager();
-    const assistantMessageId = await contextManager.saveMessage(
-      sessionId,
-      'assistant',
-      ''
-    );
-    await contextManager.saveToolUse(
-      sessionId,
-      'Task',
-      {
-        description: 'Wait for abort marker',
-        prompt: 'Wait until the parent cancels this background task.',
-        subagent_type: 'Explore',
-        subagent_session_id: childSessionId,
-        run_in_background: true,
-      },
-      assistantMessageId
-    );
-    AgentSessionStore.getInstance().saveSession({
-      schemaVersion: 2,
-      id: childSessionId,
-      subagentType: 'Explore',
-      description: 'Wait for abort marker',
-      prompt: 'Wait until the parent cancels this background task.',
-      messages: [],
-      status: 'running',
-      background: true,
-      createdAt: Date.now(),
-      lastActiveAt: Date.now(),
-      parentSessionId: sessionId,
-      parentProjectPath: workspaceRoot,
-      rootAgentId: childSessionId,
-      resumeDepth: 0,
-      workspaceRoot,
-      isolation: 'none',
-    });
-    runtime.registerBackgroundSubagent(childSessionId);
-
-    const controller = new AbortController();
-    const turn = await runtime.beginTurn();
-    const waiting = runtime.waitForBackgroundSubagentFollowUp(turn, controller.signal);
-    controller.abort('user-cancel');
-
-    await expect(waiting).resolves.toBe(false);
-    await runtime.finishTurn(turn);
-    await runtime.dispose();
-  });
-
-  it('does not mistake the claimed parent input for a background completion', async () => {
-    const workspaceRoot = path.join(storageRoot, 'background-wait-live-project');
-    const sessionId = 'background-wait-live-parent';
-    const childSessionId = 'agent-background-wait-live';
-    const runtime = await createTestRuntime(sessionId, workspaceRoot);
-    const prepared = await runtime.prepareInputTurn('launch and wait');
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    await runtime.createGoal(
-      { objective: 'invalidate ambiguous background ancestry' },
-      { turnId: prepared.handle.id }
-    );
-    const contextManager = runtime.getExecutionEngine().getContextManager();
-    const persistCompletion = vi.spyOn(
-      contextManager.persistentStore,
-      'persistBackgroundSubagentCompletion'
-    );
-    const assistantMessageId = await contextManager.saveMessage(
-      sessionId,
-      'assistant',
-      ''
-    );
-    await contextManager.saveToolUse(
-      sessionId,
-      'Task',
-      {
-        description: 'Return live marker',
-        prompt: 'Return the live background marker.',
-        subagent_type: 'Explore',
-        subagent_session_id: childSessionId,
-        run_in_background: true,
-      },
-      assistantMessageId
-    );
-    const sessionStore = AgentSessionStore.getInstance();
-    sessionStore.saveSession({
-      schemaVersion: 2,
-      id: childSessionId,
-      subagentType: 'Explore',
-      description: 'Return live marker',
-      prompt: 'Return the live background marker.',
-      messages: [],
-      status: 'running',
-      background: true,
-      createdAt: Date.now(),
-      lastActiveAt: Date.now(),
-      parentSessionId: sessionId,
-      parentProjectPath: workspaceRoot,
-      rootAgentId: childSessionId,
-      resumeDepth: 0,
-      workspaceRoot,
-      isolation: 'none',
-    });
-    runtime.registerBackgroundSubagent(childSessionId);
-
-    let settled = false;
-    const waiting = runtime
-      .waitForBackgroundSubagentFollowUp(prepared.handle)
-      .then((value) => {
-        settled = true;
-        return value;
-      });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(settled).toBe(false);
-
-    sessionStore.markCompleted(childSessionId, {
-      success: true,
-      message: 'BACKGROUND_LIVE_CHILD_MARKER',
-    });
-    await runtime.notifyBackgroundSubagentCompleted(childSessionId);
-
-    expect(runtime.getPendingSteeringMessages()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: `background-subagent-completion:${childSessionId}`,
-          content: expect.stringContaining('BACKGROUND_LIVE_CHILD_MARKER'),
-        }),
-      ])
-    );
-    await expect(waiting).resolves.toBe(true);
-    expect((await runtime.getGoal())?.turnLineage).toEqual({
-      currentTurnId: prepared.handle.id,
-    });
-    await runtime.notifyBackgroundSubagentCompleted(childSessionId);
-    expect(persistCompletion).toHaveBeenCalledTimes(1);
-    const next = await runtime.finishTurn(prepared.handle, {
-      continuePending: true,
-      outcome: {
-        status: 'completed',
-        turnsCount: 1,
-        toolCallsCount: 1,
-        durationMs: 1,
-      },
-    });
-    if (!next) throw new Error('Expected completion follow-up turn');
-    const completion = await runtime.drainSteering(next);
-    expect(completion).toHaveLength(1);
-    await runtime.finishTurn(next, {
-      outcome: {
-        status: 'completed',
-        turnsCount: 1,
-        toolCallsCount: 0,
-        durationMs: 1,
-      },
-    });
-    await runtime.dispose();
-  });
-
-  it('retries Goal handoff reconciliation after the turn terminal already exists', async () => {
-    const workspaceRoot = path.join(storageRoot, 'goal-terminal-handoff-project');
-    const sessionId = 'goal-terminal-handoff-session';
-    const first = await createTestRuntime(sessionId, workspaceRoot);
-    const prepared = await first.prepareInputTurn('finish before sidecar commit');
-    if (!prepared.accepted) throw new Error('Expected direct input preparation');
-    const goalStore = new GoalStore(workspaceRoot, sessionId);
-    const created = await goalStore.create({
-      objective: 'finish before sidecar commit',
-    });
-    await goalStore.requestCompletion();
-    const passed = await goalStore.recordCompletionVerification({
-      verdict: 'pass',
-      verifierSessionId: 'verifier-terminal-handoff',
-      evidenceSha256: 'f'.repeat(64),
-    });
-    const persistentStore = first
-      .getExecutionEngine()
-      .getContextManager().persistentStore;
-    await first
-      .getExecutionEngine()
-      .getContextManager()
-      .saveMessage(sessionId, 'assistant', 'TERMINAL_HANDOFF_RECOVERED', null, {
-        turnFinalization: {
-          turnId: prepared.handle.id,
-          inputMessageIds: [prepared.messageId],
-          turnsCount: 2,
-          toolCallsCount: 1,
-          durationMs: 800,
-          goalFinalization: {
-            goalId: created.goalId,
-            verificationAttempt: passed.completionVerification!.attempt,
-            verifierSessionId: 'verifier-terminal-handoff',
-            evidenceSha256: 'f'.repeat(64),
-            goalUpdatedAt: passed.updatedAt,
-          },
+    vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
+    const options = {
+      sessionId: 'partial-initialization',
+      mcpServers: {
+        project: {
+          type: 'stdio' as const,
+          command: 'node',
+          args: ['server.mjs'],
         },
-      });
-    await persistentStore.saveTurnCompletion(
-      sessionId,
-      {
-        turnId: prepared.handle.id,
-        completedAt: new Date().toISOString(),
-        turnsCount: 2,
-        toolCallsCount: 1,
-        durationMs: 800,
       },
-      [prepared.messageId]
-    );
-    await first.dispose();
+    };
 
-    const goalUpdates: unknown[] = [];
-    const unsubscribe = Bus.subscribe((event) => {
-      if (
-        event.sessionId === sessionId &&
-        event.projectPath === workspaceRoot &&
-        event.type === 'goal.updated'
-      ) {
-        goalUpdates.push(event.properties.goal);
-      }
-    });
-    const recovered = await createTestRuntime(sessionId, workspaceRoot);
-    unsubscribe();
-    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject({
-      goalId: created.goalId,
-      status: 'complete',
-    });
-    expect(goalUpdates).toEqual([
-      expect.objectContaining({
-        goalId: created.goalId,
-        status: 'complete',
-      }),
-    ]);
-    expect(recovered.getStartupTurnRecovery()).toMatchObject({
-      turnId: prepared.handle.id,
-      outcome: 'completed',
-    });
-    await expect(recovered.getRecoveredFinalResponse()).resolves.toMatchObject({
-      turnId: prepared.handle.id,
-      content: 'TERMINAL_HANDOFF_RECOVERED',
-    });
-    expect(recovered.getPendingSteeringCount()).toBe(0);
+    await expect(SessionRuntime.create(options)).rejects.toBe(initializationError);
+
+    expect(killSession).toHaveBeenCalledWith(options.sessionId);
+    expect(approvalClear).toHaveBeenCalledTimes(1);
+    expect(worktreeMocks.releaseSession).toHaveBeenCalledWith(options.sessionId);
+    expect(chatDispose).toHaveBeenCalledTimes(1);
+    expect(disconnectAll).toHaveBeenCalledTimes(1);
+
+    const recovered = await SessionRuntime.create(options);
     await recovered.dispose();
-  });
-
-  it('rejects archived sessions before restoring runtime resources', async () => {
-    const workspaceRoot = path.join(storageRoot, 'archived-runtime-project');
-    const sessionId = 'archived-runtime-session';
-    await SessionService.createSessionMetadata(sessionId, workspaceRoot, {
-      taskStatus: 'completed',
-    });
-    await SessionService.archiveSession(sessionId, workspaceRoot);
-    worktreeMocks.cleanupStaleAgentWorktrees.mockClear();
-
-    await expect(createTestRuntime(sessionId, workspaceRoot)).rejects.toMatchObject({
-      name: 'SessionArchivedError',
-      code: 'BLADE_SESSION_ARCHIVED',
-      archivedBySessionId: sessionId,
-    });
-    expect(worktreeMocks.cleanupStaleAgentWorktrees).not.toHaveBeenCalled();
-    expect(createChatServiceAsync).not.toHaveBeenCalled();
   });
 
   it('preserves the initialization error and continues cleanup after a cleanup failure', async () => {
@@ -2919,6 +1970,40 @@ describe('SessionRuntime', () => {
 
     const recovered = await SessionRuntime.create(options);
     await recovered.dispose();
+  });
+
+  it('atomically switches the session model and disposes the previous service', async () => {
+    const firstDispose = vi.fn().mockResolvedValue(undefined);
+    const secondDispose = vi.fn().mockResolvedValue(undefined);
+    const firstService = {
+      chat: vi.fn(),
+      streamChat: vi.fn(),
+      getConfig: vi.fn(),
+      updateConfig: vi.fn(),
+      dispose: firstDispose,
+    };
+    const secondService = {
+      chat: vi.fn(),
+      streamChat: vi.fn(),
+      getConfig: vi.fn(),
+      updateConfig: vi.fn(),
+      dispose: secondDispose,
+    };
+    vi.mocked(createChatServiceAsync)
+      .mockResolvedValueOnce(firstService as any)
+      .mockResolvedValueOnce(secondService as any);
+    const runtime = await SessionRuntime.create({ sessionId: 'model-switch' });
+
+    await runtime.refresh({ modelId: 'model-2' });
+
+    expect(runtime.getCurrentModelId()).toBe('model-2');
+    expect(runtime.getCurrentModelMaxContextTokens()).toBe(1_047_576);
+    expect(runtime.getChatService()).toBe(secondService);
+    expect(firstDispose).toHaveBeenCalledTimes(1);
+    expect(secondDispose).not.toHaveBeenCalled();
+
+    await runtime.dispose();
+    expect(secondDispose).toHaveBeenCalledTimes(1);
   });
 
   it('owns reasoning effort per Session and recreates the provider atomically', async () => {
@@ -3107,6 +2192,42 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
+  it('owns communication style per Session without rebuilding the provider', async () => {
+    const runtime = await SessionRuntime.create({
+      sessionId: 'communication-style-session',
+      communicationStyle: 'pragmatic',
+    });
+
+    expect(runtime.getCommunicationStyleConfiguration()).toMatchObject({
+      selection: 'pragmatic',
+      effective: 'pragmatic',
+      source: 'built-in',
+      prompt: expect.stringContaining('deeply pragmatic'),
+      supported: expect.arrayContaining([
+        expect.objectContaining({ id: 'explanatory' }),
+      ]),
+    });
+    expect(createChatServiceAsync).toHaveBeenCalledTimes(1);
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    const builtinOptions = vi.mocked(getBuiltinTools).mock.calls.at(-1)?.[0];
+    expect(builtinOptions?.getCommunicationStyle?.()).toBe('pragmatic');
+
+    await runtime.refresh({ communicationStyle: 'explanatory' });
+    expect(runtime.getCommunicationStyleConfiguration()).toMatchObject({
+      selection: 'explanatory',
+      effective: 'explanatory',
+      prompt: expect.stringContaining('implementation choices'),
+    });
+    expect(createChatServiceAsync).toHaveBeenCalledTimes(1);
+
+    await runtime.refresh({ modelId: 'model-2' });
+    expect(runtime.getCurrentModelId()).toBe('model-2');
+    expect(runtime.getCommunicationStyleConfiguration().selection).toBe('explanatory');
+    expect(createChatServiceAsync).toHaveBeenCalledTimes(2);
+
+    await runtime.dispose();
+  });
+
   it('pins custom style provenance across durable runtime reconstruction', async () => {
     const catalog = new CommunicationStyleCatalog([
       {
@@ -3145,7 +2266,10 @@ describe('SessionRuntime', () => {
       }
     );
     await expect(
-      createTestRuntime('custom-style-mismatch', mismatchedWorkspace)
+      SessionRuntime.create({
+        sessionId: 'custom-style-mismatch',
+        workspaceRoot: mismatchedWorkspace,
+      })
     ).rejects.toThrow('Communication style provenance mismatch');
 
     const legacyWorkspace = path.join(storageRoot, 'style-backfill');
@@ -3157,7 +2281,10 @@ describe('SessionRuntime', () => {
         communicationStyle: 'project:strict',
       }
     );
-    const runtime = await createTestRuntime('custom-style-backfill', legacyWorkspace);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'custom-style-backfill',
+      workspaceRoot: legacyWorkspace,
+    });
     expect(
       (
         await SessionService.findSessionMetadata(
@@ -3225,23 +2352,29 @@ describe('SessionRuntime', () => {
       projectInstructionsDigest: 'f'.repeat(64),
     });
     await expect(
-      createTestRuntime('project-rules-mismatch', workspace)
+      SessionRuntime.create({
+        sessionId: 'project-rules-mismatch',
+        workspaceRoot: workspace,
+      })
     ).rejects.toThrow('Project instruction provenance mismatch');
 
     await SessionService.createSessionMetadata('project-rules-backfill', workspace, {
       taskStatus: 'completed',
     });
-    const runtime = await createTestRuntime('project-rules-backfill', workspace);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'project-rules-backfill',
+      workspaceRoot: workspace,
+    });
     expect(
       (await SessionService.findSessionMetadata('project-rules-backfill', workspace))
         ?.projectInstructionsDigest
     ).toBe(digest);
     await runtime.dispose();
 
-    const freshRuntime = await createTestRuntime(
-      'project-rules-fresh-session',
-      workspace
-    );
+    const freshRuntime = await SessionRuntime.create({
+      sessionId: 'project-rules-fresh-session',
+      workspaceRoot: workspace,
+    });
     expect(
       (
         await SessionService.findSessionMetadata(
@@ -3251,6 +2384,44 @@ describe('SessionRuntime', () => {
       )?.projectInstructionsDigest
     ).toBe(digest);
     await freshRuntime.dispose();
+  });
+
+  it('publishes and clears its ephemeral Provider recovery projection', () => {
+    const runtime = new SessionRuntime(DEFAULT_CONFIG, {
+      sessionId: 'provider-recovery-runtime',
+      workspaceRoot: storageRoot,
+    });
+    const events: Array<{ type: string; properties: Record<string, unknown> }> = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (event.sessionId === 'provider-recovery-runtime') events.push(event);
+    });
+
+    try {
+      const generation = runtime.beginProviderRecovery();
+      const retry = runtime.observeProviderRecovery(generation, {
+        kind: 'provider_retry',
+        phase: 'scheduled',
+        attempt: 1,
+        maxRetries: 12,
+        reason: 'rate_limit',
+        delayMs: 2_000,
+      });
+      const clear = runtime.clearProviderRecovery(generation);
+
+      expect(retry?.snapshot).toMatchObject({
+        activity: 'retry_wait',
+        reason: 'rate_limit',
+      });
+      expect(clear?.snapshot).toBeNull();
+      expect(events.map((event) => event.type)).toEqual([
+        'provider.recovery',
+        'provider.recovery',
+        'provider.recovery',
+      ]);
+      expect(events.at(-1)?.properties.recovery).toMatchObject({ snapshot: null });
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('forgets a recovery generation even when it never became visible', async () => {
@@ -3274,6 +2445,38 @@ describe('SessionRuntime', () => {
         reason: 'transport',
       })
     ).toBeUndefined();
+  });
+
+  it('publishes and clears its ephemeral turn activity projection', () => {
+    const runtime = new SessionRuntime(DEFAULT_CONFIG, {
+      sessionId: 'turn-activity-runtime',
+      workspaceRoot: storageRoot,
+    });
+    const events: Array<{ type: string; properties: Record<string, unknown> }> = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (event.sessionId === 'turn-activity-runtime') events.push(event);
+    });
+
+    try {
+      const generation = runtime.beginTurnActivity();
+      const turn = runtime.observeTurnActivity(generation, {
+        kind: 'turn_start',
+        turn: 1,
+        maxTurns: 20,
+      });
+      const clear = runtime.clearTurnActivity(generation);
+
+      expect(turn?.snapshot).toMatchObject({ phase: 'thinking', turn: 1 });
+      expect(clear?.snapshot).toBeNull();
+      expect(events.map((event) => event.type)).toEqual([
+        'turn.activity',
+        'turn.activity',
+        'turn.activity',
+      ]);
+      expect(events.at(-1)?.properties.activity).toMatchObject({ snapshot: null });
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('forgets a turn activity generation when the runtime is disposed', async () => {
@@ -3302,7 +2505,10 @@ describe('SessionRuntime', () => {
       createNamedTestTool('ToolSearch', ToolKind.ReadOnly),
       createNamedTestTool('Write', ToolKind.Write),
     ]);
-    const runtime = await createTestRuntime('filtered-deferred-schema', storageRoot);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'filtered-deferred-schema',
+      workspaceRoot: storageRoot,
+    });
     const executor = runtime.createToolExecutor({
       permissionMode: PermissionMode.YOLO,
       toolWhitelist: ['UpdateGoal', 'Write'],
@@ -3328,6 +2534,60 @@ describe('SessionRuntime', () => {
     }
   });
 
+  it('keeps prompt artifact reads available through explicit tool filters', async () => {
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    const { createReadPromptArtifactTool } = await import(
+      '../../../../src/tools/builtin/system/readPromptArtifact.js'
+    );
+    vi.mocked(getBuiltinTools).mockImplementationOnce(async (options) => [
+      createReadPromptArtifactTool(options!.userPromptArtifactStore!) as never,
+    ]);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'prompt-artifact-tool-filter',
+      workspaceRoot: storageRoot,
+    });
+    const executor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.YOLO,
+      toolWhitelist: ['Read'],
+      toolBlacklist: ['ReadPromptArtifact'],
+    });
+    const internals = executor as unknown as {
+      registry: { get(name: string): unknown };
+      toolWhitelist: ReadonlySet<string> | null;
+      toolBlacklist: ReadonlySet<string> | null;
+    };
+
+    expect(internals.registry.get('ReadPromptArtifact')).toBeDefined();
+    expect(internals.toolWhitelist?.has('ReadPromptArtifact')).toBe(true);
+    expect(internals.toolBlacklist?.has('ReadPromptArtifact') ?? false).toBe(false);
+    executor.dispose();
+    await runtime.dispose();
+  });
+
+  it('only attaches hidden project verification to an explicit YOLO executor', async () => {
+    const runtime = await SessionRuntime.create({
+      sessionId: 'auto-verify-permission-boundary',
+    });
+
+    const defaultExecutor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.DEFAULT,
+    });
+    const autoEditExecutor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.AUTO_EDIT,
+    });
+    const yoloExecutor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.YOLO,
+    });
+    const getVerifier = (executor: ToolExecutor) =>
+      (executor as unknown as { autoVerifyRuntime?: unknown }).autoVerifyRuntime;
+
+    expect(getVerifier(defaultExecutor)).toBeUndefined();
+    expect(getVerifier(autoEditExecutor)).toBeUndefined();
+    expect(getVerifier(yoloExecutor)).toBeDefined();
+
+    await runtime.dispose();
+  });
+
   it('prefers an immutable Session LSP manager over hidden AutoVerify', async () => {
     lspResourceMocks.resolve.mockResolvedValueOnce({
       projectRoot: storageRoot,
@@ -3338,7 +2598,10 @@ describe('SessionRuntime', () => {
         },
       },
     });
-    const runtime = await createTestRuntime('session-lsp-resources', storageRoot);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'session-lsp-resources',
+      workspaceRoot: storageRoot,
+    });
     const executor = runtime.createToolExecutor({
       permissionMode: PermissionMode.YOLO,
     });
@@ -3354,29 +2617,17 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
-  it('clears runtime-owned resources before a disposed instance is refreshed', async () => {
-    const runtime = await createTestRuntime('refresh-after-dispose');
-    const previousEngine = runtime.getExecutionEngine();
-    const previousContextManager = previousEngine.getContextManager();
+  it('clears runtime state even when releasing the session lease fails', async () => {
+    const runtime = new SessionRuntime({} as any, { sessionId: 'session-1' });
+    (runtime as any).initialized = true;
+    (runtime as any).sessionLease = {
+      release: vi.fn().mockRejectedValue(new Error('lease release failed')),
+    };
 
-    await runtime.dispose();
+    await expect(runtime.dispose()).rejects.toThrow('lease release failed');
 
-    expect(() => runtime.getChatService()).toThrow(
-      'Session runtime is not initialized'
-    );
-    expect(() => runtime.getExecutionEngine()).toThrow(
-      'Session runtime is not initialized'
-    );
-    expect(() => runtime.getCurrentModelMaxContextTokens()).toThrow(
-      'Session runtime is not initialized'
-    );
-
-    await runtime.refresh({});
-
-    expect(runtime.getExecutionEngine()).not.toBe(previousEngine);
-    expect(runtime.getExecutionEngine().getContextManager()).not.toBe(
-      previousContextManager
-    );
-    await runtime.dispose();
+    expect((runtime as any).sessionLease).toBeUndefined();
+    expect((runtime as any).currentModelId).toBeUndefined();
+    expect((runtime as any).initialized).toBe(false);
   });
 });

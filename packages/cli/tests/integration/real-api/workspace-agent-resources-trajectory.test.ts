@@ -23,6 +23,7 @@ import { getSkillCreatorContent } from '../../../src/skills/builtin/skill-creato
 import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { getCwd, runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
 import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
@@ -346,6 +347,165 @@ describeBuiltin('bundled skill invocation without installation (real API)', () =
         if (originalConfig) getState().config.actions.setConfig(originalConfig);
         if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
         else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+        await rm(root, { recursive: true, force: true });
+      }
+    }, 180_000);
+  }
+});
+
+describeBuiltin('Skill lifetime on a reused Agent (real API)', () => {
+  for (const model of builtinModels) {
+    it(`${model.model} restores ordinary tools for the next user task`, async () => {
+      if (!model.baseURL) throw new Error('Missing provider URL');
+      const root = await mkdtemp(path.join(os.tmpdir(), 'blade-skill-lifetime-'));
+      const workspace = path.join(root, 'workspace');
+      const userSkillsDir = path.join(root, 'skills');
+      const previousConfig = getState().config.config;
+      const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+      const originalCwd = getCwd();
+      const proxy = await startRecordingProviderProxy(model.baseURL);
+      let runtime: SessionRuntime | undefined;
+      let agent: Agent | undefined;
+      try {
+        await mkdir(workspace);
+        await writeFixture(
+          userSkillsDir,
+          'only-read/SKILL.md',
+          [
+            '---',
+            'name: only-read',
+            'description: Read the requested fixture once',
+            'allowed-tools:',
+            '  - Read',
+            '---',
+            'Read proof.txt exactly once, then reply with its exact contents. Do not call other tools.',
+          ].join('\n')
+        );
+        await writeFile(path.join(workspace, 'proof.txt'), 'SKILL_LIFETIME_READ_DONE');
+        process.env.BLADE_STORAGE_ROOT = path.join(root, 'storage');
+        setCwdState(workspace);
+        resetWorkspaceAgentResources();
+        SkillRegistry.resetInstance();
+        SkillRegistry.getInstance({
+          cwd: workspace,
+          userSkillsDir,
+          claudeUserSkillsDir: path.join(root, 'claude-skills'),
+          projectSkillsDir: path.join(workspace, '.blade', 'skills'),
+          claudeProjectSkillsDir: path.join(workspace, '.claude', 'skills'),
+        });
+        const config = buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseUrl });
+        getState().config.actions.setConfig({
+          ...config,
+          permissionMode: PermissionMode.YOLO,
+          hooks: { enabled: false },
+          disableAllHooks: true,
+          mcpServers: {},
+        });
+        runtime = await SessionRuntime.create({
+          sessionId: `skill-lifetime-${Date.now()}`,
+          workspaceRoot: workspace,
+        });
+        agent = await Agent.createWithRuntime(runtime, {
+          sessionId: runtime.sessionId,
+          toolWhitelist: ['Skill', 'Read', 'Bash'],
+          maxTurns: 3,
+        });
+        const context: ChatContext = {
+          messages: [],
+          userId: 'skill-lifetime-test',
+          sessionId: runtime.sessionId,
+          workspaceRoot: workspace,
+          permissionMode: PermissionMode.YOLO,
+        };
+        const firstEvents: LoopEvent[] = [];
+        const first = await drainLoop(
+          agent.chatStream(
+            'Call Skill with skill "only-read" and follow it to read proof.txt. Do not call other tools before loading the skill.',
+            context,
+            { stream: true }
+          ),
+          async (event) => {
+            firstEvents.push(event);
+            if (
+              event.kind === 'tool_result' &&
+              'function' in event.toolCall &&
+              event.toolCall.function.name === 'Skill' &&
+              event.result.success
+            ) {
+              if (!agent) throw new Error('Missing active Agent');
+              await expect(
+                drainLoop(
+                  agent.chatStream(
+                    'Concurrent input must not alter the current skill.',
+                    { ...context, messages: [...context.messages] },
+                    { stream: true }
+                  )
+                )
+              ).rejects.toThrow('Session already has an active turn');
+            }
+          }
+        );
+        expect(first.success).toBe(true);
+        expect(
+          firstEvents.flatMap((event) =>
+            event.kind === 'tool_result' && 'function' in event.toolCall
+              ? [event.toolCall.function.name]
+              : []
+          )
+        ).toEqual(['Skill', 'Read']);
+        const boundary = proxy.requestBodies.length;
+        const duringSkill: unknown = JSON.parse(proxy.requestBodies[1]);
+        expect(duringSkill).toMatchObject({
+          tools: [
+            expect.objectContaining({
+              function: expect.objectContaining({ name: 'Read' }),
+            }),
+            expect.objectContaining({
+              function: expect.objectContaining({ name: 'ReadPromptArtifact' }),
+            }),
+          ],
+        });
+        const second = await drainLoop(
+          agent.chatStream(
+            'The previous skill task is finished. This is a new ordinary task: reply exactly NEXT_TASK_READY without using any tools.',
+            context,
+            { stream: true }
+          )
+        );
+        expect(second.success).toBe(true);
+        const request: unknown = JSON.parse(proxy.requestBodies[boundary]);
+        if (
+          !request ||
+          typeof request !== 'object' ||
+          !('tools' in request) ||
+          !Array.isArray(request.tools)
+        ) {
+          throw new Error('Second task has no tool schemas');
+        }
+        const names = request.tools.flatMap((tool) => {
+          if (!tool || typeof tool !== 'object' || !('function' in tool)) return [];
+          const fn: unknown = tool.function;
+          return fn &&
+            typeof fn === 'object' &&
+            'name' in fn &&
+            typeof fn.name === 'string'
+            ? [fn.name]
+            : [];
+        });
+        expect(names).toContain('Bash');
+        expect(names).toContain('Skill');
+        expect(names).toContain('Read');
+        assertNoSecrets({ first, second, firstEvents }, [model.apiKey]);
+      } finally {
+        await agent?.destroy();
+        await runtime?.dispose();
+        await proxy.close();
+        resetWorkspaceAgentResources();
+        SkillRegistry.resetInstance();
+        setCwdState(originalCwd);
+        if (previousConfig) getState().config.actions.setConfig(previousConfig);
+        if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+        else process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
         await rm(root, { recursive: true, force: true });
       }
     }, 180_000);

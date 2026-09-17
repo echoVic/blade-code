@@ -59,6 +59,8 @@ const roots: string[] = [];
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 const marker = 'GOAL_PAUSED_USAGE_READY';
 const blocker = 'Required external credentials are unavailable';
+const followUpMarker = 'SKILL_RELEASED_NEXT_TASK';
+const followUpPrompt = `The previous Skill task is finished. This is a new ordinary task. Do not use tools. ${createSplitPtyMarkerInstruction(followUpMarker)}`;
 type SettlementState = 'paused' | 'blocked';
 
 afterEach(async () => {
@@ -165,6 +167,7 @@ async function createFixture(
   const storageRoot = path.join(root, 'storage');
   const readyFile = path.join(root, 'provider-ready');
   const releaseFile = path.join(root, 'provider-release');
+  const followUpReadyFile = path.join(root, 'follow-up-allowed');
   const sessionId = `goal-paused-usage-${randomBytes(6).toString('hex')}`;
   await Promise.all([
     mkdir(workspace),
@@ -194,14 +197,29 @@ async function createFixture(
   let skillActivated = false;
   let blockingToolSeen = false;
   let finalResponseSeen = false;
+  let followUpAllowed = false;
+  let followUpRequests = 0;
+  let followUpCompleted = false;
   let failure: string | undefined;
   const abort = new AbortController();
   const server = createServer((request, response) => {
     void (async () => {
-      requests++;
-      const expectedRequests = settlementState === 'blocked' ? 2 : 1;
-      if (finalResponseSeen || requests > expectedRequests)
-        throw new Error('Stopped Goal unexpectedly requested another response');
+      const followUp =
+        followUpAllowed ||
+        (skillSchemas &&
+          (await access(followUpReadyFile).then(
+            () => true,
+            () => false
+          )));
+      if (followUp) {
+        followUpRequests++;
+        if (followUpRequests !== 1) throw new Error('Follow-up unexpectedly repeated');
+      } else {
+        requests++;
+        const expectedRequests = settlementState === 'blocked' ? 2 : 1;
+        if (finalResponseSeen || requests > expectedRequests)
+          throw new Error('Stopped Goal unexpectedly requested another response');
+      }
       const chunks: Buffer[] = [];
       for await (const chunk of request)
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -226,7 +244,27 @@ async function createFixture(
             ? [fn.name]
             : [];
         });
-        if (
+        if (followUp) {
+          const messages = 'messages' in requestBody ? requestBody.messages : undefined;
+          if (
+            !Array.isArray(messages) ||
+            !messages.some(
+              (message) =>
+                message &&
+                typeof message === 'object' &&
+                'role' in message &&
+                message.role === 'user' &&
+                'content' in message &&
+                message.content === followUpPrompt
+            )
+          )
+            throw new Error('Follow-up request lost the complete user prompt');
+          if (!names.includes('Skill') || !names.includes('ToolSearch')) {
+            throw new Error(
+              `Previous Skill restrictions leaked into the next task: ${names.join(',')}`
+            );
+          }
+        } else if (
           names.toSorted().join(',') !==
           ['ReadPromptArtifact', 'UpdateGoal'].toSorted().join(',')
         ) {
@@ -262,6 +300,22 @@ async function createFixture(
       summary.append(Buffer.from(text));
       const observed = summary.finish();
       const evidence = responseEvidence(text);
+      if (followUp) {
+        if (
+          observed.parseStatus !== 'complete' ||
+          observed.toolCallDeltas !== 0 ||
+          !observed.finishReasons.includes('stop') ||
+          evidence.content !== followUpMarker
+        ) {
+          throw new Error(
+            `Unexpected follow-up response: ${JSON.stringify({ observed, content: evidence.content })}`
+          );
+        }
+        followUpCompleted = true;
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.end(text);
+        return;
+      }
       responseContents.push(evidence.content);
       tokens += evidence.tokens;
       const skillResponse = skillSchemas && !skillActivated && requests === 1;
@@ -427,6 +481,7 @@ async function createFixture(
     sessionId,
     readyFile,
     releaseFile,
+    followUpReadyFile,
     env,
     store: new GoalStore(workspace, sessionId),
     tokens: () => tokens,
@@ -434,6 +489,11 @@ async function createFixture(
     requests: () => requests,
     discoveryRequests: () => Number(discovered),
     skillActivated: () => skillActivated,
+    allowFollowUp: () => {
+      followUpAllowed = true;
+    },
+    followUpCompleted: () => followUpCompleted,
+    followUpRequests: () => followUpRequests,
     turnLimitReached: () => (discovered || skillActivated) && blockingToolSeen,
     ready: async () => {
       await waitFor(async () => {
@@ -689,6 +749,16 @@ async function runWeb(test: Fixture, development: boolean, secret: string) {
     await page.reload({ waitUntil: 'domcontentloaded' });
     refreshing = false;
     await page.locator('[data-blade-goal-status="budget_limited"]').waitFor();
+    if (test.skillSchemas) {
+      test.allowFollowUp();
+      const composer = page.locator('textarea[data-blade-composer]');
+      await composer.fill(followUpPrompt);
+      await page.locator('[data-blade-submit]').click();
+      await page
+        .locator('[data-chat-role="assistant"]')
+        .getByText(followUpMarker, { exact: true })
+        .waitFor({ timeout: 90_000 });
+    }
     expect(await page.locator('body').textContent()).not.toContain(secret);
     expect(faults).toEqual([]);
     expect(host.stdout() + host.stderr() + (dev?.stderr() ?? '')).not.toContain(secret);
@@ -797,6 +867,50 @@ async function runHeadless(test: Fixture, secret: string) {
     await expect(test.store.resume()).resolves.toMatchObject({
       status: 'budget_limited',
     });
+    if (test.skillSchemas) {
+      test.allowFollowUp();
+      const next = startChild(
+        process.execPath,
+        [
+          cliEntry,
+          '--headless',
+          '--output-format',
+          'jsonl',
+          '--resume',
+          test.sessionId,
+          '--allowed-tools',
+          'Skill,ToolSearch,UpdateGoal',
+          '--no-verification-agent',
+          followUpPrompt,
+        ],
+        test.workspace,
+        test.env
+      );
+      if (!next.child.pid) throw new Error('Follow-up host has no PID');
+      const nextIdentity = await captureForegroundGuiLauncherIdentity(next.child.pid);
+      try {
+        expect(await next.exited).toBe(0);
+        const content = next
+          .stdout()
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .flatMap((line) => {
+            const event: unknown = JSON.parse(line);
+            return event &&
+              typeof event === 'object' &&
+              'type' in event &&
+              event.type === 'content_delta' &&
+              'delta' in event &&
+              typeof event.delta === 'string'
+              ? [event.delta]
+              : [];
+          })
+          .join('');
+        expect(content).toBe(followUpMarker);
+      } finally {
+        await stopForegroundGuiLauncher(next.child, nextIdentity);
+      }
+    }
   } finally {
     await stopForegroundGuiLauncher(host.child, identity);
   }
@@ -869,6 +983,36 @@ async function runAcp(test: Fixture, secret: string) {
       async () => (await test.store.get())?.status === 'budget_limited',
       'ACP resumed over budget'
     );
+    if (test.skillSchemas) {
+      test.allowFollowUp();
+      const start = client.sessionUpdates.length;
+      await connection.prompt({
+        sessionId: test.sessionId,
+        prompt: [{ type: 'text', text: followUpPrompt }],
+      });
+      const updates = client.sessionUpdates.slice(start);
+      const goalBoundary = updates.findIndex(
+        ({ update }) =>
+          update.sessionUpdate === 'session_info_update' &&
+          update._meta?.['blade/goal'] !== undefined
+      );
+      expect(goalBoundary).toBeGreaterThanOrEqual(0);
+      const text = (notifications: readonly acp.SessionNotification[]) =>
+        notifications
+          .flatMap(({ update }) =>
+            update.sessionUpdate === 'agent_message_chunk' &&
+            update.content.type === 'text'
+              ? [update.content.text]
+              : []
+          )
+          .join('');
+      expect(text(updates.slice(0, goalBoundary))).toBe(followUpMarker);
+      const goal = await test.store.get();
+      expect(goal?.status).toBe('budget_limited');
+      expect(text(updates.slice(goalBoundary))).toBe(
+        `[Goal budget_limited: ${goal?.objective}]\n`
+      );
+    }
     child.stdin.end();
     await waitFor(
       () => child.exitCode !== null || child.signalCode !== null,
@@ -1006,6 +1150,9 @@ suite('Stopped Goal usage surface matrix (real API)', () => {
                     settlementState,
                     directSchemas,
                     skillSchemas,
+                    followUpReadyFile: test.followUpReadyFile,
+                    followUpPrompt,
+                    followUpMarker,
                   })
                 ).toString('base64'),
               }
@@ -1037,6 +1184,8 @@ suite('Stopped Goal usage surface matrix (real API)', () => {
           expect(test.requests()).toBe(settlementState === 'blocked' ? 2 : 1);
           expect(test.tokens()).toBeGreaterThan(1);
           expect(test.skillActivated()).toBe(skillSchemas);
+          expect(test.followUpRequests()).toBe(skillSchemas ? 1 : 0);
+          expect(test.followUpCompleted()).toBe(skillSchemas);
           console.log(
             'GOAL_PAUSED_USAGE_EVIDENCE',
             JSON.stringify({
