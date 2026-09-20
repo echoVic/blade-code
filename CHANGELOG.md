@@ -1,11 +1,17 @@
 # Changelog
 
-## [0.10.206] - 2026-09-16
+## [0.10.206] - 2026-09-20
+
+### Refactored
+- Consolidate Session ownership, event projection, compaction, subagent dependencies, and local/remote fork handling; separate HTTP routing from run execution and resource cleanup.
+- Remove unused internal subsystems and deprecated compatibility APIs, share test fixture lifecycles, and move static prompts, themes, permissions, and SQL into packaged assets. Internal integrations using the removed `taskTool` singleton must use `createTaskTool` with an explicit registry.
 
 ### Fixed
 - Release Skill tool restrictions when their admitted logical turn completes, fails, is cancelled, or closes. Preserve restrictions through same-turn Plan approval and leave the active turn unchanged when a concurrent request is rejected.
+- Keep pending-resume status visible in Web and settle Browser popup registration after clicks.
 
 ### Tests
+- Retain focused runtime boundary suites and production qualification paths across CLI, Web, ACP, and Browser tools.
 - Verify reused Agents restore ordinary tool schemas on the next task with real Flash/Pro requests.
 - Exercise subsequent task recovery through Headless, ACP, raw PTY, and production/development Chromium while keeping stopped Goal usage unchanged.
 
