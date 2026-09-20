@@ -7,6 +7,55 @@ import type {
 import { SessionBrowserRuntime } from '../../../src/browser/SessionBrowserRuntime.js';
 
 describe('SessionBrowserRuntime lifecycle', () => {
+  it.each(['frame', 'attribute'] as const)(
+    'fails closed when sandbox inspection stalls at %s and releases late handles',
+    async (stage) => {
+      vi.useFakeTimers();
+      const runtime = new SessionBrowserRuntime('/project', 'sandbox-inspection');
+      const element = {
+        getAttribute: vi.fn(async () => null as string | null),
+        dispose: vi.fn(async () => undefined),
+      };
+      let releaseFrame: (value: typeof element) => void = () => undefined;
+      const pendingFrame = new Promise<typeof element>((resolve) => {
+        releaseFrame = resolve;
+      });
+      let releaseAttribute: (value: string | null) => void = () => undefined;
+      const pendingAttribute = new Promise<string | null>((resolve) => {
+        releaseAttribute = resolve;
+      });
+      if (stage === 'attribute') element.getAttribute.mockReturnValue(pendingAttribute);
+      const frame = {
+        frameElement: vi.fn(() =>
+          stage === 'frame' ? pendingFrame : Promise.resolve(element)
+        ),
+      };
+      const inspection = runtime as unknown as {
+        isFrameSandboxOpaque(candidate: typeof frame): Promise<boolean>;
+      };
+      let result: boolean | undefined;
+      const pending = inspection.isFrameSandboxOpaque(frame).then((value) => {
+        result = value;
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(result).toBe(true);
+        releaseFrame(element);
+        releaseAttribute(null);
+        await pending;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(element.dispose).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        releaseFrame(element);
+        releaseAttribute(null);
+        await pending;
+        await runtime.dispose();
+        vi.useRealTimers();
+      }
+    }
+  );
+
   it('settles disposal while context acquisition is still pending', async () => {
     let resolveAcquire: ((lease: BrowserContextLease) => void) | undefined;
     const release = vi.fn(async () => undefined);
@@ -38,6 +87,7 @@ describe('SessionBrowserRuntime lifecycle', () => {
     const page = {
       isClosed: () => false,
       on: vi.fn(),
+      title: vi.fn(async () => 'Fixture'),
       ariaSnapshot: vi.fn(async () => {
         throw new Error('Target page, context or browser has been closed');
       }),

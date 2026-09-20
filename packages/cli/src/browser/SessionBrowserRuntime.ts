@@ -1418,7 +1418,7 @@ export class SessionBrowserRuntime {
         url: candidateOrigin,
         text: 'Cross-origin top-level navigation was blocked',
       });
-      await route.abort('blockedbyclient');
+      await route.abort('aborted');
       if (state.openerPageId) {
         await page.close({ runBeforeUnload: false }).catch(() => undefined);
         this.removePage(state);
@@ -1550,10 +1550,24 @@ export class SessionBrowserRuntime {
   }
 
   private async isFrameSandboxOpaque(frame: Frame): Promise<boolean> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1_000);
+    const signal = AbortSignal.any([
+      controller.signal,
+      this.generationController.signal,
+    ]);
     try {
-      const frameElement = await frame.frameElement();
+      // A paused navigation may prevent frameElement from resolving until routing resumes.
+      const frameElement = await raceWithAbort(
+        frame.frameElement(),
+        signal,
+        (lateElement) => lateElement.dispose()
+      );
       try {
-        const sandbox = await frameElement.getAttribute('sandbox');
+        const sandbox = await raceWithAbort(
+          frameElement.getAttribute('sandbox'),
+          signal
+        );
         return (
           sandbox !== null &&
           !sandbox
@@ -1567,6 +1581,8 @@ export class SessionBrowserRuntime {
       }
     } catch {
       return true;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -1580,6 +1596,11 @@ export class SessionBrowserRuntime {
       throw new BrowserRuntimeError('browser_page_not_found', 'Browser page is closed');
     }
     this.throwIfBlockedNavigation(state);
+    const title = sanitizeBrowserText(
+      await state.page.title().catch(() => ''),
+      MAX_BROWSER_TITLE_BYTES
+    );
+    this.throwIfBlockedNavigation(state);
     const rawSnapshot = await state.page.ariaSnapshot({
       mode: 'ai',
       depth,
@@ -1590,10 +1611,6 @@ export class SessionBrowserRuntime {
     this.throwIfBlockedNavigation(state);
     const tabs = await this.pageSummaries();
     const origin = browserOriginFromPageUrl(state.page.url()) ?? 'null';
-    const title = sanitizeBrowserText(
-      await state.page.title().catch(() => ''),
-      MAX_BROWSER_TITLE_BYTES
-    );
     const viewport =
       typeof state.page.viewportSize === 'function' ? state.page.viewportSize() : null;
     const record = this.snapshots.issue({

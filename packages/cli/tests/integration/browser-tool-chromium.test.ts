@@ -641,6 +641,7 @@ describe('SessionBrowserRuntime with real Chromium', () => {
       candidateOrigin: `http://127.0.0.1:${otherPort}`,
     });
     expect(crossOriginRequests).toBe(0);
+    expect(runtimePage.url()).toBe(`${origin}/`);
 
     const beforeBackground = await runtime.navigate({
       url: `${origin}/`,

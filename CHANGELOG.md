@@ -9,6 +9,7 @@
 ### Fixed
 - Release Skill tool restrictions when their admitted logical turn completes, fails, is cancelled, or closes. Preserve restrictions through same-turn Plan approval and leave the active turn unchanged when a concurrent request is rejected.
 - Keep pending-resume status visible in Web and settle Browser popup registration after clicks.
+- Preserve the current Browser page when cancelling a forbidden cross-origin navigation, bound sandbox frame inspection while keeping uncertain frames non-interactive, and read page metadata before snapshots to avoid Chromium initialization stalls.
 
 ### Tests
 - Retain focused runtime boundary suites and production qualification paths across CLI, Web, ACP, and Browser tools.
