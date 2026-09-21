@@ -106,6 +106,7 @@
     "lru-cache": "^11.5.2",
     "nanoid": "^5.1.16",
     "open": "^10.1.2",
+    "pathe": "^2.0.3",
     "picomatch": "^4.0.5",
     "playwright": "1.63.0",
     "proper-lockfile": "^4.1.2",
