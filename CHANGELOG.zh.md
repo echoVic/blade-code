@@ -1,6 +1,16 @@
 # Changelog
 
+## [0.11.1] - 2026-09-21
+
+### 修复
+- 将 `pathe` 声明为直接运行时依赖，使全新安装无需依赖传递包即可构建 CLI。
+
+### 测试
+- 为生产代码中的 `pathe` 导入新增运行时依赖边界回归。
+
 ## [0.11.0] - 2026-09-21
+
+未发布候选版本。全新 CI 构建暴露了未声明的运行时依赖；全部改动已随修正后的 package manifest 纳入 0.11.1。
 
 ### 破坏性变更
 - 升级 `@earendil-works/pi-ai` 后，将 DeepSeek provider 的 Flash 目录模型从 `deepseek-v4-flash` 重命名为 `deepseek-flash`；仍使用旧目录 ID 的模型配置需要同步更新。

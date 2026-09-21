@@ -1,6 +1,16 @@
 # Changelog
 
+## [0.11.1] - 2026-09-21
+
+### Fixed
+- Declare `pathe` as a direct runtime dependency so clean installs can build the CLI without relying on a transitive package.
+
+### Tests
+- Add a runtime dependency boundary regression for the production `pathe` import.
+
 ## [0.11.0] - 2026-09-21
+
+Unpublished candidate. Clean CI builds exposed an undeclared runtime dependency; all changes are included in 0.11.1 with the corrected package manifest.
 
 ### Breaking Changes
 - Rename the DeepSeek provider's Flash catalog model from `deepseek-v4-flash` to `deepseek-flash` after upgrading `@earendil-works/pi-ai`. Existing model configurations using the old catalog ID must be updated.
