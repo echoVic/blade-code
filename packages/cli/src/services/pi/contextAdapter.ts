@@ -9,6 +9,7 @@ import type {
   ToolCall,
   TSchema,
 } from '@earendil-works/pi-ai';
+import { MAX_INLINE_ATTACHMENT_BYTES } from '../../api/attachmentLimits.js';
 import { withSelectedConversationContext } from '../../context/selectedConversationContext.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type {
@@ -61,42 +62,113 @@ function parseDataUrl(url: string): Omit<ImageContent, 'type'> | undefined {
 
 async function imageContent(
   url: string,
-  signal?: AbortSignal
+  consumeBytes: (bytes: number) => void,
+  signal: AbortSignal,
+  source: 'user' | 'tool'
 ): Promise<ImageContent | TextContent> {
+  signal.throwIfAborted();
   const inline = parseDataUrl(url);
-  if (inline) return { type: 'image', ...inline };
+  if (inline) {
+    // Tool-owned inline screenshots are bounded by their artifact store.
+    if (source === 'user') consumeBytes(Buffer.byteLength(url));
+    return { type: 'image', ...inline };
+  }
   if (!/^https?:\/\//i.test(url)) {
-    return { type: 'text', text: `[Unsupported image source: ${url}]` };
+    return { type: 'text', text: '[Unsupported image source]' };
   }
 
-  const response = await fetch(url, { signal });
-  if (!response.ok) {
-    throw new Error(`Failed to load image ${url}: HTTP ${response.status}`);
-  }
-  return {
-    type: 'image',
-    mimeType: response.headers.get('content-type')?.split(';')[0] ?? 'image/png',
-    data: Buffer.from(await response.arrayBuffer()).toString('base64'),
+  const controller = new AbortController();
+  const downloadSignal = AbortSignal.any([signal, controller.signal]);
+  const timer = setTimeout(
+    () => controller.abort(new Error('Image download timed out')),
+    30_000
+  );
+  let response: Response | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let cancellation: Promise<void> | undefined;
+  const cancel = () => {
+    cancellation ??= reader?.cancel(downloadSignal.reason).catch(() => undefined);
   };
+  try {
+    response = await fetch(url, { signal: downloadSignal });
+    if (!response.ok) {
+      throw new Error(`Failed to load image: HTTP ${response.status}`);
+    }
+    const mimeType = response.headers.get('content-type')?.split(';')[0] ?? 'image/png';
+    consumeBytes(Buffer.byteLength(`data:${mimeType};base64,`));
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    let encodedBytes = 0;
+    reader = response.body?.getReader();
+    downloadSignal.addEventListener('abort', cancel, { once: true });
+    downloadSignal.throwIfAborted();
+    if (reader) {
+      while (true) {
+        const chunk = await reader.read();
+        downloadSignal.throwIfAborted();
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        const nextEncodedBytes = 4 * Math.ceil(bytes / 3);
+        consumeBytes(nextEncodedBytes - encodedBytes);
+        encodedBytes = nextEncodedBytes;
+        chunks.push(chunk.value);
+      }
+    }
+    return {
+      type: 'image',
+      mimeType,
+      data: Buffer.concat(chunks, bytes).toString('base64'),
+    };
+  } catch (error) {
+    if (downloadSignal.aborted) throw downloadSignal.reason;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    downloadSignal.removeEventListener('abort', cancel);
+    if (reader) {
+      cancel();
+      await cancellation;
+      reader.releaseLock();
+    } else {
+      await response?.body?.cancel().catch(() => undefined);
+    }
+  }
 }
 
 async function multimodalContent(
   content: ContentPart[],
   supportsImages: boolean,
-  signal?: AbortSignal
+  signal: AbortSignal | undefined,
+  source: 'user' | 'tool'
 ): Promise<Array<TextContent | ImageContent>> {
-  return Promise.all(
-    content.map((part) =>
-      part.type === 'text'
-        ? Promise.resolve<TextContent>({ type: 'text', text: part.text })
-        : supportsImages
-          ? imageContent(part.image_url.url, signal)
-          : Promise.resolve<TextContent>({
-              type: 'text',
-              text: '[Image omitted: current model does not support image input]',
-            })
-    )
+  const controller = new AbortController();
+  const batchSignal = signal
+    ? AbortSignal.any([signal, controller.signal])
+    : controller.signal;
+  let usedBytes = 0;
+  const consumeBytes = (bytes: number) => {
+    usedBytes += bytes;
+    if (usedBytes > MAX_INLINE_ATTACHMENT_BYTES) {
+      throw new Error('Image attachments exceed the 5 MiB limit');
+    }
+  };
+  const pending = content.map((part) =>
+    part.type === 'text'
+      ? Promise.resolve<TextContent>({ type: 'text', text: part.text })
+      : supportsImages
+        ? imageContent(part.image_url.url, consumeBytes, batchSignal, source)
+        : Promise.resolve<TextContent>({
+            type: 'text',
+            text: '[Image omitted: current model does not support image input]',
+          })
   );
+  try {
+    return await Promise.all(pending);
+  } catch (error) {
+    controller.abort(error);
+    await Promise.allSettled(pending);
+    throw error;
+  }
 }
 
 export async function createPiContext(
@@ -124,7 +196,7 @@ export async function createPiContext(
       const content =
         typeof visibleContent === 'string'
           ? visibleContent
-          : await multimodalContent(visibleContent, supportsImages, signal);
+          : await multimodalContent(visibleContent, supportsImages, signal, 'user');
       contextMessages.push({ role: 'user', content, timestamp: Date.now() });
       continue;
     }
@@ -165,7 +237,7 @@ export async function createPiContext(
       content:
         typeof message.content === 'string'
           ? [{ type: 'text', text: message.content }]
-          : await multimodalContent(message.content, supportsImages, signal),
+          : await multimodalContent(message.content, supportsImages, signal, 'tool'),
       isError: false,
       timestamp: Date.now(),
     });

@@ -371,6 +371,20 @@ If the primary Provider hits an idle timeout before producing any output, it can
 without retrying the same Provider. Once text, reasoning, a tool call, usage, or a finish event has been produced,
 the execution boundary is non-replayable and the Provider is not switched.
 
+If the current message or history contains user images, the fallback must also support image input. A text-only candidate fails before any request is sent instead of dropping images and continuing. Configure a vision-capable fallback for these tasks.
+
+## Image Attachment Downloads
+
+HTTP(S) images are downloaded before the Provider request. Images in each user
+message share a 5 MiB encoded budget, including inline images, downloaded content's
+base64 encoding, and data URL prefixes. Downloads are measured as bytes are read,
+independently of server-declared sizes. Each remote image has a 30-second download
+deadline, including its response body. A limit violation, timeout, or cancellation
+aborts the batch and releases response streams before the request ends; incomplete
+images are not sent to the Provider. Fallback reuses resolved images without downloading
+again. Tool-produced inline screenshots retain their own artifact size limits rather
+than consuming the user attachment budget.
+
 ## Breaking Upgrades
 
 The following legacy fields in a model record are no longer supported:

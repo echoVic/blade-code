@@ -1120,9 +1120,15 @@ export class PiAIChatService implements IChatService {
     for (const [index, fallback] of fallbackModels.entries()) {
       if (!hasLogicalAttemptCapacity()) break;
       let fallbackEmitted = false;
+      const fallbackConfig = createFallbackChatConfig(this.config, fallback);
+      const fallbackModel = createFallbackModel(fallbackConfig, fallback);
+      if (
+        filtered.some((message) => hasImageContent(message)) &&
+        !fallbackModel.input.includes('image')
+      ) {
+        throw new Error(`${fallbackModel.name} does not support image input`);
+      }
       try {
-        const fallbackConfig = createFallbackChatConfig(this.config, fallback);
-        const fallbackModel = createFallbackModel(fallbackConfig, fallback);
         yield {
           modelFallback: {
             from: providerFallbackIdentity(failedModel.provider, failedModel.id),

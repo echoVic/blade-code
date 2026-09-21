@@ -327,6 +327,110 @@ describe('PiAIChatService', () => {
     );
   });
 
+  it.each([false, true])(
+    'rejects a text-only fallback when image input is historical: %s',
+    async (historical) => {
+      const visionModel: Model<Api> = {
+        ...piModelFixture,
+        name: 'Vision Model',
+        input: ['text', 'image'],
+      };
+      createPiRuntime.mockReturnValue({ models: {}, model: visionModel });
+      streamPiModel
+        .mockReturnValueOnce(chunks([new Error('status 503')]))
+        .mockReturnValueOnce(chunks([{ content: 'image silently ignored' }]));
+      const chat = await service({
+        fallbackModels: [{ provider: 'test', model: 'backup' }],
+      });
+      const stream = chat.streamChat([
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: 'data:image/png;base64,abc' },
+            },
+          ],
+        },
+        ...(historical
+          ? [{ role: 'user' as const, content: 'Continue from the screenshot.' }]
+          : []),
+      ]);
+      const events: StreamChunk[] = [];
+      const consume = async () => {
+        for await (const event of stream) events.push(event);
+      };
+
+      await expect(consume()).rejects.toThrow(
+        'Test Model does not support image input'
+      );
+      expect(streamPiModel).toHaveBeenCalledOnce();
+      expect(events.flatMap((event) => event.modelFallback ?? [])).toEqual([]);
+    }
+  );
+
+  it('does not classify an image capability error using the primary HTTP failure', async () => {
+    const visionModel: Model<Api> = { ...piModelFixture, input: ['text', 'image'] };
+    createPiRuntime.mockReturnValue({ models: {}, model: visionModel });
+    observePiProviderResponses.mockImplementation(
+      (
+        _options: unknown,
+        _model: unknown,
+        onResponse: (response: { statusCode: number }) => void
+      ) => onResponse({ statusCode: 503 })
+    );
+    streamPiModel.mockReturnValueOnce(chunks([new Error('status 503')]));
+
+    await expect(
+      (
+        await service({
+          fallbackModels: [
+            { provider: 'test', model: 'text-backup' },
+            { provider: 'test', model: 'next-backup' },
+          ],
+        })
+      ).chat([
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+          ],
+        },
+      ])
+    ).rejects.toThrow('Test Model does not support image input');
+    expect(createFallbackModel).toHaveBeenCalledOnce();
+    expect(streamPiModel).toHaveBeenCalledOnce();
+  });
+
+  it('preserves image context when the fallback advertises vision', async () => {
+    const visionModel: Model<Api> = {
+      ...piModelFixture,
+      input: ['text', 'image'],
+    };
+    createPiRuntime.mockReturnValue({ models: {}, model: visionModel });
+    createFallbackModel.mockReturnValueOnce({ ...visionModel, id: 'vision-backup' });
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([{ content: 'image described' }]));
+    const result = await (
+      await service({ fallbackModels: [{ provider: 'test', model: 'vision-backup' }] })
+    ).chat([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,abc' },
+          },
+        ],
+      },
+    ]);
+
+    expect(result.content).toBe('image described');
+    expect(streamPiModel).toHaveBeenCalledTimes(2);
+    expect(streamPiModel.mock.calls[1][2]).toBe(streamPiModel.mock.calls[0][2]);
+  });
+
   it('passes the exact tool requirement to context and request adapters', async () => {
     streamPiModel.mockReturnValue(chunks([{ finishReason: 'toolUse' }]));
     const chat = await service();
