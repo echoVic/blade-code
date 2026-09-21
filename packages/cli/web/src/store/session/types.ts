@@ -578,7 +578,8 @@ export interface StreamingSlice {
   setRunId: (runId: string | null) => void;
   prepareEventSubscription: (
     ref: SessionRef,
-    onEvent?: (event: StreamEvent) => void
+    onEvent?: (event: StreamEvent) => void,
+    options?: { resumePending?: boolean }
   ) => Promise<() => void>;
   replaceEventSubscription: (next: (() => void) | null) => void;
   subscribeToEvents: (ref: SessionRef) => Promise<void>;

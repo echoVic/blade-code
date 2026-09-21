@@ -2411,6 +2411,37 @@ describe('SessionRoutes runtime reuse', () => {
     ]);
   });
 
+  it('subscribes for a new message without automatically resuming retained input', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    mockResolvedSession('submission-session', { projectPath: '/persisted-workspace' });
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    vi.useFakeTimers();
+    const controller = createSessionRouteController();
+    const abort = new AbortController();
+    const response = await controller.app.request(
+      '/submission-session/events?projectPath=%2Fpersisted-workspace&resume=false',
+      { signal: abort.signal }
+    );
+    const collector = createSseCollector(response);
+    try {
+      expect(await collector.next()).toMatchObject({
+        type: 'connected',
+        properties: { sessionId: 'submission-session', status: 'idle' },
+      });
+      await vi.advanceTimersByTimeAsync(20);
+      expect(agentState.chatStream).not.toHaveBeenCalled();
+      expect(runtimeState.runtime.discardPendingInput).not.toHaveBeenCalled();
+    } finally {
+      abort.abort();
+      await collector.cancel();
+      await controller.shutdown();
+      vi.useRealTimers();
+    }
+  });
+
   it('retries a retryable zero-side-effect Web pending resume', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'

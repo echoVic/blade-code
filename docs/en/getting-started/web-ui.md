@@ -77,6 +77,25 @@ The Web UI supports all of Blade Code's core features:
 - 🔒 **Permission control** - Switch permission modes
 - 🌍 **Multilingual** - Switch between Chinese and English interfaces
 
+## Continuing After Stop
+
+Stopping the active turn preserves pending input. When you change models and send a
+new message in the current Session, Web first establishes an events-only connection,
+then submits the message and model selection. Retained input cannot restart on the
+previous model merely because that pre-submission connection opens. Re-entering a
+Session or reconnecting an established stream still supports automatic pending-task
+recovery. Late callbacks from a retired connection cannot update its replacement.
+Events must pass structure and Session identity checks before advancing the resume
+cursor; heartbeats keep the connection alive without advancing that durable cursor.
+Every reconnect has a 10-second server-handshake deadline. A timeout uses the existing
+retry backoff; exhausting consecutive reconnect attempts shows offline rather than
+leaving the UI reconnecting indefinitely. Once connectivity returns, select "Reconnect"
+in the offline banner to establish a fresh event subscription and recover retained
+pending input. Exhausting connection attempts does not delete that input.
+
+Rejecting an oversized image upload leaves the text draft intact. After an execution
+failure, "Edit and resend" restores the original message and image attachments.
+
 ## Tool Execution Details
 
 Live updates and durable history for the same tool call merge into one card instead

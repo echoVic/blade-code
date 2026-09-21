@@ -1290,7 +1290,13 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
       try {
         if (!isStreaming) {
-          preparedUnsubscribe = await get().prepareEventSubscription(sessionRef);
+          preparedUnsubscribe = await get().prepareEventSubscription(
+            sessionRef,
+            undefined,
+            {
+              resumePending: false,
+            }
+          );
           if (!isCurrentSend()) {
             closePreparedSubscription(preparedUnsubscribe);
             preparedUnsubscribe = null;

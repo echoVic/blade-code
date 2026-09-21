@@ -41,7 +41,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
 
     setRunId: (runId) => set({ currentRunId: runId }),
 
-    prepareEventSubscription: async (ref, onEvent) => {
+    prepareEventSubscription: async (ref, onEvent, options) => {
       if (isHistorySurfaceActive(get().historySurfaceSelection)) {
         set({ error: HISTORY_SURFACE_READ_ONLY_ERROR });
         throw new Error(HISTORY_SURFACE_READ_ONLY_ERROR);
@@ -50,6 +50,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
       let connection: (() => void) | null = null;
       let connectionState: TaskEventConnectionState = 'connecting';
       connection = await sessionService.openEventSubscription(ref, dispatch, {
+        ...options,
         onConnectionStateChange: (nextState) => {
           connectionState = nextState;
           if (connection && activeConnection === connection) {

@@ -948,6 +948,7 @@ export const sessionService = {
     ref: SessionRef,
     onEvent: (event: StreamEvent) => void,
     options?: {
+      resumePending?: boolean;
       maxRetries?: number;
       onConnectionChange?: (connected: boolean) => void;
       onConnectionStateChange?: (state: TaskEventConnectionState) => void;
@@ -992,8 +993,14 @@ export const sessionService = {
     };
 
     const closeCurrentConnection = () => {
-      eventSource?.close();
+      clearReadinessTimeout();
+      const previous = eventSource;
       eventSource = null;
+      if (previous) {
+        previous.onmessage = null;
+        previous.onerror = null;
+        previous.close();
+      }
     };
 
     const cleanup = () => {
@@ -1037,6 +1044,7 @@ export const sessionService = {
       );
 
       retryTimeout = setTimeout(() => {
+        retryTimeout = null;
         void connect().catch((error) => {
           console.error('SSE reconnect failed', error);
           onConnectionChange?.(false);
@@ -1046,10 +1054,13 @@ export const sessionService = {
     };
 
     const markReady = () => {
+      clearReadinessTimeout();
       retryCount = 0;
       lastHeartbeat = Date.now();
       onConnectionChange?.(true);
+      if (isManualClose || !eventSource) return;
       onConnectionStateChange?.('connected');
+      if (isManualClose || !eventSource) return;
       clearHeartbeatMonitor();
       heartbeatCheckInterval = setInterval(() => {
         if (Date.now() - lastHeartbeat > 45000) {
@@ -1072,7 +1083,7 @@ export const sessionService = {
 
       closeCurrentConnection();
       const eventsUrl = withSessionRef(
-        `${API_BASE}/sessions/${ref.sessionId}/events`,
+        `${API_BASE}/sessions/${ref.sessionId}/events${options?.resumePending === false && !isSubscriptionReady ? '?resume=false' : ''}`,
         ref
       );
       // Resume from our cursor so the server replays only missed committed events.
@@ -1080,24 +1091,41 @@ export const sessionService = {
         lastSeq > 0
           ? `${eventsUrl}${eventsUrl.includes('?') ? '&' : '?'}lastEventId=${lastSeq}`
           : eventsUrl;
-      eventSource = new EventSource(resumableUrl);
+      const source = new EventSource(resumableUrl);
+      eventSource = source;
 
-      if (!isSubscriptionReady) {
-        clearReadinessTimeout();
-        readinessTimeout = setTimeout(() => {
+      readinessTimeout = setTimeout(() => {
+        if (isManualClose || eventSource !== source) return;
+        closeCurrentConnection();
+        if (!isSubscriptionReady) {
           onConnectionStateChange?.('offline');
           failReady(new Error('Timed out waiting for event subscription readiness'));
-        }, SESSION_EVENT_READY_TIMEOUT_MS);
-      }
+          return;
+        }
+        onConnectionChange?.(false);
+        scheduleReconnect();
+      }, SESSION_EVENT_READY_TIMEOUT_MS);
 
-      eventSource.onmessage = (e) => {
+      source.onmessage = (e) => {
+        if (isManualClose || eventSource !== source) return;
         try {
-          const parsed = JSON.parse(e.data) as { seq?: number };
-          // Advance the durable-resume cursor on any seq-carrying committed event.
-          if (typeof parsed.seq === 'number' && parsed.seq > lastSeq) {
-            lastSeq = parsed.seq;
+          const event = BusEventSchema.parse(JSON.parse(e.data)) as StreamEvent;
+          if (event.type === 'heartbeat') {
+            lastHeartbeat = Date.now();
+            return;
           }
-          const event = BusEventSchema.parse(parsed) as StreamEvent;
+          if (
+            event.properties.sessionId !== ref.sessionId ||
+            event.properties.projectPath !== ref.projectPath
+          )
+            return;
+          if (
+            typeof event.seq === 'number' &&
+            Number.isSafeInteger(event.seq) &&
+            event.seq > lastSeq
+          ) {
+            lastSeq = event.seq;
+          }
           lastHeartbeat = Date.now();
           if (event.type === 'connected') {
             if (
@@ -1142,16 +1170,15 @@ export const sessionService = {
             }
             return;
           }
-          if (event.type === 'heartbeat') return;
           onEvent(event);
         } catch (err) {
           console.error('Failed to parse SSE event:', e.data, err);
         }
       };
 
-      eventSource.onerror = () => {
-        if (isManualClose) return;
-        const closedByServer = eventSource?.readyState === EventSource.CLOSED;
+      source.onerror = () => {
+        if (isManualClose || eventSource !== source) return;
+        const closedByServer = source.readyState === EventSource.CLOSED;
         clearHeartbeatMonitor();
         closeCurrentConnection();
         if (closedByServer) {

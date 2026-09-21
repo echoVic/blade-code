@@ -4013,6 +4013,7 @@ export const createSessionRouteController = (): SessionRouteController => {
 
   app.get('/:sessionId/events', async (c) => {
     const sessionId = c.req.param('sessionId');
+    const resumePendingOnConnect = c.req.query('resume') !== 'false';
     let sseLease: ActiveOperationLease;
     try {
       sseLease = sseGate.enter(c.req.raw.signal);
@@ -4355,28 +4356,32 @@ export const createSessionRouteController = (): SessionRouteController => {
           }
           if (stream.aborted || terminationStarted) return;
 
-          const postInitResume = resumePendingSession(session).catch(async (error) => {
-            if (error instanceof SessionWorkspaceUnavailableError) {
-              await refreshSessionTaskMetadata(session).catch(() => undefined);
-              const taskFailure =
-                session.taskFailure?.code === 'workspace_unavailable'
-                  ? session.taskFailure
-                  : taskFailureForCode('workspace_unavailable');
-              session.taskStatus = 'failed';
-              session.taskStatusReason = taskFailure.message;
-              session.taskFailure = taskFailure;
-              Bus.publish(ref, 'session.error', {
-                error: taskFailure.message,
-                taskFailure,
-              });
-              Bus.publish(ref, 'session.status', { status: 'error' });
-            }
-            logger.error(
-              `[SessionRoutes] Failed to resume pending input for ${sessionId}:`,
-              error
+          if (resumePendingOnConnect) {
+            const postInitResume = resumePendingSession(session).catch(
+              async (error) => {
+                if (error instanceof SessionWorkspaceUnavailableError) {
+                  await refreshSessionTaskMetadata(session).catch(() => undefined);
+                  const taskFailure =
+                    session.taskFailure?.code === 'workspace_unavailable'
+                      ? session.taskFailure
+                      : taskFailureForCode('workspace_unavailable');
+                  session.taskStatus = 'failed';
+                  session.taskStatusReason = taskFailure.message;
+                  session.taskFailure = taskFailure;
+                  Bus.publish(ref, 'session.error', {
+                    error: taskFailure.message,
+                    taskFailure,
+                  });
+                  Bus.publish(ref, 'session.status', { status: 'error' });
+                }
+                logger.error(
+                  `[SessionRoutes] Failed to resume pending input for ${sessionId}:`,
+                  error
+                );
+              }
             );
-          });
-          void trackSseOperation(postInitResume);
+            void trackSseOperation(postInitResume);
+          }
           if (stream.aborted || terminationStarted) return;
 
           heartbeatInterval = setInterval(() => {

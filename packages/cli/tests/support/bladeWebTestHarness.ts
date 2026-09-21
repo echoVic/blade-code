@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { createServer, request as requestHttp, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import {
   type Browser,
@@ -148,6 +149,89 @@ export async function createObservedBrowserHarness(
     async close() {
       state.closing = true;
       await browser.close().catch(() => undefined);
+    },
+  };
+}
+
+export async function startSessionEventRelay(options: {
+  origin: string;
+  browserOrigin: string;
+  sessionId: string;
+}) {
+  const connections: URL[] = [];
+  const disconnectors = new Set<() => void>();
+  const held = new Map<ServerResponse, () => void>();
+  const requests = new Set<ReturnType<typeof requestHttp>>();
+  let paused = false;
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? '/', options.origin);
+    if (url.pathname !== `/sessions/${options.sessionId}/events`) {
+      response.writeHead(404).end();
+      return;
+    }
+    connections.push(url);
+    const forward = () => {
+      held.delete(response);
+      if (response.destroyed) return;
+      const upstream = requestHttp(url, { headers: request.headers }, (source) => {
+        response.writeHead(source.statusCode ?? 502, {
+          ...source.headers,
+          'access-control-allow-origin': options.browserOrigin,
+        });
+        source.once('error', () => response.destroy());
+        source.pipe(response);
+        const disconnect = () => {
+          source.unpipe(response);
+          response.end();
+          source.destroy();
+          upstream.destroy();
+        };
+        disconnectors.add(disconnect);
+        response.once('close', () => {
+          disconnectors.delete(disconnect);
+          source.destroy();
+          upstream.destroy();
+        });
+      });
+      requests.add(upstream);
+      upstream.once('close', () => requests.delete(upstream));
+      upstream.once('error', () => response.destroy());
+      response.once('close', () => upstream.destroy());
+      upstream.end();
+    };
+    if (paused) {
+      held.set(response, forward);
+      response.once('close', () => held.delete(response));
+    } else forward();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string')
+    throw new Error('Missing SSE relay port');
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    connections,
+    get heldCount() {
+      return held.size;
+    },
+    disconnectAndHold() {
+      paused = true;
+      for (const disconnect of disconnectors) disconnect();
+    },
+    release() {
+      paused = false;
+      for (const forward of held.values()) forward();
+    },
+    async close() {
+      for (const response of held.keys()) response.destroy();
+      for (const request of requests) request.destroy();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      );
     },
   };
 }

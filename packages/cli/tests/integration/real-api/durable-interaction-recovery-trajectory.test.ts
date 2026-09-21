@@ -6,10 +6,12 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
 } from 'node:fs/promises';
+import { createServer, request as requestHttp } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -54,7 +56,23 @@ import {
   type RecordingProviderRequestLifecycle,
   startRecordingProviderProxy,
 } from '../../support/recordingProviderProxy.js';
-import { assertNoSecrets, finalAssistantText } from './sessionForkTrajectoryHarness.js';
+import { SessionSchema } from '../../../src/api/schemas.js';
+import {
+  startSessionEventRelay,
+  withBladeWebTest,
+} from '../../support/bladeWebTestHarness.js';
+import { reserveLoopbackPort, waitForHttp } from '../../support/asyncTestUtils.js';
+import {
+  captureForegroundGuiLauncherIdentity,
+  stopForegroundGuiLauncher,
+} from '../../support/foregroundBoundedOutputWebDriver.js';
+import {
+  assertNoSecrets,
+  finalAssistantText,
+  inspectFinalAssistantText,
+  findSessionTranscript,
+  readSessionEvents,
+} from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
@@ -3440,6 +3458,307 @@ describe
       if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
       else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
     });
+
+    for (const surface of ['production', 'development'] as const) {
+      for (const recovery of ['automatic', 'manual'] as const) {
+        const scenario =
+          recovery === 'manual'
+            ? 'manual recovery from exhausted SSE retries'
+            : 'an actual SSE disconnect';
+        it(`resumes retained input after ${scenario} in ${surface} Chromium`, async () => {
+          if (!deepseekFlash?.baseURL) throw new Error('DeepSeek Flash unavailable');
+          const root = await mkdtemp(path.join(os.tmpdir(), 'blade-sse-reconnect-'));
+          const workspace = path.join(root, 'workspace');
+          const home = path.join(root, 'home');
+          const storageRoot = path.join(root, 'storage');
+          let proxy: RecordingProviderProxy | undefined;
+          let gate: ReturnType<typeof createServer> | undefined;
+          let relay: Awaited<ReturnType<typeof startSessionEventRelay>> | undefined;
+          let dev: ChildProcess | undefined;
+          let identity:
+            | Awaited<ReturnType<typeof captureForegroundGuiLauncherIdentity>>
+            | undefined;
+          let requests = 0;
+          let cancelled = false;
+          let release = false;
+          try {
+            await mkdir(workspace);
+            proxy = await startRecordingProviderProxy(deepseekFlash.baseURL);
+            const recording = proxy;
+            gate = createServer((request, response) => {
+              requests++;
+              if (!release) {
+                request.resume();
+                response.once('close', () => {
+                  cancelled = true;
+                });
+                return;
+              }
+              const upstream = requestHttp(
+                new URL(request.url ?? '/', recording.baseUrl),
+                {
+                  method: request.method,
+                  headers: request.headers,
+                },
+                (source) => {
+                  response.writeHead(source.statusCode ?? 502, source.headers);
+                  source.once('error', () => response.destroy());
+                  source.pipe(response);
+                  response.once('close', () => source.destroy());
+                }
+              );
+              upstream.once('error', () => response.destroy());
+              response.once('close', () => upstream.destroy());
+              request.pipe(upstream);
+            });
+            const server = gate;
+            await new Promise<void>((resolve, reject) => {
+              server.once('error', reject);
+              server.listen(0, '127.0.0.1', resolve);
+            });
+            const address = server.address();
+            if (!address || typeof address === 'string')
+              throw new Error('Missing Provider gate');
+            const config = buildRealApiRuntimeConfig({
+              ...deepseekFlash,
+              baseURL: `http://127.0.0.1:${address.port}/v1`,
+            });
+            config.models = config.models.map((model) => ({
+              ...model,
+              overrides: { ...model.overrides, maxRetries: 0 },
+            }));
+            await writeQualificationConfig(home, config);
+            await withBladeWebTest(
+              { workspace, home, storageRoot },
+              {},
+              async ({ page, origin, state, faults }) => {
+                let browserOrigin = origin;
+                if (surface === 'development') {
+                  const webRoot = path.resolve(import.meta.dirname, '../../../web');
+                  const dependencies = await realpath(
+                    path.resolve(webRoot, '../../../node_modules')
+                  );
+                  const port = await reserveLoopbackPort();
+                  dev = spawn(
+                    process.execPath,
+                    [
+                      '--input-type=module',
+                      '--eval',
+                      'import {createServer,searchForWorkspaceRoot} from "vite";' +
+                        `const server=await createServer({server:{host:"127.0.0.1",port:${port},strictPort:true,fs:{allow:[searchForWorkspaceRoot(process.cwd()),${JSON.stringify(dependencies)}]}}});await server.listen();`,
+                    ],
+                    {
+                      cwd: webRoot,
+                      env: { ...process.env, VITE_API_TARGET: origin },
+                      detached: true,
+                      stdio: 'ignore',
+                    }
+                  );
+                  if (!dev.pid) throw new Error('Missing Vite PID');
+                  identity = await captureForegroundGuiLauncherIdentity(dev.pid);
+                  browserOrigin = `http://127.0.0.1:${port}`;
+                  await waitForHttp(browserOrigin);
+                }
+                const created = await fetch(`${origin}/sessions`, {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({
+                    projectPath: workspace,
+                    title: 'SSE recovery',
+                  }),
+                });
+                expect(created.ok).toBe(true);
+                const sessionId = SessionSchema.parse(await created.json()).sessionId;
+                relay = await startSessionEventRelay({
+                  origin,
+                  browserOrigin,
+                  sessionId,
+                });
+                const eventsRelay = relay;
+                await page.route(`**/sessions/${sessionId}/events?*`, (route) => {
+                  const url = new URL(route.request().url());
+                  return route.continue({
+                    url: `${eventsRelay.origin}${url.pathname}${url.search}`,
+                  });
+                });
+                const url = new URL(browserOrigin);
+                url.searchParams.set('session', sessionId);
+                url.searchParams.set('project', workspace);
+                await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+                const composer = page.locator('textarea[data-blade-composer]');
+                await composer.fill(
+                  'Do not call any tools. Reply with exactly SSE_RECONNECT_READY, without formatting or extra text.'
+                );
+                await page.locator('[data-blade-submit]').click();
+                await expect.poll(() => requests, { timeout: 30_000 }).toBe(1);
+                expect(eventsRelay.connections.at(-1)?.searchParams.get('resume')).toBe(
+                  'false'
+                );
+                const count = eventsRelay.connections.length;
+                eventsRelay.disconnectAndHold();
+                await expect
+                  .poll(() => eventsRelay.heldCount, { timeout: 15_000 })
+                  .toBe(1);
+                expect(eventsRelay.connections).toHaveLength(count + 1);
+                const firstCursor = eventsRelay.connections
+                  .at(-1)
+                  ?.searchParams.get('lastEventId');
+                // Keep the first reconnect silent until the browser's handshake deadline expires.
+                await expect
+                  .poll(() => eventsRelay.connections.length, { timeout: 15_000 })
+                  .toBe(count + 2);
+                expect(eventsRelay.heldCount).toBe(1);
+                const reconnect = eventsRelay.connections.at(-1);
+                expect(reconnect?.searchParams.get('lastEventId')).toBe(firstCursor);
+                expect(reconnect?.searchParams.has('resume')).toBe(false);
+                expect(
+                  Number(reconnect?.searchParams.get('lastEventId'))
+                ).toBeGreaterThan(0);
+                expect(reconnect?.searchParams.get('projectPath')).toBe(workspace);
+                const stopped = await fetch(
+                  `${origin}/sessions/${sessionId}/abort?projectPath=${encodeURIComponent(workspace)}`,
+                  { method: 'POST' }
+                );
+                expect(stopped.ok).toBe(true);
+                await expect.poll(() => cancelled).toBe(true);
+                expect(recording.requestBodies).toEqual([]);
+                if (recovery === 'manual') {
+                  const offline = page
+                    .getByRole('alert')
+                    .filter({ hasText: /Live updates are offline|实时更新已离线/ });
+                  await offline.waitFor({ state: 'visible', timeout: 70_000 });
+                  expect(eventsRelay.connections).toHaveLength(count + 5);
+                  expect(eventsRelay.heldCount).toBe(0);
+                  const exhaustedCount = eventsRelay.connections.length;
+                  await new Promise((resolve) => setTimeout(resolve, 2000));
+                  expect(eventsRelay.connections).toHaveLength(exhaustedCount);
+                  expect(recording.requestBodies).toEqual([]);
+                  release = true;
+                  eventsRelay.release();
+                  await offline
+                    .getByRole('button', { name: /Reconnect|重新连接/ })
+                    .click();
+                  await expect
+                    .poll(() => eventsRelay.connections.length)
+                    .toBe(exhaustedCount + 1);
+                  expect(
+                    eventsRelay.connections.at(-1)?.searchParams.has('resume')
+                  ).toBe(false);
+                } else {
+                  release = true;
+                  eventsRelay.release();
+                }
+                await Promise.all([
+                  page
+                    .locator('[data-chat-role="assistant"]')
+                    .getByText('SSE_RECONNECT_READY', { exact: true })
+                    .waitFor({ timeout: 90_000 }),
+                  expect
+                    .poll(
+                      async () => {
+                        const response = await fetch(
+                          `${origin}/sessions/${sessionId}/status?projectPath=${encodeURIComponent(workspace)}`
+                        );
+                        if (!response.ok)
+                          throw new Error(`Session status failed: ${response.status}`);
+                        const status: unknown = await response.json();
+                        return status &&
+                          typeof status === 'object' &&
+                          'status' in status
+                          ? status.status
+                          : undefined;
+                      },
+                      { timeout: 90_000 }
+                    )
+                    .toBe('completed'),
+                ]);
+                await page
+                  .locator('[data-turn-activity-strip]')
+                  .waitFor({ state: 'detached' });
+                const events = readSessionEvents(
+                  findSessionTranscript(storageRoot, sessionId)
+                );
+                expect(requests).toBe(2);
+                expect(recording.forwardedRequestNumbers).toEqual([1]);
+                expect(recording.responseSummaries).toEqual([
+                  expect.objectContaining({ parseStatus: 'complete' }),
+                ]);
+                expect(
+                  events.filter((event) => event.type === 'turn_started')
+                ).toHaveLength(2);
+                expect(
+                  events.filter((event) => event.type === 'turn_aborted')
+                ).toHaveLength(1);
+                expect(
+                  events.filter((event) => event.type === 'turn_completed')
+                ).toHaveLength(1);
+                expect(
+                  events.filter((event) => event.type === 'inbox_acknowledged')
+                ).toHaveLength(1);
+                const finalInspection = inspectFinalAssistantText(events);
+                if (finalInspection.state !== 'ready') {
+                  console.error('SSE_FINALIZATION_DIAGNOSTIC', {
+                    surface,
+                    recovery,
+                    finalInspection,
+                    suffix: events.slice(-6).map((event) => ({
+                      type: event.type,
+                      data:
+                        event.type === 'session_updated'
+                          ? { taskStatus: event.data.taskStatus }
+                          : undefined,
+                    })),
+                    status: await (
+                      await fetch(
+                        `${origin}/sessions/${sessionId}/status?projectPath=${encodeURIComponent(workspace)}`
+                      )
+                    ).json(),
+                  });
+                }
+                expect(finalAssistantText(events)).toBe('SSE_RECONNECT_READY');
+                state.refreshing = true;
+                await page.reload({ waitUntil: 'domcontentloaded' });
+                state.refreshing = false;
+                await page
+                  .locator('[data-chat-role="assistant"]')
+                  .getByText('SSE_RECONNECT_READY', { exact: true })
+                  .waitFor();
+                expect(faults).toEqual(
+                  recovery === 'manual'
+                    ? ['console:SSE max retries (5) reached, giving up']
+                    : []
+                );
+                assertNoSecrets({ dom: await page.content(), events }, [
+                  deepseekFlash.apiKey,
+                ]);
+                console.log('SSE_RECONNECT_EVIDENCE', {
+                  surface,
+                  requests,
+                  providerRequests: 1,
+                  acknowledged: 1,
+                  handshakeTimeouts: recovery === 'manual' ? 5 : 1,
+                  recovery,
+                });
+              }
+            );
+          } finally {
+            if (dev) await stopForegroundGuiLauncher(dev, identity);
+            const server = gate;
+            await Promise.all([
+              relay?.close(),
+              proxy?.close(),
+              server
+                ? new Promise<void>((resolve, reject) => {
+                    server.closeAllConnections();
+                    server.close((error) => (error ? reject(error) : resolve()));
+                  })
+                : undefined,
+            ]);
+            await rm(root, { recursive: true, force: true });
+          }
+        }, 180_000);
+      }
+    }
 
     it('recovers a one-shot DeepSeek failure through a production ACP subprocess', async () => {
       if (!deepseekFlash?.baseURL) throw new Error('DeepSeek Flash is unavailable');
