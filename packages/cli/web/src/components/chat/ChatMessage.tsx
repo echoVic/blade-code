@@ -5,6 +5,7 @@ import {
   Copy,
   FileText,
   Loader2,
+  LocateFixed,
   MessageSquareQuote,
   RotateCcw,
 } from 'lucide-react';
@@ -77,6 +78,7 @@ function useToolExpansion(kind: 'group' | 'detail', toolCallId: string) {
 interface ChatMessageProps {
   message: Message;
   showAvatar?: boolean;
+  onNavigateToMessage?: (messageId: string) => void;
 }
 
 const MarkdownRenderer = lazy(() =>
@@ -1397,7 +1399,11 @@ function AgentMessageContent({ message }: { message: Message }) {
   );
 }
 
-function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) {
+function ChatMessageComponent({
+  message,
+  showAvatar = true,
+  onNavigateToMessage,
+}: ChatMessageProps) {
   const t = useT();
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -1515,6 +1521,16 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
                       <p className="mt-1 text-[11px] leading-4 text-[hsl(var(--deck-ink))]">
                         {annotation.comment}
                       </p>
+                    )}
+                    {onNavigateToMessage && (
+                      <button
+                        type="button"
+                        onClick={() => onNavigateToMessage(annotation.sourceMessageId)}
+                        className="mt-1.5 inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-[10.5px] font-medium text-[hsl(var(--deck-accent))] transition-colors hover:bg-[hsl(var(--deck-accent-soft))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
+                      >
+                        <LocateFixed aria-hidden className="h-3.5 w-3.5" />
+                        {t('chat.input.annotation.jump')}
+                      </button>
                     )}
                   </div>
                 ))}

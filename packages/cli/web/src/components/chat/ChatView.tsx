@@ -14,7 +14,7 @@ import {
   RotateCcw,
   WifiOff,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TaskArtifactBar } from '@/components/tasks/TaskArtifactBar';
 import { useT } from '@/i18n';
 import { focusBladeComposer } from '@/lib/composerFocus';
@@ -25,7 +25,7 @@ import { rejectHistorySurfaceAction } from '@/store/session/historySurfaceGuard'
 import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
 import type { ComposerImageAttachment } from './ChatInput';
 import { ChatInput } from './ChatInput';
-import { ChatList } from './ChatList';
+import { ChatList, type ChatMessageNavigationRequest } from './ChatList';
 import { FollowUpQueuePanel } from './FollowUpQueuePanel';
 import { GoalControlBar } from './GoalControlBar';
 import { PendingInteractionBar } from './PendingInteractionBar';
@@ -172,6 +172,9 @@ export function ChatView() {
   );
   const clearError = useSessionStore((state) => state.clearError);
   const [recoveryDraft, setRecoveryDraft] = useState<RecoveryDraft | null>(null);
+  const [messageNavigationRequest, setMessageNavigationRequest] = useState<
+    (ChatMessageNavigationRequest & { sessionKey: string }) | null
+  >(null);
   const currentSession = currentSessionRef
     ? sessions.find(
         (session) =>
@@ -223,7 +226,19 @@ export function ChatView() {
 
   useEffect(() => {
     setRecoveryDraft(null);
+    setMessageNavigationRequest(null);
   }, [currentSessionKey]);
+
+  const navigateToMessage = useCallback(
+    (messageId: string) => {
+      setMessageNavigationRequest((current) => ({
+        messageId,
+        requestId: (current?.requestId ?? 0) + 1,
+        sessionKey: currentSessionKey,
+      }));
+    },
+    [currentSessionKey]
+  );
 
   const handleSend = async (payload: {
     content: string;
@@ -392,6 +407,11 @@ export function ChatView() {
             selectionDraftKey={historyOnly ? undefined : composerDraftKey}
             canAskSideConversation={Boolean(currentSessionRef && !historyOnly)}
             onOpenSideConversation={openSideConversation}
+            navigationRequest={
+              messageNavigationRequest?.sessionKey === currentSessionKey
+                ? messageNavigationRequest
+                : null
+            }
           />
           <TeamPanel />
         </div>
@@ -443,6 +463,7 @@ export function ChatView() {
             pendingInputDelivery={pendingInputDelivery}
             recoveredSteeringCount={recoveredSteeringCount}
             workspacePath={currentSessionRef?.projectPath}
+            onNavigateToMessage={navigateToMessage}
           />
           <div data-chat-primary-status className="contents">
             <StatusBar />

@@ -478,6 +478,7 @@
   "chat.input.annotation.show": "Show {count} selected-text annotations",
   "chat.input.annotation.item": "Selection {index}",
   "chat.input.annotation.remove": "Remove selection {index}",
+  "chat.input.annotation.jump": "Jump to message",
   "chat.input.model.placeholder": "Select Model",
   "chat.input.model.empty": "No models configured",
   "chat.input.model.vision": "Vision",

@@ -1265,7 +1265,7 @@ describe('SessionRoutes runtime reuse', () => {
       expect(messagesResponse.status).toBe(200);
       const messages = await messagesResponse.json();
       expect(vi.mocked(SessionService.loadSession).mock.calls).toEqual([
-        [sessionId, projectPath],
+        [sessionId, projectPath, { includeMessageIds: true }],
       ]);
       expect(messages).toEqual([
         { role: 'user', content: 'fresh durable user history' },
@@ -4809,7 +4809,8 @@ describe('SessionRoutes runtime reuse', () => {
     ]);
     expect(SessionService.loadSession).toHaveBeenCalledWith(
       'shared-session',
-      '/tmp/workspace-b'
+      '/tmp/workspace-b',
+      { includeMessageIds: true }
     );
   });
 
@@ -6520,7 +6521,8 @@ describe('SessionRoutes runtime reuse', () => {
     await expect(messagesResponse.json()).resolves.toEqual(rewoundMessages);
     expect(SessionService.loadSession).toHaveBeenCalledWith(
       'shared-rewind',
-      '/tmp/workspace-a'
+      '/tmp/workspace-a',
+      { includeMessageIds: true }
     );
     const sessionsResponse = await app.request('/');
     const sessions = (await sessionsResponse.json()) as Array<{

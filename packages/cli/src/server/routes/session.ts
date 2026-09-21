@@ -3938,7 +3938,11 @@ export const createSessionRouteController = (): SessionRouteController => {
 
     try {
       const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
-      const messages = await SessionService.loadSession(ref.sessionId, ref.projectPath);
+      const messages = await SessionService.loadSession(
+        ref.sessionId,
+        ref.projectPath,
+        { includeMessageIds: true }
+      );
       return c.json(projectClientMessages(messages));
     } catch (error) {
       logger.error('[SessionRoutes] Failed to get messages:', error);

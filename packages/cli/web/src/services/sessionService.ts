@@ -294,7 +294,7 @@ const normalizeHistoryMessage = (
   index: number,
   now: number
 ): Message => ({
-  id: `history-${index}-${now}`,
+  id: message.id ?? `history-${index}-${now}`,
   role: message.role as MessageRole,
   content: normalizeContent(message.content),
   timestamp: now,

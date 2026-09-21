@@ -1,8 +1,20 @@
 import { ArrowDown, History } from 'lucide-react';
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { ScrollArea } from '@/components/ui/ScrollArea';
 import { useT } from '@/i18n';
+import {
+  locateChatMessage,
+  visibleCountForChatMessage,
+} from '@/lib/chatMessageNavigation';
 import { cn } from '@/lib/utils';
 import type { Message } from '@/store/session';
 import { projectMessagesForDisplay } from '@/store/session/utils/displayMessages';
@@ -22,6 +34,12 @@ interface ChatListProps {
   selectionDraftKey?: string;
   canAskSideConversation?: boolean;
   onOpenSideConversation?: (selectedText: string) => boolean;
+  navigationRequest?: ChatMessageNavigationRequest | null;
+}
+
+export interface ChatMessageNavigationRequest {
+  messageId: string;
+  requestId: number;
 }
 
 const INITIAL_RENDERED_MESSAGES = 120;
@@ -49,6 +67,7 @@ function ChatListComponent({
   selectionDraftKey,
   canAskSideConversation = false,
   onOpenSideConversation,
+  navigationRequest,
 }: ChatListProps) {
   const t = useT();
   const displayMessages = useMemo(
@@ -82,6 +101,8 @@ function ChatListComponent({
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
+  const pendingMessageNavigationRef = useRef<string | null>(null);
+  const handledNavigationRequestRef = useRef<number | null>(null);
   const [visibleCount, setVisibleCount] = useState(INITIAL_RENDERED_MESSAGES);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -181,6 +202,24 @@ function ChatListComponent({
   );
   const turns = useMemo(() => deriveChatTurns(displayMessages), [displayMessages]);
 
+  const navigateToMessage = useCallback(
+    (messageId: string) => {
+      const requiredVisibleCount = visibleCountForChatMessage(
+        displayMessages,
+        messageId,
+        visibleCount
+      );
+      if (requiredVisibleCount === null) return;
+      if (requiredVisibleCount > visibleCount) {
+        pendingMessageNavigationRef.current = messageId;
+        setVisibleCount(requiredVisibleCount);
+        return;
+      }
+      locateChatMessage(containerRef.current, messageId);
+    },
+    [displayMessages, visibleCount]
+  );
+
   useLayoutEffect(() => {
     const anchor = pendingHistoryAnchorRef.current;
     if (!anchor) return;
@@ -198,6 +237,26 @@ function ChatListComponent({
       viewport.scrollHeight
     );
   }, [visibleCount]);
+
+  useLayoutEffect(() => {
+    const messageId = pendingMessageNavigationRef.current;
+    if (!messageId) return;
+    pendingMessageNavigationRef.current = null;
+    window.requestAnimationFrame(() => {
+      locateChatMessage(containerRef.current, messageId);
+    });
+  }, [visibleCount]);
+
+  useEffect(() => {
+    if (
+      !navigationRequest ||
+      handledNavigationRequestRef.current === navigationRequest.requestId
+    ) {
+      return;
+    }
+    handledNavigationRequestRef.current = navigationRequest.requestId;
+    navigateToMessage(navigationRequest.messageId);
+  }, [navigateToMessage, navigationRequest]);
 
   if (isLoading) {
     return (
@@ -347,7 +406,11 @@ function ChatListComponent({
                 key={message.id || `msg-${index}`}
                 value={toolExpansion.current}
               >
-                <ChatMessage message={message} showAvatar={showAvatar} />
+                <ChatMessage
+                  message={message}
+                  showAvatar={showAvatar}
+                  onNavigateToMessage={navigateToMessage}
+                />
               </ToolExpansionContext.Provider>
             );
           })}

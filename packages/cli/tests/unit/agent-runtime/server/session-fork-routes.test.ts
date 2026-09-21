@@ -93,10 +93,16 @@ describe('BladeServer session fork route', () => {
         )}`
       );
       expect(childMessagesResponse.status).toBe(200);
-      await expect(childMessagesResponse.json()).resolves.toEqual([
+      const childMessages = (await childMessagesResponse.json()) as Array<{
+        id?: string;
+        role: string;
+        content: string;
+      }>;
+      expect(childMessages).toMatchObject([
         { role: 'user', content: 'Remember FORK_VALUE' },
         { role: 'assistant', content: 'READY' },
       ]);
+      expect(childMessages.every((message) => Boolean(message.id))).toBe(true);
     } finally {
       await server.stop();
     }

@@ -478,6 +478,7 @@
   "chat.input.annotation.show": "查看 {count} 条选中文字注释",
   "chat.input.annotation.item": "选中内容 {index}",
   "chat.input.annotation.remove": "移除选中内容 {index}",
+  "chat.input.annotation.jump": "跳转到消息",
   "chat.input.model.placeholder": "选择模型",
   "chat.input.model.empty": "未配置模型",
   "chat.input.model.vision": "视觉",

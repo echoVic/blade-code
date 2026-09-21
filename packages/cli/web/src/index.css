@@ -227,6 +227,18 @@
     }
   }
 
+  [data-chat-message-id] {
+    scroll-margin-block: 24px;
+    transition:
+      background-color 240ms ease,
+      box-shadow 240ms ease;
+  }
+
+  [data-chat-message-highlighted="true"] {
+    background-color: hsl(var(--deck-accent-soft));
+    box-shadow: inset 3px 0 0 hsl(var(--deck-accent));
+  }
+
   /* Chrome-style small key hint (used for ⌘1..4 on templates) */
   .deck-kbd {
     font-family: "JetBrains Mono", monospace;

@@ -465,6 +465,7 @@ describe('API Schemas', () => {
 
     it('应该保留 reasoningContent 与 thinkingContent', () => {
       const parsed = SessionHistoryMessageSchema.parse({
+        id: 'durable-message-1',
         role: 'assistant',
         content: 'history',
         reasoningContent: 'chain-of-thought',
@@ -472,6 +473,7 @@ describe('API Schemas', () => {
       });
 
       expect(parsed).toMatchObject({
+        id: 'durable-message-1',
         role: 'assistant',
         content: 'history',
         reasoningContent: 'chain-of-thought',

@@ -1427,7 +1427,8 @@ export class SessionService {
    */
   static async loadSession(
     sessionId: string,
-    projectPath?: string
+    projectPath?: string,
+    options: { includeMessageIds?: boolean } = {}
   ): Promise<Message[]> {
     try {
       if (projectPath) {
@@ -1437,7 +1438,8 @@ export class SessionService {
           return await this.loadSessionFromFile(
             filePath,
             sessionId,
-            resolvedProjectPath
+            resolvedProjectPath,
+            options
           );
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -1455,7 +1457,12 @@ export class SessionService {
         throw new Error(`未找到会话: ${sessionId}`);
       }
 
-      return await this.loadSessionFromFile(session.filePath, sessionId);
+      return await this.loadSessionFromFile(
+        session.filePath,
+        sessionId,
+        undefined,
+        options
+      );
     } catch (error) {
       logger.error(`[SessionService] 加载会话失败 (${sessionId}):`, error);
       throw error;
@@ -3355,7 +3362,8 @@ export class SessionService {
   private static async loadSessionFromFile(
     filePath: string,
     sessionId: string,
-    projectPath?: string
+    projectPath?: string,
+    options: { includeMessageIds?: boolean } = {}
   ): Promise<Message[]> {
     const content = await readFile(filePath, 'utf-8');
     const entries = this.parseStoredSession(content, sessionId);
@@ -3370,7 +3378,7 @@ export class SessionService {
         throw new Error(`未找到会话: ${sessionId}`);
       }
     }
-    return this.convertJSONLToMessages(entries);
+    return this.convertJSONLToMessages(entries, options);
   }
 
   private static async loadSessionModelContextFromFile(
@@ -3441,7 +3449,10 @@ export class SessionService {
   /** 将 JSONL 条目转换为 OpenAI Message 格式 */
   static convertJSONLToMessages(
     entries: SessionEvent[],
-    options: { includeTokenBudgetHandoffs?: boolean } = {}
+    options: {
+      includeTokenBudgetHandoffs?: boolean;
+      includeMessageIds?: boolean;
+    } = {}
   ): Message[] {
     const messages: Message[] = [];
     const messageMap = new Map<string, Message>();
@@ -3491,6 +3502,7 @@ export class SessionService {
             ? recoveredToolAssistants.get(entry.data.parentMessageId)
             : undefined;
         const message: Message = recoveredAssistant ?? {
+          ...(options.includeMessageIds ? { id: entry.data.messageId } : {}),
           role: entry.data.role,
           content: '',
           ...(entry.data.metadata || entry.data.inboxMessageId
@@ -3508,6 +3520,7 @@ export class SessionService {
               }
             : {}),
         };
+        if (options.includeMessageIds) message.id ??= entry.data.messageId;
         messageMap.set(entry.data.messageId, message);
         partMap.set(entry.data.messageId, []);
         if (!recoveredAssistant) {

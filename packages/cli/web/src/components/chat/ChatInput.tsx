@@ -18,6 +18,7 @@ import {
   Hand,
   Info,
   Loader2,
+  LocateFixed,
   MessageSquareQuote,
   Paperclip,
   Send,
@@ -104,6 +105,7 @@ interface ChatInputProps {
   draftKey?: string;
   placeholder?: string;
   workspacePath?: string | null;
+  onNavigateToMessage?: (messageId: string) => void;
 }
 
 const MODES: {
@@ -187,6 +189,7 @@ export function ChatInput({
   draftKey,
   placeholder,
   workspacePath,
+  onNavigateToMessage,
 }: ChatInputProps) {
   const t = useT();
   const initialDraft = useRef(readComposerDraft(draftKey));
@@ -1040,6 +1043,19 @@ export function ChatInput({
                           <p className="mt-1.5 text-[11px] leading-4 text-[hsl(var(--deck-ink))]">
                             {annotation.comment}
                           </p>
+                        )}
+                        {onNavigateToMessage && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAnnotationsOpen(false);
+                              onNavigateToMessage(annotation.sourceMessageId);
+                            }}
+                            className="mt-1.5 inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-[10.5px] font-medium text-[hsl(var(--deck-accent))] transition-colors hover:bg-[hsl(var(--deck-accent-soft))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
+                          >
+                            <LocateFixed aria-hidden className="h-3.5 w-3.5" />
+                            {t('chat.input.annotation.jump')}
+                          </button>
                         )}
                       </div>
                       <button
