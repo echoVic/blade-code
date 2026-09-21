@@ -139,6 +139,20 @@ Edits Jupyter Notebook files.
 
 ## Search Tools
 
+### FindFiles
+
+Fuzzy-searches file names and relative paths. Use it when you remember only a
+fragment, abbreviation, or approximate spelling of a file name.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | ✅ | Fuzzy file name or relative path query |
+| `max_results` | number | | Maximum results, default 20 |
+
+**Type**: ReadOnly
+**Features**: Uses a shared workspace file-name index and respects `.gitignore`
+and built-in ignore rules
+
 ### Glob
 
 Finds files using glob patterns.
@@ -640,6 +654,7 @@ See the [Permission System](/en/configuration/permissions.md) section for detail
 | File Operations | Write | Write | Write or create file |
 | File Operations | Edit | Write | Replace file content by string/regex |
 | File Operations | NotebookEdit | Write | Edit Jupyter Notebook |
+| Search | FindFiles | ReadOnly | Fuzzy-search file names and relative paths |
 | Search | Glob | ReadOnly | Find files with glob patterns |
 | Search | Grep | ReadOnly | ripgrep-based content search |
 | Shell | Bash | Execute | Execute Shell commands |

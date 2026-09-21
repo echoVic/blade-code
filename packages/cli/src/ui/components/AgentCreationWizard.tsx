@@ -52,6 +52,7 @@ type WizardStep =
 
 // 可用工具列表
 const AVAILABLE_TOOLS = [
+  { label: 'FindFiles - 模糊文件搜索', value: 'FindFiles' },
   { label: 'Glob - 文件搜索', value: 'Glob' },
   { label: 'Grep - 内容搜索', value: 'Grep' },
   { label: 'Read - 读取文件', value: 'Read' },

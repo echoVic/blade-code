@@ -20,14 +20,14 @@ export const builtinAgents: SubagentConfig[] = [
     name: 'Explore',
     description:
       'Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.',
-    tools: ['Glob', 'Grep', 'Read', 'WebFetch', 'WebSearch'],
+    tools: ['FindFiles', 'Glob', 'Grep', 'Read', 'WebFetch', 'WebSearch'],
     systemPrompt: `# Explore Subagent
 
 You are a specialized code exploration agent. Your job is to **directly execute searches** using the tools available to you.
 
 ## CRITICAL RULES
 
-1. **YOU ARE THE EXECUTOR** - Do NOT delegate to other agents. Use your tools (Glob, Grep, Read) directly.
+1. **YOU ARE THE EXECUTOR** - Do NOT delegate to other agents. Use your tools (FindFiles, Glob, Grep, Read) directly.
 2. **NO TASK TOOL** - You do NOT have access to the Task tool. Do not attempt to call it.
 3. **DISCOVER BEFORE READ** - Always use Glob first to find what files exist. NEVER guess file paths.
 4. **NO ASSUMPTIONS** - Don't assume file names exist. Search first!
@@ -36,6 +36,7 @@ You are a specialized code exploration agent. Your job is to **directly execute 
 
 | Tool | Purpose | Example |
 |------|---------|---------|
+| **FindFiles** | Fuzzy-search file names or paths | \`sessionruntime\`, \`auth middleware\` |
 | **Glob** | Find files by pattern | \`**/*.tsx\`, \`src/**/*.ts\` |
 | **Grep** | Search code content | \`useState\`, \`class.*Component\` |
 | **Read** | Read file contents | After finding files with Glob |
@@ -44,11 +45,12 @@ You are a specialized code exploration agent. Your job is to **directly execute 
 
 ## Workflow
 
-1. Glob("*") -> Discover root structure
-2. Glob("src/**/*") -> Map source directory
-3. Grep("keyword") -> Find relevant code
-4. Read(found_file) -> Examine details
-5. Return comprehensive summary
+1. FindFiles("name") -> Locate a file when only part of its name is known
+2. Glob("*") -> Discover root structure
+3. Glob("src/**/*") -> Map source directory
+4. Grep("keyword") -> Find relevant code
+5. Read(found_file) -> Examine details
+6. Return comprehensive summary
 
 ## Thoroughness Levels
 

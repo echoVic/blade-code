@@ -144,6 +144,18 @@ ACP-local backend，以及未声明 fs 或 all-false capability 的 ACP Session�
 
 ## 搜索工具
 
+### FindFiles
+
+按文件名或相对路径进行模糊搜索。适合只记得文件名片段、缩写或近似拼写时使用。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `query` | string | ✅ | 文件名或相对路径的模糊查询 |
+| `max_results` | number | | 最大结果数，默认 20 |
+
+**类型**: ReadOnly
+**特性**: 基于共享的 workspace 文件名索引，遵循 `.gitignore` 和默认忽略规则
+
 ### Glob
 
 使用 glob 模式查找文件。
@@ -681,6 +693,7 @@ blade mcp list
 | 文件操作 | Write | Write | 写入或创建文件 |
 | 文件操作 | Edit | Write | 按字符串/正则替换文件内容 |
 | 文件操作 | NotebookEdit | Write | 编辑 Jupyter Notebook |
+| 搜索 | FindFiles | ReadOnly | 按文件名或相对路径模糊搜索 |
 | 搜索 | Glob | ReadOnly | glob 模式查找文件 |
 | 搜索 | Grep | ReadOnly | 基于 ripgrep 的内容搜索 |
 | Shell | Bash | Execute | 执行 Shell 命令 |

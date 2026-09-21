@@ -46,6 +46,7 @@ const logger = createLogger(LogCategory.AGENT);
 /** 允许在流式阶段提前执行的工具白名单。 仅纯读、无副作用的工具才应出现在此列表中。 此列表与 isConcurrencySafe（文件锁语义）完全独立。 */
 export const STREAMING_PRELAUNCH_ALLOWLIST: ReadonlySet<string> = new Set([
   'Read',
+  'FindFiles',
   'Glob',
   'Grep',
   'WebFetch',

@@ -46,6 +46,10 @@ export function formatToolCallSummary(
       const shellId = params.shell_id as string;
       return `Sending input to Shell: ${shellId || 'unknown'}`;
     }
+    case 'FindFiles': {
+      const query = params.query as string;
+      return `Finding files: ${query}`;
+    }
     case 'Glob': {
       const pattern = params.pattern as string;
       return `Searching files: ${pattern}`;
@@ -183,6 +187,7 @@ export function shouldShowToolDetail(toolName: string, result: ToolResult): bool
     case 'Edit':
     case 'ApplyPatch':
     case 'Read':
+    case 'FindFiles':
     case 'Glob':
     case 'Grep':
     case 'Bash':
@@ -242,6 +247,28 @@ export function generateToolDetail(
   }
 
   switch (toolName) {
+    case 'FindFiles': {
+      const matches = result.metadata?.matches;
+      if (!Array.isArray(matches)) return null;
+      const paths = matches
+        .map((match) =>
+          match &&
+          typeof match === 'object' &&
+          'path' in match &&
+          typeof match.path === 'string'
+            ? match.path
+            : undefined
+        )
+        .filter((path): path is string => path !== undefined);
+      if (paths.length === 0) return null;
+      const maxShow = 5;
+      const lines = paths.slice(0, maxShow);
+      if (paths.length > maxShow) {
+        lines.push(`... (+${paths.length - maxShow} more)`);
+      }
+      return lines.join('\n');
+    }
+
     case 'Glob': {
       if (!isGlobMetadata(result.metadata)) return null;
       const { matches } = result.metadata;

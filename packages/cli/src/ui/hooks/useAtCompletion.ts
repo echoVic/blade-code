@@ -1,23 +1,13 @@
-import fg from 'fast-glob';
-import Fuse from 'fuse.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { fileNameIndex } from '../../services/FileNameIndex.js';
 import { getCwd } from '../../utils/cwd.js';
 import {
   DEFAULT_EXCLUDE_DIRS,
   DEFAULT_EXCLUDE_FILE_PATTERNS,
 } from '../../utils/filePatterns.js';
 
-// 全局文件列表缓存，避免重复加载
-let globalFileCache: {
-  cwd: string;
-  ignoreKey: string;
-  files: string[];
-  timestamp: number;
-} | null = null;
-const FILE_CACHE_TTL = 5000; // 5 秒缓存
-
 export function clearAtCompletionCache(): void {
-  globalFileCache = null;
+  fileNameIndex.invalidate();
 }
 
 export interface AtMatchResult {
@@ -105,8 +95,9 @@ export function useAtCompletion(
     canRequest,
   } = options;
   const canRequestRef = useRef(canRequest);
+  const loadedIndexKeyRef = useRef<string | null>(null);
   canRequestRef.current = canRequest;
-  const [files, setFiles] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const ignorePatternsKey = useMemo(
@@ -126,57 +117,41 @@ export function useAtCompletion(
     }
     return extractAtMention(input, cursorPosition);
   }, [input, cursorPosition]);
-  useEffect(() => {
-    if (!shouldLoadFiles) {
-      setFiles([]);
-      setLoading(false);
-      return;
-    }
+  const indexKey = `${cwd}\0${ignorePatternsKey}`;
 
-    const now = Date.now();
-    if (
-      globalFileCache &&
-      globalFileCache.cwd === cwd &&
-      globalFileCache.ignoreKey === ignorePatternsKey &&
-      now - globalFileCache.timestamp < FILE_CACHE_TTL
-    ) {
-      setFiles(globalFileCache.files);
+  useEffect(() => {
+    if (!shouldLoadFiles || !atMatch.hasQuery) {
+      setSuggestions([]);
       setLoading(false);
       return;
     }
 
     let cancelled = false;
-    const loadFiles = async () => {
+    const controller = new AbortController();
+    const searchFiles = async () => {
       if (disabled || canRequestRef.current?.() === false) {
-        setFiles([]);
+        setSuggestions([]);
         setLoading(false);
         return;
       }
-      setLoading(true);
+      if (loadedIndexKeyRef.current !== indexKey) setLoading(true);
       try {
-        const foundFiles = (await fg('**/*', {
+        const matches = await fileNameIndex.search(atMatch.query, {
           cwd,
-          dot: false,
-          followSymbolicLinks: false,
-          onlyFiles: false,
-          markDirectories: true,
-          unique: true,
-          ignore: ignorePatterns,
-        })) as string[];
-        const normalized = foundFiles.map((f) => f.replace(/\\/g, '/'));
+          limit: maxSuggestions,
+          includeDirectories: true,
+          ignorePatterns,
+          fuzzy: fuzzyMatch,
+          signal: controller.signal,
+        });
         if (!cancelled) {
-          setFiles(normalized);
-          globalFileCache = {
-            cwd,
-            ignoreKey: ignorePatternsKey,
-            files: normalized,
-            timestamp: now,
-          };
+          setSuggestions(matches.map((match) => match.path));
+          loadedIndexKeyRef.current = indexKey;
         }
       } catch (error) {
-        console.error('Failed to load files for @ completion:', error);
-        if (!cancelled) {
-          setFiles([]);
+        if (!cancelled && !controller.signal.aborted) {
+          console.error('Failed to search files for @ completion:', error);
+          setSuggestions([]);
         }
       } finally {
         if (!cancelled) {
@@ -184,44 +159,30 @@ export function useAtCompletion(
         }
       }
     };
-    const timer = setTimeout(loadFiles, debounceDelay);
+    const timer =
+      loadedIndexKeyRef.current === indexKey
+        ? undefined
+        : setTimeout(searchFiles, debounceDelay);
+    if (timer === undefined) void searchFiles();
+
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      controller.abort();
+      if (timer !== undefined) clearTimeout(timer);
     };
-    // ignorePatternsKey intentionally represents the array's semantic value.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shouldLoadFiles, cwd, debounceDelay, ignorePatternsKey, disabled]);
-  const fuse = useMemo(
-    () =>
-      fuzzyMatch && files.length > 0
-        ? new Fuse(files, {
-            threshold: 0.4,
-            ignoreLocation: true,
-            minMatchCharLength: 1,
-          })
-        : null,
-    [files, fuzzyMatch]
-  );
-  const suggestions = useMemo(() => {
-    if (!atMatch.hasQuery || files.length === 0) {
-      return [];
-    }
+  }, [
+    atMatch.hasQuery,
+    atMatch.query,
+    cwd,
+    debounceDelay,
+    disabled,
+    fuzzyMatch,
+    ignorePatterns,
+    indexKey,
+    maxSuggestions,
+    shouldLoadFiles,
+  ]);
 
-    const query = atMatch.query.toLowerCase();
-    if (query === '') {
-      return files.slice(0, maxSuggestions);
-    }
-
-    if (fuse) {
-      const results = fuse.search(query);
-      return results.slice(0, maxSuggestions).map((r) => r.item);
-    }
-
-    return files
-      .filter((file) => file.toLowerCase().includes(query))
-      .slice(0, maxSuggestions);
-  }, [atMatch, files, fuse, maxSuggestions]);
   useEffect(() => {
     setSelectedIndex(0);
   }, [suggestions]);

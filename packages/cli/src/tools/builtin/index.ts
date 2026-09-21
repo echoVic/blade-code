@@ -36,7 +36,7 @@ import { notebookEditTool } from './notebook/index.js';
 // Plan 工具
 import { enterPlanModeTool, exitPlanModeTool } from './plan/index.js';
 // 搜索工具
-import { globTool, grepTool } from './search/index.js';
+import { findFilesTool, globTool, grepTool } from './search/index.js';
 // Shell 命令工具
 import { bashTool, killShellTool, writeStdinTool } from './shell/index.js';
 import type { SubagentDelegationDeps } from './subagentDelegationDeps.js';
@@ -116,7 +116,8 @@ export async function getBuiltinTools(opts?: {
     applyPatchTool,
     notebookEditTool,
 
-    // 搜索工具: Glob, Grep
+    // 搜索工具: FindFiles, Glob, Grep
+    findFilesTool,
     globTool,
     grepTool,
 

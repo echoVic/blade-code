@@ -6,7 +6,7 @@ Plan mode is a read-only permission mode used during the research and planning p
 
 In Plan mode:
 
-- ✅ **Allowed**: read-only tools such as Read, Glob, Grep, WebFetch, WebSearch, TaskCreate/TaskGet/TaskUpdate/TaskList
+- ✅ **Allowed**: read-only tools such as Read, FindFiles, Glob, Grep, WebFetch, WebSearch, TaskCreate/TaskGet/TaskUpdate/TaskList
 - ❌ **Denied**: modifying tools such as Write, Edit, Bash
 - 🔵 **Special**: the ExitPlanMode tool for submitting a plan
 

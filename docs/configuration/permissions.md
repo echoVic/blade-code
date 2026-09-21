@@ -20,7 +20,7 @@ Blade 提供四种权限模式。TUI 中的 `Shift+Tab` 在 `default`、`autoEdi
 ### DEFAULT 模式（默认）
 
 ```
-✅ 自动批准: 只读工具（Read、Glob、Grep、WebFetch、WebSearch、TaskCreate/TaskGet/TaskUpdate/TaskList、Task、Plan 工具）
+✅ 自动批准: 只读工具（Read、FindFiles、Glob、Grep、WebFetch、WebSearch、TaskCreate/TaskGet/TaskUpdate/TaskList、Task、Plan 工具）
 ❌ 需要确认: Write 工具（Edit、Write、ApplyPatch、NotebookEdit）、Execute 工具（Bash、Skill、SlashCommand）
 ```
 

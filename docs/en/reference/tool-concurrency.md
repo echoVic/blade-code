@@ -46,7 +46,7 @@ Hidden foreground candidates count against this capacity before spawn, preventin
 
 ## Built-in Tool Policies
 
-- Read, Glob, Grep, and other pure read tools are `shared` and can be stream-prelaunched in the explicit allowlist.
+- Read, FindFiles, Glob, Grep, and other pure read tools are `shared` and can be stream-prelaunched in the explicit allowlist.
 - Write, Edit, and NotebookEdit are `shared`, but the same path is serialized through the global `FileLockManager`; different paths can run in parallel.
 - Bash is `shared`, constrained by both Session execute=2 and process-wide execute=3.
 - Task is `shared`; each call owns an independent durable child session. Parallel children that may modify code must still use `isolation: "worktree"`.

@@ -9,7 +9,7 @@ Blade ships with 4 core subagents:
 | Name | Purpose | Available Tools |
 |------|------|----------|
 | `general-purpose` | General-purpose task agent for researching complex problems and multi-step tasks | All tools |
-| `Explore` | Code exploration expert that quickly searches and analyzes the codebase | Glob, Grep, Read, WebFetch, WebSearch |
+| `Explore` | Code exploration expert that quickly searches and analyzes the codebase | FindFiles, Glob, Grep, Read, WebFetch, WebSearch |
 | `Plan` | Software architect that designs implementation plans and architecture proposals | All tools |
 | `statusline-setup` | Status line configuration expert | Read, Edit |
 

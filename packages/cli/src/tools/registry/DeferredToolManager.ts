@@ -12,6 +12,7 @@ const ALWAYS_LOADED_TOOLS = new Set([
   'Edit',
   'Write',
   'ApplyPatch',
+  'FindFiles',
   'Glob',
   'Grep',
   'Bash',

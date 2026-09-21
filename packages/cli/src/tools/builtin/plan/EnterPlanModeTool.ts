@@ -54,7 +54,7 @@ Do NOT use EnterPlanMode for:
 ## What Happens in Plan Mode
 
 In plan mode, you'll:
-1. Thoroughly explore the codebase using Glob, Grep, and Read tools
+1. Thoroughly explore the codebase using FindFiles, Glob, Grep, and Read tools
 2. Understand existing patterns and architecture
 3. Design an implementation approach
 4. Present your plan to the user for approval
@@ -111,7 +111,7 @@ User: "What files handle routing?"
             llmContent:
               '[OK] User approved entering Plan mode.\n\n' +
               'You are now in PLAN MODE. Remember:\n' +
-              '- Use ONLY read-only tools: Read, Glob, Grep, WebFetch, WebSearch, Task\n' +
+              '- Use ONLY read-only tools: Read, FindFiles, Glob, Grep, WebFetch, WebSearch, Task\n' +
               '- DO NOT use Edit, Write, ApplyPatch, Bash, or any file-modifying tools\n' +
               '- When your research is complete, call ExitPlanMode with your implementation plan\n' +
               '- For pure research questions, answer directly without ExitPlanMode\n\n' +

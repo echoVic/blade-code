@@ -9,7 +9,7 @@ Blade 内置 4 个核心子代理：
 | 名称 | 用途 | 可用工具 |
 |------|------|----------|
 | `general-purpose` | 通用任务代理，用于复杂问题研究和多步骤任务 | 所有工具 |
-| `Explore` | 代码探索专家，快速搜索和分析代码库 | Glob, Grep, Read, WebFetch, WebSearch |
+| `Explore` | 代码探索专家，快速搜索和分析代码库 | FindFiles, Glob, Grep, Read, WebFetch, WebSearch |
 | `Plan` | 软件架构师，设计实现计划和架构方案 | 所有工具 |
 | `statusline-setup` | 状态栏配置专家 | Read, Edit |
 

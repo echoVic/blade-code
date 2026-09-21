@@ -93,6 +93,7 @@ describe('StreamingToolExecutor', () => {
     it('contains the expected tools', () => {
       const expected = [
         'Read',
+        'FindFiles',
         'Glob',
         'Grep',
         'WebFetch',

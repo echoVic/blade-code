@@ -461,6 +461,8 @@ function extractToolTarget(
       return stringParam('notebook_path');
     case 'Grep':
       return stringParam('path', 'pattern');
+    case 'FindFiles':
+      return stringParam('query');
     case 'Glob':
       return stringParam('pattern');
     case 'WebFetch':
@@ -493,7 +495,7 @@ function getPhaseForTool(
   message: string;
   shouldLockTarget: boolean;
 } {
-  const searchTools = new Set(['Glob', 'Grep', 'WebSearch', 'LS']);
+  const searchTools = new Set(['FindFiles', 'Glob', 'Grep', 'WebSearch', 'LS']);
   const readTools = new Set(['Read', 'WebFetch']);
   const actionTools = new Set([
     'Edit',

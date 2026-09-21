@@ -23,6 +23,7 @@ describe('builtin tool retry safety', () => {
         .sort()
     ).toEqual(
       [
+        'FindFiles',
         'GetGoal',
         'Glob',
         'Grep',

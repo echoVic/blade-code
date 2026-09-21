@@ -5,11 +5,15 @@ import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  glob: vi.fn(),
+  invalidate: vi.fn(),
+  search: vi.fn(),
 }));
 
-vi.mock('fast-glob', () => ({
-  default: mocks.glob,
+vi.mock('../../../../../src/services/FileNameIndex.js', () => ({
+  fileNameIndex: {
+    invalidate: mocks.invalidate,
+    search: mocks.search,
+  },
 }));
 
 import {
@@ -37,8 +41,18 @@ describe('useAtCompletion', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    mocks.invalidate.mockReset();
+    mocks.search.mockReset().mockImplementation(async (query: string) => {
+      const paths = ['src/alpha.ts', 'docs/readme.md'];
+      return paths
+        .filter((candidate) => candidate.includes(query))
+        .map((candidate) => ({
+          path: candidate,
+          score: 0,
+          isDirectory: false,
+        }));
+    });
     clearAtCompletionCache();
-    mocks.glob.mockReset().mockResolvedValue(['src/alpha.ts', 'docs/readme.md']);
     input = '';
     disabled = false;
     cwd = `/workspace/${Math.random()}`;
@@ -60,7 +74,7 @@ describe('useAtCompletion', () => {
       await vi.advanceTimersByTimeAsync(300);
     });
 
-    expect(mocks.glob).not.toHaveBeenCalled();
+    expect(mocks.search).not.toHaveBeenCalled();
     expect(state?.suggestions).toEqual([]);
     expect(state?.loading).toBe(false);
   });
@@ -77,12 +91,12 @@ describe('useAtCompletion', () => {
       vi.advanceTimersByTime(1_000);
     });
 
-    expect(mocks.glob).not.toHaveBeenCalled();
+    expect(mocks.search).not.toHaveBeenCalled();
     expect(state?.suggestions).toEqual([]);
     expect(state?.loading).toBe(false);
   });
 
-  it('loads files once and reuses the cached list while the query changes', async () => {
+  it('uses the shared file name index while the query changes', async () => {
     input = '@src';
     await act(async () => {
       root.render(<Harness />);
@@ -92,7 +106,7 @@ describe('useAtCompletion', () => {
       await vi.advanceTimersByTimeAsync(300);
     });
     expect(state?.suggestions).toContain('src/alpha.ts');
-    expect(mocks.glob).toHaveBeenCalledOnce();
+    expect(mocks.search).toHaveBeenCalledOnce();
 
     input = '@alpha';
     await act(async () => {
@@ -101,6 +115,12 @@ describe('useAtCompletion', () => {
     });
 
     expect(state?.suggestions).toEqual(['src/alpha.ts']);
-    expect(mocks.glob).toHaveBeenCalledOnce();
+    expect(mocks.search).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the shared index cache', () => {
+    clearAtCompletionCache();
+
+    expect(mocks.invalidate).toHaveBeenCalled();
   });
 });

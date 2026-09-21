@@ -20,7 +20,7 @@ Blade provides four permission modes. In the TUI, `Shift+Tab` cycles between `de
 ### DEFAULT Mode (default)
 
 ```
-✅ Auto-approved: read-only tools (Read, Glob, Grep, WebFetch, WebSearch, TaskCreate/TaskGet/TaskUpdate/TaskList, Task, Plan tools)
+✅ Auto-approved: read-only tools (Read, FindFiles, Glob, Grep, WebFetch, WebSearch, TaskCreate/TaskGet/TaskUpdate/TaskList, Task, Plan tools)
 ❌ Requires confirmation: Write tools (Edit, Write, ApplyPatch, NotebookEdit), Execute tools (Bash, Skill, SlashCommand)
 ```
 

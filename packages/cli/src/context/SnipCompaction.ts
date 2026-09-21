@@ -18,6 +18,7 @@ interface ToolTurn {
 
 const READ_ONLY_TOOLS = new Set([
   'Read',
+  'FindFiles',
   'Grep',
   'Glob',
   'Search',

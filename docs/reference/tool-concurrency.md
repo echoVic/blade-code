@@ -60,7 +60,7 @@ capacity 则持有到进程/ACP terminal 终态。
 
 ## 内置工具策略
 
-- Read、Glob、Grep 和其他纯读工具为 `shared`，并可在显式 allowlist 中流式预启动。
+- Read、FindFiles、Glob、Grep 和其他纯读工具为 `shared`，并可在显式 allowlist 中流式预启动。
 - Write、Edit 和 NotebookEdit 为 `shared`，但同一路径通过全局
   `FileLockManager` 串行；不同路径可以并行。
 - Bash 为 `shared`，同时受 Session execute=2 与全进程 execute=3 约束。
