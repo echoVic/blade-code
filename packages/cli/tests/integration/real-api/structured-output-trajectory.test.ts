@@ -25,7 +25,7 @@ const models = isRealApiTestEnabled()
 const gpt = models.find((model) => model.id === 'gpt');
 const claude = models.find((model) => model.id === 'claude');
 const deepseek = models.find((model) => model.id === 'deepseek');
-const describeReal = isRealApiTestEnabled() ? describe.sequential : describe.skip;
+const describeReal = isRealApiTestEnabled() ? describe : describe.skip;
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 let originalConfig: RuntimeConfig | null = null;
 

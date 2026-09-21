@@ -134,9 +134,9 @@ async function waitForHttp(origin: string): Promise<void> {
   }, 'Goal host failure Web server did not become ready');
 }
 
-describe
-  .skipIf(process.platform === 'win32')
-  .sequential('Goal execution-host failure production surfaces', () => {
+describe.skipIf(process.platform === 'win32')(
+  'Goal execution-host failure production surfaces',
+  () => {
     it('blocks the Headless Goal after three real Bash timeouts', async () => {
       const test = await createGoalExecutionHostFailureFixture(createHttpServer);
       roots.push(test.root);
@@ -377,4 +377,5 @@ describe
         await test.provider.close();
       }
     }, 150_000);
-  });
+  }
+);

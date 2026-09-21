@@ -231,114 +231,112 @@ afterAll(() => {
   WorkspaceTrustService.resetInstance();
 });
 
-describe
-  .skipIf(!isRealApiTestEnabled())
-  .sequential('native Browser Tool release matrix', () => {
-    it.each(matrix)(
-      '$qualificationId',
-      async ({ model, surface }) => {
-        const environment = new Map(
-          Object.entries(process.env).flatMap(([name, value]) =>
-            value === undefined ? [] : [[name, value] as const]
-          )
-        );
-        const root = await mkdtemp(
-          path.join(
-            os.tmpdir(),
-            `blade-browser-tool-${safeSlug(model.model)}-${surface}-`
-          )
-        );
-        const home = path.join(root, 'home');
-        const storageRoot = path.join(root, 'storage');
-        const workspaceInput = path.join(root, 'workspace');
-        const nonce = `browser_nonce_${randomBytes(12).toString('hex')}`;
-        const defaultGuiRouting = surface === 'web';
-        const fixture = await createBrowserToolFixture(nonce, {
-          promptMode: defaultGuiRouting ? 'default-gui-routing' : 'explicit-protocol',
-        });
-        if (defaultGuiRouting) {
-          expect(fixture.prompt).not.toMatch(/Browser Tool|Playwright|Puppeteer/);
-        }
-        let sessionId = `browser-tool-${surface}-${nonce}`;
-        let evidence: unknown;
-        try {
-          await Promise.all([
-            mkdir(home, { recursive: true }),
-            mkdir(storageRoot, { recursive: true }),
-            mkdir(workspaceInput, { recursive: true }),
-          ]);
-          const workspace = await initializeWorkspace(workspaceInput);
-          const runtimeConfig = await writeRuntimeConfig(home, model);
-          process.env.HOME = home;
-          process.env.BLADE_STORAGE_ROOT = storageRoot;
-          process.env.BLADE_AUTO_MEMORY = '0';
-          process.env.BLADE_TELEMETRY_DISABLED = '1';
-          process.env.PLAYWRIGHT_BROWSERS_PATH = browserCacheRoot();
+describe.skipIf(!isRealApiTestEnabled())('native Browser Tool release matrix', () => {
+  it.each(matrix)(
+    '$qualificationId',
+    async ({ model, surface }) => {
+      const environment = new Map(
+        Object.entries(process.env).flatMap(([name, value]) =>
+          value === undefined ? [] : [[name, value] as const]
+        )
+      );
+      const root = await mkdtemp(
+        path.join(
+          os.tmpdir(),
+          `blade-browser-tool-${safeSlug(model.model)}-${surface}-`
+        )
+      );
+      const home = path.join(root, 'home');
+      const storageRoot = path.join(root, 'storage');
+      const workspaceInput = path.join(root, 'workspace');
+      const nonce = `browser_nonce_${randomBytes(12).toString('hex')}`;
+      const defaultGuiRouting = surface === 'web';
+      const fixture = await createBrowserToolFixture(nonce, {
+        promptMode: defaultGuiRouting ? 'default-gui-routing' : 'explicit-protocol',
+      });
+      if (defaultGuiRouting) {
+        expect(fixture.prompt).not.toMatch(/Browser Tool|Playwright|Puppeteer/);
+      }
+      let sessionId = `browser-tool-${surface}-${nonce}`;
+      let evidence: unknown;
+      try {
+        await Promise.all([
+          mkdir(home, { recursive: true }),
+          mkdir(storageRoot, { recursive: true }),
+          mkdir(workspaceInput, { recursive: true }),
+        ]);
+        const workspace = await initializeWorkspace(workspaceInput);
+        const runtimeConfig = await writeRuntimeConfig(home, model);
+        process.env.HOME = home;
+        process.env.BLADE_STORAGE_ROOT = storageRoot;
+        process.env.BLADE_AUTO_MEMORY = '0';
+        process.env.BLADE_TELEMETRY_DISABLED = '1';
+        process.env.PLAYWRIGHT_BROWSERS_PATH = browserCacheRoot();
 
-          if (surface === 'pty') {
-            evidence = await runBrowserToolPtyDriver({
+        if (surface === 'pty') {
+          evidence = await runBrowserToolPtyDriver({
+            workspace,
+            storageRoot,
+            home,
+            sessionId,
+            fixture,
+            secret: model.apiKey,
+          });
+        } else if (surface === 'web') {
+          const web = await runBrowserToolWebDriver({
+            workspace,
+            storageRoot,
+            home,
+            fixture,
+            secret: model.apiKey,
+          });
+          sessionId = web.sessionId;
+          evidence = web;
+        } else {
+          getState().config.actions.setConfig(runtimeConfig);
+          WorkspaceTrustService.resetInstance();
+          await WorkspaceTrustService.getInstance().trust(workspace);
+          if (surface === 'headless') {
+            evidence = await runBrowserToolHeadlessDriver({
               workspace,
-              storageRoot,
-              home,
               sessionId,
               fixture,
-              secret: model.apiKey,
             });
-          } else if (surface === 'web') {
-            const web = await runBrowserToolWebDriver({
+          } else {
+            const acp = await runBrowserToolAcpDriver({
               workspace,
-              storageRoot,
-              home,
               fixture,
               secret: model.apiKey,
             });
-            sessionId = web.sessionId;
-            evidence = web;
-          } else {
-            getState().config.actions.setConfig(runtimeConfig);
-            WorkspaceTrustService.resetInstance();
-            await WorkspaceTrustService.getInstance().trust(workspace);
-            if (surface === 'headless') {
-              evidence = await runBrowserToolHeadlessDriver({
-                workspace,
-                sessionId,
-                fixture,
-              });
-            } else {
-              const acp = await runBrowserToolAcpDriver({
-                workspace,
-                fixture,
-                secret: model.apiKey,
-              });
-              sessionId = acp.sessionId;
-              evidence = acp;
-            }
+            sessionId = acp.sessionId;
+            evidence = acp;
           }
-
-          const transcriptPath = findSessionTranscript(storageRoot, sessionId);
-          const events = readSessionEvents(transcriptPath);
-          const trace = extractDurableToolTrace(events);
-          assertBrowserToolTrace(trace, fixture.origin, {
-            strictToolSearch: !defaultGuiRouting,
-          });
-          assertNoSecrets({ evidence, trace, events }, [model.apiKey]);
-          expect(finalAssistantText(events)).toContain(fixture.finalMarker);
-          expect(evidence).toBeTruthy();
-          expect(fixture.requests()).toEqual(expect.arrayContaining(['/', '/second']));
-          await assertNoForegroundLeases(workspace, sessionId);
-          if (surface === 'headless' || surface === 'acp') {
-            expect(getBrowserProcessPool().stats()).toMatchObject({
-              contexts: 0,
-              running: false,
-            });
-          }
-        } finally {
-          await fixture.close();
-          restoreEnvironment(environment);
-          WorkspaceTrustService.resetInstance();
-          await removeTestDirectory(root);
         }
-      },
-      300_000
-    );
-  });
+
+        const transcriptPath = findSessionTranscript(storageRoot, sessionId);
+        const events = readSessionEvents(transcriptPath);
+        const trace = extractDurableToolTrace(events);
+        assertBrowserToolTrace(trace, fixture.origin, {
+          strictToolSearch: !defaultGuiRouting,
+        });
+        assertNoSecrets({ evidence, trace, events }, [model.apiKey]);
+        expect(finalAssistantText(events)).toContain(fixture.finalMarker);
+        expect(evidence).toBeTruthy();
+        expect(fixture.requests()).toEqual(expect.arrayContaining(['/', '/second']));
+        await assertNoForegroundLeases(workspace, sessionId);
+        if (surface === 'headless' || surface === 'acp') {
+          expect(getBrowserProcessPool().stats()).toMatchObject({
+            contexts: 0,
+            running: false,
+          });
+        }
+      } finally {
+        await fixture.close();
+        restoreEnvironment(environment);
+        WorkspaceTrustService.resetInstance();
+        await removeTestDirectory(root);
+      }
+    },
+    300_000
+  );
+});

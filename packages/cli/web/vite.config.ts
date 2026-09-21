@@ -5,7 +5,7 @@ import { defineConfig, loadEnv } from "vite"
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiTarget = env.VITE_API_TARGET || 'http://localhost:4097'
-  const rootNodeModules = path.resolve(__dirname, '../../../node_modules')
+  const rootNodeModules = path.resolve(import.meta.dirname, '../../../node_modules')
 
   return {
     plugins: [
@@ -81,8 +81,11 @@ export default defineConfig(({ mode }) => {
           find: /^react-dom\/test-utils$/,
           replacement: path.join(rootNodeModules, 'react-dom/test-utils.js'),
         },
-        { find: '@api', replacement: path.resolve(__dirname, '../src/api') },
-        { find: '@', replacement: path.resolve(__dirname, './src') },
+        {
+          find: '@api',
+          replacement: path.resolve(import.meta.dirname, '../src/api'),
+        },
+        { find: '@', replacement: path.resolve(import.meta.dirname, './src') },
       ],
     },
     server: {

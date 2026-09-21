@@ -190,9 +190,9 @@ afterEach(async () => {
   );
 });
 
-describe
-  .skipIf(process.platform === 'win32')
-  .sequential('durable Goal turn lineage production surfaces', () => {
+describe.skipIf(process.platform === 'win32')(
+  'durable Goal turn lineage production surfaces',
+  () => {
     it('projects the exact chain through Headless JSONL', async () => {
       const test = await createGoalTurnLineageFixture(createHttpServer);
       roots.push(test.root);
@@ -424,4 +424,5 @@ describe
         await test.provider.close();
       }
     }, 150_000);
-  });
+  }
+);

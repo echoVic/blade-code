@@ -1036,8 +1036,7 @@ async function runAcp(test: Fixture, secret: string) {
   }
 }
 
-const suite =
-  enabled && process.platform !== 'win32' ? describe.sequential : describe.skip;
+const suite = enabled && process.platform !== 'win32' ? describe : describe.skip;
 suite('Stopped Goal usage surface matrix (real API)', () => {
   it.skipIf(enabled)('requires the real API release matrix', () => undefined);
   for (const model of models) {

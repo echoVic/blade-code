@@ -94,7 +94,7 @@ if (isRealApiTestEnabled() && isReleaseMatrix() && !deepseekFlash) {
     'DeepSeek Flash is required for the production Chromium qualification'
   );
 }
-const describeReal = durableRecoveryModel ? describe.sequential : describe.skip;
+const describeReal = durableRecoveryModel ? describe : describe.skip;
 
 interface WebRecoveryWaitInput {
   controller: SessionRouteController;
@@ -1747,7 +1747,7 @@ describe('durable ACP recovery diagnostics', () => {
 
     expect(surfaceIndex).toBeGreaterThan(regressionIndex);
     expect(source).toMatch(
-      /describe\s*\.skipIf\(!isRealApiTestEnabled\(\) \|\| !deepseekFlash\)\s*\.sequential\('production durable pending recovery surfaces \(real API\)'/
+      /describe\s*\.skipIf\(!isRealApiTestEnabled\(\) \|\| !deepseekFlash\)\s*\(\s*'production durable pending recovery surfaces \(real API\)'/
     );
 
     const regressionSlice = source.slice(regressionIndex, surfaceIndex);
@@ -2849,9 +2849,9 @@ describe('durable Web recovery diagnostics', () => {
   });
 });
 
-describe
-  .skipIf(!isRealApiTestEnabled())
-  .sequential('production durable pending recovery qualification (real API)', () => {
+describe.skipIf(!isRealApiTestEnabled())(
+  'production durable pending recovery qualification (real API)',
+  () => {
     it('recovers a one-shot DeepSeek failure through the visible Web UI', async () => {
       if (!deepseekFlash?.baseURL) throw new Error('DeepSeek Flash is unavailable');
       const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-web-chromium-'));
@@ -3205,7 +3205,8 @@ describe
         await rm(root, { recursive: true, force: true });
       }
     }, 360_000);
-  });
+  }
+);
 
 describeReal('durable pending interaction recovery trajectory (real API)', () => {
   const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
@@ -3449,9 +3450,9 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
   }, 600_000);
 });
 
-describe
-  .skipIf(!isRealApiTestEnabled() || !deepseekFlash)
-  .sequential('production durable pending recovery surfaces (real API)', () => {
+describe.skipIf(!isRealApiTestEnabled() || !deepseekFlash)(
+  'production durable pending recovery surfaces (real API)',
+  () => {
     const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 
     afterEach(() => {
@@ -3986,4 +3987,5 @@ describe
         if (root) await rm(root, { recursive: true, force: true });
       }
     });
-  });
+  }
+);

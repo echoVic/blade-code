@@ -902,9 +902,9 @@ describe('compaction fixture render barrier', () => {
   });
 });
 
-describe
-  .skipIf(process.platform === 'win32')
-  .sequential('compaction memory production surfaces', () => {
+describe.skipIf(process.platform === 'win32')(
+  'compaction memory production surfaces',
+  () => {
     it.each(['headless', 'acp', 'pty', 'web'] as const)(
       '%s persists one safe entry and emits bounded evidence',
       async (surface) => {
@@ -921,4 +921,5 @@ describe
       },
       180_000
     );
-  });
+  }
+);

@@ -192,9 +192,9 @@ describe('coding result commit ordering', () => {
   });
 });
 
-describe
-  .skipIf(!enabled || process.platform === 'win32')
-  .sequential('cross-surface coding workflow (real API)', () => {
+describe.skipIf(!enabled || process.platform === 'win32')(
+  'cross-surface coding workflow (real API)',
+  () => {
     for (const model of modelConfigs)
       for (const surface of [
         'web-production',
@@ -568,7 +568,8 @@ describe
             );
         });
       }
-  });
+  }
+);
 
 describe.skipIf(!enabled)('release coding trajectory (real API)', () => {
   for (const modelConfig of modelConfigs) {

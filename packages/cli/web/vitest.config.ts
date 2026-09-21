@@ -1,14 +1,14 @@
 import { resolve } from 'path';
 import { defineConfig } from 'vitest/config';
 
-const rootNodeModules = resolve(__dirname, '../../../node_modules');
+const rootNodeModules = resolve(import.meta.dirname, '../../../node_modules');
 
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
     include: ['tests/**/*.{test,spec}.{ts,tsx}'],
-    setupFiles: [resolve(__dirname, '../tests/support/setup.ts')],
+    setupFiles: [resolve(import.meta.dirname, '../tests/support/setup.ts')],
     pool: 'threads',
     fileParallelism: true,
     maxWorkers: 4,
@@ -81,11 +81,11 @@ export default defineConfig({
       },
       {
         find: '@api',
-        replacement: resolve(__dirname, '../src/api'),
+        replacement: resolve(import.meta.dirname, '../src/api'),
       },
       {
         find: '@',
-        replacement: resolve(__dirname, 'src'),
+        replacement: resolve(import.meta.dirname, 'src'),
       },
     ],
   },

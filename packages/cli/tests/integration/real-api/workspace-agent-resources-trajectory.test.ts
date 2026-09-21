@@ -34,7 +34,7 @@ import {
 const resourceModel = isRealApiTestEnabled()
   ? resolveRequiredDeepSeekQualificationModels()[0]
   : undefined;
-const describeReal = resourceModel ? describe.sequential : describe.skip;
+const describeReal = resourceModel ? describe : describe.skip;
 
 class RecordingAcpClient implements acp.Client {
   readonly updates: acp.SessionNotification[] = [];
@@ -233,7 +233,7 @@ async function collectTurn(
 const builtinModels = isRealApiTestEnabled()
   ? resolveRequiredDeepSeekQualificationModels()
   : [];
-const describeBuiltin = isRealApiTestEnabled() ? describe.sequential : describe.skip;
+const describeBuiltin = isRealApiTestEnabled() ? describe : describe.skip;
 
 describeBuiltin('bundled skill invocation without installation (real API)', () => {
   for (const model of builtinModels) {

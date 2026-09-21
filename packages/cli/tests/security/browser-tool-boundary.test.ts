@@ -20,7 +20,7 @@ describe('native Browser Tool source boundary', () => {
       await readFile(path.resolve('../../node_modules/playwright/package.json'), 'utf8')
     ) as { scripts?: Record<string, string> };
 
-    expect(packageJson.dependencies?.playwright).toBe('1.62.1');
+    expect(packageJson.dependencies?.playwright).toBe('1.63.0');
     expect(packageJson.devDependencies?.playwright).toBeUndefined();
     expect(playwrightPackage.scripts?.install).toBeUndefined();
     expect(playwrightPackage.scripts?.postinstall).toBeUndefined();
