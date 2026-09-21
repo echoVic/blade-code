@@ -4,7 +4,7 @@ import { estimateCostUsd } from '../../../src/services/pricing.js';
 describe('estimateCostUsd', () => {
   it('calculates DeepSeek cost from pi metadata', () => {
     const cost = estimateCostUsd('deepseek-v4-pro', 1_000_000, 1_000_000);
-    expect(cost).toBeCloseTo(0.435 + 0.87, 4);
+    expect(cost).toBeCloseTo(1.32 + 3.96, 4);
   });
 
   it('calculates GPT-4o cost correctly', () => {
@@ -29,7 +29,7 @@ describe('estimateCostUsd', () => {
 
   it('uses provider to disambiguate model IDs', () => {
     const cost = estimateCostUsd('deepseek-v4-pro', 1_000_000, 0, 0, 0, 'deepseek');
-    expect(cost).toBeCloseTo(0.435, 4);
+    expect(cost).toBeCloseTo(1.32, 4);
   });
 
   it('handles zero tokens', () => {

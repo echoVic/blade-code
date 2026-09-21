@@ -405,7 +405,7 @@ transcript。TUI `/queue` 与 Web 面板可以删除或重排尚未被观察的�
 
 `packages/cli/tests/integration/process-tree-lifecycle.test.ts` 会启动一个父进程和一个忽略 `SIGTERM` 的后代，验证父进程获得优雅清理机会、后代最终被强制回收，并且 API 只在回收完成后返回。
 
-生产资格门禁还会要求 `deepseek-v4-flash` 和 `deepseek-v4-pro` 通过以下真实 CLI 进程轨迹：
+生产资格门禁还会要求 `deepseek-flash` 和 `deepseek-v4-pro` 通过以下真实 CLI 进程轨迹：
 
 - 模型触发一个必然超时的 Bash 进程树，收到结构化 `timeout_error` 后继续使用 Write 工具完成恢复任务，同时验证没有后代进程遗留；
 - parent 和 subagent 分别启动含延迟副作用的前台 Bash，宿主在 tool result 前硬杀

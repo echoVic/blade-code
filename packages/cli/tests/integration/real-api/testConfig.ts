@@ -44,7 +44,7 @@ export interface ResolvedModelSettings {
 export interface DeepSeekQualificationSettings {
   apiKey: string;
   baseURL: string;
-  models: readonly [string, string];
+  models: readonly [string];
 }
 
 export function normalizeNewApiBaseURL(baseURL: string): string {
@@ -52,7 +52,7 @@ export function normalizeNewApiBaseURL(baseURL: string): string {
   return /\/v\d+$/i.test(normalized) ? normalized : `${normalized}/v1`;
 }
 
-const REQUIRED_DEEPSEEK_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro'] as const;
+const REQUIRED_DEEPSEEK_MODELS = ['deepseek-flash'] as const;
 
 const cachedBladeModels = new Map<string, BladeModelConfig | null>();
 
@@ -285,14 +285,9 @@ export function resolveForkQualificationModels(
         'DeepSeek API key is required for fork qualification; set DEEPSEEK_API_KEY.'
       );
     }
-    if (!configuredDeepSeekModels.includes('deepseek-v4-flash')) {
+    if (!configuredDeepSeekModels.includes('deepseek-flash')) {
       throw new Error(
-        'DeepSeek Flash is required for fork qualification; include exact model deepseek-v4-flash in DEEPSEEK_MODELS.'
-      );
-    }
-    if (!configuredDeepSeekModels.includes('deepseek-v4-pro')) {
-      throw new Error(
-        'DeepSeek Pro is required for fork qualification; include exact model deepseek-v4-pro in DEEPSEEK_MODELS.'
+        'DeepSeek Flash is required for fork qualification; include exact model deepseek-flash in DEEPSEEK_MODELS.'
       );
     }
   }
@@ -344,40 +339,29 @@ export function resolveDeepSeekQualificationSettings(
   const configs = resolveForkQualificationModels(env, {
     requiredDeepSeek: true,
   }).filter((config) => config.id === 'deepseek');
-  const ordered = REQUIRED_DEEPSEEK_MODELS.map((model) =>
-    configs.find((config) => config.model === model)
-  );
-  const [flash, pro] = ordered;
-  if (!flash || !pro) {
-    throw new Error(
-      'DeepSeek qualification requires exactly the Flash and Pro model matrix'
-    );
-  }
-  if (flash.apiKey !== pro.apiKey || flash.baseURL !== pro.baseURL) {
-    throw new Error('DeepSeek qualification models must share one provider channel');
+  const flash = configs.find((config) => config.model === REQUIRED_DEEPSEEK_MODELS[0]);
+  if (!flash) {
+    throw new Error('DeepSeek qualification requires the Flash model');
   }
 
   return {
     apiKey: flash.apiKey,
     baseURL: flash.baseURL ?? 'https://api.deepseek.com',
-    models: [flash.model, pro.model],
+    models: [flash.model],
   };
 }
 
 export function resolveRequiredDeepSeekQualificationModels(
   env: Readonly<Record<string, string | undefined>> = process.env
-): readonly [TestModelConfig, TestModelConfig] {
+): readonly [TestModelConfig] {
   const configs = resolveForkQualificationModels(env, {
     requiredDeepSeek: true,
   }).filter((config) => config.id === 'deepseek');
   const flash = configs.find((config) => config.model === REQUIRED_DEEPSEEK_MODELS[0]);
-  const pro = configs.find((config) => config.model === REQUIRED_DEEPSEEK_MODELS[1]);
-  if (!flash || !pro) {
-    throw new Error(
-      'DeepSeek qualification requires exactly the Flash and Pro model matrix'
-    );
+  if (!flash) {
+    throw new Error('DeepSeek qualification requires the Flash model');
   }
-  return [flash, pro];
+  return [flash];
 }
 
 function resolveLegacyModelConfigs(): TestModelConfig[] {

@@ -81,7 +81,7 @@ describe('BrowserInstallation', () => {
         }),
       })
     ).resolves.toEqual({
-      playwrightVersion: '1.62.1',
+      playwrightVersion: '1.63.0',
       executablePath: '/browser/chromium',
       installed: true,
       browserVersion: 'Chromium 140.0',

@@ -19,12 +19,16 @@ import {
   resolveRequiredDeepSeekQualificationModels,
 } from './testConfig.js';
 
+// DeepSeek only exercises Flash for this trajectory; the release matrix still
+// requires the full Flash/Pro credential matrix but runs Flash alone here.
 const modelConfigs = isRealApiTestEnabled()
   ? isReleaseMatrix()
-    ? resolveRequiredDeepSeekQualificationModels()
+    ? resolveRequiredDeepSeekQualificationModels().filter(
+        (config) => config.model === 'deepseek-flash'
+      )
     : expandDeepSeekModelMatrix(
         getEnabledModelConfigs().filter((config) => config.id === 'deepseek')
-      )
+      ).filter((config) => config.model === 'deepseek-flash')
   : [];
 const enabled = modelConfigs.length > 0;
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;

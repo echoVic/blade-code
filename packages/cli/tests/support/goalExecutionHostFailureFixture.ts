@@ -45,7 +45,7 @@ function bashToolChunks(requestNumber: number): unknown[] {
       id: 'host-failure-tool-' + requestNumber,
       object: 'chat.completion.chunk',
       created: 1,
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       choices: [
         {
           index: 0,
@@ -74,7 +74,7 @@ function bashToolChunks(requestNumber: number): unknown[] {
       id: 'host-failure-tool-' + requestNumber,
       object: 'chat.completion.chunk',
       created: 1,
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
       usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 },
     },
@@ -87,7 +87,7 @@ function finalChunks(requestNumber: number): unknown[] {
       id: 'host-failure-final-' + requestNumber,
       object: 'chat.completion.chunk',
       created: 1,
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       choices: [
         {
           index: 0,
@@ -100,7 +100,7 @@ function finalChunks(requestNumber: number): unknown[] {
       id: 'host-failure-final-' + requestNumber,
       object: 'chat.completion.chunk',
       created: 1,
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
       usage: { prompt_tokens: 24, completion_tokens: 4, total_tokens: 28 },
     },
@@ -277,7 +277,7 @@ export async function createGoalExecutionHostFailureFixture(
           id: 'goal-host-fixture',
           displayName: 'Goal host fixture',
           provider: 'deepseek',
-          model: 'deepseek-v4-flash',
+          model: 'deepseek-flash',
           overrides: {
             baseUrl,
             maxRetries: 0,

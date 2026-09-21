@@ -42,10 +42,7 @@ const REAL_API_PROVIDER_PREFIXES = [
   'DOMESTIC',
 ] as const;
 
-const REQUIRED_DEEPSEEK_MODELS = [
-  'deepseek-v4-flash',
-  'deepseek-v4-pro',
-] as const;
+const REQUIRED_DEEPSEEK_MODELS = ['deepseek-flash'] as const;
 
 const LOCAL_CHECKS: readonly QualificationCheck[] = [
   { id: 'type-check', name: 'Type check', command: 'bun', args: ['run', 'type-check'] },

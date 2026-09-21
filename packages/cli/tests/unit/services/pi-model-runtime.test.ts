@@ -19,13 +19,13 @@ function config(overrides: Partial<ChatConfig>): ChatConfig {
 describe('pi model runtime', () => {
   it('uses the built-in native provider protocol', () => {
     const runtime = createPiRuntime(
-      config({ provider: 'deepseek', model: 'deepseek-v4-flash' })
+      config({ provider: 'deepseek', model: 'deepseek-flash' })
     );
 
     expect(runtime.model).toMatchObject({
       provider: 'deepseek',
       api: 'openai-completions',
-      id: 'deepseek-v4-flash',
+      id: 'deepseek-flash',
     });
   });
 
@@ -95,7 +95,7 @@ describe('pi model runtime', () => {
       {
         id: 'deepseek',
         provider: 'deepseek',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         overrides: { streamIdleTimeout: 120_000 },
       },
       { temperature: 0, timeout: 180_000 },
@@ -113,7 +113,7 @@ describe('pi model runtime', () => {
       {
         id: 'deepseek',
         provider: 'deepseek',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
       },
       { temperature: 0, timeout: 180_000 },
       'low'
@@ -135,7 +135,7 @@ describe('pi model runtime', () => {
       {
         id: 'deepseek',
         provider: 'deepseek',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
       },
       {
         temperature: 0,
@@ -171,7 +171,7 @@ describe('pi model runtime', () => {
         {
           id: 'first-model',
           provider: 'deepseek',
-          model: 'deepseek-v4-flash',
+          model: 'deepseek-flash',
         },
         { temperature: 0, timeout: 180_000 },
         'off'
@@ -263,7 +263,7 @@ describe('pi model runtime', () => {
     const primary = {
       id: 'primary',
       provider: 'deepseek',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       fallbackModels: [{ provider: 'openai', model: 'gpt-5.5' }],
     };
 

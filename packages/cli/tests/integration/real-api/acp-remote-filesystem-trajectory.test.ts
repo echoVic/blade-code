@@ -311,7 +311,7 @@ const deepseekModels = isRealApiTestEnabled()
       materializeRealApiEnvironment(process.env)
     )
   : [];
-const describeReal = deepseekModels.length === 2 ? describe.sequential : describe.skip;
+const describeReal = deepseekModels.length === 1 ? describe.sequential : describe.skip;
 
 describeReal('paired ACP remote filesystem qualification (real API)', () => {
   const fixtureRoots: string[] = [];

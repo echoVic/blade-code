@@ -175,7 +175,7 @@ describe('remote filesystem qualification harness helpers', () => {
 
   it('produces stable canonical evidence and digest across volatile roots', () => {
     const first = buildCanonicalRemoteFilesystemQualificationEvidence({
-      qualificationId: 'deepseek:deepseek-v4-flash',
+      qualificationId: 'deepseek:deepseek-flash',
       frameworkRetryBudget: 0,
       sourcePath: '/tmp/run-a/workspace/inputs/source.txt',
       outputPath: '/tmp/run-a/workspace/remote/out.txt',
@@ -192,7 +192,7 @@ describe('remote filesystem qualification harness helpers', () => {
       outputExcludesHostCanary: true,
     });
     const second = buildCanonicalRemoteFilesystemQualificationEvidence({
-      qualificationId: 'deepseek:deepseek-v4-flash',
+      qualificationId: 'deepseek:deepseek-flash',
       frameworkRetryBudget: 0,
       sourcePath: '/tmp/run-b/other/inputs/source.txt',
       outputPath: '/tmp/run-b/other/remote/out.txt',
@@ -287,7 +287,7 @@ describe('remote filesystem qualification harness helpers', () => {
         {
           id: 'selected-model',
           provider: 'deepseek',
-          model: 'deepseek-v4-flash',
+          model: 'deepseek-flash',
           overrides: {
             timeout: 180_000,
             streamIdleTimeout: 90_000,

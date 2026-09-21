@@ -167,7 +167,7 @@ describe('controlled benchmark runner', () => {
       ...DEFAULT_CONFIG,
       currentModelId: 'test-model',
       modelProviders: {},
-      models: [{ id: 'test-model', provider: 'deepseek', model: 'deepseek-v4-flash' }],
+      models: [{ id: 'test-model', provider: 'deepseek', model: 'deepseek-flash' }],
     });
     vi.spyOn(getPiModelCatalog().models, 'getAuth').mockResolvedValue({
       auth: { apiKey: 'PRIVATE_BENCHMARK_KEY' },

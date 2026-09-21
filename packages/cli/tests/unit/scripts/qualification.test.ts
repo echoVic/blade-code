@@ -370,22 +370,22 @@ describe('production qualification contract', () => {
     });
   });
 
-  it('requires both production qualification models', () => {
+  it('requires the Flash production qualification model', () => {
     expect(() =>
       resolveProductionEnvironment({
         DEEPSEEK_API_KEY: 'test-secret',
-        DEEPSEEK_MODELS: 'deepseek-v4-flash',
+        DEEPSEEK_MODELS: 'deepseek-v4-pro',
       })
-    ).toThrow('deepseek-v4-pro');
+    ).toThrow('deepseek-flash');
   });
 
-  it('defaults production qualification to both required models', () => {
+  it('defaults production qualification to the Flash model', () => {
     const env = resolveProductionEnvironment({
       DEEPSEEK_API_KEY: 'test-secret',
     });
 
-    expect(env.DEEPSEEK_MODELS).toBe('deepseek-v4-flash,deepseek-v4-pro');
-    expect(env.DEEPSEEK_MODEL).toBe('deepseek-v4-flash');
+    expect(env.DEEPSEEK_MODELS).toBe('deepseek-flash');
+    expect(env.DEEPSEEK_MODEL).toBe('deepseek-flash');
     expect(env.DEEPSEEK_BASE_URL).toBe('https://api.deepseek.com');
     expect(env.REAL_API_TEST).toBe('1');
   });

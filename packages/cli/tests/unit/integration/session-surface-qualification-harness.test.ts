@@ -20,10 +20,10 @@ import {
 
 const modelConfig: TestModelConfig = {
   id: 'deepseek',
-  qualificationId: 'deepseek:deepseek-v4-flash',
+  qualificationId: 'deepseek:deepseek-flash',
   name: 'DeepSeek',
   provider: 'deepseek',
-  model: 'deepseek-v4-flash',
+  model: 'deepseek-flash',
   apiKey: 'fixture-secret-api-key',
   baseURL: 'https://example.test/v1',
 };

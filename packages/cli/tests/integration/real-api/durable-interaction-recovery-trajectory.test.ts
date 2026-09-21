@@ -86,7 +86,7 @@ const qualificationModels = isRealApiTestEnabled()
 const execFileAsync = promisify(execFile);
 const deepseek = qualificationModels.find((model) => model.id === 'deepseek');
 const deepseekFlash = qualificationModels.find(
-  (model) => model.id === 'deepseek' && model.model === 'deepseek-v4-flash'
+  (model) => model.id === 'deepseek' && model.model === 'deepseek-flash'
 );
 const durableRecoveryModel = deepseekFlash ?? deepseek;
 if (isRealApiTestEnabled() && isReleaseMatrix() && !deepseekFlash) {

@@ -163,7 +163,7 @@ control and privacy boundaries.
 
 `packages/cli/tests/integration/process-tree-lifecycle.test.ts` starts a parent process and a descendant that ignores `SIGTERM`, verifying that the parent gets a graceful cleanup opportunity, descendants are ultimately force-reclaimed, and the API returns only after reclamation completes.
 
-Production qualification gates also require `deepseek-v4-flash` and `deepseek-v4-pro` to pass the following real CLI process trajectories:
+Production qualification gates also require `deepseek-flash` and `deepseek-v4-pro` to pass the following real CLI process trajectories:
 
 - The model triggers a Bash process tree that inevitably times out, continues completing recovery tasks using the Write tool after receiving structured `timeout_error`, while verifying no descendant processes remain;
 - Parent and subagent respectively start foreground Bash with delayed side effects, and the host hard-kills the Blade owner before tool result; the new Runtime must reclaim identity-matched process trees within respective Session lease critical sections, close orphan tool receipts, and prove the sidecar contains no commands, environment, output, or API keys;

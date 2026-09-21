@@ -19,7 +19,7 @@ function scope(overrides: Partial<ProviderCircuitScope> = {}): ProviderCircuitSc
     provider: 'deepseek',
     api: 'openai-completions',
     baseUrl: 'https://provider.example/v1',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     serviceTier: 'default',
     apiVersion: '2026-08-16',
     apiKey: 'secret-api-key',

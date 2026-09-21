@@ -137,7 +137,7 @@ function writeTextCompletion(
       id: 'memory-text',
       object: 'chat.completion.chunk',
       created: 1,
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       choices: [
         { index: 0, delta: { role: 'assistant', content }, finish_reason: null },
       ],
@@ -148,7 +148,7 @@ function writeTextCompletion(
       id: 'memory-text',
       object: 'chat.completion.chunk',
       created: 1,
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
       usage: {
         prompt_tokens: promptTokens,
@@ -301,7 +301,7 @@ async function createFixture(
             id: 'memory-fixture',
             displayName: 'Memory fixture',
             provider: 'deepseek',
-            model: 'deepseek-v4-flash',
+            model: 'deepseek-flash',
             overrides: {
               baseUrl: provider.baseUrl,
               maxRetries: 0,

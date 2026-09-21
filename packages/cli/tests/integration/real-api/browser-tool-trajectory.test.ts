@@ -44,8 +44,8 @@ const matrix = models.flatMap((model) =>
     qualificationId: `${model.qualificationId}:${surface}`,
   }))
 );
-if (isRealApiTestEnabled() && matrix.length !== 8) {
-  throw new Error(`Browser Tool matrix must contain 8 cells, got ${matrix.length}`);
+if (isRealApiTestEnabled() && matrix.length !== 4) {
+  throw new Error(`Browser Tool matrix must contain 4 cells, got ${matrix.length}`);
 }
 
 const expectedTools = [

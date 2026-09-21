@@ -152,7 +152,7 @@ describe('ConfigManager 集成', () => {
             id: 'wesO2a9-nJgBgIBI7gm5B',
             displayName: 'DeepSeek V4 Flash',
             provider: 'deepseek',
-            model: 'deepseek-v4-flash',
+            model: 'deepseek-flash',
           },
         ],
       })
@@ -160,11 +160,11 @@ describe('ConfigManager 集成', () => {
 
     const config = await ConfigManager.getInstance().initialize();
 
-    expect(config.currentModelId).toBe('deepseek-v4-flash');
-    expect(config.models[0]?.id).toBe('deepseek-v4-flash');
+    expect(config.currentModelId).toBe('deepseek-flash');
+    expect(config.models[0]?.id).toBe('deepseek-flash');
     expect(JSON.parse(readFileSync(userConfigPath, 'utf8'))).toMatchObject({
-      currentModelId: 'deepseek-v4-flash',
-      models: [{ id: 'deepseek-v4-flash' }],
+      currentModelId: 'deepseek-flash',
+      models: [{ id: 'deepseek-flash' }],
     });
   });
 
@@ -197,7 +197,7 @@ describe('ConfigManager 集成', () => {
             id: 'user-model',
             displayName: 'User Model',
             provider: 'deepseek',
-            model: 'deepseek-v4-flash',
+            model: 'deepseek-flash',
           },
         ],
         temperature: 0.7,
@@ -266,7 +266,7 @@ describe('ConfigManager 集成', () => {
           {
             id: 'user-model',
             provider: 'deepseek',
-            model: 'deepseek-v4-flash',
+            model: 'deepseek-flash',
           },
         ],
         mcpServers: {

@@ -73,13 +73,13 @@ describe('custom provider lifecycle store actions', () => {
   it('generates readable deterministic IDs for models without an explicit ID', async () => {
     const first = await configActions().addModel({
       provider: 'deepseek',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       displayName: 'DeepSeek V4 Flash',
     });
     const second = await configActions().addModelWithProvider(
       {
         provider: 'another-gateway',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
       },
       {
         name: 'Another Gateway',
@@ -88,10 +88,10 @@ describe('custom provider lifecycle store actions', () => {
       }
     );
 
-    expect(first.id).toBe('deepseek-v4-flash');
-    expect(second.id).toBe('another-gateway-deepseek-v4-flash');
+    expect(first.id).toBe('deepseek-flash');
+    expect(second.id).toBe('another-gateway-deepseek-flash');
     expect(getConfig()?.models.map((model) => model.id)).toEqual(
-      expect.arrayContaining(['deepseek-v4-flash', 'another-gateway-deepseek-v4-flash'])
+      expect.arrayContaining(['deepseek-flash', 'another-gateway-deepseek-flash'])
     );
   });
 

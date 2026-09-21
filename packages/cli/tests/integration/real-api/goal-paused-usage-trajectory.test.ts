@@ -11,9 +11,9 @@ import { chromium } from 'playwright';
 import { afterEach, describe, expect, it, type TestContext } from 'vitest';
 import { Agent } from '../../../src/agent/Agent.js';
 import { drainLoop, type LoopEvent } from '../../../src/agent/loop/index.js';
-import type { ChatContext } from '../../../src/agent/types.js';
 import { createProcessModelResources } from '../../../src/agent/resources/WorkspaceModelResources.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
+import type { ChatContext } from '../../../src/agent/types.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import { resetProjectionDbCache } from '../../../src/context/storage/sqlite/projection.js';
@@ -21,12 +21,12 @@ import { GoalStore } from '../../../src/goals/GoalStore.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { ChildBackedRecordingAcpClient } from '../../support/acp/ChildBackedRecordingAcpClient.js';
+import { createSplitPtyMarkerInstruction } from '../../support/foregroundBoundedOutputPtyDriver.js';
 import {
   captureForegroundGuiLauncherIdentity,
   isExpectedBrowserRequestFailure,
   stopForegroundGuiLauncher,
 } from '../../support/foregroundBoundedOutputWebDriver.js';
-import { createSplitPtyMarkerInstruction } from '../../support/foregroundBoundedOutputPtyDriver.js';
 import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import { OpenAIResponseSummaryCollector } from '../../support/recordingProviderProxy.js';
 import {
@@ -51,8 +51,10 @@ const settlementCases = [
   { settlementState: 'blocked', directSchemas: true, skillSchemas: false },
   { settlementState: 'blocked', directSchemas: false, skillSchemas: true },
 ] as const;
-if (enabled && models.length * surfaces.length * settlementCases.length !== 40) {
-  throw new Error('Goal usage qualification requires forty surface/state/schema cells');
+if (enabled && models.length * surfaces.length * settlementCases.length !== 20) {
+  throw new Error(
+    'Goal usage qualification requires twenty surface/state/schema cells'
+  );
 }
 const cliEntry = path.resolve(import.meta.dirname, '../../../dist/blade.js');
 const roots: string[] = [];

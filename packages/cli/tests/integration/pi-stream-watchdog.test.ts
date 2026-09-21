@@ -41,7 +41,7 @@ describe('pi provider stream watchdog integration', () => {
                 id: `watchdog-${requestCount}`,
                 object: 'chat.completion.chunk',
                 created: 1,
-                model: 'deepseek-v4-flash',
+                model: 'deepseek-flash',
                 choices: [
                   {
                     index: 0,
@@ -59,7 +59,7 @@ describe('pi provider stream watchdog integration', () => {
                   id: `watchdog-${requestCount}`,
                   object: 'chat.completion.chunk',
                   created: 1,
-                  model: 'deepseek-v4-flash',
+                  model: 'deepseek-flash',
                   choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
                   usage: {
                     prompt_tokens: 4,
@@ -168,7 +168,7 @@ describe('pi provider stream watchdog integration', () => {
       provider: 'deepseek',
       apiKey: 'integration-test-key',
       baseUrl,
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       maxOutputTokens: 64,
       timeout: 5_000,
       streamIdleTimeout: STREAM_IDLE_TIMEOUT_MS,

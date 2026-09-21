@@ -33,7 +33,7 @@ describe('real API credential file', () => {
         deepseek: {
           apiKey: 'deepseek-secret',
           baseURL: 'https://deepseek.invalid/v1',
-          models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+          models: ['deepseek-flash', 'deepseek-v4-pro'],
         },
         claude: {
           apiKey: 'claude-secret',
@@ -60,8 +60,8 @@ describe('real API credential file', () => {
     ).toEqual({
       DEEPSEEK_API_KEY: 'deepseek-secret',
       DEEPSEEK_BASE_URL: 'https://deepseek.invalid/v1',
-      DEEPSEEK_MODELS: 'deepseek-v4-flash,deepseek-v4-pro',
-      DEEPSEEK_MODEL: 'deepseek-v4-flash',
+      DEEPSEEK_MODELS: 'deepseek-flash,deepseek-v4-pro',
+      DEEPSEEK_MODEL: 'deepseek-flash',
       CLAUDE_API_KEY: 'claude-secret',
       CLAUDE_BASE_URL: 'https://gateway.invalid/v1',
       CLAUDE_MODEL: 'claude-test',

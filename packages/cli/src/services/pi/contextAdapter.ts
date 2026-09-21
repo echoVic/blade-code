@@ -2,6 +2,7 @@ import type {
   Api,
   Context,
   ImageContent,
+  JsonObject,
   Model,
   Tool as PiTool,
   TextContent,
@@ -42,12 +43,12 @@ function textContent(content: string | ContentPart[]): string {
     .join('\n');
 }
 
-function parseArguments(value: string | undefined): Record<string, unknown> {
+function parseArguments(value: string | undefined): JsonObject {
   if (!value) return {};
   try {
     const parsed = JSON.parse(value);
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
+      ? (parsed as JsonObject)
       : {};
   } catch {
     logger.warn('[PiAIChatService] Invalid historical tool arguments', { value });
