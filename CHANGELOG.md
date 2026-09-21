@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.11.0] - 2026-09-21
+
+### Breaking Changes
+- Rename the DeepSeek provider's Flash catalog model from `deepseek-v4-flash` to `deepseek-flash` after upgrading `@earendil-works/pi-ai`. Existing model configurations using the old catalog ID must be updated.
+
+### Added
+- Add the `FindFiles` read-only tool for fuzzy filename and relative-path search, backed by a shared cached index and integrated with tool discovery, built-in agents, Plan mode, TUI `@` completion, and documentation.
+- Preserve durable message IDs in history projections and allow Web annotations to jump back to their source messages.
+- Bound remote image attachment downloads by size, timeout, and cancellation, and prevent vision requests from falling back to text-only models.
+
+### Changed
+- Upgrade the runtime and frontend toolchain to Chalk 6, Undici 8, Lucide React 1.47, Vite 8, React plugin 6, Vitest and V8 coverage 5, and esbuild 0.28.
+- Run DeepSeek release qualification with `deepseek-flash` only, while retaining optional Claude, GPT, and domestic provider coverage.
+- Migrate Vitest suites away from the removed `.sequential` API and update Vite configuration paths for native config loading.
+
+### Fixed
+- Isolate Web SSE connection generations, validate replay events before cursor advancement, and preserve pending input when submitting after a stopped turn or model switch.
+
+### Tests
+- Add real-API qualification for `FindFiles` and retain Headless, PTY, Web, ACP, Browser, coverage, build, and full regression gates across the upgraded dependency stack.
+
 ## [0.10.206] - 2026-09-20
 
 ### Refactored

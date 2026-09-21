@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.11.0] - 2026-09-21
+
+### 破坏性变更
+- 升级 `@earendil-works/pi-ai` 后，将 DeepSeek provider 的 Flash 目录模型从 `deepseek-v4-flash` 重命名为 `deepseek-flash`；仍使用旧目录 ID 的模型配置需要同步更新。
+
+### 新功能
+- 新增只读 `FindFiles` 工具，基于共享缓存索引模糊搜索文件名与相对路径，并接入工具发现、内置 Agent、Plan 模式、TUI `@` 补全和双语文档。
+- 在历史投影中保留持久消息 ID，使 Web 注释可以跳转回来源消息。
+- 为远程图片附件下载增加大小、超时和取消边界，并禁止视觉请求回退到纯文本模型。
+
+### 变更
+- 将运行时与前端工具链升级到 Chalk 6、Undici 8、Lucide React 1.47、Vite 8、React 插件 6、Vitest/V8 Coverage 5 和 esbuild 0.28。
+- DeepSeek 发布资格矩阵仅验证 `deepseek-flash`，同时保留可选 Claude、GPT 和国内 Provider 覆盖。
+- 迁移 Vitest 已移除的 `.sequential` API，并更新 Vite 配置路径以兼容原生配置加载。
+
+### 修复
+- 隔离 Web SSE 连接代际，在推进游标前校验回放事件，并在停止回合或切换模型后提交时保留待发送输入。
+
+### 测试
+- 新增 `FindFiles` 真实 API 资格轨迹，并在升级后的依赖栈上保留 Headless、PTY、Web、ACP、Browser、Coverage、构建和完整回归门禁。
+
 ## [0.10.206] - 2026-09-20
 
 ### 重构
