@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.2] - 2026-09-22
+
+### Added
+- Add automatic inline conversation recaps for long-running tasks, summarizing the current goal, verified progress, blockers, and next step across TUI, Web, ACP, and Headless surfaces.
+- Persist recaps as display-only session history while excluding them from subsequent model context, tool execution, structured output, and compaction checkpoints.
+
+### Changed
+- Rate-limit recap generation by elapsed time and completed model rounds, use a bounded tool-free Provider request, and silently continue the main task when recap generation or persistence fails.
+- Render recaps as muted inline progress text and preserve ordering across live streams, reconnect replay, session resume, and subsequent model rounds.
+
+### Tests
+- Cover recap scheduling, input and output budgets, cancellation, persistence, replay, token accounting, prompt isolation, and failure recovery.
+- Verify TUI stream ordering, Web responsive rendering, ACP history projection, Headless JSONL output, full regression, build, lint, and type-check gates.
+
 ## [0.11.1] - 2026-09-21
 
 ### Fixed
