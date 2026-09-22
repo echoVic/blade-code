@@ -155,6 +155,12 @@ Blade/
 
 ---
 
+## 🌐 在浏览器里使用 Blade
+
+[Pilion Browser](https://github.com/echoVic/pilion-browser) 是一个作为 ACP 客户端的桌面浏览器。在它的 Agent 面板里选择 **Blade**：Pilion 会启动 `blade --acp`，转发你配置的模型 API Key（DeepSeek、Anthropic、OpenAI、Gemini、xAI、OpenRouter 等），并把自己的标签页作为 MCP 工具（`browser_snapshot`、`browser_screenshot`、导航、点击、输入）交给 Blade，全程带操作前审批与人工接管。首次会按需安装 `blade-code`（需要 Node.js ≥ 22.19.0）。macOS、Windows、Linux 的安装包见 [Pilion Releases](https://github.com/echoVic/pilion-browser/releases)。
+
+---
+
 ## 🤝 贡献
 
 ```bash
