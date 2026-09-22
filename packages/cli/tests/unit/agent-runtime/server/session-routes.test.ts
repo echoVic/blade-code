@@ -1192,6 +1192,49 @@ describe('SessionRoutes runtime reuse', () => {
     }
   });
 
+  it('starts a fresh assistant message after an inline recap so later output follows it', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    mockResolvedSession('recap-run', { projectPath: '/tmp/recap-run' });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'content_delta', delta: 'Before recap' };
+      yield { kind: 'stream_end' };
+      yield { kind: 'conversation_recap', messageId: 'recap-id', text: 'Progress.' };
+      yield { kind: 'content_delta', delta: 'After recap' };
+      yield { kind: 'stream_end' };
+      return { success: true, finalMessage: 'After recap' };
+    });
+    const controller = createSessionRouteController();
+    try {
+      const response = await controller.app.request(
+        '/recap-run/message?projectPath=%2Ftmp%2Frecap-run',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: 'continue' }),
+        }
+      );
+      expect(response.status).toBe(202);
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.some(([, type]) => type === 'session.completed')
+        ).toBe(true);
+      });
+      const deltas = busState.publish.mock.calls.filter(
+        ([, type]) => type === 'message.delta'
+      );
+      expect(deltas).toHaveLength(2);
+      expect(deltas[0]![2].messageId).not.toBe(deltas[1]![2].messageId);
+      // The durable part supplies the recap; the loop must not publish a second copy.
+      expect(
+        busState.publish.mock.calls.filter(([, type]) => type === 'conversation.recap')
+      ).toHaveLength(0);
+    } finally {
+      await controller.shutdown();
+    }
+  });
+
   it('resolves a Browser route without loading durable history', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'

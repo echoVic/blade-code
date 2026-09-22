@@ -13,6 +13,7 @@
 
 * Guides
   * [Slash Commands](/en/guides/slash-commands.md)
+  * [Conversation Recap](/en/guides/conversation-recap.md)
   * [Auto Memory](/en/guides/memory.md)
   * [Subagents](/en/guides/subagents.md)
   * [Skills](/en/guides/skills.md)

@@ -304,6 +304,17 @@ export function createLoopEventHandler(
         deps.sessionActions.updateTokenUsage(event.usage);
         break;
 
+      case 'conversation_recap':
+        if (deps.signal.aborted) break;
+        deps.sessionActions.addMessage({
+          id: event.messageId,
+          role: 'assistant',
+          content: event.text,
+          timestamp: Date.now(),
+          metadata: { conversationRecap: true },
+        });
+        break;
+
       // --- 压缩 ---
       case 'compaction':
         deps.sessionActions.setCompacting(event.phase === 'start');

@@ -51,7 +51,16 @@ export function applyCommittedEvent(
   const timestamp = Date.parse(event.timestamp) || Date.now();
   switch (event.type) {
     case 'message_created': {
-      upsertMessage(state, event.data.messageId, event.data.role, timestamp);
+      const message = upsertMessage(
+        state,
+        event.data.messageId,
+        event.data.role,
+        timestamp
+      );
+      const metadata = event.data.metadata;
+      if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+        message.metadata = metadata;
+      }
       return state;
     }
     case 'part_created':

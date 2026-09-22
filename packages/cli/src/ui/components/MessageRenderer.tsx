@@ -544,6 +544,17 @@ export const MessageRenderer: React.FC<MessageRendererProps> = React.memo(
     );
     const { content: displayContent, isTruncated, hiddenLines } = truncatedResult;
 
+    if (metadata?.conversationRecap === true) {
+      return (
+        <Box marginBottom={1} flexShrink={0}>
+          <Text color={theme.colors.text.muted} wrap="wrap">
+            <Text bold>↶ recap: </Text>
+            <Text italic>{content}</Text>
+          </Text>
+        </Box>
+      );
+    }
+
     // 处理 tool 消息的详细内容（complete 阶段）
     if (!usingBlocksOverride && role === 'tool' && metadata && 'detail' in metadata) {
       const toolMetadata = metadata as { detail?: string; phase?: string };

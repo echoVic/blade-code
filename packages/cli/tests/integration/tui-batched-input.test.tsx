@@ -8,10 +8,6 @@ import { getState } from '../../src/store/vanilla.js';
 import { CustomTextInput } from '../../src/ui/components/CustomTextInput.js';
 import { InputArea } from '../../src/ui/components/InputArea.js';
 import { MessageArea } from '../../src/ui/components/MessageArea.js';
-import {
-  appendMarkdownDelta,
-  finalizeMarkdownCache,
-} from '../../src/ui/utils/markdownIncremental.js';
 import { TranscriptPager } from '../../src/ui/components/TranscriptPager.js';
 import { useInputBuffer } from '../../src/ui/hooks/useInputBuffer.js';
 import { useTerminalInputModes } from '../../src/ui/hooks/useTerminalInputModes.js';
@@ -23,6 +19,10 @@ import {
   DISABLE_BRACKETED_PASTE,
   ENABLE_BRACKETED_PASTE,
 } from '../../src/ui/input/terminalInput.js';
+import {
+  appendMarkdownDelta,
+  finalizeMarkdownCache,
+} from '../../src/ui/utils/markdownIncremental.js';
 
 const RAW_INPUT_WAIT_OPTIONS = {
   interval: 20,
@@ -162,6 +162,64 @@ describe('TUI batched input integration', () => {
       actions.addAssistantMessage('GOAL_STATUS_AFTER_EMPTY_TOOL_TURN');
       await vi.waitFor(() =>
         expect(stdout.output).toContain('GOAL_STATUS_AFTER_EMPTY_TOOL_TURN')
+      );
+    } finally {
+      instance.unmount();
+      getState().command.actions.setProcessing(false);
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('renders a recap after streamed content while the main task remains active', async () => {
+    vi.stubEnv('CI', 'false');
+    const stdin = new TestInputStream();
+    const stdout = new TestOutputStream();
+    const stderr = new TestOutputStream();
+    const actions = getState().session.actions;
+    getState().command.actions.setProcessing(true);
+    const instance = render(<MessageArea />, {
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stderr: stderr as unknown as NodeJS.WriteStream,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
+    activeRenders.push(instance);
+    try {
+      let id = '';
+      await act(async () => {
+        id = actions.appendAssistantContent('BEFORE_RECAP\n\n');
+        appendMarkdownDelta(id, 'BEFORE_RECAP\n\n');
+      });
+      await vi.waitFor(() => expect(stdout.output).toContain('BEFORE_RECAP'));
+      await act(async () => {
+        finalizeMarkdownCache(id);
+        actions.finalizeStreamingMessage();
+      });
+      await act(async () => {
+        actions.addMessage({
+          id: 'recap-live',
+          role: 'assistant',
+          content: 'RECAP_LIVE_PROGRESS',
+          timestamp: Date.now(),
+          metadata: { conversationRecap: true },
+        });
+      });
+      await vi.waitFor(() => expect(stdout.output).toContain('RECAP_LIVE_PROGRESS'), {
+        timeout: 3000,
+      });
+      expect(stdout.output.indexOf('recap:')).toBeGreaterThan(
+        stdout.output.indexOf('BEFORE_RECAP')
+      );
+      expect(getState().command.isProcessing).toBe(true);
+      expect(stdout.output.split('RECAP_LIVE_PROGRESS')).toHaveLength(2);
+      await act(async () => {
+        const nextId = actions.appendAssistantContent('AFTER_RECAP\n\n');
+        appendMarkdownDelta(nextId, 'AFTER_RECAP\n\n');
+      });
+      await vi.waitFor(() => expect(stdout.output).toContain('AFTER_RECAP'));
+      expect(stdout.output.indexOf('AFTER_RECAP')).toBeGreaterThan(
+        stdout.output.indexOf('RECAP_LIVE_PROGRESS')
       );
     } finally {
       instance.unmount();

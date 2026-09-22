@@ -28,6 +28,7 @@ vi.mock('../../../../../src/ui/utils/toolFormatters.js', () => ({
 
 function createHarness() {
   const sessionActions = {
+    addMessage: vi.fn(),
     finalizeStreamingMessage: vi.fn(),
     discardStreamingMessage: vi.fn(),
     setCurrentThinkingContent: vi.fn(),
@@ -90,6 +91,25 @@ function createHarness() {
 }
 
 describe('createLoopEventHandler', () => {
+  it('inserts recap as a separate display message without touching the main response', () => {
+    const harness = createHarness();
+    harness.handler({
+      kind: 'conversation_recap',
+      messageId: 'recap-id',
+      text: 'Goal: ship.',
+    });
+    expect(harness.sessionActions.addMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'recap-id',
+        role: 'assistant',
+        content: 'Goal: ship.',
+        metadata: { conversationRecap: true },
+      })
+    );
+    expect(harness.streamingBuffer.batchAppendContent).not.toHaveBeenCalled();
+    expect(harness.stats.outputStarted).toBe(false);
+  });
+
   it('projects the complete shared event contract', () => {
     const harness = createHarness();
     for (const event of comprehensiveLoopEvents()) harness.handler(event);

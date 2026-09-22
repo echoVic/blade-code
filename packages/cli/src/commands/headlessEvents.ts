@@ -51,6 +51,12 @@ const ContentEventSchema = event({
   content: Type.String(),
 });
 
+const ConversationRecapEventSchema = event({
+  type: Type.Literal('conversation_recap'),
+  message_id: Type.String(),
+  text: Type.String(),
+});
+
 const StructuredOutputEventSchema = event({
   type: Type.Literal('structured_output'),
   output: Type.Record(Type.String(), Type.Unknown()),
@@ -773,6 +779,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     ThinkingEventSchema,
     StreamEndEventSchema,
     ContentEventSchema,
+    ConversationRecapEventSchema,
     StructuredOutputEventSchema,
     ToolStartEventSchema,
     ToolProgressEventSchema,

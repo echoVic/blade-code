@@ -863,7 +863,10 @@ export class PersistentStore {
                 partId: nanoid(),
                 messageId,
                 partType: 'text',
-                payload: { text: content },
+                payload: {
+                  text: content,
+                  ...(metadata?.conversationRecap ? { conversationRecap: true } : {}),
+                },
                 createdAt: now,
               }),
             ]

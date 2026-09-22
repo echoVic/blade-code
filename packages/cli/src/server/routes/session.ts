@@ -412,6 +412,23 @@ export function projectCommittedSessionEvent(event: SessionEvent):
   | undefined {
   const base = typeof event.seq === 'number' ? { seq: event.seq } : {};
   if (
+    event.type === 'part_created' &&
+    event.data.partType === 'text' &&
+    event.data.payload !== null &&
+    typeof event.data.payload === 'object' &&
+    !Array.isArray(event.data.payload) &&
+    'conversationRecap' in event.data.payload &&
+    event.data.payload.conversationRecap === true &&
+    'text' in event.data.payload &&
+    typeof event.data.payload.text === 'string'
+  ) {
+    return {
+      type: 'conversation.recap',
+      ...base,
+      properties: { messageId: event.data.messageId, text: event.data.payload.text },
+    };
+  }
+  if (
     event.type === 'message_created' &&
     event.data.metadata !== null &&
     typeof event.data.metadata === 'object' &&

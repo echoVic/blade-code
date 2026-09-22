@@ -356,6 +356,14 @@ export async function executeRunAsync(
         return;
       }
       switch (event.kind) {
+        case 'conversation_recap':
+          // The committed recap part is delivered by SessionEventLog (including replay).
+          // Close the preceding live group so later deltas appear below the recap.
+          if (assistantMessageId) {
+            emit('message.complete', { messageId: assistantMessageId });
+            assistantMessageId = undefined;
+          }
+          break;
         case 'content_delta':
           if (event.delta.length > 0) outputStarted = true;
           if (structuredOutputExpected) break;

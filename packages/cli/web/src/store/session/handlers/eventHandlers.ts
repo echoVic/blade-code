@@ -306,6 +306,19 @@ const handleMessageCreated: EventHandler = (props, get, set) => {
   }
 };
 
+const handleConversationRecap: EventHandler = (props, get) => {
+  if (typeof props.messageId !== 'string' || typeof props.text !== 'string') return;
+  const state = get();
+  if (state.messages.some((message) => message.id === props.messageId)) return;
+  state.addMessage({
+    id: props.messageId,
+    role: 'assistant',
+    content: props.text,
+    timestamp: Date.now(),
+    metadata: { conversationRecap: true },
+  });
+};
+
 const handleMessageDelta: EventHandler = (props, get, _set) => {
   const {
     currentSessionId,
@@ -2275,6 +2288,7 @@ const handleTeamEvent: EventHandler = (_props, get) => {
 
 const eventHandlers: Record<string, EventHandler> = {
   'message.created': handleMessageCreated,
+  'conversation.recap': handleConversationRecap,
   'message.delta': handleMessageDelta,
   'message.complete': handleMessageComplete,
   'structured.output': handleStructuredOutput,
@@ -2364,6 +2378,7 @@ const BUFFERED_EVENTS = new Set([
 
 // 流结束事件（需要先 drain buffer）
 const STREAM_END_EVENTS = new Set([
+  'conversation.recap',
   'message.complete',
   'thinking.completed',
   'session.completed',

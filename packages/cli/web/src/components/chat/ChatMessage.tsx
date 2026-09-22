@@ -1408,6 +1408,22 @@ function ChatMessageComponent({
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
 
+  if (message.metadata?.conversationRecap === true) {
+    return (
+      <div
+        data-chat-message-id={message.id}
+        data-chat-role="assistant"
+        data-conversation-recap
+        className="w-full px-4 py-2 sm:pl-16"
+      >
+        <p className="break-words text-sm leading-relaxed text-[hsl(var(--deck-ink-muted))]">
+          <span className="font-medium">↶ recap: </span>
+          <span className="italic">{getTextContent(message.content)}</span>
+        </p>
+      </div>
+    );
+  }
+
   if (isSystem) {
     const content = getTextContent(message.content);
     return (

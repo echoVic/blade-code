@@ -55,6 +55,44 @@ vi.mock('../../../src/services/SessionService.js', () => ({
 }));
 
 describe('headless runner', () => {
+  it.each(['text', 'jsonl'] as const)(
+    'emits recap separately from the answer in %s output',
+    async (outputFormat) => {
+      const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+      const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+      agentState.chatStream.mockImplementationOnce(
+        mockChatGenerator([
+          { kind: 'conversation_recap', messageId: 'r', text: 'Goal: ship.' },
+        ])
+      );
+      const { runHeadless } = await import('../../../src/commands/headless.js');
+      expect(
+        await runHeadless(
+          { headless: true, message: 'continue', outputFormat },
+          { stdout, stderr }
+        )
+      ).toBe(0);
+      const out = stdout.write.mock.calls.map(([text]) => text).join('');
+      const err = stderr.write.mock.calls.map(([text]) => text).join('');
+      if (outputFormat === 'jsonl') {
+        expect(
+          out
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line))
+        ).toContainEqual({
+          event_version: 1,
+          type: 'conversation_recap',
+          message_id: 'r',
+          text: 'Goal: ship.',
+        });
+      } else {
+        expect(err).toContain('recap: Goal: ship.');
+        expect(out).not.toContain('recap:');
+      }
+    }
+  );
+
   /** Helper: create a mock async generator that yields events and returns a LoopResult */
   function mockChatGenerator(
     events: Array<Record<string, unknown>>,

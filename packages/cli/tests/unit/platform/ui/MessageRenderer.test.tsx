@@ -146,6 +146,25 @@ describe('MessageRenderer', () => {
     );
   });
 
+  it('renders marked recaps with a plain inline label and no assistant bullet', async () => {
+    const { MessageRenderer } = await import(
+      '../../../../src/ui/components/MessageRenderer.js'
+    );
+    const html = renderToStaticMarkup(
+      React.createElement(MessageRenderer, {
+        content: 'Goal: ship. Review is pending.',
+        role: 'assistant',
+        metadata: { conversationRecap: true },
+        terminalWidth: 100,
+      })
+    );
+    expect(html).toContain('recap:');
+    expect(html).toContain('Goal: ship. Review is pending.');
+    expect(html).toContain('color="darkgray"');
+    expect(html).not.toContain('•');
+    expect(html).not.toContain('inline-renderer');
+  });
+
   it('覆盖 blockquote、table、diff 和 markdown fenced code', async () => {
     const html = await renderMessage(
       [

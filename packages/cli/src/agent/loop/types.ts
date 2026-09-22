@@ -72,6 +72,7 @@ export type ToolEvent =
 /** 循环控制事件 */
 export type SystemEvent =
   | { kind: 'turn_start'; turn: number; maxTurns: number }
+  | { kind: 'conversation_recap'; messageId: string; text: string }
   | {
       kind: 'compaction';
       phase: 'start' | 'end';

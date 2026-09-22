@@ -367,6 +367,7 @@ export interface MessagePersistenceMetadata {
   usage?: { input_tokens: number; output_tokens: number };
   inboxMessageId?: string;
   clientVisible?: boolean;
+  conversationRecap?: boolean;
   emptyFinalCorrection?: boolean;
   contextualProjectRules?: boolean;
   ruleReferences?: JsonValue;

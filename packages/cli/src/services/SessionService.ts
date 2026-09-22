@@ -97,6 +97,7 @@ import { getVersion } from '../utils/packageInfo.js';
 import type { ContentPart, Message } from './ChatServiceInterface.js';
 import { isClientVisibleMessage } from './clientMessageVisibility.js';
 import { isCommunicationStyleSelection } from './communicationStyle.js';
+import { isConversationRecap } from './conversationRecapMetadata.js';
 import { isReasoningEffortSelection } from './pi/reasoningEffort.js';
 import { isResponseVerbositySelection } from './pi/responseVerbosity.js';
 import { isServiceTierSelection } from './pi/serviceTier.js';
@@ -3434,7 +3435,7 @@ export class SessionService {
     if (checkpointIndex < 0 || !replacementMessages) {
       return this.convertJSONLToMessages(materialized, {
         includeTokenBudgetHandoffs: true,
-      });
+      }).filter((message) => !isConversationRecap(message));
     }
 
     const suffix = this.convertJSONLToMessages(
@@ -3443,7 +3444,9 @@ export class SessionService {
         includeTokenBudgetHandoffs: true,
       }
     );
-    return [...replacementMessages, ...suffix];
+    return [...replacementMessages, ...suffix].filter(
+      (message) => !isConversationRecap(message)
+    );
   }
 
   /** 将 JSONL 条目转换为 OpenAI Message 格式 */

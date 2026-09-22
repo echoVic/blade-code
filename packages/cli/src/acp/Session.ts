@@ -76,6 +76,7 @@ import { projectSessionLoopEvent } from '../server/routes/sessionLoopEventProjec
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
 import { CodeReviewService, renderCodeReview } from '../services/CodeReviewService.js';
 import { isClientVisibleMessage } from '../services/clientMessageVisibility.js';
+import { isConversationRecap } from '../services/conversationRecapMetadata.js';
 import { isProviderAdmissionError } from '../services/pi/providerRequestAdmission.js';
 import { SessionInteractionService } from '../services/SessionInteractionService.js';
 import {
@@ -773,6 +774,17 @@ export class AcpSession {
     for (const message of this.messages) {
       if (!this.canSendUpdates()) return;
       if (!isClientVisibleMessage(message)) continue;
+      if (isConversationRecap(message) && typeof message.content === 'string') {
+        if (
+          !(await this.sendUpdateAndWait({
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: `\n\nrecap: ${message.content}\n\n` },
+            _meta: { 'blade/conversationRecap': true },
+          }))
+        )
+          return;
+        continue;
+      }
       const sessionUpdate =
         message.role === 'user'
           ? 'user_message_chunk'
@@ -1461,6 +1473,13 @@ export class AcpSession {
         }),
         async (event: LoopEvent) => {
           switch (event.kind) {
+            case 'conversation_recap':
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: `\n\nrecap: ${event.text}\n\n` },
+                _meta: { 'blade/conversationRecap': true },
+              });
+              break;
             // --- 流式内容（delta 是唯一内容信号） ---
             case 'content_delta':
               if (outputSchema) break;

@@ -1089,6 +1089,16 @@ function createEventWriter(
         `[tokens] in=${usage.inputTokens} out=${usage.outputTokens} total=${usage.totalTokens} / ${usage.maxContextTokens}`
       );
     },
+    conversationRecap(event: Extract<LoopEvent, { kind: 'conversation_recap' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('conversation_recap', {
+          message_id: event.messageId,
+          text: event.text,
+        });
+        return;
+      }
+      writeLine(io.stderr, `recap: ${event.text}`);
+    },
     compacting(event: Extract<LoopEvent, { kind: 'compaction' }>) {
       const isCompacting = event.phase === 'start';
       if (outputFormat === 'jsonl') {
@@ -1999,6 +2009,9 @@ export async function runHeadless(
             break;
 
           // --- 压缩 ---
+          case 'conversation_recap':
+            eventWriter.conversationRecap(event);
+            break;
           case 'compaction':
             eventWriter.compacting(event);
             break;

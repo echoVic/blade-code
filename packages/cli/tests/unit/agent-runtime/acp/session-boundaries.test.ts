@@ -1442,6 +1442,37 @@ describe('AcpSession', () => {
   });
 
   describe('replayHistory', () => {
+    it('labels persisted recaps when replaying history', async () => {
+      session = new AcpSession(
+        'test-session-id',
+        createLocalAcpSessionRoots('/tmp/test'),
+        mockConnection as unknown as ConstructorParameters<typeof AcpSession>[2],
+        undefined,
+        {
+          initialMessages: [
+            {
+              role: 'assistant',
+              content: 'Goal: ship.',
+              metadata: { conversationRecap: true },
+            },
+          ],
+        }
+      );
+      mockConnection.sessionUpdates = [];
+      await session.replayHistory();
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '\n\nrecap: Goal: ship.\n\n' },
+              _meta: { 'blade/conversationRecap': true },
+            }),
+          }),
+        ])
+      );
+    });
+
     it.each(['destroy', 'abort'] as const)(
       '%s 后停止 deferred history replay 且不恢复 pending input',
       async (stopMethod) => {
@@ -1678,6 +1709,25 @@ describe('AcpSession', () => {
     beforeEach(async () => {
       await session.initialize();
       mockConnection.sessionUpdates = [];
+    });
+
+    it('projects inline recaps independently of main assistant content', async () => {
+      getMockAgent().chatStream = async function* () {
+        yield { kind: 'conversation_recap', messageId: 'r', text: 'Goal: ship.' };
+        return { success: true, finalMessage: 'Done.' };
+      };
+      await promptText(session, 'continue');
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '\n\nrecap: Goal: ship.\n\n' },
+              _meta: { 'blade/conversationRecap': true },
+            }),
+          }),
+        ])
+      );
     });
 
     it('projects unified Provider recovery and typed fallback metadata', async () => {

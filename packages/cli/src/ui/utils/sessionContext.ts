@@ -1,4 +1,5 @@
 import type { Message } from '../../services/ChatServiceInterface.js';
+import { isConversationRecap } from '../../services/conversationRecapMetadata.js';
 import {
   renderUserShellCommandForModel,
   userShellCommandRecordFromMetadata,
@@ -29,12 +30,17 @@ export function buildContextMessagesFromSession(
   >
 ): Message[] {
   if (!session.restoredContextMessages || session.restoredVisibleMessageCount <= 0) {
-    return session.messages.map(toContextMessage);
+    return session.messages
+      .filter((message) => !isConversationRecap(message))
+      .map(toContextMessage);
   }
 
   const appendedMessages = session.messages
     .slice(session.restoredVisibleMessageCount)
+    .filter((message) => !isConversationRecap(message))
     .map(toContextMessage);
 
-  return [...session.restoredContextMessages, ...appendedMessages];
+  return [...session.restoredContextMessages, ...appendedMessages].filter(
+    (message) => !isConversationRecap(message)
+  );
 }

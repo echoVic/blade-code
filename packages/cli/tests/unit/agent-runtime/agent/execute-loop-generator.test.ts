@@ -631,6 +631,94 @@ function contextualRuleResolution() {
 // ===== Tests =====
 
 describe('executeLoopGenerator', () => {
+  it.each(['success', 'provider-failure', 'commit-failure'] as const)(
+    'generates an automatic display-only recap at a safe boundary: %s',
+    async (outcome) => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      let now = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      const context = createMockContext();
+      let mainCalls = 0;
+      let recapCalls = 0;
+      let recapCommitted = false;
+      const mainPayloads: Message[][] = [];
+      saveMessage.mockImplementation(
+        async (_id, _role, _content, _parent, metadata) => {
+          if (metadata?.conversationRecap) {
+            if (outcome === 'commit-failure') throw new Error('recap commit failed');
+            recapCommitted = true;
+            return 'recap-id';
+          }
+          return `main-${mainCalls}`;
+        }
+      );
+      vi.mocked(deps.chatService.chat).mockImplementation(
+        async (messages, tools, _signal, options) => {
+          if (options?.providerSessionId?.endsWith(':recap')) {
+            recapCalls++;
+            expect(mainCalls).toBe(5);
+            expect(tools).toEqual([]);
+            if (outcome === 'provider-failure') throw new Error('recap unavailable');
+            return {
+              content: 'RECAP_ONLY: Five files inspected. Next: finish.',
+              usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+            };
+          }
+          mainPayloads.push(structuredClone(messages));
+          mainCalls++;
+          now += 30_000;
+          return mainCalls <= 5
+            ? {
+                content: `Inspecting file ${mainCalls}.`,
+                toolCalls: [
+                  {
+                    id: `tc-${mainCalls}`,
+                    type: 'function',
+                    function: {
+                      name: 'Read',
+                      arguments: JSON.stringify({ path: `file-${mainCalls}.ts` }),
+                    },
+                  },
+                ],
+              }
+            : { content: 'Finished inspection.' };
+        }
+      );
+      try {
+        const generator = executeLoopGenerator(
+          deps,
+          'Inspect five files.',
+          context,
+          { stream: false },
+          undefined
+        );
+        const events: LoopEvent[] = [];
+        let next = await generator.next();
+        while (!next.done) {
+          if (next.value.kind === 'conversation_recap') {
+            expect(recapCommitted).toBe(true);
+            expect(next.value.messageId).toBe('recap-id');
+          }
+          events.push(next.value);
+          next = await generator.next();
+        }
+        expect(next.value.success).toBe(true);
+        expect(mainCalls).toBe(6);
+        expect(recapCalls).toBe(1);
+        expect(next.value.metadata?.tokensUsed).toBe(
+          outcome === 'provider-failure' ? 0 : 15
+        );
+        expect(
+          events.filter((event) => event.kind === 'conversation_recap')
+        ).toHaveLength(outcome === 'success' ? 1 : 0);
+        expect(JSON.stringify(mainPayloads)).not.toContain('RECAP_ONLY');
+        expect(JSON.stringify(context.messages)).not.toContain('RECAP_ONLY');
+      } finally {
+        clock.mockRestore();
+      }
+    }
+  );
+
   beforeEach(() => {
     vi.clearAllMocks();
     streamingToolExecutorState.executionContexts.length = 0;

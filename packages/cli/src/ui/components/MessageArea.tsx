@@ -1,6 +1,7 @@
 import ansiEscapes from 'ansi-escapes';
 import { Box, Static, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { isConversationRecap } from '../../services/conversationRecapMetadata.js';
 import {
   useClearCount,
   useCurrentStreamingBuffer,
@@ -16,6 +17,7 @@ import {
   useTaskList,
   useThinkingExpanded,
 } from '../../store/selectors/index.js';
+import type { SessionMessage } from '../../store/types.js';
 import { useTerminalDimensions } from '../hooks/useTerminalDimensions.js';
 import {
   getMarkdownBlocksSnapshot,
@@ -45,6 +47,9 @@ import { ThinkingBlock } from './ThinkingBlock.js';
 interface MessageAreaProps {
   active?: boolean;
 }
+
+const isStreamStatusMessage = (message: SessionMessage) =>
+  message.role === 'tool' || isConversationRecap(message);
 
 const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => {
   const messages = useMessages();
@@ -121,7 +126,7 @@ const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => 
     }
     streamingToolMessageIdsRef.current = new Set();
     streamingToolBaselineIdsRef.current = new Set(
-      historyMessages.filter((msg) => msg.role === 'tool').map((msg) => msg.id)
+      historyMessages.filter(isStreamStatusMessage).map((msg) => msg.id)
     );
     streamingMessageIdRef.current = null;
     streamingBlockCountRef.current = 0;
@@ -153,7 +158,7 @@ const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => 
     streamingChunkIndexRef.current = 0;
     streamingToolMessageIdsRef.current = new Set();
     streamingToolBaselineIdsRef.current = new Set(
-      historyMessages.filter((msg) => msg.role === 'tool').map((msg) => msg.id)
+      historyMessages.filter(isStreamStatusMessage).map((msg) => msg.id)
     );
     streamingPendingEmptyBlocksRef.current = [];
     setStreamingStaticItems([]);
@@ -171,10 +176,11 @@ const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => 
     streamingBlockCountRef.current = 0;
     streamingChunkIndexRef.current = 0;
     streamingToolBaselineIdsRef.current = new Set(
-      historyMessages.filter((msg) => msg.role === 'tool').map((msg) => msg.id)
+      historyMessages.filter(isStreamStatusMessage).map((msg) => msg.id)
     );
     streamingPendingEmptyBlocksRef.current = [];
-    setStreamingStaticItems([]);
+    // Keep Static's already-emitted prefix across model rounds. Dropping it here
+    // makes the next round (after tools or a recap) fall behind Static's cursor.
   }, [activeStreamingMessageId, clearCount]);
 
   useEffect(() => {
@@ -264,7 +270,7 @@ const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => 
     const baseline = streamingToolBaselineIdsRef.current;
     const newToolMessages = historyMessages.filter(
       (msg) =>
-        msg.role === 'tool' &&
+        isStreamStatusMessage(msg) &&
         !baseline.has(msg.id) &&
         !streamingToolMessageIdsRef.current.has(msg.id)
     );
@@ -394,7 +400,12 @@ const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => 
       if (skipFinalizingMessageId && msg.id === skipFinalizingMessageId) {
         continue;
       }
-      if (msg.role === 'tool' && streamingToolMessageIdsRef.current.has(msg.id)) {
+      if (
+        isStreamStatusMessage(msg) &&
+        (streamingToolMessageIdsRef.current.has(msg.id) ||
+          (activeStreamingMessageId &&
+            !streamingToolBaselineIdsRef.current.has(msg.id)))
+      ) {
         continue;
       }
       if (msg.role === 'assistant' && streamedAssistantMessageIds.has(msg.id)) {
@@ -422,6 +433,7 @@ const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => 
     terminalWidth,
     skipFinalizingMessageId,
     streamedAssistantMessageIds,
+    activeStreamingMessageId,
   ]);
 
   const allStaticItems = useMemo(

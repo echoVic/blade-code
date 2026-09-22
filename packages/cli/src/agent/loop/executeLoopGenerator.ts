@@ -55,6 +55,7 @@ import type {
   StreamToolCall,
   UsageInfo,
 } from '../../services/ChatServiceInterface.js';
+import { ConversationRecapSchedule } from '../../services/ConversationRecapSchedule.js';
 import { INTERNAL_CONTROL_MESSAGE_METADATA } from '../../services/clientMessageVisibility.js';
 import {
   isProviderContextLimitError,
@@ -120,6 +121,7 @@ import {
   saveToolUse,
   saveUserMessage,
 } from './conversationPersistence.js';
+import { generateConversationRecap } from './conversationRecap.js';
 import { ensureDurableToolIdentity } from './durableToolIdentity.js';
 import {
   createStaleLoopDetector,
@@ -1041,6 +1043,7 @@ export async function* executeLoopGenerator(
   systemPrompt: string | undefined
 ): AsyncGenerator<LoopEvent, LoopResult, void> {
   const startTime = Date.now();
+  const recapSchedule = new ConversationRecapSchedule(startTime);
   let totalTokens = 0;
   const recordUsage = (usage: UsageInfo) => {
     totalTokens = Math.min(
@@ -2456,6 +2459,25 @@ validates the object and may return a bounded corrective error.`;
           }
         }
         state.writeback();
+
+        if (
+          !isSubagent &&
+          !structuredOutputContract &&
+          deps.executionEngine &&
+          recapSchedule.claim(
+            turnsCount,
+            Date.now(),
+            compactResult.kind === 'compacted'
+          )
+        ) {
+          yield* generateConversationRecap(
+            deps,
+            context,
+            lastMessageUuid,
+            recordUsage,
+            options?.signal
+          );
+        }
 
         // 3. 轮次计数
         turnsCount = nextTurn;
