@@ -4,7 +4,7 @@ import type { FollowUpQueueSnapshot } from '../api/followUpQueueSchemas.js';
 import type { PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { SessionTurnRecoveryAssessment } from '../context/turnRecoveryAssessment.js';
-import type { MessagePersistenceMetadata } from '../context/types.js';
+import type { MessagePersistenceMetadata, SessionTurnUsage } from '../context/types.js';
 import type { GoalExecutionFrontierPreparation } from '../goals/executionFrontier.js';
 import type {
   GoalCompletionVerificationResult,
@@ -219,6 +219,7 @@ export interface LoopResult {
     toolCallsCount: number;
     duration: number;
     tokensUsed?: number; // Token 使用量
+    usage?: SessionTurnUsage;
     toolSuccessRate?: number; // 工具成功率 (0-1)
     totalToolFailures?: number; // 工具总失败次数
     executionHostFailureCategory?: GoalExecutionHostFailureCategory;

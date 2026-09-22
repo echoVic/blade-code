@@ -1172,6 +1172,7 @@ export class Agent {
                     turnsCount: result.metadata?.turnsCount ?? 0,
                     toolCallsCount: result.metadata?.toolCallsCount ?? 0,
                     durationMs: result.metadata?.duration ?? 0,
+                    ...(result.metadata?.usage ? { usage: result.metadata.usage } : {}),
                   }
                 : {
                     status: 'aborted',
@@ -1179,6 +1180,7 @@ export class Agent {
                     turnsCount: result.metadata?.turnsCount ?? 0,
                     toolCallsCount: result.metadata?.toolCallsCount ?? 0,
                     durationMs: result.metadata?.duration ?? 0,
+                    ...(result.metadata?.usage ? { usage: result.metadata.usage } : {}),
                   },
           });
           if (turnHandle) {

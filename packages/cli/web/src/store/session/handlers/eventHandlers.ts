@@ -588,12 +588,14 @@ const handleToolResult: EventHandler = (props, get, set) => {
       ? props.toolName
       : (existingTool?.toolName ?? 'Unknown');
   const metadata = props.metadata as Record<string, unknown> | undefined;
+  const endTime = Date.now();
 
   if (messageWithTool) {
     updateToolCall(targetMessageId, toolCallId, {
       status: success ? 'success' : 'error',
       summary,
       output,
+      endTime,
       metadata,
     });
   } else if (!messageWithSubagent) {
@@ -604,7 +606,8 @@ const handleToolResult: EventHandler = (props, get, set) => {
       status: success ? 'success' : 'error',
       summary,
       output,
-      startTime: Date.now(),
+      startTime: endTime,
+      endTime,
       metadata,
     });
   }

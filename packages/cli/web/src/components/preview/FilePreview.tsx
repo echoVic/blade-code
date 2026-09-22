@@ -40,6 +40,8 @@ import {
 } from './PreviewFileTree';
 import { PreviewLogList } from './PreviewLogList';
 import {
+  derivePreviewActivitySegments,
+  derivePreviewRunSummaries,
   fileNameFromPath,
   nextSearchResultIndex,
   type PreviewLogEntry,
@@ -467,6 +469,8 @@ export function FilePreview({
       ? (taskDiffs ?? [])
       : messageDiffs;
   const logs = useMemo(() => buildLogs(messages), [messages]);
+  const runs = useMemo(() => derivePreviewRunSummaries(messages), [messages]);
+  const activities = useMemo(() => derivePreviewActivitySegments(messages), [messages]);
 
   useEffect(() => {
     const query = fileQuery.trim();
@@ -1145,7 +1149,7 @@ export function FilePreview({
         </TabsContent>
 
         <TabsContent value="logs" className="overflow-hidden flex-1 mt-0">
-          <PreviewLogList logs={logs} />
+          <PreviewLogList logs={logs} runs={runs} activities={activities} />
         </TabsContent>
 
         <TabsContent
@@ -1214,6 +1218,8 @@ function buildLogs(
         status: string;
         summary?: string;
         output?: string;
+        startTime: number;
+        endTime?: number;
       }>;
     };
   }>
@@ -1242,7 +1248,9 @@ function buildLogs(
                 ? 'error'
                 : 'running',
           content: cleaned || (args ? `Arguments:\n${args}` : undefined),
-          timestamp: message.timestamp,
+          timestamp: toolCall.startTime,
+          startedAt: toolCall.startTime,
+          completedAt: toolCall.endTime,
         });
       }
     }

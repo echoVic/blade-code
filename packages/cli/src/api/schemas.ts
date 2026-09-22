@@ -451,6 +451,7 @@ export type Goal = Static<typeof GoalSchema>;
 export const SessionHistoryMessageSchema = Runtime(
   Type.Object({
     id: Type.Optional(Type.String({ minLength: 1 })),
+    timestamp: Type.Optional(Type.Number({ minimum: 0 })),
     role: MessageRoleSchema,
     content: MessageContentSchema,
     metadata: Type.Optional(Type.Unknown()),

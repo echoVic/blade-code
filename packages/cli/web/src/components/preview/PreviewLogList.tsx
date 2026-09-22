@@ -1,22 +1,32 @@
-import { ChevronDown, ChevronRight, Search } from 'lucide-react';
+import { Activity, ChevronDown, ChevronRight, List, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { PreviewRunMetrics, PreviewRunTimeline } from './PreviewRunTelemetry';
 import {
   filterPreviewLogs,
+  type PreviewActivitySegment,
   type PreviewLogEntry,
   type PreviewLogFilter,
+  type PreviewRunSummary,
 } from './previewFilters';
 
 interface PreviewLogListProps {
   logs: PreviewLogEntry[];
+  runs: PreviewRunSummary[];
+  activities?: PreviewActivitySegment[];
 }
 
 const INITIAL_VISIBLE_LOGS = 80;
 const MORE_VISIBLE_LOGS = 80;
 
-export function PreviewLogList({ logs }: PreviewLogListProps) {
+type LogView = 'timeline' | 'details';
+
+export function PreviewLogList({ logs, runs, activities = [] }: PreviewLogListProps) {
   const t = useT();
+  const [view, setView] = useState<LogView>(() =>
+    runs.length > 0 || activities.length > 0 ? 'timeline' : 'details'
+  );
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<PreviewLogFilter>('all');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -37,116 +47,156 @@ export function PreviewLogList({ logs }: PreviewLogListProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="space-y-2 border-b border-[hsl(var(--deck-border))] px-4 py-3">
-        <div className="flex h-8 items-center gap-2 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-2 focus-within:border-[hsl(var(--deck-accent)/0.6)]">
-          <Search className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--deck-ink-faint))]" />
-          <input
-            type="search"
-            aria-label={t('preview.logs.searchAria')}
-            placeholder={t('preview.logs.searchPlaceholder')}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-[hsl(var(--deck-ink))] outline-none placeholder:text-[hsl(var(--deck-ink-faint))]"
-          />
+      <div className="border-b border-[hsl(var(--deck-border))]">
+        <PreviewRunMetrics runs={runs} />
+
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <div
+            className="inline-flex h-8 items-center rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] p-0.5"
+            aria-label={t('preview.logs.viewAria')}
+          >
+            {(['timeline', 'details'] as const).map((candidate) => {
+              const Icon = candidate === 'timeline' ? Activity : List;
+              return (
+                <button
+                  key={candidate}
+                  type="button"
+                  aria-pressed={view === candidate}
+                  onClick={() => setView(candidate)}
+                  className={cn(
+                    'flex h-6 items-center gap-1.5 rounded px-2 font-mono text-[10px] transition-colors',
+                    view === candidate
+                      ? 'bg-[hsl(var(--deck-canvas))] text-[hsl(var(--deck-ink))] shadow-sm'
+                      : 'text-[hsl(var(--deck-ink-faint))] hover:text-[hsl(var(--deck-ink-muted))]'
+                  )}
+                >
+                  <Icon className="h-3 w-3" />
+                  {t(`preview.logs.view.${candidate}`)}
+                </button>
+              );
+            })}
+          </div>
           <span className="font-mono text-[9px] tabular-nums text-[hsl(var(--deck-ink-faint))]">
-            {filtered.length}/{logs.length}
+            {runs.length} {t('preview.logs.runs')}
           </span>
         </div>
-        <div
-          className="flex items-center gap-1"
-          aria-label={t('preview.logs.filterAria')}
-        >
-          {(['all', 'running', 'error', 'success'] as const).map((status) => (
-            <button
-              key={status}
-              type="button"
-              aria-pressed={filter === status}
-              onClick={() => setFilter(status)}
-              className={cn(
-                'rounded-md border px-2 py-1 font-mono text-[9.5px] transition-colors',
-                filter === status
-                  ? 'border-[hsl(var(--deck-accent)/0.45)] bg-[hsl(var(--deck-accent-soft))] text-[hsl(var(--deck-accent))]'
-                  : 'border-[hsl(var(--deck-border))] text-[hsl(var(--deck-ink-faint))] hover:text-[hsl(var(--deck-ink-muted))]'
-              )}
+
+        {view === 'details' && (
+          <div className="space-y-2 border-t border-[hsl(var(--deck-hairline))] px-4 py-3">
+            <div className="flex h-8 items-center gap-2 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-2 focus-within:border-[hsl(var(--deck-accent)/0.6)]">
+              <Search className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--deck-ink-faint))]" />
+              <input
+                type="search"
+                aria-label={t('preview.logs.searchAria')}
+                placeholder={t('preview.logs.searchPlaceholder')}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-[hsl(var(--deck-ink))] outline-none placeholder:text-[hsl(var(--deck-ink-faint))]"
+              />
+              <span className="font-mono text-[9px] tabular-nums text-[hsl(var(--deck-ink-faint))]">
+                {filtered.length}/{logs.length}
+              </span>
+            </div>
+            <div
+              className="flex items-center gap-1"
+              aria-label={t('preview.logs.filterAria')}
             >
-              {t(`preview.logs.filter.${status}`)}
-            </button>
-          ))}
-        </div>
+              {(['all', 'running', 'error', 'success'] as const).map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  aria-pressed={filter === status}
+                  onClick={() => setFilter(status)}
+                  className={cn(
+                    'rounded-md border px-2 py-1 font-mono text-[9.5px] transition-colors',
+                    filter === status
+                      ? 'border-[hsl(var(--deck-accent)/0.45)] bg-[hsl(var(--deck-accent-soft))] text-[hsl(var(--deck-accent))]'
+                      : 'border-[hsl(var(--deck-border))] text-[hsl(var(--deck-ink-faint))] hover:text-[hsl(var(--deck-ink-muted))]'
+                  )}
+                >
+                  {t(`preview.logs.filter.${status}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
-        {logs.length === 0 ? (
-          <EmptyLogState
-            title={t('preview.logs.emptyTitle')}
-            subtitle={t('preview.logs.emptyHint')}
-          />
-        ) : filtered.length === 0 ? (
-          <EmptyLogState
-            title={t('preview.logs.noMatches')}
-            subtitle={t('preview.logs.noMatchesHint')}
-          />
-        ) : (
-          visibleLogs.map((log) => {
-            const isExpanded = expanded[log.id];
-            const contentLines = (log.content || '').split('\n');
-            const isLong = contentLines.length > 10 || (log.content?.length || 0) > 800;
-            const visible =
-              isExpanded || !isLong ? contentLines : contentLines.slice(0, 8);
-            return (
-              <div
-                key={log.id}
-                data-preview-log-id={log.id}
-                className="overflow-hidden rounded-lg border border-[hsl(var(--deck-border))]"
-              >
-                <div className="flex items-center justify-between border-b border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface-2))] px-3 py-2">
-                  <div className="space-y-0.5">
-                    <div className="font-mono text-[12px] text-[hsl(var(--deck-ink))]">
-                      {log.title}
-                    </div>
-                    {log.subtitle && (
-                      <div className="font-mono text-[11px] text-[hsl(var(--deck-ink-muted))]">
-                        {log.subtitle}
+      {view === 'timeline' ? (
+        <PreviewRunTimeline runs={runs} activities={activities} />
+      ) : (
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+          {logs.length === 0 ? (
+            <EmptyLogState
+              title={t('preview.logs.emptyTitle')}
+              subtitle={t('preview.logs.emptyHint')}
+            />
+          ) : filtered.length === 0 ? (
+            <EmptyLogState
+              title={t('preview.logs.noMatches')}
+              subtitle={t('preview.logs.noMatchesHint')}
+            />
+          ) : (
+            visibleLogs.map((log) => {
+              const isExpanded = expanded[log.id];
+              const contentLines = (log.content || '').split('\n');
+              const isLong =
+                contentLines.length > 10 || (log.content?.length || 0) > 800;
+              const visible =
+                isExpanded || !isLong ? contentLines : contentLines.slice(0, 8);
+              return (
+                <div
+                  key={log.id}
+                  data-preview-log-id={log.id}
+                  className="overflow-hidden rounded-lg border border-[hsl(var(--deck-border))]"
+                >
+                  <div className="flex items-center justify-between border-b border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface-2))] px-3 py-2">
+                    <div className="space-y-0.5">
+                      <div className="font-mono text-[12px] text-[hsl(var(--deck-ink))]">
+                        {log.title}
                       </div>
-                    )}
+                      {log.subtitle && (
+                        <div className="font-mono text-[11px] text-[hsl(var(--deck-ink-muted))]">
+                          {log.subtitle}
+                        </div>
+                      )}
+                    </div>
+                    <StatusPill status={log.status} />
                   </div>
-                  <StatusPill status={log.status} />
+                  {log.content && (
+                    <div className="space-y-2 px-3 py-3">
+                      <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface-2))] p-3 font-mono text-[12px] text-[hsl(var(--deck-ink))]">
+                        {visible.join('\n')}
+                        {!isExpanded && isLong && '\n…'}
+                      </pre>
+                      {isLong && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpanded((previous) => ({
+                              ...previous,
+                              [log.id]: !previous[log.id],
+                            }))
+                          }
+                          className="flex items-center gap-1 font-mono text-[12px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:text-[hsl(var(--deck-ink))]"
+                        >
+                          {isExpanded ? (
+                            <ChevronDown className="h-3 w-3" />
+                          ) : (
+                            <ChevronRight className="h-3 w-3" />
+                          )}
+                          {isExpanded
+                            ? t('preview.logs.collapse')
+                            : t('preview.logs.expand')}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-                {log.content && (
-                  <div className="space-y-2 px-3 py-3">
-                    <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface-2))] p-3 font-mono text-[12px] text-[hsl(var(--deck-ink))]">
-                      {visible.join('\n')}
-                      {!isExpanded && isLong && '\n…'}
-                    </pre>
-                    {isLong && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpanded((previous) => ({
-                            ...previous,
-                            [log.id]: !previous[log.id],
-                          }))
-                        }
-                        className="flex items-center gap-1 font-mono text-[12px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:text-[hsl(var(--deck-ink))]"
-                      >
-                        {isExpanded ? (
-                          <ChevronDown className="h-3 w-3" />
-                        ) : (
-                          <ChevronRight className="h-3 w-3" />
-                        )}
-                        {isExpanded
-                          ? t('preview.logs.collapse')
-                          : t('preview.logs.expand')}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-        {visibleCount < filtered.length && (
-          <div className="flex justify-center">
+              );
+            })
+          )}
+          {visibleCount < filtered.length && (
             <button
               type="button"
               onClick={() =>
@@ -155,15 +205,15 @@ export function PreviewLogList({ logs }: PreviewLogListProps) {
                   count: Math.min(filtered.length, visibleCount + MORE_VISIBLE_LOGS),
                 })
               }
-              className="rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-3 py-1.5 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:border-[hsl(var(--deck-border-strong))] hover:text-[hsl(var(--deck-ink))]"
+              className="mx-auto block rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-3 py-1.5 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:border-[hsl(var(--deck-border-strong))] hover:text-[hsl(var(--deck-ink))]"
             >
               {t('preview.logs.showMore', {
                 count: Math.min(MORE_VISIBLE_LOGS, filtered.length - visibleCount),
               })}
             </button>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

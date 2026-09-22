@@ -168,6 +168,14 @@ describe('durable turn lifecycle', () => {
         turnsCount: 2,
         toolCallsCount: 1,
         durationMs: 1000,
+        usage: {
+          inputTokens: 1_000,
+          outputTokens: 100,
+          cacheReadTokens: 600,
+          cacheWriteTokens: 100,
+          uncachedInputTokens: 300,
+          estimatedCostUsd: 0.0025,
+        },
       },
       ['input-1']
     );
@@ -179,6 +187,14 @@ describe('durable turn lifecycle', () => {
         turnsCount: 2,
         toolCallsCount: 1,
         durationMs: 1000,
+        usage: {
+          inputTokens: 1_000,
+          outputTokens: 100,
+          cacheReadTokens: 600,
+          cacheWriteTokens: 100,
+          uncachedInputTokens: 300,
+          estimatedCostUsd: 0.0025,
+        },
       },
       ['input-1']
     );
@@ -203,6 +219,14 @@ describe('durable turn lifecycle', () => {
           turnsCount: 2,
           toolCallsCount: 1,
           durationMs: 1000,
+          usage: {
+            inputTokens: 1_000,
+            outputTokens: 100,
+            cacheReadTokens: 600,
+            cacheWriteTokens: 100,
+            uncachedInputTokens: 300,
+            estimatedCostUsd: 0.0025,
+          },
         },
       },
     });
@@ -2224,6 +2248,14 @@ describe('durable turn lifecycle', () => {
           turnsCount: 2,
           toolCallsCount: 1,
           durationMs: 900,
+          usage: {
+            inputTokens: 2_400,
+            outputTokens: 300,
+            cacheReadTokens: 1_500,
+            cacheWriteTokens: 200,
+            uncachedInputTokens: 700,
+            estimatedCostUsd: 0.0042,
+          },
           goalFinalization: {
             goalId: 'goal-final-ready',
             verificationAttempt: 2,
@@ -2247,6 +2279,14 @@ describe('durable turn lifecycle', () => {
           verifierSessionId: 'verifier-final-ready',
           evidenceSha256: 'a'.repeat(64),
         },
+        usage: {
+          inputTokens: 2_400,
+          outputTokens: 300,
+          cacheReadTokens: 1_500,
+          cacheWriteTokens: 200,
+          uncachedInputTokens: 700,
+          estimatedCostUsd: 0.0042,
+        },
       },
     });
     await expect(
@@ -2262,6 +2302,14 @@ describe('durable turn lifecycle', () => {
         turnsCount: 2,
         toolCallsCount: 1,
         durationMs: 900,
+        usage: {
+          inputTokens: 2_400,
+          outputTokens: 300,
+          cacheReadTokens: 1_500,
+          cacheWriteTokens: 200,
+          uncachedInputTokens: 700,
+          estimatedCostUsd: 0.0042,
+        },
         goalFinalization: {
           goalId: 'goal-final-ready',
           verificationAttempt: 2,
@@ -2287,6 +2335,14 @@ describe('durable turn lifecycle', () => {
         turnsCount: 2,
         toolCallsCount: 1,
         durationMs: 900,
+        usage: {
+          inputTokens: 2_400,
+          outputTokens: 300,
+          cacheReadTokens: 1_500,
+          cacheWriteTokens: 200,
+          uncachedInputTokens: 700,
+          estimatedCostUsd: 0.0042,
+        },
       },
     });
     expect(completion?.seq).toBe((acknowledgement?.seq ?? 0) + 1);

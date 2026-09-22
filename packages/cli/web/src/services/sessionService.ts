@@ -297,7 +297,7 @@ const normalizeHistoryMessage = (
   id: message.id ?? `history-${index}-${now}`,
   role: message.role as MessageRole,
   content: normalizeContent(message.content),
-  timestamp: now,
+  timestamp: message.timestamp ?? now,
   metadata:
     message.metadata && typeof message.metadata === 'object'
       ? (message.metadata as Record<string, unknown>)

@@ -150,7 +150,7 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
               type,
               description,
               status: 'running',
-              startTime: Date.now(),
+              startTime: raw.timestamp || Date.now(),
               sessionId:
                 typeof taskArgs.subagent_session_id === 'string'
                   ? taskArgs.subagent_session_id
@@ -174,7 +174,7 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
             toolName,
             arguments: argumentsText,
             status: 'running',
-            startTime: Date.now(),
+            startTime: raw.timestamp || Date.now(),
           };
           agentContent = appendTimelineToolCall(agentContent, toolCall);
         }
@@ -277,6 +277,7 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
         if (existingTool) {
           existingTool.output = getTextContent(raw.content);
           existingTool.status = failed ? 'error' : 'success';
+          existingTool.endTime = raw.timestamp || Date.now();
           existingTool.metadata = toolMetadata;
           existingTool.summary =
             typeof toolMetadata?.summary === 'string'
@@ -298,7 +299,8 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
               toolName,
               output: getTextContent(raw.content),
               status: failed ? 'error' : 'success',
-              startTime: Date.now(),
+              startTime: raw.timestamp || Date.now(),
+              endTime: raw.timestamp || Date.now(),
               metadata: toolMetadata,
               summary:
                 typeof toolMetadata?.summary === 'string'

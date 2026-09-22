@@ -29,10 +29,12 @@ import {
   applyToolResultBudget,
   MessageBudgetTracker,
 } from '../../context/ToolResultBudget.js';
+import { accumulateSessionTurnUsage } from '../../context/turnUsage.js';
 import type {
   MessagePersistenceMetadata,
   SessionGoalFinalizationInfo,
   SessionTurnFinalizationInfo,
+  SessionTurnUsage,
   SubagentRunRef,
 } from '../../context/types.js';
 import {
@@ -1042,14 +1044,57 @@ export async function* executeLoopGenerator(
   options: LoopOptions | undefined,
   systemPrompt: string | undefined
 ): AsyncGenerator<LoopEvent, LoopResult, void> {
+  const generator = executeLoopGeneratorCore(
+    deps,
+    message,
+    context,
+    options,
+    systemPrompt
+  );
+  let usage: SessionTurnUsage | undefined;
+
+  while (true) {
+    const next = await generator.next();
+    if (next.done) {
+      if (!usage || !next.value.metadata) return next.value;
+      return {
+        ...next.value,
+        metadata: {
+          ...next.value.metadata,
+          usage,
+        },
+      };
+    }
+    if (next.value.kind === 'token_usage') {
+      usage = accumulateSessionTurnUsage(usage, next.value.usage);
+    }
+    yield next.value;
+  }
+}
+
+async function* executeLoopGeneratorCore(
+  deps: LoopDependencies,
+  message: UserMessageContent,
+  context: ChatContext,
+  options: LoopOptions | undefined,
+  systemPrompt: string | undefined
+): AsyncGenerator<LoopEvent, LoopResult, void> {
   const startTime = Date.now();
   const recapSchedule = new ConversationRecapSchedule(startTime);
   let totalTokens = 0;
+  let turnUsage: SessionTurnUsage | undefined;
   const recordUsage = (usage: UsageInfo) => {
     totalTokens = Math.min(
       Number.MAX_SAFE_INTEGER,
       totalTokens + (resolveProviderContextTokens(usage) ?? 0)
     );
+    turnUsage = accumulateSessionTurnUsage(turnUsage, {
+      inputTokens: usage.promptTokens,
+      outputTokens: usage.completionTokens,
+      cacheReadTokens: usage.cacheReadInputTokens,
+      cacheWriteTokens: usage.cacheCreationInputTokens,
+      costUsd: usage.costUsd,
+    });
   };
   // 提到 try 外，使 catch 中的 makeAbortResult 能拿到真实进度
   let turnsCount = 0;
@@ -1150,6 +1195,7 @@ validates the object and may return a bounded corrective error.`;
         turnsCount,
         toolCallsCount: allToolResults.length,
         durationMs: Math.max(0, Date.now() - startTime),
+        ...(turnUsage ? { usage: turnUsage } : {}),
         ...(goalFinalization ? { goalFinalization } : {}),
       };
     };

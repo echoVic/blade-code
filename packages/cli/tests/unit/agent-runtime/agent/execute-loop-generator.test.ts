@@ -1927,6 +1927,14 @@ describe('executeLoopGenerator', () => {
       chatMock.mockResolvedValueOnce({
         content: 'Durable final response',
         toolCalls: undefined,
+        usage: {
+          promptTokens: 1_000,
+          completionTokens: 100,
+          totalTokens: 1_100,
+          cacheReadInputTokens: 600,
+          cacheCreationInputTokens: 100,
+          costUsd: 0.0025,
+        },
         finishReason: 'stop',
       });
 
@@ -1960,11 +1968,27 @@ describe('executeLoopGenerator', () => {
             turnsCount: 1,
             toolCallsCount: 0,
             durationMs: expect.any(Number),
+            usage: {
+              inputTokens: 1_000,
+              outputTokens: 100,
+              cacheReadTokens: 600,
+              cacheWriteTokens: 100,
+              uncachedInputTokens: 300,
+              estimatedCostUsd: 0.0025,
+            },
           },
         },
         undefined,
         undefined
       );
+      expect(result.metadata?.usage).toEqual({
+        inputTokens: 1_000,
+        outputTokens: 100,
+        cacheReadTokens: 600,
+        cacheWriteTokens: 100,
+        uncachedInputTokens: 300,
+        estimatedCostUsd: 0.0025,
+      });
     });
 
     it('applies mid-turn steering before accepting the model final response', async () => {

@@ -152,6 +152,11 @@ Preview keeps the sidebar and application header visible and floats the current
 Session composer over the bottom of the content. Expand its status row to inspect
 the conversation, context usage, cache hit rate, and current run phase.
 
+The Logs tab provides Timeline and Details views. Timeline organizes Session activity
+into run, model-call, tool-call, and cache-hit lanes, with estimated cost, cached input,
+and fresh input totals. These metrics are persisted with the Session and remain
+available after reopening it. Details retains searchable, status-filtered tool output.
+
 Preview history lives only for the current panel lifecycle and is capped at 50
 entries. Blade accepts only HTTP(S) addresses and rejects credential-bearing
 URLs. Preview pages use a no-referrer sandboxed iframe. Blade does not proxy

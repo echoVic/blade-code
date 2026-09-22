@@ -16,6 +16,7 @@ describe('sessionService message history', () => {
               id: 'durable-message-1',
               role: 'assistant',
               content: 'Persisted response',
+              timestamp: 1_756_944_000_000,
             },
           ]),
           {
@@ -36,6 +37,7 @@ describe('sessionService message history', () => {
         id: 'durable-message-1',
         role: 'assistant',
         content: 'Persisted response',
+        timestamp: 1_756_944_000_000,
       },
     ]);
   });

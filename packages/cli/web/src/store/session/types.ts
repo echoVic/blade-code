@@ -234,6 +234,7 @@ export interface ToolCallInfo {
   };
   output?: string;
   startTime: number;
+  endTime?: number;
   metadata?: Record<string, unknown>;
 }
 

@@ -44,6 +44,7 @@ describe('SessionService client message identity', () => {
         id: 'durable-message-1',
         role: 'assistant',
         content: 'Persisted response',
+        timestamp: Date.parse('2026-09-21T00:00:00.000Z'),
       },
     ]);
   });

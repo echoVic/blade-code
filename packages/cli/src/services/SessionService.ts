@@ -3505,7 +3505,12 @@ export class SessionService {
             ? recoveredToolAssistants.get(entry.data.parentMessageId)
             : undefined;
         const message: Message = recoveredAssistant ?? {
-          ...(options.includeMessageIds ? { id: entry.data.messageId } : {}),
+          ...(options.includeMessageIds
+            ? {
+                id: entry.data.messageId,
+                timestamp: Date.parse(entry.data.createdAt),
+              }
+            : {}),
           role: entry.data.role,
           content: '',
           ...(entry.data.metadata || entry.data.inboxMessageId

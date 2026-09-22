@@ -2020,6 +2020,7 @@ export class SessionRuntime {
           turnsCount: outcome.turnsCount,
           toolCallsCount: outcome.toolCallsCount,
           durationMs: outcome.durationMs,
+          ...(outcome.usage ? { usage: outcome.usage } : {}),
         },
         inputMessageIds
       );
@@ -2047,6 +2048,7 @@ export class SessionRuntime {
           turnsCount: outcome.turnsCount,
           toolCallsCount: outcome.toolCallsCount,
           durationMs: outcome.durationMs,
+          ...(outcome.usage ? { usage: outcome.usage } : {}),
           recovery: {
             version: 3,
             inputMessageIds,

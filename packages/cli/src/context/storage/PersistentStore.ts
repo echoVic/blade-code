@@ -21,6 +21,7 @@ import {
   type TokenBudgetHandoffRecordedV1,
   type ValidTokenBudgetHandoffEvent,
 } from '../TokenBudgetHandoff.js';
+import { parseSessionTurnUsage } from '../turnUsage.js';
 import {
   MAX_TURN_INPUT_MESSAGE_ID_CHARS,
   MAX_TURN_INPUT_MESSAGE_IDS,
@@ -527,12 +528,14 @@ function parseTurnFinalization(
     goalFinalization = parseGoalFinalization(record.goalFinalization);
     if (!goalFinalization) return undefined;
   }
+  const usage = parseSessionTurnUsage(record.usage);
   return {
     turnId,
     inputMessageIds: [...new Set(validInputMessageIds)],
     turnsCount,
     toolCallsCount,
     durationMs,
+    ...(usage ? { usage } : {}),
     ...(goalFinalization ? { goalFinalization } : {}),
   };
 }
@@ -1503,6 +1506,7 @@ export class PersistentStore {
               turnsCount: finalization.turnsCount,
               toolCallsCount: finalization.toolCallsCount,
               durationMs: finalization.durationMs,
+              ...(finalization.usage ? { usage: finalization.usage } : {}),
             }),
           ];
         }

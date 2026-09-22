@@ -417,6 +417,16 @@ export interface SessionTurnMetrics {
   turnsCount: number;
   toolCallsCount: number;
   durationMs: number;
+  usage?: SessionTurnUsage;
+}
+
+export interface SessionTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  uncachedInputTokens: number;
+  estimatedCostUsd: number;
 }
 
 export interface SessionTurnCompletionInfo extends SessionTurnMetrics {
