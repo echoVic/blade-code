@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.3] - 2026-09-22
+
+### Added
+- Persist per-turn input, output, cache-read, cache-write, uncached-input, and estimated-cost metrics in completed and aborted Session events.
+- Add a Web Logs timeline with separate run, model, tool, and cache lanes, plus detailed hover and keyboard-focus telemetry.
+
+### Changed
+- Preserve durable message and tool timestamps so reopened Sessions retain their execution-time distribution instead of rebuilding it from load time.
+- Keep the existing searchable tool log as a Details view and surface aggregate cost, cache hit rate, cached input, and fresh input above both views.
+
+### Tests
+- Cover usage normalization and aggregation, durable completion and crash recovery, history timestamps, timeline interval derivation, telemetry rendering, and responsive desktop/mobile behavior.
+- Verify the full unit and Web suites, lint, type checking, production build, and browser rendering without running paid real-API qualification.
+
 ## [0.11.2] - 2026-09-22
 
 ### Added
