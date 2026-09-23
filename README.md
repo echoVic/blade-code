@@ -71,6 +71,10 @@ blade --headless --output-format jsonl "分析这个仓库"
 
 首次启动会自动进入模型配置向导：**选择 Provider → 选择模型 → 输入 API Key**。
 
+### 在 Pilion Browser 中使用
+
+[Pilion Browser](https://github.com/echoVic/pilion-browser) 是一个作为 ACP 客户端的桌面浏览器。在它的 Agent 面板中选择 **Blade**，Pilion 会以 `blade --acp` 启动 Blade，并把自己的标签页作为 MCP 工具（`browser_snapshot`、`browser_screenshot`、导航、点击、输入）交给 Blade 操作，支持操作前确认和人工接管；Blade 继续使用 `~/.blade/auth.json` 中的凭证。安装包见 [Pilion Releases](https://github.com/echoVic/pilion-browser/releases)。
+
 ---
 
 ## ⚙️ 配置

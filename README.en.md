@@ -71,6 +71,10 @@ blade --headless --output-format jsonl "analyze this repo"
 
 On first launch, a setup wizard guides you: **Pick Provider → Select Model → Enter API Key**.
 
+### Use Blade from Pilion Browser
+
+[Pilion Browser](https://github.com/echoVic/pilion-browser) is a desktop browser that works as an ACP client. Choose **Blade** in its Agent panel: Pilion launches `blade --acp` and exposes its own tabs to Blade as MCP tools (`browser_snapshot`, `browser_screenshot`, navigate, click, type) with approval-before-action and human takeover; Blade keeps using the credentials in `~/.blade/auth.json`. Installers for macOS, Windows and Linux are on the [Pilion releases page](https://github.com/echoVic/pilion-browser/releases).
+
 ---
 
 ## ⚙️ Configuration
