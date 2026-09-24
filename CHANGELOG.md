@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.11.6] - 2026-09-24
+
+### Added
+- Ship ripgrep 15.2.0 for macOS (arm64, x64), Linux (x64, arm64), and Windows (x64) in the npm package so search works without a system `rg`. `prepack` downloads the binaries, verifies the official SHA256 checksums, and aborts the publish if any platform fails; Linux arm64 uses the static musl build.
+- Prefer the bundled ripgrep after a one-time probe, falling back to the system `rg` and `@vscode/ripgrep`; set `BLADE_USE_BUILTIN_RIPGREP=0` to prefer the system binary. Every ripgrep invocation ignores the user's ripgrep configuration.
+- With the bundled binary, Grep supports look-around and back-references by switching to PCRE2 automatically.
+
+### Changed
+- Grep searches hidden files while skipping version-control directories, reads ripgrep's JSON output to attach context lines by line number, and returns a 500-character window around matches on very long lines. Patterns that start with `-` are no longer parsed as flags.
+- Glob lists files with ripgrep when directories are not requested, returning the newest matches first and honoring `.gitignore` negations.
+- The FindFiles and `@` completion index lists files with ripgrep and derives directories from file paths, so empty directories are no longer suggested. Glob and the index fall back to fast-glob when ripgrep is unavailable.
+
+### Fixed
+- Resolve the bundled ripgrep from the package root so the packaged CLI finds it, and include the binaries in the npm tarball.
+- Keep context lines, Windows drive-letter paths, and single-file results intact when Grep falls back to `git grep` or the system `grep`.
+
+### Tests
+- Cover ripgrep resolution, checksum-verified downloads, packaging of the binaries, Grep JSON parsing and line windows, Glob parity with fast-glob, and file-index listing.
+- Verify the full unit, integration, and Web suites, lint, type checking, and a packed tarball installed without system ripgrep or `@vscode/ripgrep` and driven through a headless CLI session, without running paid real-API qualification.
+
 ## [0.11.5] - 2026-09-24
 
 ### Fixed

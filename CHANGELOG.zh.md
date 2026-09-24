@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.11.6] - 2026-09-24
+
+### 新增
+- npm 包内置 macOS（arm64、x64）、Linux（x64、arm64）与 Windows（x64）的 ripgrep 15.2.0，没有系统 `rg` 也能正常搜索。`prepack` 会下载二进制并校验官方 SHA256，任一平台失败即中止发布；Linux arm64 使用静态链接的 musl 版本。
+- 优先使用内置 ripgrep（首次使用时探测可执行性），不可用时依次回退到系统 `rg` 与 `@vscode/ripgrep`；设置 `BLADE_USE_BUILTIN_RIPGREP=0` 可改为系统 rg 优先。所有 ripgrep 调用均忽略用户的 ripgrep 配置。
+- 使用内置版本时，Grep 支持前后断言与反向引用，按需自动切换到 PCRE2。
+
+### 变更
+- Grep 会搜索隐藏文件但跳过版本库目录，改为解析 ripgrep 的 JSON 输出并按行号挂接上下文，超长行只返回匹配附近 500 个字符；以 `-` 开头的模式不再被当作参数。
+- 不列目录时 Glob 改用 ripgrep 列出文件，按修改时间从新到旧返回，并正确处理 `.gitignore` 的反向规则。
+- FindFiles 与 `@` 补全的文件索引改用 ripgrep 列出文件，目录由文件路径推导，空目录不再出现在候选中；ripgrep 不可用时 Glob 与索引回退到 fast-glob。
+
+### 修复
+- 从包根目录定位内置 ripgrep，使打包后的 CLI 能找到它，并将二进制纳入 npm 包。
+- Grep 回退到 `git grep` 或系统 `grep` 时，保留上下文行、Windows 盘符路径与单文件搜索结果。
+
+### 测试
+- 覆盖 ripgrep 解析顺序、带校验的下载、二进制打包、Grep JSON 解析与长行窗口、Glob 与 fast-glob 的结果一致性以及文件索引。
+- 验证单元、集成与 Web 全量测试、lint、类型检查，并在未安装系统 ripgrep 与 `@vscode/ripgrep` 的环境中安装打包产物、通过 Headless CLI 会话端到端运行；未运行付费真实 API 资格测试。
+
 ## [0.11.5] - 2026-09-24
 
 ### 修复
