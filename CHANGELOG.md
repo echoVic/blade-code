@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.5] - 2026-09-24
+
+### Fixed
+- Run worktree Git commands in the C locale so stale worktree cleanup outside a Git repository stays a no-op when Git prints localized messages.
+
+### Tests
+- Force a localized Git environment in the worktree cleanup regression so it fails without the fix wherever Git ships translations.
+
 ## [0.11.4] - 2026-09-24
 
 ### Fixed
