@@ -108,5 +108,3 @@ export const forkCommand: SlashCommand = {
     }
   },
 };
-
-export default forkCommand;

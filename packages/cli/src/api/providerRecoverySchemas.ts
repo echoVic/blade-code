@@ -48,7 +48,6 @@ export const ProviderRecoveryActivitySchema = StringEnum([
   'stream_stall',
   'fallback',
 ]);
-export type ProviderRecoveryActivity = Static<typeof ProviderRecoveryActivitySchema>;
 
 export const ProviderRecoveryIdentitySchema = Type.Object(
   {

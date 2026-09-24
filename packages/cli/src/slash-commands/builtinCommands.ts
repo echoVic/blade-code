@@ -23,7 +23,7 @@ import compactCommand from './compact.js';
 import { CustomCommandRegistry } from './custom/index.js';
 import effortCommand from './effort.js';
 import exportCommand from './export.js';
-import forkCommand from './fork.js';
+import { forkCommand } from './fork.js';
 import mcpCommand from './mcp.js';
 import memoryCommand from './memory.js';
 import permissionsCommand from './permissions.js';

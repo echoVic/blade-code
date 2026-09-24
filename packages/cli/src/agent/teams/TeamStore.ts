@@ -36,10 +36,6 @@ export interface AgentTeam {
   members: TeamMember[];
 }
 
-interface TeamFile {
-  teams?: AgentTeam[];
-}
-
 export class TeamStore {
   private readonly teamsDir: string;
 
@@ -202,5 +198,3 @@ function normalizeTeam(data: unknown): AgentTeam | undefined {
     })),
   };
 }
-
-export type { TeamFile };

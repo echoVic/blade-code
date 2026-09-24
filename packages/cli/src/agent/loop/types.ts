@@ -296,29 +296,6 @@ export interface TokenUsageInfo {
 /** Generator yield 的事件联合类型 */
 export type LoopEvent = StreamEvent | ToolEvent | SystemEvent | DomainEvent;
 
-// ===== Loop State =====
-
-export type LoopPhase =
-  | 'idle'
-  | 'streaming'
-  | 'executing_tools'
-  | 'compacting'
-  | 'complete'
-  | 'error';
-
-/** 循环状态（用于调试/可观测性） */
-export interface LoopState {
-  phase: LoopPhase;
-  turn: number;
-  totalTokens: number;
-  toolCallsCount: number;
-  transition?: {
-    from: string;
-    to: string;
-    reason: string;
-  };
-}
-
 // ===== Skill Execution Context =====
 
 export interface SkillExecutionContext {

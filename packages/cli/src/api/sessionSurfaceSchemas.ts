@@ -57,7 +57,6 @@ export const SurfaceUnavailableReasonSchema = Runtime(
     'capability-not-advertised',
   ])
 );
-export type SurfaceUnavailableReason = Static<typeof SurfaceUnavailableReasonSchema>;
 
 export const SessionSurfaceCapabilitiesSchema = Runtime(
   StrictObject({
@@ -229,9 +228,6 @@ export const SessionSurfaceErrorEnvelopeSchema = Runtime(
     }),
   })
 );
-export type SessionSurfaceErrorEnvelope = Static<
-  typeof SessionSurfaceErrorEnvelopeSchema
->;
 
 export const SessionSurfaceCatalogPageSchema = Runtime(
   StrictObject({
@@ -258,7 +254,6 @@ export const SessionSurfaceOpenRequestSchema = Runtime(
     limit: SessionSurfaceLimitSchema,
   })
 );
-export type SessionSurfaceOpenRequest = Static<typeof SessionSurfaceOpenRequestSchema>;
 
 export const SessionSurfaceOpenResultSchema = Runtime(
   StrictObject({
@@ -277,13 +272,9 @@ export const SessionSurfaceHistoryRequestSchema = Runtime(
     limit: SessionSurfaceLimitSchema,
   })
 );
-export type SessionSurfaceHistoryRequest = Static<
-  typeof SessionSurfaceHistoryRequestSchema
->;
 
 export const SessionSurfaceForkRequestSchema = Runtime(
   StrictObject({
     locator: SessionLocatorV2Schema,
   })
 );
-export type SessionSurfaceForkRequest = Static<typeof SessionSurfaceForkRequestSchema>;

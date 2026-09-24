@@ -30,8 +30,6 @@ export type {
   FunctionDeclaration,
   LoopDependencies,
   LoopEvent,
-  LoopPhase,
-  LoopState,
   SkillExecutionContext,
   StreamEvent,
   SystemEvent,

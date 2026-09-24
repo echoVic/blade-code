@@ -47,16 +47,6 @@ export function sameSurfaceLocator(
   return false;
 }
 
-export function sessionRefFromSurfaceLocator(
-  locator: SessionLocatorV2
-): SessionRef | null {
-  if (locator.workspace.kind !== 'local') return null;
-  return {
-    sessionId: locator.sessionId,
-    projectPath: locator.workspace.projectPath,
-  };
-}
-
 export function findSessionByRef(
   sessions: readonly Session[],
   ref: SessionRef

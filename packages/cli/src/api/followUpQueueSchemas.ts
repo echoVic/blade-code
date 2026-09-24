@@ -29,7 +29,6 @@ export const FollowUpQueueItemSchema = Runtime(
     { additionalProperties: false }
   )
 );
-export type FollowUpQueueItem = Static<typeof FollowUpQueueItemSchema>;
 
 export const FollowUpQueueSnapshotSchema = Runtime(
   Type.Object(
@@ -121,6 +120,3 @@ export const FollowUpQueueErrorResponseSchema = Runtime(
     { additionalProperties: false }
   )
 );
-export type FollowUpQueueErrorResponse = Static<
-  typeof FollowUpQueueErrorResponseSchema
->;

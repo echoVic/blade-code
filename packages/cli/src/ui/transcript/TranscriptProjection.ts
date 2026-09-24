@@ -386,13 +386,6 @@ export class TranscriptSearchIndex {
   }
 }
 
-export function searchTranscriptBlocks(
-  blocks: readonly TranscriptBlock[],
-  query: string
-): TranscriptMatch[] {
-  return new TranscriptSearchIndex().search(blocks, query);
-}
-
 export function findTranscriptMatchLineIndex(
   lines: readonly TranscriptLine[],
   match: TranscriptMatch

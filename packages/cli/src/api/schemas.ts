@@ -79,7 +79,6 @@ export type Message = Static<typeof MessageSchema>;
 export const SessionTaskStatusSchema = Runtime(
   StringEnum(['queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'])
 );
-export type SessionTaskStatus = Static<typeof SessionTaskStatusSchema>;
 
 export const SessionTaskIsolationSchema = Runtime(StringEnum(['local', 'worktree']));
 export type SessionTaskIsolation = Static<typeof SessionTaskIsolationSchema>;
@@ -95,7 +94,6 @@ export type SessionTaskKind = Static<typeof SessionTaskKindSchema>;
 export const SessionTaskDeliveryStatusSchema = Runtime(
   StringEnum(['applied', 'discarded', 'conflicted'])
 );
-export type SessionTaskDeliveryStatus = Static<typeof SessionTaskDeliveryStatusSchema>;
 
 export const SessionTaskDeliverySchema = Runtime(
   Type.Object({
@@ -106,7 +104,6 @@ export const SessionTaskDeliverySchema = Runtime(
     message: Type.Optional(Type.String()),
   })
 );
-export type SessionTaskDelivery = Static<typeof SessionTaskDeliverySchema>;
 
 export const SessionTaskDiffStatSchema = Runtime(
   Type.Object({
@@ -116,7 +113,6 @@ export const SessionTaskDiffStatSchema = Runtime(
     commits: Type.Integer({ minimum: 0 }),
   })
 );
-export type SessionTaskDiffStat = Static<typeof SessionTaskDiffStatSchema>;
 
 export const SessionTaskDiffFileSchema = Runtime(
   Type.Object({
@@ -128,7 +124,6 @@ export const SessionTaskDiffFileSchema = Runtime(
     truncated: Type.Boolean(),
   })
 );
-export type SessionTaskDiffFile = Static<typeof SessionTaskDiffFileSchema>;
 
 export const SessionTaskDiffArtifactSchema = Runtime(
   Type.Object({
@@ -205,7 +200,6 @@ export const SessionPendingInteractionSchema = Runtime(
     requestId: Type.String(),
   })
 );
-export type SessionPendingInteraction = Static<typeof SessionPendingInteractionSchema>;
 
 export const SessionTaskFailureSchema = Runtime(
   Type.Object({
@@ -229,7 +223,6 @@ export const SessionTaskFailureSchema = Runtime(
     ),
   })
 );
-export type SessionTaskFailure = Static<typeof SessionTaskFailureSchema>;
 
 export const ReasoningEffortSchema = Runtime(
   StringEnum(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -493,7 +486,6 @@ export const SessionRewindRequestSchema = Runtime(
     mode: Default(SessionRewindModeSchema, 'conversation'),
   })
 );
-export type SessionRewindRequest = Static<typeof SessionRewindRequestSchema>;
 
 export const SessionRewindResponseSchema = Runtime(
   Type.Object({
@@ -666,7 +658,6 @@ export const CreateTaskRequestSchema = Runtime(
     outputSchema: Type.Optional(OutputSchemaSchema),
   })
 );
-export type CreateTaskRequest = Static<typeof CreateTaskRequestSchema>;
 
 export const UpdateTaskRequestSchema = Runtime(
   Type.Object({
@@ -678,7 +669,6 @@ export const UpdateTaskRequestSchema = Runtime(
     ),
   })
 );
-export type UpdateTaskRequest = Static<typeof UpdateTaskRequestSchema>;
 
 export const CreateTaskResponseSchema = Runtime(
   Type.Object({
@@ -698,9 +688,6 @@ export const SessionTaskDeliveryRequestSchema = Runtime(
     action: StringEnum(['apply', 'discard']),
   })
 );
-export type SessionTaskDeliveryRequest = Static<
-  typeof SessionTaskDeliveryRequestSchema
->;
 
 // ── Scheduled tasks ───────────────────────────────────────────────────────────
 // A schedule fires a headless task run on a cron/interval/one-shot trigger.
@@ -734,7 +721,6 @@ export const ScheduleDispatchSchema = Runtime(
     permissionMode: Default(PermissionModeSchema, 'default'),
   })
 );
-export type ScheduleDispatch = Static<typeof ScheduleDispatchSchema>;
 
 export const ScheduleSchema = Runtime(
   Type.Object({
@@ -860,7 +846,6 @@ export const UserShellCommandRecordSchema = Runtime(
     truncated: Type.Boolean(),
   })
 );
-export type UserShellCommandRecord = Static<typeof UserShellCommandRecordSchema>;
 
 export const UserShellCommandRequestSchema = Runtime(
   Type.Object({
@@ -872,7 +857,6 @@ export const UserShellCommandRequestSchema = Runtime(
     projectPath: Type.Optional(Type.String()),
   })
 );
-export type UserShellCommandRequest = Static<typeof UserShellCommandRequestSchema>;
 
 export const UserShellCommandResponseSchema = Runtime(
   Type.Object({
@@ -896,7 +880,6 @@ export const SideConversationRequestSchema = Runtime(
     projectPath: Type.Optional(Type.String()),
   })
 );
-export type SideConversationRequest = Static<typeof SideConversationRequestSchema>;
 
 export const SideConversationResponseSchema = Runtime(
   Type.Object({
@@ -928,7 +911,6 @@ export const CodeReviewRequestSchema = Runtime(
     modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   })
 );
-export type CodeReviewRequest = Static<typeof CodeReviewRequestSchema>;
 
 export const CodeReviewStartResponseSchema = Runtime(
   Type.Object({

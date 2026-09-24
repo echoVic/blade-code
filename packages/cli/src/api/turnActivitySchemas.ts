@@ -28,7 +28,6 @@ export const TurnActivityPhaseSchema = StringEnum([
   'compacting',
   'continuing',
 ]);
-export type TurnActivityPhase = Static<typeof TurnActivityPhaseSchema>;
 
 export const TurnActivityToolSchema = Type.Refine(
   Type.Object(

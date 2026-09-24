@@ -44,11 +44,6 @@ function readRuntimePackageInfo(): PackageInfo {
   return cachedPackageInfo;
 }
 
-/** 获取包信息 */
-export function getPackageInfo(): PackageInfo {
-  return { ...readRuntimePackageInfo() };
-}
-
 /** 获取版本号 */
 export function getVersion(): string {
   return readRuntimePackageInfo().version;
@@ -62,11 +57,6 @@ export function getPackageName(): string {
 /** 获取描述 */
 export function getDescription(): string {
   return readRuntimePackageInfo().description;
-}
-
-/** 获取格式化的版本信息 */
-export function getFormattedVersion(): string {
-  return `v${getVersion()}`;
 }
 
 /** 获取版权信息 */

@@ -19,8 +19,6 @@ export type PendingResumeRunResult =
       evidence?: PendingResumeFailureEvidence;
     };
 
-export type PendingResumeResult = PendingResumeRunResult;
-
 export interface PendingResumeTerminalFailure {
   phase: 'failed' | 'exhausted';
   attempt: number;

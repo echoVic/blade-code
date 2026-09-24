@@ -34,23 +34,6 @@ export function isAttentionTaskStatus(
   return status === 'completed' || status === 'failed' || status === 'interrupted';
 }
 
-export function shouldMarkTaskUnread(
-  previousStatus: Session['taskStatus'] | undefined,
-  nextStatus: Session['taskStatus'],
-  isCurrentVisible: boolean
-): boolean {
-  if (!isAttentionTaskStatus(nextStatus) || isCurrentVisible) return false;
-  return (
-    previousStatus !== nextStatus &&
-    !(
-      previousStatus === 'completed' ||
-      previousStatus === 'failed' ||
-      previousStatus === 'interrupted' ||
-      previousStatus === 'cancelled'
-    )
-  );
-}
-
 function emptyTaskTerminalReadLedger(): TaskTerminalReadLedgerV1 {
   return { version: 1, entries: [] };
 }
@@ -329,21 +312,6 @@ export function persistUnreadTaskKeys(
   } catch {
     // The in-memory unread state remains useful when storage is unavailable.
   }
-}
-
-export function pruneUnreadTaskKeys(
-  keys: readonly string[],
-  sessions: readonly Session[]
-): string[] {
-  const existing = new Set(
-    sessions.map((session) =>
-      sessionRefKey({
-        sessionId: session.sessionId,
-        projectPath: session.projectPath,
-      })
-    )
-  );
-  return keys.filter((key) => existing.has(key));
 }
 
 export function showTaskNotification(input: {

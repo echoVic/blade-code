@@ -209,7 +209,6 @@ describe('/fork slash command', () => {
     const sourcePath = path.join(process.cwd(), 'src/slash-commands/fork.ts');
     const source = await readFile(sourcePath, 'utf8');
 
-    expect(forkModule.default).toBe(forkModule.forkCommand);
     expect(builtinCommands.fork).toBe(forkModule.forkCommand);
 
     const helpContext: SlashCommandContext = {

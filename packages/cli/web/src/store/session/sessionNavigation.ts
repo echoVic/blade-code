@@ -1,10 +1,9 @@
 import {
-  type Session,
   type SessionLocatorV2,
   SessionLocatorV2Schema,
   type SessionRef,
 } from '@api/schemas';
-import { findSessionByRef, sameSurfaceLocator } from './sessionIdentity';
+import { sameSurfaceLocator } from './sessionIdentity';
 
 const LAST_SESSION_KEY = 'blade.sessions.last';
 const SESSION_PARAM = 'session';
@@ -229,22 +228,6 @@ export function readStoredSessionRef(
   } catch {
     return null;
   }
-}
-
-export function resolveRestorableSession(
-  sessions: readonly Session[],
-  intent: SessionNavigationIntent,
-  storedRef: SessionRef | null
-): SessionRef | null {
-  // An explicit URL is authoritative. Never silently open another task when
-  // a shared/deep link points to a deleted or unavailable session.
-  if (intent.hasSessionParam) {
-    return intent.sessionRef && findSessionByRef(sessions, intent.sessionRef)
-      ? intent.sessionRef
-      : null;
-  }
-  if (intent.projectPath) return null;
-  return storedRef && findSessionByRef(sessions, storedRef) ? storedRef : null;
 }
 
 export function syncSessionNavigation(

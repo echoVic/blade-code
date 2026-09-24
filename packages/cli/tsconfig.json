@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node", "vitest/globals"],
+    "types": ["node", "vitest/globals", "bun"],
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {

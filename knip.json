@@ -2,22 +2,16 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "workspaces": {
     "packages/cli": {
-      "entry": ["src/blade.tsx", "src/acp/index.ts"],
-      "project": ["src/**/*.{ts,tsx}"],
-      "ignore": ["**/*.test.ts", "**/*.spec.ts", "tests/**/*"]
+      "entry": ["src/blade.tsx", "src/acp/index.ts", "scripts/*.{js,ts}"],
+      "project": ["src/**/*.{ts,tsx}"]
     },
     "packages/cli/web": {
-      "entry": ["src/main.tsx"],
-      "project": ["src/**/*.{ts,tsx}"],
-      "ignore": ["**/*.test.ts", "**/*.spec.ts"]
+      "project": ["src/**/*.{ts,tsx}"]
     },
     "packages/vscode": {
-      "project": ["src/**/*.ts"],
-      "ignore": ["**/*.test.ts", "**/*.spec.ts"]
+      "project": ["src/**/*.ts"]
     }
   },
-  "ignoreBinaries": ["vite"],
-  "ignoreDependencies": [],
   "ignoreExportsUsedInFile": true,
   "rules": {
     "enumMembers": "off"
