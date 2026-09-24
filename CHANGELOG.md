@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.4] - 2026-09-24
+
+### Fixed
+- Declare `wrap-ansi` as a direct runtime dependency; the terminal Markdown table renderer imports it, but the CLI previously received it only transitively through `ink` and `yargs`.
+
+### Refactored
+- Remove unused exports, types, and scripts reported by `knip`, including the `detect-unused` wrapper that reported success whenever `knip` found issues and the superseded `scripts/ready.ts`.
+- Drop 23 root workspace dependencies that hoisted newer major versions over the versions declared by each package.
+
+### Tests
+- Verify type checking, lint, the production build, and the unit suite on the cleaned dependency layout.
+
 ## [0.11.3] - 2026-09-22
 
 ### Added
