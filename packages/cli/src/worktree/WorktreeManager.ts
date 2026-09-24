@@ -218,6 +218,8 @@ async function runGit(
           ...options.env,
           GIT_TERMINAL_PROMPT: '0',
           GIT_ASKPASS: '',
+          // 报错文本需按英文原文判断，不能随用户语言环境本地化
+          LC_ALL: 'C',
         },
       },
       (error: ExecFileException | null, stdout, stderr) => {

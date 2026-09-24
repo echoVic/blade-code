@@ -435,9 +435,11 @@ describe('WorktreeManager integration', () => {
     const nonGitRoot = join(tempRoot, 'non-git');
     await mkdir(nonGitRoot);
 
-    const result = await manager.cleanupStaleAgentWorktrees({
-      workspaceRoot: nonGitRoot,
-    });
+    // 本地化的 git 报错不应影响“非仓库”的判断
+    vi.stubEnv('LC_ALL', 'zh_CN.UTF-8');
+    const result = await manager
+      .cleanupStaleAgentWorktrees({ workspaceRoot: nonGitRoot })
+      .finally(() => vi.unstubAllEnvs());
 
     expect(result).toEqual({
       scanned: 0,
