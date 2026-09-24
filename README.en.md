@@ -41,7 +41,9 @@
 - 📋 **Structured Workflows** — Task delegation, Goal mode, Spec/Plan, Subagent orchestration
 - 🔗 **Extensible** — MCP protocol, plugin system, Skills, Hooks
 - 🔒 **Secure & Controllable** — Four permission modes (default/autoEdit/plan/yolo) + tool allow/deny lists
-- 💰 **Precise Cost Tracking** — Per-call token accumulation with cache pricing; check with `/cost`
+- 💰 **Cost Observability** — Per-turn tokens, cache reads/writes, and estimated cost persist with the
+  session across aborts and reopens; watch live with `/cost`, replay turns in the Web Logs timeline,
+  stream `token_usage` from Headless JSONL, and see why prompt caches break
 - 🎨 **Modern UI** — React + Ink terminal / React + Vite web, with Thinking mode support
 
 ---

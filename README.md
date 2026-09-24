@@ -41,7 +41,8 @@
 - 📋 **结构化工作流** — Task 委托、Goal 模式、Spec/Plan、Subagent 与 Agent Teams 编排
 - 🔗 **开放扩展** — MCP 协议、插件系统、Skills、Hooks
 - 🔒 **安全可控** — 四级权限模式（default/autoEdit/plan/yolo）+ 工具白/黑名单
-- 💰 **精确费用追踪** — 多轮累计 token 消耗与缓存价格，支持 `/cost` 实时查看
+- 💰 **成本可观测** — 每轮 token、缓存读写与预估费用随会话持久化，中断或重开后仍可追溯；
+  `/cost` 实时查看、Web 日志时间轴逐轮回看、Headless JSONL 输出 `token_usage`，缓存失效自动归因
 - 🎨 **现代 UI** — React + Ink 终端 / React + Vite Web，支持 Thinking 模式
 
 ---
