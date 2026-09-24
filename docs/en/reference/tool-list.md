@@ -150,8 +150,10 @@ fragment, abbreviation, or approximate spelling of a file name.
 | `max_results` | number | | Maximum results, default 20 |
 
 **Type**: ReadOnly
-**Features**: Uses a shared workspace file-name index and respects `.gitignore`
-and built-in ignore rules
+**Features**: Uses a shared workspace file-name index (listed with the bundled
+ripgrep, falling back to fast-glob) that respects `.gitignore` and built-in
+ignore rules; directories are derived from file paths, so empty directories are
+not listed
 
 ### Glob
 
@@ -159,13 +161,14 @@ Finds files using glob patterns.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `pattern` | string | ✅ | Glob matching pattern |
-| `cwd` | string | | Search directory (default current directory) |
-| `ignore` | string[] | | List of patterns to ignore |
-| `limit` | number | | Result count limit |
+| `pattern` | string | ✅ | Glob pattern, relative to the search directory |
+| `path` | string | | Search directory (default: workspace) |
+| `max_results` | number | | Maximum results, default 100, at most 1000 |
+| `include_directories` | boolean | | Include directories, default false |
+| `case_sensitive` | boolean | | Case-sensitive matching, default false |
 
 **Type**: ReadOnly  
-**Features**: Based on fast-glob, with built-in ignoring of common directories like node_modules
+**Features**: Lists files with the bundled ripgrep, newest first; uses fast-glob for directory listings or when ripgrep is unavailable; respects `.gitignore` (including `!` negations) and built-in ignores such as node_modules
 
 ### Grep
 
@@ -174,14 +177,18 @@ Content search based on ripgrep.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `pattern` | string | ✅ | Search regular expression |
-| `path` | string | | Search path |
-| `glob` | string | | File filter pattern |
-| `context` | number | | Number of context lines |
-| `ignore_case` | boolean | | Case insensitive |
-| `max_count` | number | | Maximum match count |
+| `path` | string | | File or directory to search (default: workspace) |
+| `glob` | string | | File filter pattern (rg `--glob`) |
+| `type` | string | | File type (rg `--type`) |
+| `output_mode` | string | | `content` / `files_with_matches` (default) / `count` |
+| `-i` | boolean | | Case insensitive |
+| `-n` | boolean | | Show line numbers in content mode, default true |
+| `-A` / `-B` / `-C` | number | | Context lines after / before / around matches |
+| `head_limit` / `offset` | number | | Paginate results |
+| `multiline` | boolean | | Match across lines |
 
 **Type**: ReadOnly  
-**Features**: Four-level smart fallback (ripgrep → git grep → system grep → JS fallback)
+**Features**: Prefers the ripgrep 15.2.0 binary shipped with the package (set `BLADE_USE_BUILTIN_RIPGREP=0` to prefer the system `rg`) and always ignores the user's ripgrep configuration; with the bundled binary, look-around and back-references switch to PCRE2 automatically; searches hidden files but skips `.git` and other version-control directories; lines longer than 500 characters return only a window around the match; four-level smart fallback (ripgrep → git grep → system grep → JS fallback)
 
 ## Shell Commands
 

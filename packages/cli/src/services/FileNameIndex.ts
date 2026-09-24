@@ -2,7 +2,12 @@ import path from 'node:path';
 import fg from 'fast-glob';
 import Fuse, { type IFuseOptions } from 'fuse.js';
 import { LRUCache } from 'lru-cache';
-import { DEFAULT_EXCLUDE_DIRS, FileFilter } from '../utils/filePatterns.js';
+import { listFilesWithRipgrep } from '../tools/builtin/search/ripgrep.js';
+import {
+  DEFAULT_EXCLUDE_DIRS,
+  FileFilter,
+  getExcludePatterns,
+} from '../utils/filePatterns.js';
 
 const DEFAULT_CACHE_TTL_MS = 5_000;
 const DEFAULT_MAX_WORKSPACES = 32;
@@ -115,6 +120,36 @@ export class FileNameIndex {
     cwd: string,
     ignorePatterns: string[] | undefined
   ): Promise<FileNameIndexSnapshot> {
+    // 快照由多个调用方共享，不绑定任何一方的 signal
+    const listed = await listFilesWithRipgrep({
+      cwd,
+      hidden: false,
+      ignore: ignorePatterns ?? getExcludePatterns(),
+    });
+    const entries = listed
+      ? withParentDirectories(listed)
+      : await this.listWithFastGlob(cwd, ignorePatterns);
+    const files = entries.filter((entry) => !entry.isDirectory);
+    const fuseOptions: IFuseOptions<FileNameIndexEntry> = {
+      keys: ['path'],
+      includeScore: true,
+      threshold: 0.4,
+      ignoreLocation: true,
+      minMatchCharLength: 1,
+    };
+
+    return {
+      entries,
+      files,
+      allIndex: new Fuse(entries, fuseOptions),
+      fileIndex: new Fuse(files, fuseOptions),
+    };
+  }
+
+  private async listWithFastGlob(
+    cwd: string,
+    ignorePatterns: string[] | undefined
+  ): Promise<FileNameIndexEntry[]> {
     const fileFilter = await FileFilter.create({
       cwd,
       useGitignore: true,
@@ -135,29 +170,34 @@ export class FileNameIndex {
       ignore: fileFilter.getIgnorePatterns(),
     });
 
-    const entries = found
+    return found
       .map((candidate) => candidate.replaceAll('\\', '/'))
       .filter((candidate) => !fileFilter.shouldIgnore(candidate))
       .map((candidate) => ({
         path: candidate,
         isDirectory: candidate.endsWith('/'),
       }));
-    const files = entries.filter((entry) => !entry.isDirectory);
-    const fuseOptions: IFuseOptions<FileNameIndexEntry> = {
-      keys: ['path'],
-      includeScore: true,
-      threshold: 0.4,
-      ignoreLocation: true,
-      minMatchCharLength: 1,
-    };
-
-    return {
-      entries,
-      files,
-      allIndex: new Fuse(entries, fuseOptions),
-      fileIndex: new Fuse(files, fuseOptions),
-    };
   }
+}
+
+/** 由文件路径推导所有上级目录（以 / 结尾，与 fast-glob 的 markDirectories 一致），按路径排序 */
+function withParentDirectories(files: string[]): FileNameIndexEntry[] {
+  const directories = new Set<string>();
+  for (const file of files) {
+    for (
+      let index = file.indexOf('/');
+      index !== -1;
+      index = file.indexOf('/', index + 1)
+    ) {
+      directories.add(file.slice(0, index + 1));
+    }
+  }
+  return [
+    ...[...directories].map((path) => ({ path, isDirectory: true })),
+    ...files.map((path) => ({ path, isDirectory: false })),
+  ].sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+  );
 }
 
 export const fileNameIndex = new FileNameIndex();

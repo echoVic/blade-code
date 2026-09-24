@@ -1,5 +1,4 @@
 import { execSync, spawn } from 'child_process';
-import { existsSync } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { join, relative } from 'path';
 import picomatch from 'picomatch';
@@ -10,6 +9,7 @@ import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, GrepMetadata, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/toolSchemas.js';
+import { getRipgrep, type RipgrepCommand } from './ripgrep.js';
 
 /** 搜索策略枚举 */
 enum SearchStrategy {
@@ -19,6 +19,8 @@ enum SearchStrategy {
   FALLBACK = 'fallback',
 }
 
+const VCS_DIRECTORIES = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'];
+
 /** 搜索结果条目 */
 interface GrepMatch {
   file_path: string;
@@ -27,91 +29,6 @@ interface GrepMatch {
   context_before?: string[];
   context_after?: string[];
   count?: number;
-}
-
-/** 获取平台特定的 ripgrep 路径 */
-function getPlatformRipgrepPath(): string | null {
-  const platform = process.platform;
-  const arch = process.arch;
-
-  const platformMap: Record<string, string> = {
-    'darwin-arm64': 'darwin-arm64/rg',
-    'darwin-x64': 'darwin-x64/rg',
-    'linux-arm64': 'linux-arm64/rg',
-    'linux-x64': 'linux-x64/rg',
-    'win32-x64': 'win32-x64/rg.exe',
-  };
-
-  const key = `${platform}-${arch}`;
-  const relativePath = platformMap[key];
-
-  if (!relativePath) {
-    return null;
-  }
-
-  // 尝试从模块安装目录查找（用于 npm 包）
-  try {
-    const moduleDir = new URL(
-      '../../../../vendor/ripgrep/' + relativePath,
-      import.meta.url
-    ).pathname;
-    if (existsSync(moduleDir)) {
-      return moduleDir;
-    }
-  } catch {
-    // 忽略错误
-  }
-
-  return null;
-}
-
-/**
- * 获取 ripgrep 可执行文件路径
- * 优先级:
- * 1. 系统安装的 rg（优先使用，可能是最新版本）
- * 2. 项目内置的 vendor/ripgrep 中的二进制文件（性能最优）
- * 3. @vscode/ripgrep 包提供的 rg（可选依赖，作为备选）
- */
-function getRipgrepPath(): string | null {
-  // 策略 1: 尝试使用系统安装的 ripgrep
-  try {
-    const cmd =
-      process.platform === 'win32'
-        ? 'where rg'
-        : 'command -v rg 2>/dev/null || which rg 2>/dev/null';
-    const out = execSync(cmd, {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'ignore'],
-    })
-      .split(/\r?\n/)[0]
-      .trim();
-    if (out) {
-      return out;
-    }
-  } catch {
-    // 系统 rg 不可用，继续尝试其他策略
-  }
-
-  // 策略 2: 尝试使用内置的 vendor ripgrep
-  const vendorRg = getPlatformRipgrepPath();
-  if (vendorRg && existsSync(vendorRg)) {
-    return vendorRg;
-  }
-
-  // 策略 3: 尝试使用 @vscode/ripgrep（可选依赖）
-  // 注意：这里使用同步的 require 是安全的，因为它是可选依赖
-  // 如果不存在，catch 块会捕获错误
-  try {
-    // @ts-ignore - 可选依赖可能不存在
-    const vsRipgrep = require('@vscode/ripgrep');
-    if (vsRipgrep?.rgPath && existsSync(vsRipgrep.rgPath)) {
-      return vsRipgrep.rgPath;
-    }
-  } catch {
-    // @vscode/ripgrep 不可用，继续尝试其他策略
-  }
-
-  return null;
 }
 
 /** 检查是否在 git 仓库中 */
@@ -141,18 +58,14 @@ function isSystemGrepAvailable(): boolean {
 
 /** 执行 ripgrep 搜索 */
 async function executeRipgrep(
+  rg: RipgrepCommand,
   args: string[],
   outputMode: string,
   signal: AbortSignal,
   updateOutput?: (output: string) => void
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const rgPath = getRipgrepPath();
-  if (!rgPath) {
-    throw new Error('ripgrep not available');
-  }
-
   return new Promise((resolve, reject) => {
-    const child = spawn(rgPath, args, {
+    const child = spawn(rg.command, [...rg.args, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -443,17 +356,21 @@ function buildRipgrepArgs(options: {
   type?: string;
   output_mode: string;
   case_insensitive: boolean;
-  line_numbers: boolean;
   context_before?: number;
   context_after?: number;
   context?: number;
   head_limit?: number;
   offset?: number;
   multiline: boolean;
+  bundled: boolean;
 }): string[] {
-  const args: string[] = [];
+  const args: string[] = ['--hidden'];
 
-  // 基本选项
+  // 内置 rg 编译了 PCRE2：前后断言、反向引用等自动切换引擎
+  if (options.bundled) {
+    args.push('--engine', 'auto');
+  }
+
   if (options.case_insensitive) {
     args.push('-i');
   }
@@ -462,18 +379,17 @@ function buildRipgrepArgs(options: {
     args.push('-U', '--multiline-dotall');
   }
 
-  // 输出模式
+  // 输出模式：content 用 JSON 事件，其余用 NUL 分隔，路径不再有歧义；
+  // 搜索单个文件时 rg 默认不输出文件名，count 需显式要求
   switch (options.output_mode) {
     case 'files_with_matches':
-      args.push('-l');
+      args.push('-l', '--null');
       break;
     case 'count':
-      args.push('-c');
+      args.push('-c', '--with-filename', '--null');
       break;
     case 'content':
-      if (options.line_numbers) {
-        args.push('-n');
-      }
+      args.push('--json');
       break;
   }
 
@@ -494,6 +410,11 @@ function buildRipgrepArgs(options: {
     args.push('--type', options.type);
   }
 
+  // --hidden 会进入点目录，版本库目录需要显式排除
+  for (const dir of VCS_DIRECTORIES) {
+    args.push('--glob', `!${dir}`);
+  }
+
   // 默认排除常见目录
   for (const dir of DEFAULT_EXCLUDE_DIRS) {
     args.push('--glob', `!${dir}/**`);
@@ -510,8 +431,8 @@ function buildRipgrepArgs(options: {
     args.push('-m', totalLimit.toString());
   }
 
-  // 搜索模式
-  args.push(options.pattern);
+  // 搜索模式；以 - 开头的模式不能被当成参数
+  args.push('-e', options.pattern);
 
   // 搜索路径
   args.push(options.path);
@@ -519,14 +440,17 @@ function buildRipgrepArgs(options: {
   return args;
 }
 
-/** 解析 ripgrep/git grep/system grep 输出 */
-function parseGrepOutput(output: string, outputMode: string): GrepMatch[] {
+/** 解析 git grep/system grep 的文本输出（rg 的输出见 parseRipgrepOutput） */
+export function parseGrepOutput(
+  output: string,
+  outputMode: string,
+  contextAfter = 0
+): GrepMatch[] {
   if (!output.trim()) {
     return [];
   }
 
   const lines = output.trim().split('\n');
-  const matches: GrepMatch[] = [];
 
   switch (outputMode) {
     case 'files_with_matches':
@@ -536,25 +460,113 @@ function parseGrepOutput(output: string, outputMode: string): GrepMatch[] {
 
     case 'count':
       return lines.map((line) => {
-        const [filePath, count] = line.split(':');
+        // 计数在最后一个冒号之后，路径本身可能含冒号（如 Windows 盘符）
+        const separatorIndex = line.lastIndexOf(':');
         return {
-          file_path: filePath,
-          count: parseInt(count, 10),
+          file_path: line.substring(0, separatorIndex),
+          count: parseInt(line.substring(separatorIndex + 1), 10),
         };
       });
 
     case 'content':
-      for (const line of lines) {
-        const match = parseContentLine(line);
-        if (match) {
-          matches.push(match);
-        }
-      }
-      return matches;
+      return parseContentOutput(lines, contextAfter);
 
     default:
       return [];
   }
+}
+
+/** 以 `--` 分隔的每组输出来自同一文件：匹配行为 path:N:text，上下文行为 path-N-text */
+function parseContentOutput(lines: string[], contextAfter: number): GrepMatch[] {
+  const matches: GrepMatch[] = [];
+  let group: string[] = [];
+  const flush = () => {
+    if (group.length > 0) {
+      matches.push(...parseContentGroup(group, contextAfter));
+      group = [];
+    }
+  };
+
+  for (const line of lines) {
+    if (line === '--') {
+      flush();
+    } else if (line) {
+      group.push(line);
+    }
+  }
+  flush();
+  return matches;
+}
+
+/** 上下文行挂到相邻匹配：两次匹配之间的行先补足前一条的 after，其余归后一条的 before */
+function parseContentGroup(lines: string[], contextAfter: number): GrepMatch[] {
+  const group = splitContentGroup(lines);
+  if (!group) {
+    return lines.map(parseContentLine).filter((match) => match !== null);
+  }
+
+  const matches: GrepMatch[] = [];
+  let pending: string[] = [];
+  for (const entry of group.entries) {
+    if (!entry.isMatch) {
+      pending.push(entry.text);
+      continue;
+    }
+    const previous = matches.at(-1);
+    if (previous) {
+      const after = pending.splice(0, contextAfter);
+      if (after.length > 0) previous.context_after = after;
+    }
+    const match: GrepMatch = {
+      file_path: group.filePath,
+      line_number: entry.lineNumber,
+      content: entry.text,
+    };
+    if (pending.length > 0) match.context_before = pending;
+    matches.push(match);
+    pending = [];
+  }
+
+  const last = matches.at(-1);
+  if (last && pending.length > 0) last.context_after = pending;
+  return matches;
+}
+
+interface ContentEntry {
+  lineNumber: number;
+  isMatch: boolean;
+  text: string;
+}
+
+const LINE_NUMBER_FIELD = /([:-])(\d+)\1/y;
+
+/** 路径可能含 `:` 或 `-数字-`，取能让组内各行解析出连续行号且含匹配行的最短前缀 */
+function splitContentGroup(
+  lines: string[]
+): { filePath: string; entries: ContentEntry[] } | null {
+  const [first] = lines;
+  for (let end = 1; end < first.length; end++) {
+    LINE_NUMBER_FIELD.lastIndex = end;
+    if (!LINE_NUMBER_FIELD.test(first)) continue;
+    const filePath = first.substring(0, end);
+    const entries: ContentEntry[] = [];
+    for (const line of lines) {
+      LINE_NUMBER_FIELD.lastIndex = end;
+      const field = line.startsWith(filePath) ? LINE_NUMBER_FIELD.exec(line) : null;
+      const lineNumber = Number(field?.[2]);
+      const previous = entries.at(-1);
+      if (!field || (previous && lineNumber !== previous.lineNumber + 1)) break;
+      entries.push({
+        lineNumber,
+        isMatch: field[1] === ':',
+        text: line.substring(end + field[0].length),
+      });
+    }
+    if (entries.length === lines.length && entries.some((entry) => entry.isMatch)) {
+      return { filePath, entries };
+    }
+  }
+  return null;
 }
 
 /** 解析内容行 */
@@ -588,6 +600,140 @@ function parseContentLine(line: string): GrepMatch | null {
       content: remainder,
     };
   }
+}
+
+const MAX_LINE_LENGTH = 500;
+
+interface RipgrepJsonText {
+  text?: string;
+  bytes?: string;
+}
+
+interface RipgrepJsonEvent {
+  type: string;
+  data?: {
+    path?: RipgrepJsonText;
+    lines?: RipgrepJsonText;
+    line_number?: number | null;
+    submatches?: Array<{ start: number }>;
+  };
+}
+
+function decodeRipgrepText(value: RipgrepJsonText | undefined): string {
+  return value?.text ?? Buffer.from(value?.bytes ?? '', 'base64').toString('utf8');
+}
+
+/** 超长行只保留 focus 附近的窗口，两端标注省略的字符数 */
+function clipLine(line: string, focus: number): string {
+  if (line.length <= MAX_LINE_LENGTH) {
+    return line;
+  }
+  const start = Math.max(
+    0,
+    Math.min(line.length - MAX_LINE_LENGTH, focus - MAX_LINE_LENGTH / 2)
+  );
+  const end = start + MAX_LINE_LENGTH;
+  const head = start > 0 ? `…[${start} chars omitted]…` : '';
+  const tail = end < line.length ? `…[${line.length - end} chars omitted]…` : '';
+  return `${head}${line.slice(start, end)}${tail}`;
+}
+
+/** 多行匹配逐行裁剪，首个子匹配所在的行以子匹配为中心 */
+function clipMatchText(text: string, focus: number): string {
+  let offset = 0;
+  return text
+    .split('\n')
+    .map((line) => {
+      const lineFocus = focus - offset;
+      offset += line.length + 1;
+      return clipLine(line, lineFocus >= 0 && lineFocus < line.length ? lineFocus : 0);
+    })
+    .join('\n');
+}
+
+/** rg 输出：content 为 --json 事件流，files_with_matches 与 count 为 NUL 分隔 */
+export function parseRipgrepOutput(
+  output: string,
+  outputMode: string,
+  contextAfter = 0
+): GrepMatch[] {
+  switch (outputMode) {
+    case 'files_with_matches':
+      return output
+        .split('\0')
+        .filter(Boolean)
+        .map((file_path) => ({ file_path }));
+
+    case 'count':
+      return output
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const separatorIndex = line.lastIndexOf('\0');
+          return {
+            file_path: line.substring(0, separatorIndex),
+            count: parseInt(line.substring(separatorIndex + 1), 10),
+          };
+        });
+
+    case 'content':
+      return parseRipgrepJson(output, contextAfter);
+
+    default:
+      return [];
+  }
+}
+
+/** 按行号挂接上下文：前一条匹配 after 范围内的行归它，其余归下一条匹配的 before */
+function parseRipgrepJson(output: string, contextAfter: number): GrepMatch[] {
+  const matches: GrepMatch[] = [];
+  let previous: { match: GrepMatch; lastLine: number } | undefined;
+  let pending: string[] = [];
+
+  for (const line of output.split('\n')) {
+    if (!line) continue;
+    const event = JSON.parse(line) as RipgrepJsonEvent;
+    const data = event.data;
+
+    if (event.type === 'begin' || event.type === 'end') {
+      previous = undefined;
+      pending = [];
+      continue;
+    }
+    if (!data || (event.type !== 'match' && event.type !== 'context')) continue;
+
+    const raw = decodeRipgrepText(data.lines);
+    const text = raw.replace(/\r?\n$/, '');
+    const lineNumber = data.line_number ?? 0;
+
+    if (event.type === 'context') {
+      const clipped = clipLine(text, 0);
+      if (previous && lineNumber - previous.lastLine <= contextAfter) {
+        previous.match.context_after ??= [];
+        previous.match.context_after.push(clipped);
+      } else {
+        pending.push(clipped);
+      }
+      continue;
+    }
+
+    // submatch 偏移按字节计，换算为字符位置
+    const byteStart = data.submatches?.[0]?.start ?? 0;
+    const focus = Buffer.from(raw).subarray(0, byteStart).toString('utf8').length;
+    const match: GrepMatch = {
+      file_path: decodeRipgrepText(data.path),
+      line_number: lineNumber,
+      content: clipMatchText(text, focus),
+    };
+    if (pending.length > 0) {
+      match.context_before = pending;
+      pending = [];
+    }
+    matches.push(match);
+    previous = { match, lastLine: lineNumber + text.split('\n').length - 1 };
+  }
+
+  return matches;
 }
 
 /**
@@ -717,10 +863,10 @@ export const grepTool = createTool({
       let matches: GrepMatch[] = [];
 
       // 策略 1: 尝试使用 ripgrep
-      const rgPath = getRipgrepPath();
-      if (rgPath) {
+      const rg = getRipgrep();
+      if (rg) {
         try {
-          updateOutput?.(`使用 ripgrep (${rgPath})`);
+          updateOutput?.(`使用 ripgrep (${rg.command})`);
 
           const args = buildRipgrepArgs({
             pattern,
@@ -729,16 +875,16 @@ export const grepTool = createTool({
             type,
             output_mode,
             case_insensitive: caseInsensitive ?? false,
-            line_numbers: lineNumbers,
             context_before: contextBefore,
             context_after: contextAfter,
             context: contextLines,
             head_limit,
             offset,
             multiline: multiline ?? false,
+            bundled: rg.bundled,
           });
 
-          result = await executeRipgrep(args, output_mode, signal, updateOutput);
+          result = await executeRipgrep(rg, args, output_mode, signal, updateOutput);
           strategy = SearchStrategy.RIPGREP;
         } catch {
           updateOutput?.(`[WARN] ripgrep 失败，尝试降级策略...`);
@@ -815,7 +961,15 @@ export const grepTool = createTool({
         };
       } else {
         // 解析 grep 输出
-        matches = parseGrepOutput(result.stdout, output_mode);
+        const contextAfterLines = contextLines ?? contextAfter ?? 0;
+        matches =
+          strategy === SearchStrategy.RIPGREP
+            ? parseRipgrepOutput(result.stdout, output_mode, contextAfterLines)
+            : parseGrepOutput(result.stdout, output_mode, contextAfterLines);
+      }
+
+      if (output_mode === 'content' && !lineNumbers) {
+        matches = matches.map(({ line_number: _lineNumber, ...match }) => match);
       }
 
       // 应用 offset 裁剪（如果指定）

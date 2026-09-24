@@ -27,7 +27,8 @@ vendor/ripgrep/
 ### 自动下载（推荐）
 
 ```bash
-npm run vendor:ripgrep
+# 在 packages/cli 目录执行；省略版本号时使用脚本内置的默认版本
+node scripts/download-ripgrep.js [版本号]
 ```
 
 ### 手动下载
@@ -44,16 +45,11 @@ npm run vendor:ripgrep
 ### 清理
 
 ```bash
-npm run vendor:ripgrep:clean
+rm -rf vendor/ripgrep/*/
 ```
 
 ## 注意事项
 
-- 这些文件是**可选的**
-- Grep 工具会自动降级到其他搜索方案
-- 包含这些文件会增加 npm 包体积 ~40-50 MB
-- 这些文件已添加到 `.gitignore`
-
-## 更多信息
-
-详细文档请参考: [docs/development/implementation/grep-tool.md](../../docs/development/implementation/grep-tool.md)
+- `npm pack` / `npm publish` 会经 `prepack` 自动下载并校验这些文件，随 npm 包发布（解压后约 21 MB）
+- 二进制不提交到 git（见 `.gitignore`）；`.npmignore` 让 npm 打包时不套用 `.gitignore`
+- Grep 工具优先使用系统 rg，其次是这里的内置版本，都不可用时降级到其他搜索方案

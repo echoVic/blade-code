@@ -42,7 +42,7 @@
     "type-check": "tsc --noEmit",
     "format:check": "biome format src tests",
     "ready": "node scripts/run-bun.js run scripts/qualify.ts production",
-    "prepack": "node scripts/run-bun.js run build",
+    "prepack": "node scripts/download-ripgrep.js && node scripts/run-bun.js run build",
     "release": "node scripts/release.js",
     "release:dry": "node scripts/release.js --dry-run",
     "release:major": "node scripts/release.js --major",

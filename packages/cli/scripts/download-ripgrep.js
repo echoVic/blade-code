@@ -1,36 +1,50 @@
 #!/usr/bin/env node
 
 /**
- * 下载所有平台的 ripgrep 二进制文件到 vendor 目录
+ * 下载所有平台的 ripgrep 二进制文件到 vendor 目录，并用官方 .sha256 校验
  * 使用: node scripts/download-ripgrep.js [版本号]
+ * 环境变量 RIPGREP_DOWNLOAD_BASE_URL 可替换下载源（如镜像）
+ * 任一平台失败即以非零退出，避免发布缺少二进制的包
  */
 
-import { createWriteStream, existsSync, mkdirSync, chmodSync, readdirSync, statSync } from 'fs';
-import { join, dirname } from 'path';
-import { pipeline } from 'stream/promises';
-import { fileURLToPath } from 'url';
-import { get } from 'https';
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PROJECT_ROOT = join(__dirname, '..');
+const execFileAsync = promisify(execFile);
+const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // 配置
-const VERSION = process.argv[2] || '14.1.0';
-const BASE_URL = `https://github.com/BurntSushi/ripgrep/releases/download/${VERSION}`;
+const VERSION = process.argv[2] || '15.2.0';
+const BASE_URL = `${
+  process.env.RIPGREP_DOWNLOAD_BASE_URL ||
+  'https://github.com/BurntSushi/ripgrep/releases/download'
+}/${VERSION}`;
 const VENDOR_DIR = join(PROJECT_ROOT, 'vendor', 'ripgrep');
 
 // 平台映射
 const PLATFORMS = [
   {
-    name: 'macOS (Apple Silicon)',
+    name: 'macOS (Intel)',
     rgPlatform: 'x86_64-apple-darwin',
     bladePlatform: 'darwin-x64',
     binary: 'rg',
     archive: 'tar.gz',
   },
   {
-    name: 'macOS (Intel)',
+    name: 'macOS (Apple Silicon)',
     rgPlatform: 'aarch64-apple-darwin',
     bladePlatform: 'darwin-arm64',
     binary: 'rg',
@@ -45,7 +59,8 @@ const PLATFORMS = [
   },
   {
     name: 'Linux (ARM64)',
-    rgPlatform: 'aarch64-unknown-linux-gnu',
+    // 静态链接的 musl 版本，glibc 与 musl 发行版都能运行
+    rgPlatform: 'aarch64-unknown-linux-musl',
     bladePlatform: 'linux-arm64',
     binary: 'rg',
     archive: 'tar.gz',
@@ -59,184 +74,86 @@ const PLATFORMS = [
   },
 ];
 
-/**
- * 下载文件
- */
-async function downloadFile(url, dest) {
-  return new Promise((resolve, reject) => {
-    get(url, (response) => {
-      // 处理重定向
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        downloadFile(response.headers.location, dest).then(resolve).catch(reject);
-        return;
-      }
-
-      if (response.statusCode !== 200) {
-        reject(new Error(`下载失败: HTTP ${response.statusCode}`));
-        return;
-      }
-
-      const fileStream = createWriteStream(dest);
-      const totalSize = parseInt(response.headers['content-length'], 10);
-      let downloadedSize = 0;
-
-      response.on('data', (chunk) => {
-        downloadedSize += chunk.length;
-        const progress = ((downloadedSize / totalSize) * 100).toFixed(1);
-        process.stdout.write(`\r  进度: ${progress}%`);
-      });
-
-      pipeline(response, fileStream)
-        .then(() => {
-          console.log(''); // 新行
-          resolve();
-        })
-        .catch(reject);
-    }).on('error', reject);
-  });
-}
-
-/**
- * 解压 tar.gz 文件
- */
-async function extractTarGz(archivePath, targetDir, fileName) {
-  const { promisify } = await import('util');
-  const { exec } = await import('child_process');
-  const execAsync = promisify(exec);
-
-  const archiveBaseName = `ripgrep-${VERSION}-${fileName}`;
-  const cmd = `tar -xzf "${archivePath}" --strip-components=1 -C "${targetDir}" "${archiveBaseName}/rg"`;
-
-  try {
-    await execAsync(cmd);
-  } catch (error) {
-    throw new Error(`解压失败: ${error.message}`);
+async function fetchBuffer(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`下载失败: HTTP ${response.status} ${url}`);
   }
+  return Buffer.from(await response.arrayBuffer());
 }
 
-/**
- * 解压 zip 文件
- */
-async function extractZip(archivePath, targetDir, fileName) {
-  const { promisify } = await import('util');
-  const { exec } = await import('child_process');
-  const execAsync = promisify(exec);
-
-  const archiveBaseName = `ripgrep-${VERSION}-${fileName}`;
-  const cmd = `unzip -j -o "${archivePath}" "${archiveBaseName}/rg.exe" -d "${targetDir}"`;
-
-  try {
-    await execAsync(cmd);
-  } catch (error) {
-    throw new Error(`解压失败: ${error.message}`);
+/** 官方校验文件有 `hash  name` 与 Windows CertUtil 两种格式，均取其中的 64 位十六进制摘要 */
+async function fetchExpectedSha256(url) {
+  const hash = (await fetchBuffer(url)).toString('utf8').match(/\b[0-9a-f]{64}\b/i)?.[0];
+  if (!hash) {
+    throw new Error(`校验文件中没有 SHA256: ${url}`);
   }
+  return hash.toLowerCase();
 }
 
-/**
- * 获取文件大小（人类可读）
- */
-function getHumanFileSize(filePath) {
-  const stats = statSync(filePath);
-  const bytes = stats.size;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  if (bytes === 0) return '0 B';
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${sizes[i]}`;
-}
+/** 校验通过后才解压并覆盖，失败时保留原有二进制 */
+async function installPlatform(platform, workDir) {
+  const archiveBaseName = `ripgrep-${VERSION}-${platform.rgPlatform}`;
+  const archiveName = `${archiveBaseName}.${platform.archive}`;
+  const url = `${BASE_URL}/${archiveName}`;
+  console.log(`  URL: ${url}`);
 
-/**
- * 列出所有下载的文件
- */
-function listDownloadedFiles() {
-  const files = [];
-
-  function walk(dir) {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(fullPath);
-      } else if (entry.name === 'rg' || entry.name === 'rg.exe') {
-        files.push(fullPath);
-      }
-    }
+  const [archive, expected] = await Promise.all([
+    fetchBuffer(url),
+    fetchExpectedSha256(`${url}.sha256`),
+  ]);
+  const actual = createHash('sha256').update(archive).digest('hex');
+  if (actual !== expected) {
+    throw new Error(`SHA256 不匹配: 期望 ${expected}，实际 ${actual}`);
   }
 
-  if (existsSync(VENDOR_DIR)) {
-    walk(VENDOR_DIR);
+  const archivePath = join(workDir, archiveName);
+  const memberPath = `${archiveBaseName}/${platform.binary}`;
+  writeFileSync(archivePath, archive);
+  if (platform.archive === 'zip') {
+    await execFileAsync('unzip', ['-o', '-q', archivePath, memberPath, '-d', workDir]);
+  } else {
+    await execFileAsync('tar', ['-xzf', archivePath, '-C', workDir, memberPath]);
   }
 
-  return files;
+  const targetDir = join(VENDOR_DIR, platform.bladePlatform);
+  const binaryPath = join(targetDir, platform.binary);
+  mkdirSync(targetDir, { recursive: true });
+  copyFileSync(join(workDir, memberPath), binaryPath);
+  if (platform.binary === 'rg') {
+    chmodSync(binaryPath, 0o755);
+  }
+  return binaryPath;
 }
 
-/**
- * 主函数
- */
 async function main() {
   console.log(`📦 开始下载 ripgrep v${VERSION} 所有平台的二进制文件...\n`);
 
-  // 创建 vendor 目录
-  if (!existsSync(VENDOR_DIR)) {
-    mkdirSync(VENDOR_DIR, { recursive: true });
-  }
-
-  // 下载每个平台
-  for (const platform of PLATFORMS) {
-    console.log(`\n⏬ 正在下载 ${platform.name} (${platform.bladePlatform})...`);
-
-    const archiveName = `ripgrep-${VERSION}-${platform.rgPlatform}.${platform.archive}`;
-    const downloadUrl = `${BASE_URL}/${archiveName}`;
-    const tempFile = join('/tmp', archiveName);
-    const targetDir = join(VENDOR_DIR, platform.bladePlatform);
-
-    try {
-      // 创建目标目录
-      if (!existsSync(targetDir)) {
-        mkdirSync(targetDir, { recursive: true });
+  const workDir = mkdtempSync(join(tmpdir(), 'blade-ripgrep-'));
+  const failures = [];
+  try {
+    for (const platform of PLATFORMS) {
+      console.log(`⏬ ${platform.name} (${platform.bladePlatform})`);
+      try {
+        const binaryPath = await installPlatform(platform, workDir);
+        const size = (statSync(binaryPath).size / 1024 / 1024).toFixed(2);
+        console.log(`  ✅ ${binaryPath} (${size} MB)`);
+      } catch (error) {
+        failures.push(platform.name);
+        console.error(`  ❌ ${error.message}`);
       }
-
-      // 下载文件
-      console.log(`  URL: ${downloadUrl}`);
-      await downloadFile(downloadUrl, tempFile);
-
-      // 解压文件
-      console.log(`  📂 正在解压到 ${targetDir}...`);
-      if (platform.archive === 'tar.gz') {
-        await extractTarGz(tempFile, targetDir, platform.rgPlatform);
-      } else if (platform.archive === 'zip') {
-        await extractZip(tempFile, targetDir, platform.rgPlatform);
-      }
-
-      // 设置执行权限（Unix 平台）
-      if (platform.binary === 'rg') {
-        const binaryPath = join(targetDir, platform.binary);
-        try {
-          chmodSync(binaryPath, 0o755);
-        } catch (error) {
-          console.warn(`  ⚠️  无法设置执行权限: ${error.message}`);
-        }
-      }
-
-      console.log(`  ✅ ${platform.name} 下载完成`);
-    } catch (error) {
-      console.error(`  ❌ ${platform.name} 下载失败: ${error.message}`);
     }
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
   }
 
-  // 显示总结
-  console.log(`\n🎉 所有平台的 ripgrep 二进制文件下载完成！\n`);
-  console.log('📍 文件位置:');
-
-  const files = listDownloadedFiles();
-  for (const file of files) {
-    const size = getHumanFileSize(file);
-    console.log(`  - ${file} (${size})`);
+  if (failures.length > 0) {
+    console.error(`\n❌ ${failures.length} 个平台失败: ${failures.join(', ')}`);
+    process.exit(1);
   }
-
-  console.log('\n💡 提示: 这些文件将被包含在 npm 包中，确保它们有正确的权限。');
+  console.log(`\n🎉 ripgrep v${VERSION} 已校验并写入 ${VENDOR_DIR}`);
 }
 
-// 运行
 main().catch((error) => {
   console.error(`\n❌ 发生错误: ${error.message}`);
   process.exit(1);

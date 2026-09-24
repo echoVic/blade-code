@@ -3,11 +3,11 @@ import { stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import type { Entry } from 'fast-glob';
 import fg from 'fast-glob';
-import { join, resolve } from 'path';
+import { isAbsolute, join, resolve } from 'path';
 
 import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
-import { FileFilter } from '../../../utils/filePatterns.js';
+import { FileFilter, getExcludePatterns } from '../../../utils/filePatterns.js';
 import { createTool } from '../../core/createTool.js';
 import type {
   ExecutionContext,
@@ -17,6 +17,7 @@ import type {
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/toolSchemas.js';
+import { listFilesWithRipgrep } from './ripgrep.js';
 
 /** Create a standard AbortError */
 function createAbortError(message: string): Error {
@@ -133,28 +134,41 @@ export const globTool = createTool({
 
       signal.throwIfAborted();
 
-      // 创建文件过滤器（会读取并解析 .gitignore 一次）
-      const fileFilter = await FileFilter.create({
-        cwd: searchPath,
-        useGitignore: true,
-        useDefaults: true,
-        gitignoreScanMode: 'recursive',
-        customScanIgnore: [],
-        cacheTTL: 30000,
-      });
+      // rg --files 只能列出文件；列目录、绝对路径、上级路径与否定模式仍用 fast-glob
+      const listed =
+        !include_directories && isPlainRelativeGlob(pattern)
+          ? await listFilesWithRipgrep({
+              cwd: searchPath,
+              pattern,
+              caseSensitive: case_sensitive,
+              hidden: true,
+              ignore: getExcludePatterns(),
+              sortNewest: true,
+              signal,
+            })
+          : null;
 
-      // 执行 glob 搜索（复用 FileFilter 已解析的模式）
-      const { matches, wasTruncated } = await performGlobSearch(
-        searchPath,
-        pattern,
-        {
-          maxResults: max_results,
-          includeDirectories: include_directories,
-          caseSensitive: case_sensitive,
-          signal,
-        },
-        fileFilter
-      );
+      const { matches, wasTruncated } = listed
+        ? await describeFiles(searchPath, listed, max_results)
+        : await performGlobSearch(
+            searchPath,
+            pattern,
+            {
+              maxResults: max_results,
+              includeDirectories: include_directories,
+              caseSensitive: case_sensitive,
+              signal,
+            },
+            // 创建文件过滤器（会读取并解析 .gitignore 一次）
+            await FileFilter.create({
+              cwd: searchPath,
+              useGitignore: true,
+              useDefaults: true,
+              gitignoreScanMode: 'recursive',
+              customScanIgnore: [],
+              cacheTTL: 30000,
+            })
+          );
 
       const sortedMatches = sortMatches(matches);
 
@@ -382,6 +396,40 @@ async function performGlobSearch(
       });
     }
   );
+}
+
+/** rg 的 glob 以搜索根为基准，无法表达绝对路径、上级目录与否定模式 */
+function isPlainRelativeGlob(pattern: string): boolean {
+  return (
+    !isAbsolute(pattern) &&
+    !pattern.startsWith('!') &&
+    !pattern.split('/').includes('..')
+  );
+}
+
+/** rg 已按修改时间倒序，这里只补充 size 与 mtime */
+async function describeFiles(
+  searchPath: string,
+  files: string[],
+  maxResults: number
+): Promise<{ matches: FileMatch[]; wasTruncated: boolean }> {
+  const matches: FileMatch[] = [];
+  for (const relativePath of files.slice(0, maxResults)) {
+    const absolutePath = join(searchPath, relativePath);
+    try {
+      const stats = await stat(absolutePath);
+      matches.push({
+        path: absolutePath,
+        relative_path: relativePath,
+        is_directory: false,
+        size: stats.size,
+        modified: stats.mtime.toISOString(),
+      });
+    } catch {
+      // 列出后被删除的文件直接跳过
+    }
+  }
+  return { matches, wasTruncated: files.length > maxResults };
 }
 
 /** 排序匹配结果 */

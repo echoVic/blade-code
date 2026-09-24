@@ -1,0 +1,1 @@
+# 存在 .npmignore 时 npm 不再套用本目录的 .gitignore；各平台二进制需随 npm 包发布

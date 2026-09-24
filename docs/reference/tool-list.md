@@ -154,7 +154,7 @@ ACP-local backend，以及未声明 fs 或 all-false capability 的 ACP Session�
 | `max_results` | number | | 最大结果数，默认 20 |
 
 **类型**: ReadOnly
-**特性**: 基于共享的 workspace 文件名索引，遵循 `.gitignore` 和默认忽略规则
+**特性**: 基于共享的 workspace 文件名索引（优先用内置 ripgrep 列出文件，不可用时回退 fast-glob），遵循 `.gitignore` 和默认忽略规则；目录由文件路径推导，空目录不出现
 
 ### Glob
 
@@ -162,13 +162,14 @@ ACP-local backend，以及未声明 fs 或 all-false capability 的 ACP Session�
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `pattern` | string | ✅ | glob 匹配模式 |
-| `cwd` | string | | 搜索目录（默认当前目录） |
-| `ignore` | string[] | | 忽略的模式列表 |
-| `limit` | number | | 结果数量限制 |
+| `pattern` | string | ✅ | glob 匹配模式（相对搜索目录） |
+| `path` | string | | 搜索目录（默认工作区） |
+| `max_results` | number | | 最大结果数，默认 100，最大 1000 |
+| `include_directories` | boolean | | 是否包含目录，默认 false |
+| `case_sensitive` | boolean | | 是否区分大小写，默认 false |
 
 **类型**: ReadOnly
-**特性**: 基于 fast-glob，内置忽略 node_modules 等常见目录
+**特性**: 只列文件时使用内置 ripgrep，按修改时间从新到旧返回；列目录或 ripgrep 不可用时使用 fast-glob；遵循 `.gitignore`（含 `!` 反向规则），内置忽略 node_modules 等常见目录
 
 ### Grep
 
@@ -177,14 +178,18 @@ ACP-local backend，以及未声明 fs 或 all-false capability 的 ACP Session�
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `pattern` | string | ✅ | 搜索正则表达式 |
-| `path` | string | | 搜索路径 |
-| `glob` | string | | 文件过滤模式 |
-| `context` | number | | 上下文行数 |
-| `ignore_case` | boolean | | 忽略大小写 |
-| `max_count` | number | | 最大匹配数 |
+| `path` | string | | 搜索文件或目录（默认工作区） |
+| `glob` | string | | 文件过滤模式（rg `--glob`） |
+| `type` | string | | 文件类型（rg `--type`） |
+| `output_mode` | string | | `content` / `files_with_matches`（默认）/ `count` |
+| `-i` | boolean | | 忽略大小写 |
+| `-n` | boolean | | content 模式显示行号，默认 true |
+| `-A` / `-B` / `-C` | number | | 匹配后 / 前 / 前后的上下文行数 |
+| `head_limit` / `offset` | number | | 分页返回结果 |
+| `multiline` | boolean | | 跨行匹配 |
 
 **类型**: ReadOnly  
-**特性**: 四级智能降级（ripgrep → git grep → system grep → JS fallback）
+**特性**: 优先使用随包发布的 ripgrep 15.2.0（设置 `BLADE_USE_BUILTIN_RIPGREP=0` 改为系统 rg 优先），并始终忽略用户的 ripgrep 配置；使用内置版本时前后断言、反向引用自动切换到 PCRE2；搜索隐藏文件但排除 `.git` 等版本库目录；超过 500 字符的行只返回匹配附近的片段；四级智能降级（ripgrep → git grep → system grep → JS fallback）
 
 ## Shell 命令
 
