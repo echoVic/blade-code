@@ -7781,6 +7781,168 @@ describe('executeLoopGenerator', () => {
       });
     });
 
+    describe('verifier turn budget', () => {
+      const readCall = (id: string): ChatResponse => ({
+        content: '',
+        toolCalls: [
+          {
+            id,
+            type: 'function',
+            function: {
+              name: 'Read',
+              arguments: JSON.stringify({ path: 'package.json' }),
+            },
+          },
+        ],
+        finishReason: 'tool_calls',
+      });
+      const verdictCall = (
+        id: string,
+        answer: unknown = 'validated'
+      ): ChatResponse => ({
+        content: '',
+        toolCalls: [
+          {
+            id,
+            type: 'function',
+            function: {
+              name: 'StructuredOutput',
+              arguments: JSON.stringify({ answer }),
+            },
+          },
+        ],
+        finishReason: 'tool_calls',
+      });
+      const declareRead = (deps: LoopDependencies) => {
+        const registry = deps.toolExecutor.getRegistry();
+        vi.mocked(registry.getFunctionDeclarationsByMode).mockReturnValue([
+          readTool.getFunctionDeclaration(),
+        ]);
+      };
+      const runSubagent = (deps: LoopDependencies, subagentType: string) =>
+        drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Verify the change and return a structured verdict.',
+            createMockContext({
+              subagentInfo: {
+                parentSessionId: 'parent-session',
+                subagentType,
+                isSidechain: false,
+              },
+            }),
+            { stream: false, outputSchema },
+            undefined
+          )
+        );
+
+      it.each(['verification', 'goal-verification'])(
+        'returns a %s verdict that is still held at the turn limit',
+        async (subagentType) => {
+          const { deps, saveMessage } = createTypedPersistenceHarness();
+          deps.runtimeOptions.maxTurns = 3;
+          declareRead(deps);
+          const chat = vi.mocked(deps.chatService.chat);
+          chat
+            .mockResolvedValueOnce(verdictCall('verdict-turn-1'))
+            .mockResolvedValueOnce(readCall('read-turn-2'))
+            .mockResolvedValueOnce(readCall('read-turn-3'));
+
+          const { events, result } = await runSubagent(deps, subagentType);
+
+          expect(chat).toHaveBeenCalledTimes(3);
+          expect(result).toMatchObject({
+            success: true,
+            finalMessage: '{"answer":"validated"}',
+            metadata: {
+              turnsCount: 3,
+              structuredOutput: { answer: 'validated' },
+            },
+          });
+          expect(events).toContainEqual({
+            kind: 'structured_output',
+            output: { answer: 'validated' },
+            schemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+          });
+          const finalMessages = saveMessage.mock.calls.filter(
+            (call) => call[1] === 'assistant' && call[2] === '{"answer":"validated"}'
+          );
+          expect(finalMessages).toHaveLength(1);
+          expect(finalMessages[0]?.[4]).toMatchObject({
+            structuredOutput: { output: { answer: 'validated' } },
+          });
+        }
+      );
+
+      it('requires the verdict tool during the last two verifier turns', async () => {
+        const deps = createMockDeps();
+        deps.runtimeOptions.maxTurns = 4;
+        declareRead(deps);
+        const chat = vi.mocked(deps.chatService.chat);
+        chat
+          .mockResolvedValueOnce(readCall('read-turn-1'))
+          .mockResolvedValueOnce(readCall('read-turn-2'))
+          .mockResolvedValueOnce(verdictCall('invalid-verdict-turn-3', 42))
+          .mockResolvedValueOnce(verdictCall('verdict-turn-4'));
+
+        const { result } = await runSubagent(deps, 'verification');
+
+        const requests = chat.mock.calls.map(([messages, tools, , options]) => ({
+          tools: tools?.map((tool) => tool.name),
+          toolChoice: options?.toolChoice,
+          budgetReminders: messages.filter(
+            (message) =>
+              message.role === 'user' &&
+              typeof message.content === 'string' &&
+              message.content.includes('verification turn budget is nearly exhausted')
+          ).length,
+        }));
+        const forced = { type: 'tool', toolName: 'StructuredOutput' };
+        expect(requests).toEqual([
+          {
+            tools: ['Read', 'StructuredOutput'],
+            toolChoice: undefined,
+            budgetReminders: 0,
+          },
+          {
+            tools: ['Read', 'StructuredOutput'],
+            toolChoice: undefined,
+            budgetReminders: 0,
+          },
+          { tools: ['StructuredOutput'], toolChoice: forced, budgetReminders: 1 },
+          { tools: ['StructuredOutput'], toolChoice: forced, budgetReminders: 1 },
+        ]);
+        expect(result).toMatchObject({
+          success: true,
+          finalMessage: '{"answer":"validated"}',
+          metadata: { turnsCount: 4, structuredOutput: { answer: 'validated' } },
+        });
+      });
+
+      it('keeps the turn limit fatal for structured output outside verification', async () => {
+        const deps = createMockDeps();
+        deps.runtimeOptions.maxTurns = 3;
+        declareRead(deps);
+        const chat = vi.mocked(deps.chatService.chat);
+        chat
+          .mockResolvedValueOnce(readCall('read-turn-1'))
+          .mockResolvedValueOnce(readCall('read-turn-2'))
+          .mockResolvedValueOnce(verdictCall('answer-turn-3'));
+
+        const { result } = await runSubagent(deps, 'general-purpose');
+
+        expect(chat.mock.calls.map(([, , , options]) => options?.toolChoice)).toEqual([
+          undefined,
+          undefined,
+          undefined,
+        ]);
+        expect(result).toMatchObject({
+          success: false,
+          error: { type: 'max_turns_exceeded' },
+        });
+      });
+    });
+
     it('commits validated structured output when blank prose exhausts the output budget', async () => {
       const { deps, saveMessage } = createTypedPersistenceHarness();
       const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;

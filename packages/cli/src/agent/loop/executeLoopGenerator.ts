@@ -80,7 +80,10 @@ import {
 import { isAbortError } from '../../utils/abort.js';
 import { getAbortReason } from '../../utils/abortReason.js';
 import { getCwd } from '../../utils/cwd.js';
-import { isReadOnlyAuditSubagent } from '../../utils/shell/readOnlyAudit.js';
+import {
+  isReadOnlyAuditSubagent,
+  isVerificationAuditSubagent,
+} from '../../utils/shell/readOnlyAudit.js';
 import type { ProjectRuleReference } from '../resources/WorkspaceProjectRules.js';
 import type { SteeringMessage } from '../runtime/ActiveTurnMailbox.js';
 import type {
@@ -166,6 +169,10 @@ import type {
 } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
+
+// Verifiers must submit their verdict within the final turns: one attempt plus
+// one schema correction.
+const VERIFICATION_VERDICT_RESERVE_TURNS = 2;
 
 function toTokenUsageInfo(
   usage: UsageInfo,
@@ -1258,6 +1265,9 @@ validates the object and may return a bounded corrective error.`;
     // === Agentic Loop ===
     const isSubagent = !!context.subagentInfo;
     const readOnlyAudit = isReadOnlyAuditSubagent(context.subagentInfo?.subagentType);
+    const verificationAudit = isVerificationAuditSubagent(
+      context.subagentInfo?.subagentType
+    );
     const builtinVerificationEnabled = options?.builtinVerification !== false;
     const configuredMaxTurns =
       deps.runtimeOptions.maxTurns ?? options?.maxTurns ?? deps.config.maxTurns ?? -1;
@@ -1320,6 +1330,7 @@ validates the object and may return a bounded corrective error.`;
     let structuredOutput: JsonObject | undefined = restoredStructuredOutput?.output;
     let structuredOutputAlreadyCompleted = restoredStructuredOutput?.completed === true;
     let structuredOutputTruncated = false;
+    let verificationVerdictRequested = false;
     const buildStructuredOutputFinal = () => {
       if (!structuredOutput || !structuredOutputContract) return undefined;
       const output = structuredOutput;
@@ -1915,6 +1926,52 @@ validates the object and may return a bounded corrective error.`;
         if (reachedTurnLimit) {
           logger.info(`Warning: 达到轮次上限 ${maxTurns} 轮`);
 
+          // A host-validated verdict stays valid until steering or a workspace
+          // change clears it, so the turn limit must not discard it.
+          const heldVerdict = verificationAudit
+            ? buildStructuredOutputFinal()
+            : undefined;
+          if (heldVerdict) {
+            const turnFinalization = await buildTurnFinalization();
+            const persistenceMetadata: MessagePersistenceMetadata = {
+              ...heldVerdict.persistenceMetadata,
+              ...(turnFinalization ? { turnFinalization } : {}),
+            };
+            state.appendAssistant({
+              role: 'assistant',
+              content: heldVerdict.finalMessage,
+              metadata: toJsonValue(persistenceMetadata),
+            });
+            const uuid = await saveAssistantMessage(
+              deps,
+              context,
+              heldVerdict.finalMessage,
+              lastMessageUuid,
+              undefined,
+              persistenceMetadata
+            );
+            if (uuid) lastMessageUuid = uuid;
+            yield heldVerdict.event;
+            return {
+              success: true,
+              finalMessage: heldVerdict.finalMessage,
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+                toolSuccessRate:
+                  allToolResults.length > 0
+                    ? allToolResults.filter((r) => r.success).length /
+                      allToolResults.length
+                    : undefined,
+                totalToolFailures: failureTracker.totalFailures || undefined,
+                ...executionHostFailureMetadata(),
+                ...heldVerdict.resultMetadata,
+              },
+            };
+          }
+
           if (options?.onTurnLimitReached) {
             const response = await options.onTurnLimitReached({ turnsCount });
             if (options.signal?.aborted) {
@@ -2428,7 +2485,28 @@ validates the object and may return a bounded corrective error.`;
           availableTurnTools.some((tool) => tool.name === textualCorrectionToolName)
             ? textualCorrectionToolName
             : undefined;
-        const turnRequiredToolName = requiredToolName ?? turnTextualCorrectionToolName;
+        const verificationVerdictDue =
+          verificationAudit &&
+          structuredOutputContract !== undefined &&
+          structuredOutput === undefined &&
+          maxTurns - turnsCount <= VERIFICATION_VERDICT_RESERVE_TURNS;
+        const verdictReminder: Message | undefined =
+          verificationVerdictDue && !verificationVerdictRequested
+            ? {
+                role: 'user',
+                content:
+                  '<system-reminder>\n' +
+                  'The verification turn budget is nearly exhausted. Call ' +
+                  `${STRUCTURED_OUTPUT_TOOL_NAME} now with a verdict based only on ` +
+                  'the evidence already gathered. Report pass only when that ' +
+                  'evidence proves every required check passed; otherwise report ' +
+                  'fail or partial and name the unfinished checks in findings.\n' +
+                  '</system-reminder>',
+              }
+            : undefined;
+        const turnRequiredToolName = verificationVerdictDue
+          ? STRUCTURED_OUTPUT_TOOL_NAME
+          : (requiredToolName ?? turnTextualCorrectionToolName);
         const turnTools = turnRequiredToolName
           ? availableTurnTools.filter((tool) => tool.name === turnRequiredToolName)
           : availableTurnTools;
@@ -2445,7 +2523,9 @@ validates the object and may return a bounded corrective error.`;
         );
         const contextProjection = contextTokenTracker.project({
           history: state.getHistory(),
-          pendingMessages: reflectionMessage ? [reflectionMessage] : [],
+          pendingMessages: [reflectionMessage, verdictReminder].filter(
+            (message): message is Message => message !== undefined
+          ),
           contextRevision: state.contextRevision,
           modelName: chatConfig.model,
           requestProfile,
@@ -2539,6 +2619,10 @@ validates the object and may return a bounded corrective error.`;
 
         // 3.5 Self-reflection injection (every N turns)
         if (reflectionMessage) state.appendControl('user', reflectionMessage);
+        if (verdictReminder) {
+          state.appendControl('user', verdictReminder);
+          verificationVerdictRequested = true;
+        }
 
         // 4. 调用 LLM
         const isStreamEnabled = options?.stream !== false;
