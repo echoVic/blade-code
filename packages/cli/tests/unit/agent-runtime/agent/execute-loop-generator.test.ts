@@ -7781,6 +7781,95 @@ describe('executeLoopGenerator', () => {
       });
     });
 
+    it('reserves the verifier verdict channel at the turn limit', async () => {
+      const deps = createMockDeps({
+        runtimeOptions: { maxTurns: 3 } as any,
+      });
+      const registry = deps.toolExecutor.getRegistry();
+      vi.mocked(registry.getFunctionDeclarationsByMode).mockReturnValue([
+        readTool.getFunctionDeclaration(),
+      ]);
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chat
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'verifier-read-1',
+              type: 'function',
+              function: {
+                name: 'Read',
+                arguments: JSON.stringify({ path: 'package.json' }),
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'verifier-read-2',
+              type: 'function',
+              function: {
+                name: 'Read',
+                arguments: JSON.stringify({ path: 'src/index.ts' }),
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'verifier-verdict',
+              type: 'function',
+              function: {
+                name: 'StructuredOutput',
+                arguments: JSON.stringify({ answer: 'validated' }),
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a structured verification result.',
+          createMockContext({
+            subagentInfo: {
+              parentSessionId: 'parent-session',
+              subagentType: 'verification',
+              isSidechain: false,
+            },
+          }),
+          {
+            stream: false,
+            outputSchema,
+          },
+          undefined
+        )
+      );
+
+      expect(chat).toHaveBeenCalledTimes(3);
+      expect(chat.mock.calls[1]?.[3]?.toolChoice).toEqual({
+        type: 'tool',
+        toolName: 'StructuredOutput',
+      });
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: '{"answer":"validated"}',
+        metadata: { structuredOutput: { answer: 'validated' } },
+      });
+      expect(events).toContainEqual({
+        kind: 'structured_output',
+        output: { answer: 'validated' },
+        schemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+    });
+
     it('commits validated structured output when blank prose exhausts the output budget', async () => {
       const { deps, saveMessage } = createTypedPersistenceHarness();
       const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;

@@ -80,7 +80,10 @@ import {
 import { isAbortError } from '../../utils/abort.js';
 import { getAbortReason } from '../../utils/abortReason.js';
 import { getCwd } from '../../utils/cwd.js';
-import { isReadOnlyAuditSubagent } from '../../utils/shell/readOnlyAudit.js';
+import {
+  isReadOnlyAuditSubagent,
+  isVerificationAuditSubagent,
+} from '../../utils/shell/readOnlyAudit.js';
 import type { ProjectRuleReference } from '../resources/WorkspaceProjectRules.js';
 import type { SteeringMessage } from '../runtime/ActiveTurnMailbox.js';
 import type {
@@ -166,6 +169,9 @@ import type {
 } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
+
+// Reserve one turn for the verdict tool and one for completion gates.
+const VERIFICATION_VERDICT_RESERVE_TURNS = 2;
 
 function toTokenUsageInfo(
   usage: UsageInfo,
@@ -1258,6 +1264,9 @@ validates the object and may return a bounded corrective error.`;
     // === Agentic Loop ===
     const isSubagent = !!context.subagentInfo;
     const readOnlyAudit = isReadOnlyAuditSubagent(context.subagentInfo?.subagentType);
+    const verificationAudit = isVerificationAuditSubagent(
+      context.subagentInfo?.subagentType
+    );
     const builtinVerificationEnabled = options?.builtinVerification !== false;
     const configuredMaxTurns =
       deps.runtimeOptions.maxTurns ?? options?.maxTurns ?? deps.config.maxTurns ?? -1;
@@ -1319,6 +1328,7 @@ validates the object and may return a bounded corrective error.`;
       : undefined;
     let structuredOutput: JsonObject | undefined = restoredStructuredOutput?.output;
     let structuredOutputAlreadyCompleted = restoredStructuredOutput?.completed === true;
+    let structuredOutputAcceptedTurn: number | undefined;
     let structuredOutputTruncated = false;
     const buildStructuredOutputFinal = () => {
       if (!structuredOutput || !structuredOutputContract) return undefined;
@@ -1688,6 +1698,7 @@ validates the object and may return a bounded corrective error.`;
           };
         }
         structuredOutput = validation.output;
+        structuredOutputAcceptedTurn = turnsCount;
         structuredOutputAlreadyCompleted = false;
         return {
           success: true,
@@ -1915,6 +1926,51 @@ validates the object and may return a bounded corrective error.`;
         if (reachedTurnLimit) {
           logger.info(`Warning: 达到轮次上限 ${maxTurns} 轮`);
 
+          // A verification subagent may submit its schema-valid verdict in the
+          // last permitted turn. The tool result is already authoritative, so
+          // finish from that result instead of discarding it at the boundary.
+          if (
+            verificationAudit &&
+            structuredOutputContract &&
+            structuredOutput &&
+            structuredOutputAcceptedTurn === turnsCount
+          ) {
+            const structuredFinal = buildStructuredOutputFinal();
+            if (structuredFinal) {
+              const turnFinalization = await buildTurnFinalization();
+              const persistenceMetadata: MessagePersistenceMetadata = {
+                ...structuredFinal.persistenceMetadata,
+                ...(turnFinalization ? { turnFinalization } : {}),
+              };
+              state.appendAssistant({
+                role: 'assistant',
+                content: structuredFinal.finalMessage,
+                metadata: toJsonValue(persistenceMetadata),
+              });
+              const uuid = await saveAssistantMessage(
+                deps,
+                context,
+                structuredFinal.finalMessage,
+                lastMessageUuid,
+                undefined,
+                persistenceMetadata
+              );
+              if (uuid) lastMessageUuid = uuid;
+              yield structuredFinal.event;
+              return {
+                success: true,
+                finalMessage: structuredFinal.finalMessage,
+                metadata: {
+                  turnsCount,
+                  toolCallsCount: allToolResults.length,
+                  duration: Date.now() - startTime,
+                  tokensUsed: totalTokens,
+                  ...structuredFinal.resultMetadata,
+                },
+              };
+            }
+          }
+
           if (options?.onTurnLimitReached) {
             const response = await options.onTurnLimitReached({ turnsCount });
             if (options.signal?.aborted) {
@@ -2111,6 +2167,7 @@ validates the object and may return a bounded corrective error.`;
         const queuedSteering = (await turnSteering?.drain()) ?? [];
         if (queuedSteering.length > 0) {
           structuredOutput = undefined;
+          structuredOutputAcceptedTurn = undefined;
           structuredOutputAlreadyCompleted = false;
           structuredOutputRetryCount = 0;
           yield {
@@ -2428,10 +2485,29 @@ validates the object and may return a bounded corrective error.`;
           availableTurnTools.some((tool) => tool.name === textualCorrectionToolName)
             ? textualCorrectionToolName
             : undefined;
-        const turnRequiredToolName = requiredToolName ?? turnTextualCorrectionToolName;
-        const turnTools = turnRequiredToolName
-          ? availableTurnTools.filter((tool) => tool.name === turnRequiredToolName)
-          : availableTurnTools;
+        const forceVerificationVerdict =
+          verificationAudit &&
+          structuredOutputContract !== undefined &&
+          structuredOutput === undefined &&
+          Number.isFinite(maxTurns) &&
+          turnsCount >= maxTurns - VERIFICATION_VERDICT_RESERVE_TURNS &&
+          turnsCount < maxTurns;
+        const verificationFinalizationTurn =
+          verificationAudit &&
+          structuredOutputContract !== undefined &&
+          structuredOutput !== undefined &&
+          Number.isFinite(maxTurns) &&
+          turnsCount === maxTurns - 1;
+        const turnRequiredToolName = forceVerificationVerdict
+          ? STRUCTURED_OUTPUT_TOOL_NAME
+          : verificationFinalizationTurn
+            ? undefined
+            : (requiredToolName ?? turnTextualCorrectionToolName);
+        const turnTools = verificationFinalizationTurn
+          ? []
+          : turnRequiredToolName
+            ? availableTurnTools.filter((tool) => tool.name === turnRequiredToolName)
+            : availableTurnTools;
 
         // 2. 上下文压缩检查
         // writeback 确保 context.messages 与 state.history 同步，
@@ -2851,6 +2927,7 @@ validates the object and may return a bounded corrective error.`;
           const completionSteering = await turnSteering?.drainOrSeal();
           if (completionSteering && completionSteering.messages.length > 0) {
             structuredOutput = undefined;
+            structuredOutputAcceptedTurn = undefined;
             structuredOutputAlreadyCompleted = false;
             structuredOutputRetryCount = 0;
             state.appendAssistant({
@@ -3079,6 +3156,7 @@ validates the object and may return a bounded corrective error.`;
               maxOutputRecoveryCount = 0;
             }
             structuredOutput = undefined;
+            structuredOutputAcceptedTurn = undefined;
             structuredOutputAlreadyCompleted = false;
             structuredOutputRetryCount = 0;
             state.appendAssistant({
@@ -3511,6 +3589,7 @@ validates the object and may return a bounded corrective error.`;
               'Goal completion evidence invalidated by new user steering'
             );
             structuredOutput = undefined;
+            structuredOutputAcceptedTurn = undefined;
             structuredOutputAlreadyCompleted = false;
             structuredOutputRetryCount = 0;
             state.appendAssistant({
@@ -4340,6 +4419,7 @@ validates the object and may return a bounded corrective error.`;
             );
             if (newlyModifiedFiles.length > 0) {
               structuredOutput = undefined;
+              structuredOutputAcceptedTurn = undefined;
               structuredOutputAlreadyCompleted = false;
               structuredOutputRetryCount = 0;
               mutationRevision++;
