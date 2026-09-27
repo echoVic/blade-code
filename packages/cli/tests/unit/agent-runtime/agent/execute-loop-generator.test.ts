@@ -7812,8 +7812,8 @@ describe('executeLoopGenerator', () => {
               id: 'verifier-read-2',
               type: 'function',
               function: {
-                name: 'Read',
-                arguments: JSON.stringify({ path: 'src/index.ts' }),
+                name: 'StructuredOutput',
+                arguments: JSON.stringify({}),
               },
             },
           ],
