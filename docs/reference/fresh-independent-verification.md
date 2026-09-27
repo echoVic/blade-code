@@ -21,15 +21,16 @@ Blade 对主 Agent 的非平凡实现执行独立完成门禁。主 Agent 不能
 
 1. Blade 保留的内置 `verification` 类型；
 2. 新建、同步执行、`isolation="none"` 的 Task；
-3. 恰好一个结构化终态标题：
-
-```text
-## Verification Result: PASS
-```
+3. 恰好一个结构化 verdict：verifier 通过 `StructuredOutput` 提交 `verdict`
+   （`pass`、`fail` 或 `partial`）、`summary` 与 `findings`，由宿主按 schema 校验。
 
 `FAIL` 要求主 Agent修复问题后重新验证；`PARTIAL` 不得冒充成功，必须处理其中等级风险
 后重新验证。达到有界重试上限仍没有 fresh PASS 时，run 以
 `verification_failed` 终止。
+
+verifier 在轮次预算的最后两轮仍未提交 verdict 时，runtime 只提供 `StructuredOutput`
+并要求立即提交；证据不能证明全部必需检查通过时只能给出 `fail` 或 `partial`。已通过
+校验的 verdict 在到达轮次上限时仍会被采用，不会以 `max_turns_exceeded` 丢失。
 
 Verifier PASS 后发生任何 Edit、Write、ApplyPatch、NotebookEdit 或潜在写入 Bash，
 都会立即使证据失效。下一次完成尝试必须启动新的 verifier。
@@ -62,7 +63,8 @@ Verifier PASS 后发生任何 Edit、Write、ApplyPatch、NotebookEdit 或潜在
 ## 资格要求
 
 确定性测试覆盖三文件和高风险路径触发、PASS 后写入失效、FAIL/PARTIAL、重试耗尽、
-reserved agent、YOLO 只读边界、durable restore 和 CLI/Web/ACP 投影。
+轮次预算末尾的 verdict 提交与保留、reserved agent、YOLO 只读边界、durable restore
+和 CLI/Web/ACP 投影。
 
 真实 API 测试必须让主模型实际修改三个文件、尝试结束、被 runtime 强制启动新的
 verifier，并由独立模型运行项目测试后返回 PASS。Production Web GUI 还必须验证唯一

@@ -18,13 +18,11 @@ The gate only accepts:
 
 1. The built-in `verification` type reserved by Blade;
 2. A newly created, synchronously executed Task with `isolation="none"`;
-3. Exactly one structured terminal state heading:
-
-```text
-## Verification Result: PASS
-```
+3. Exactly one structured verdict: the verifier submits `verdict` (`pass`, `fail`, or `partial`), `summary`, and `findings` through `StructuredOutput`, and the host validates them against the schema.
 
 `FAIL` requires the main Agent to fix issues and re-verify; `PARTIAL` must not be passed off as success, and risks of any severity within it must be addressed before re-verifying. When a fresh PASS is still not obtained after reaching the bounded retry limit, the run terminates with `verification_failed`.
+
+If the verifier has not submitted a verdict by the last two turns of its turn budget, the runtime offers only `StructuredOutput` and requires the verdict immediately; unless the evidence proves every required check passed, the verdict must be `fail` or `partial`. A verdict that already passed validation is kept when the turn limit is reached instead of being lost to `max_turns_exceeded`.
 
 Any Edit, Write, ApplyPatch, NotebookEdit, or potentially writing Bash that occurs after a Verifier PASS immediately invalidates the evidence. The next completion attempt must launch a new verifier.
 
@@ -49,6 +47,6 @@ Internal completion reminders are not displayed as end-user messages.
 
 ## Qualification Requirements
 
-Deterministic tests cover three-file and high-risk path triggering, post-PASS write invalidation, FAIL/PARTIAL, retry exhaustion, reserved agents, YOLO read-only boundaries, durable restore, and CLI/Web/ACP projection.
+Deterministic tests cover three-file and high-risk path triggering, post-PASS write invalidation, FAIL/PARTIAL, retry exhaustion, verdict submission and retention at the end of the turn budget, reserved agents, YOLO read-only boundaries, durable restore, and CLI/Web/ACP projection.
 
 Real API tests must have the main model actually modify three files, attempt to finish, be forced by the runtime to launch a new verifier, and have the independent model run project tests before returning PASS. The Production Web GUI must also verify a unique verification card, unique PASS badge, final marker, recovery after server restart, zero internal reminders, and zero application console errors.
