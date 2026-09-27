@@ -161,6 +161,20 @@ describe('independent verification policy', () => {
     });
   });
 
+  it('asks for a structured verdict when the current verifier returned none', () => {
+    const action = checkIndependentVerificationGate(
+      gateInput({ verificationRevision: 3 })
+    );
+    expect(action).toMatchObject({
+      action: 'retry',
+      requireVerificationTask: true,
+      prompt: expect.stringContaining('structured verdict'),
+    });
+    expect(action).not.toMatchObject({
+      prompt: expect.stringContaining('## Verification Result'),
+    });
+  });
+
   it('requires fixes after FAIL or PARTIAL before another verifier run', () => {
     expect(
       checkIndependentVerificationGate(

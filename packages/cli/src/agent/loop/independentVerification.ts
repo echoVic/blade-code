@@ -295,10 +295,9 @@ export function checkIndependentVerificationGate(
       action: 'retry',
       requireVerificationTask: true,
       prompt:
-        'The verification agent did not return exactly one structured ' +
-        '"## Verification Result: PASS | FAIL | PARTIAL" verdict. Run Task again ' +
-        'with subagent_type="verification" and run_in_background=false. Require ' +
-        'tool-backed evidence and the exact final verdict heading.',
+        'The verification agent did not return a structured verdict. Run Task ' +
+        'again with subagent_type="verification" and run_in_background=false, ' +
+        'and require tool-backed evidence.',
     };
   }
 

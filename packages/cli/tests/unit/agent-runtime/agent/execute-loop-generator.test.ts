@@ -4939,6 +4939,9 @@ describe('executeLoopGenerator', () => {
         }),
         expect.objectContaining({ sessionId: 'test-session' })
       );
+      const verifierPrompt = String(executeMock.mock.calls[1]?.[1]?.prompt);
+      expect(verifierPrompt).toContain('structured verdict');
+      expect(verifierPrompt).not.toContain('## Verification Result');
       expect(context.messages).toContainEqual(
         expect.objectContaining({
           role: 'user',
