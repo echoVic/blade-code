@@ -7870,6 +7870,129 @@ describe('executeLoopGenerator', () => {
       });
     });
 
+    it('does not finalize a verifier verdict when steering is queued', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      deps.runtimeOptions.maxTurns = 1;
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chat.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'verifier-verdict-with-steering',
+            type: 'function',
+            function: {
+              name: 'StructuredOutput',
+              arguments: JSON.stringify({ answer: 'stale' }),
+            },
+          },
+        ],
+        finishReason: 'tool_calls',
+      });
+      const turnSteering = {
+        drain: vi.fn(async () => []),
+        drainOrSeal: vi.fn(async () => ({
+          messages: [
+            {
+              id: 'new-user-steering',
+              content: 'Use the updated request.',
+              queuedAt: Date.now(),
+              recovered: false,
+            },
+          ],
+          sealed: false,
+        })),
+        getSnapshot: vi.fn(async () => emptyFollowUpQueue()),
+      };
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a structured verification result.',
+          createMockContext({
+            subagentInfo: {
+              parentSessionId: 'parent-session',
+              subagentType: 'verification',
+              isSidechain: false,
+            },
+          }),
+          { stream: false, outputSchema, turnSteering },
+          undefined
+        )
+      );
+
+      expect(turnSteering.drainOrSeal).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'max_turns_exceeded' },
+      });
+      expect(events).toContainEqual(
+        expect.objectContaining({ kind: 'steering_applied' })
+      );
+      expect(result).not.toMatchObject({
+        success: true,
+        metadata: { structuredOutput: { answer: 'stale' } },
+      });
+    });
+
+    it('honors cancellation before committing the final verifier verdict', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      deps.runtimeOptions.maxTurns = 1;
+      const controller = new AbortController();
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chat.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'verifier-verdict-cancelled',
+            type: 'function',
+            function: {
+              name: 'StructuredOutput',
+              arguments: JSON.stringify({ answer: 'cancelled' }),
+            },
+          },
+        ],
+        finishReason: 'tool_calls',
+      });
+      const turnFinalization = {
+        turnId: 'verifier-turn',
+        getInputMessageIds: vi.fn(async () => {
+          controller.abort();
+          return [];
+        }),
+      };
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a structured verification result.',
+          createMockContext({
+            subagentInfo: {
+              parentSessionId: 'parent-session',
+              subagentType: 'verification',
+              isSidechain: false,
+            },
+          }),
+          {
+            stream: false,
+            outputSchema,
+            signal: controller.signal,
+            turnFinalization,
+          },
+          undefined
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'aborted' },
+      });
+      expect(turnFinalization.getInputMessageIds).toHaveBeenCalledOnce();
+      expect(result).not.toMatchObject({
+        success: true,
+        metadata: { structuredOutput: { answer: 'cancelled' } },
+      });
+    });
+
     it('commits validated structured output when blank prose exhausts the output budget', async () => {
       const { deps, saveMessage } = createTypedPersistenceHarness();
       const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;

@@ -1935,39 +1935,77 @@ validates the object and may return a bounded corrective error.`;
             structuredOutput &&
             structuredOutputAcceptedTurn === turnsCount
           ) {
-            const structuredFinal = buildStructuredOutputFinal();
-            if (structuredFinal) {
-              const turnFinalization = await buildTurnFinalization();
-              const persistenceMetadata: MessagePersistenceMetadata = {
-                ...structuredFinal.persistenceMetadata,
-                ...(turnFinalization ? { turnFinalization } : {}),
-              };
-              state.appendAssistant({
-                role: 'assistant',
-                content: structuredFinal.finalMessage,
-                metadata: toJsonValue(persistenceMetadata),
-              });
-              const uuid = await saveAssistantMessage(
-                deps,
-                context,
-                structuredFinal.finalMessage,
-                lastMessageUuid,
-                undefined,
-                persistenceMetadata
+            const completionSteering = await turnSteering?.drainOrSeal();
+            if (options?.signal?.aborted) {
+              return makeInterruptedResult(
+                turnsCount,
+                allToolResults.length,
+                options.signal
               );
-              if (uuid) lastMessageUuid = uuid;
-              yield structuredFinal.event;
-              return {
-                success: true,
-                finalMessage: structuredFinal.finalMessage,
-                metadata: {
-                  turnsCount,
-                  toolCallsCount: allToolResults.length,
-                  duration: Date.now() - startTime,
-                  tokensUsed: totalTokens,
-                  ...structuredFinal.resultMetadata,
-                },
+            }
+            if (completionSteering && completionSteering.messages.length > 0) {
+              await invalidateGoalVerification(
+                'Goal completion evidence invalidated by new user steering'
+              );
+              structuredOutput = undefined;
+              structuredOutputAcceptedTurn = undefined;
+              structuredOutputAlreadyCompleted = false;
+              structuredOutputRetryCount = 0;
+              yield {
+                kind: 'steering_applied',
+                ...(await applySteeringMessages(completionSteering.messages)),
+                delivery: 'current_turn',
+                queue: await turnSteering!.getSnapshot(),
               };
+              if (options?.signal?.aborted) {
+                return makeInterruptedResult(
+                  turnsCount,
+                  allToolResults.length,
+                  options.signal
+                );
+              }
+            } else {
+              const structuredFinal = buildStructuredOutputFinal();
+              if (structuredFinal) {
+                const turnFinalization = await buildTurnFinalization();
+                if (options?.signal?.aborted) {
+                  return makeInterruptedResult(
+                    turnsCount,
+                    allToolResults.length,
+                    options.signal
+                  );
+                }
+                const persistenceMetadata: MessagePersistenceMetadata = {
+                  ...structuredFinal.persistenceMetadata,
+                  ...(turnFinalization ? { turnFinalization } : {}),
+                };
+                state.appendAssistant({
+                  role: 'assistant',
+                  content: structuredFinal.finalMessage,
+                  metadata: toJsonValue(persistenceMetadata),
+                });
+                const uuid = await saveAssistantMessage(
+                  deps,
+                  context,
+                  structuredFinal.finalMessage,
+                  lastMessageUuid,
+                  undefined,
+                  persistenceMetadata
+                );
+                if (uuid) lastMessageUuid = uuid;
+                yield structuredFinal.event;
+                return {
+                  success: true,
+                  finalMessage: structuredFinal.finalMessage,
+                  metadata: {
+                    turnsCount,
+                    toolCallsCount: allToolResults.length,
+                    duration: Date.now() - startTime,
+                    tokensUsed: totalTokens,
+                    ...structuredFinal.resultMetadata,
+                  },
+                };
+              }
             }
           }
 
