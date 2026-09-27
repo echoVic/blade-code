@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.7] - 2026-09-27
+
+### Fixed
+- Keep a verification or goal-verification subagent's verdict when it reaches its turn limit. A verdict already validated through StructuredOutput is returned instead of failing with `max_turns_exceeded`; a verifier without one is limited to StructuredOutput for its last two turns and reminded to report pass only when its gathered evidence proves every required check.
+- Ask the independent verifier for a structured verdict instead of a `## Verification Result` heading that conflicted with its StructuredOutput contract; the gate's retry prompt for a missing verdict no longer asks for the heading either.
+
+### Documentation
+- Describe the structured verdict and the verifier's end-of-budget behavior in the Fresh Independent Verification reference.
+
+### Tests
+- Cover verdicts held at the turn limit for both verifier types, the forced verdict turns with one schema correction and a single reminder, the unchanged turn limit for other structured-output subagents, and the structured-verdict prompts; each regression fails without its fix.
+- Verify the full unit, integration, and Web suites, lint, type checking, and the production build without running paid real-API qualification.
+
 ## [0.11.6] - 2026-09-24
 
 ### Added

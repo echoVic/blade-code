@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.7] - 2026-09-27
+
+### 修复
+- verification 与 goal-verification 子代理到达轮次上限时保留结论：已通过 StructuredOutput 校验的结论直接返回，不再以 `max_turns_exceeded` 失败；最后两轮仍未提交结论时只允许调用 StructuredOutput，并提醒 verifier 只有已收集的证据能证明每项必需检查都通过时才能判 pass。
+- 独立验证改为要求 verifier 提交结构化结论，不再要求与其 StructuredOutput 契约冲突的 `## Verification Result` 标题；缺少结论时 gate 的重试提示也不再要求该标题。
+
+### 文档
+- 在 Fresh Independent Verification 参考文档中说明结构化 verdict 以及 verifier 轮次预算末尾的行为。
+
+### 测试
+- 覆盖两类 verifier 在轮次上限处保留结论、强制提交轮（含一次 schema 纠正与单次提醒）、其他结构化输出子代理的轮次上限保持不变，以及结构化结论提示；每个回归用例在缺少修复时均会失败。
+- 验证单元、集成与 Web 全量测试、lint、类型检查与生产构建；未运行付费真实 API 资格测试。
+
 ## [0.11.6] - 2026-09-24
 
 ### 新增
