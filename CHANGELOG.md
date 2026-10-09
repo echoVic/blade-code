@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.11] - 2026-10-09
+
+### Fixed
+- Run the repository-wide Biome formatting check as part of `bun run lint`, preventing local validation from missing formatting failures enforced by CI.
+
+### Documentation
+- Record the `proxy-addr` 2.0.8 security upgrade and CVE-2026-90711 in the 0.11.8 release notes.
+
 ## [0.11.10] - 2026-10-09
 
 ### Added
