@@ -56,6 +56,8 @@ interface ReadMetadataFields extends FileMetadataFields {
   acp_mode?: boolean;
   acp_fallback?: boolean;
   is_binary?: boolean;
+  is_image?: boolean;
+  image_mime?: string;
   lines_read?: number;
   total_lines?: number;
   start_line?: number;

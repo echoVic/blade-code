@@ -6,6 +6,7 @@ import { setFileSystemService } from '../../../../../../src/services/FileSystemS
 import { FileAccessTracker } from '../../../../../../src/tools/builtin/file/FileAccessTracker.js';
 import { readTool } from '../../../../../../src/tools/builtin/file/read.js';
 import { executeToolInvocation } from '../../../../../../src/tools/execution/ToolInvocationRunner.js';
+import { getToolResultModelImages } from '../../../../../../src/tools/types/ToolTypes.js';
 import { createMockFileSystem } from '../../../../../support/mocks/mockFileSystem.js';
 
 // Mock AcpServiceContext at module level
@@ -165,8 +166,9 @@ describe('ReadTool', () => {
       expect(result.metadata?.end_line).toBe(3);
     });
 
-    it('应该能够处理二进制文件', async () => {
-      const filePath = '/tmp/image.jpg';
+    it('应该能够处理非图片的二进制文件', async () => {
+      // .zip 在 binaryExtensions 白名单里但不是图片，走纯 base64 分支
+      const filePath = '/tmp/archive.zip';
       const binaryContent = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       mockFS.setFile(filePath, binaryContent);
 
@@ -179,7 +181,7 @@ describe('ReadTool', () => {
       const result = await executeRead(
         {
           file_path: filePath,
-          encoding: 'utf8', // 不指定 encoding，让工具自动检测并使用 base64
+          encoding: 'utf8',
         },
         context
       );
@@ -188,6 +190,49 @@ describe('ReadTool', () => {
       expect(result.llmContent).toBe(binaryContent.toString('base64'));
       expect(result.metadata?.is_binary).toBe(true);
       expect(result.metadata?.encoding).toBe('base64');
+      // 非图片二进制不附加 image_url
+      expect(result.metadata?.is_image).toBeUndefined();
+      expect(getToolResultModelImages(result)).toBeUndefined();
+    });
+
+    it('应该通过多模态 image_url 通道返回图片文件内容', async () => {
+      const filePath = '/tmp/photo.png';
+      const binaryContent = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
+      mockFS.setFile(filePath, binaryContent);
+
+      const context = {
+        sessionId: 'test-session',
+        updateOutput: vi.fn(),
+        signal: new AbortController().signal,
+      };
+
+      const result = await executeRead(
+        {
+          file_path: filePath,
+          encoding: 'utf8',
+        },
+        context
+      );
+
+      expect(result.success).toBe(true);
+      // llmContent 不再是 raw base64，而是简短元信息
+      expect(result.llmContent).toContain('photo.png');
+      expect(result.llmContent).toContain('image/png');
+      expect(result.metadata?.is_binary).toBe(true);
+      expect(result.metadata?.is_image).toBe(true);
+      expect(result.metadata?.image_mime).toBe('image/png');
+
+      // 模型可见的图片通过 Symbol 通道附加
+      const images = getToolResultModelImages(result);
+      expect(images).toBeDefined();
+      expect(images).toHaveLength(1);
+      expect(images![0]).toMatchObject({
+        type: 'image_url',
+        image_url: { url: expect.stringMatching(/^data:image\/png;base64,/) },
+      });
+      // 确保 base64 内容与文件一致
+      const dataUrl = images![0].image_url.url;
+      expect(dataUrl).toContain(binaryContent.toString('base64'));
     });
   });
 

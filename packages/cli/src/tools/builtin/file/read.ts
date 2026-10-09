@@ -19,15 +19,51 @@ import {
   createUnavailableAcpSessionFileSystemResult,
 } from '../../execution/ToolExecutionResults.js';
 import { getExecutionWorkspaceToolPolicy } from '../../execution/WorkspaceToolPolicy.js';
-import type {
-  ExecutionContext,
-  NodeError,
-  ReadMetadata,
-  ToolResult,
+import type { ExecutionContext, NodeError, ReadMetadata } from '../../types/index.js';
+import {
+  attachToolResultModelImages,
+  ToolErrorType,
+  ToolKind,
+  type ToolResult,
 } from '../../types/index.js';
-import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/toolSchemas.js';
 import { FileAccessTracker } from './FileAccessTracker.js';
+
+/** Raster image extensions that should be presented to the multimodal model
+ *  as visual content via the image_url channel, instead of raw base64 text. */
+const IMAGE_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.bmp',
+  '.webp',
+  '.ico',
+]);
+
+function isImageFile(ext: string): boolean {
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
+function imageMimeType(ext: string): string {
+  switch (ext) {
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    case '.png':
+      return 'image/png';
+    case '.gif':
+      return 'image/gif';
+    case '.bmp':
+      return 'image/bmp';
+    case '.webp':
+      return 'image/webp';
+    case '.ico':
+      return 'image/x-icon';
+    default:
+      return 'application/octet-stream';
+  }
+}
 
 /** ReadTool - File read tool Uses the TypeBox validation design */
 export const readTool = createTool({
@@ -310,7 +346,29 @@ export const readTool = createTool({
         acp_mode: acpMode,
       };
 
-      // 处理二进制文件
+      // 处理二进制 / 图片文件
+      if (isImageFile(ext) && encoding === 'utf8') {
+        updateOutput?.('检测到图片文件，使用多模态通道...');
+        const buffer = await fsService.readBinaryFile(file_path);
+        const mimeType = imageMimeType(ext);
+        const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`;
+        const sizeKB = (buffer.byteLength / 1024).toFixed(1);
+        // 文本描述只放元信息，图片本体通过 image_url 通道喂给模型
+        content = `[Image file: ${basename(file_path)}, ${mimeType}, ${sizeKB} KB]`;
+        metadata.encoding = 'base64';
+        metadata.is_binary = true;
+        metadata.is_image = true;
+        metadata.image_mime = mimeType;
+
+        const rawResult: ToolResult = {
+          success: true,
+          llmContent: content,
+          metadata,
+        };
+        return attachToolResultModelImages(rawResult, [
+          { type: 'image_url', image_url: { url: dataUrl } },
+        ]);
+      }
       if (isBinaryFile && encoding === 'utf8') {
         if (acpMode) {
           metadata.acp_fallback = true;
