@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.12] - 2026-10-09
+
+### Fixed
+- Publish npm releases with an explicit `latest` tag and avoid a separate dist-tag mutation that npm Trusted Publishing cannot authorize, allowing the workflow to continue to GitHub Release creation.
+
 ## [0.11.11] - 2026-10-09
 
 ### Fixed

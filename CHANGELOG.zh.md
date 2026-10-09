@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.12] - 2026-10-09
+
+### 修复
+- npm 发布显式使用 `latest` 标签，并移除 npm Trusted Publishing 无权执行的独立 dist-tag 修改，使工作流可以继续创建 GitHub Release。
+
 ## [0.11.11] - 2026-10-09
 
 ### 修复
