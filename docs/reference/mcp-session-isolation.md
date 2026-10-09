@@ -96,6 +96,43 @@ blade --headless \
 CLI 解析是无副作用的。显式配置只进入当前 Session，不修改 Store，也不影响并行
 Session。
 
+## Parallel Search MCP 示例
+
+[Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) 提供
+`web_search` 和 `web_fetch`，可匿名搜索网页和提取指定 URL 的内容，无需 Parallel API key。
+免费端点适用于探索和轻量使用，有速率限制；使用 `http`（Streamable HTTP）传输。
+
+安装 Blade（`npm install -g blade-code`）后，将以下内容保存为 `parallel-search.mcp.json`。
+仓库中也提供了 [JSON 示例](../examples/parallel-search.mcp.json)：
+
+```json
+{
+  "mcpServers": {
+    "parallel-search": {
+      "type": "http",
+      "url": "https://search.parallel.ai/mcp",
+      "headers": {
+        "User-Agent": "blade-code/parallel-search-example"
+      }
+    }
+  }
+}
+```
+
+通过显式 CLI 配置在当前 Session 启用：
+
+```bash
+blade --mcp-config ./parallel-search.mcp.json
+```
+
+这会添加 `parallel-search` 的搜索和网页读取工具，不修改已保存的配置或模型选择。
+仍需先配置 Blade 模型（`/model add`）；MCP 工具遵循现有权限确认规则。
+不要为此匿名示例添加 `Authorization` 或启用 OAuth；`/mcp-oauth` 是需要认证的独立端点。
+
+若连接失败，检查 URL 和网络；若收到速率限制，请按服务响应等待后重试。
+搜索时使用明确的目标和简短关键词；读取时传入具体 URL。相关调用应复用同一
+`session_id`，`model_name` 仅在能从当前配置确认准确模型标识时提供。
+
 ## 相关资源
 
 - [MCP Elicitation](mcp-elicitation.md)

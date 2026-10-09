@@ -78,6 +78,48 @@ Files can directly contain server maps, or use:
 
 CLI parsing is side-effect free. Explicit configuration enters only the current Session, does not modify the Store, and does not affect parallel Sessions.
 
+## Parallel Search MCP example
+
+[Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) exposes
+`web_search` and `web_fetch` for anonymous web search and extraction from specific URLs,
+without a Parallel API key. The free endpoint is intended for exploration and light use
+and has rate limits. Use `http` (Streamable HTTP) transport.
+
+After installing Blade (`npm install -g blade-code`), save the following as
+`parallel-search.mcp.json`. A [JSON example](/examples/parallel-search.mcp.json)
+is also included in the repository:
+
+```json
+{
+  "mcpServers": {
+    "parallel-search": {
+      "type": "http",
+      "url": "https://search.parallel.ai/mcp",
+      "headers": {
+        "User-Agent": "blade-code/parallel-search-example"
+      }
+    }
+  }
+}
+```
+
+Enable it explicitly for the current Session:
+
+```bash
+blade --mcp-config ./parallel-search.mcp.json
+```
+
+This adds the `parallel-search` search and fetch tools without changing saved
+configuration or model selection. Configure a Blade model first (`/model add`);
+MCP tools follow the existing permission confirmation rules.
+Do not add `Authorization` or enable OAuth for this anonymous example;
+`/mcp-oauth` is a separate endpoint that requires authentication.
+
+For connection errors, check the URL and network. If rate limited, wait as directed
+by the service response before retrying. Use a focused objective and short queries
+for search, and specific URLs for fetch. Reuse one `session_id` across related calls;
+only supply `model_name` when the exact model identifier is known from current configuration.
+
 ## Related Resources
 
 - [MCP Elicitation](/en/reference/mcp-elicitation.md)
