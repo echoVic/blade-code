@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.9] - 2026-10-09
+
+### Added
+- Return supported raster images read with the default UTF-8 encoding through model-only multimodal content while keeping bounded file metadata in the textual tool result.
+
+### Tests
+- Cover multimodal image attachments and preserve base64 output for non-image binary files.
+
 ## [0.11.8] - 2026-10-09
 
 ### Added
