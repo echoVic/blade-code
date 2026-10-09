@@ -68,17 +68,8 @@ jobs:
           if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
             echo "${package_name}@${package_version} already exists; skipping publish"
           else
-            npm publish --access public
+            npm publish --access public --tag latest
           fi
-
-      # Parallel tag publishes race on the implicit `latest` dist-tag. Pin it
-      # explicitly so the highest version being released always wins.
-      - name: Point latest dist-tag at this release
-        working-directory: packages/cli
-        run: |
-          package_name="$(bun -p "require('./package.json').name")"
-          package_version="$(bun -p "require('./package.json').version")"
-          npm dist-tag add "${package_name}@${package_version}" latest
 
       - name: Ensure GitHub Release
         env:
