@@ -32,9 +32,25 @@ export const useClearCount = () => useBladeStore((state) => state.session.clearC
 export const useIsCompacting = () =>
   useBladeStore((state) => state.session.isCompacting);
 
+/** 获取 Session 成本估算（美元） */
 export const useSessionCost = () =>
   useBladeStore((state) => state.session.tokenUsage.estimatedCostUsd);
 
+/** 获取完整的 cache 指标（hitRate + token 细分），供 HUD 展示。
+ *  仅订阅 tokenUsage 字段，不订阅整个 store。 */
+export const usePromptCacheMetrics = () =>
+  useBladeStore((state) => {
+    const { totalInputTokens, cacheReadTokens, cacheWriteTokens } =
+      state.session.tokenUsage;
+    return derivePromptCacheMetrics({
+      totalInputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+    });
+  });
+
+/** 仅命中百分比的轻量选择器（供只需显示 hitRate 的场景复用）。
+ *  若你要同时显示 token 细分，请用 usePromptCacheMetrics 直接拉完整对象。 */
 export const usePromptCacheHitRate = () =>
   useBladeStore((state) => {
     const { totalInputTokens, cacheReadTokens, cacheWriteTokens } =
@@ -44,6 +60,20 @@ export const usePromptCacheHitRate = () =>
       cacheReadTokens,
       cacheWriteTokens,
     }).hitRate;
+  });
+
+/** 获取会话 cost + token 级指标（输入/输出/total），供 HUD 一行展示。 */
+export const useSessionCostMetrics = () =>
+  useBladeStore((state) => {
+    const t = state.session.tokenUsage;
+    return {
+      estimatedCostUsd: t.estimatedCostUsd,
+      inputTokens: t.totalInputTokens,
+      outputTokens: t.totalOutputTokens,
+      totalTokens: t.totalTokens,
+      cacheReadTokens: t.cacheReadTokens,
+      cacheWriteTokens: t.cacheWriteTokens,
+    };
   });
 
 export const useProviderRecovery = () =>

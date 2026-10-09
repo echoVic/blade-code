@@ -9,7 +9,23 @@ const mockUseGitBranch = vi.fn((_projectRoot?: string) => ({
 const mockGetProjectRoot = vi.fn(() => '/repo-root');
 const mockRecoveredSteeringCount = vi.fn(() => 0);
 const mockCommunicationStyle = vi.fn(() => 'auto');
-const mockPromptCacheHitRate = vi.fn<() => number | undefined>(() => undefined);
+const mockPromptCacheMetrics = vi.fn<
+  () => import('../../../../src/api/promptCacheMetrics.js').PromptCacheMetrics
+>(() => ({
+  hitRate: undefined,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  uncachedInputTokens: 0,
+  totalInputTokens: 0,
+}));
+const mockSessionCostMetrics = vi.fn(() => ({
+  estimatedCostUsd: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+}));
 const mockProviderRecovery = vi.fn<
   () =>
     | import('../../../../src/api/providerRecoverySchemas.js').ProviderRecoveryProjection
@@ -38,7 +54,8 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useIsReady: () => true,
   useFollowUpQueue: () => mockFollowUpQueue(),
   usePermissionMode: () => 'default',
-  usePromptCacheHitRate: () => mockPromptCacheHitRate(),
+  usePromptCacheMetrics: () => mockPromptCacheMetrics(),
+  useSessionCostMetrics: () => mockSessionCostMetrics(),
   useProviderRecovery: () => mockProviderRecovery(),
   useRecoveredSteeringCount: () => mockRecoveredSteeringCount(),
   useSessionCost: () => null,
@@ -67,7 +84,21 @@ describe('ChatStatusBar', () => {
     mockGetProjectRoot.mockClear();
     mockRecoveredSteeringCount.mockReturnValue(0);
     mockCommunicationStyle.mockReturnValue('auto');
-    mockPromptCacheHitRate.mockReturnValue(undefined);
+    mockPromptCacheMetrics.mockReturnValue({
+      hitRate: undefined,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      uncachedInputTokens: 0,
+      totalInputTokens: 0,
+    });
+    mockSessionCostMetrics.mockReturnValue({
+      estimatedCostUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    });
     mockProviderRecovery.mockReturnValue(null);
     mockTaskAttentionStatus.mockReturnValue('idle');
     mockTaskAttentionUnreadKeys.mockReturnValue([]);
@@ -125,8 +156,22 @@ describe('ChatStatusBar', () => {
     expect(markup).toContain('Style pragmatic');
   });
 
-  it('应该在状态栏显示同口径缓存命中率', async () => {
-    mockPromptCacheHitRate.mockReturnValue(0.6);
+  it('应该在状态栏显示同口径缓存命中率并附带 token 细分', async () => {
+    mockPromptCacheMetrics.mockReturnValue({
+      hitRate: 0.6,
+      cacheReadTokens: 3_200,
+      cacheWriteTokens: 1_000,
+      uncachedInputTokens: 2_133,
+      totalInputTokens: 5_333,
+    });
+    mockSessionCostMetrics.mockReturnValue({
+      estimatedCostUsd: 0.042,
+      inputTokens: 5_333,
+      outputTokens: 800,
+      totalTokens: 6_133,
+      cacheReadTokens: 3_200,
+      cacheWriteTokens: 1_000,
+    });
     const { ChatStatusBar } = await import(
       '../../../../src/ui/components/ChatStatusBar.js'
     );
@@ -134,9 +179,14 @@ describe('ChatStatusBar', () => {
     const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
 
     expect(markup).toContain('Cache 60%');
+    expect(markup).toContain('r 3.2K');
+    expect(markup).toContain('w 1.0K');
+    expect(markup).toContain('5.3K in');
+    expect(markup).toContain('800 out');
+    expect(markup).toContain('$0.042');
   });
 
-  it('Provider 未回报缓存用量时应该显示空值', async () => {
+  it('Provider 未回报缓存用量时应该显示空值且不带 token 细分', async () => {
     const { ChatStatusBar } = await import(
       '../../../../src/ui/components/ChatStatusBar.js'
     );

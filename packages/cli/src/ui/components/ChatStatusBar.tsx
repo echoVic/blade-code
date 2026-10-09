@@ -1,6 +1,9 @@
 import { Box, Text } from 'ink';
 import React, { useEffect, useState } from 'react';
-import { formatPromptCacheHitRate } from '../../api/promptCacheMetrics.js';
+import {
+  formatPromptCacheHitRate,
+  type PromptCacheMetrics,
+} from '../../api/promptCacheMetrics.js';
 import { PermissionMode } from '../../config/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
@@ -14,13 +17,13 @@ import {
   useIsCompacting,
   useIsReady,
   usePermissionMode,
-  usePromptCacheHitRate,
+  usePromptCacheMetrics,
   useProviderRecovery,
   useReasoningEffort,
   useRecoveredSteeringCount,
   useResponseVerbosity,
   useServiceTier,
-  useSessionCost,
+  useSessionCostMetrics,
   useSessionId,
   useTaskAttentionStatus,
   useTaskAttentionUnreadKeys,
@@ -30,6 +33,14 @@ import {
 import { isThinkingModel } from '../../utils/modelDetection.js';
 import { useGitBranch } from '../hooks/useGitBranch.js';
 import { formatProviderRecoveryPresentation } from '../utils/providerRecoveryPresentation.js';
+
+/** 把 token 数格式化成紧凑的 K/M 表示（1,234 → 1.2K，1,234,567 → 1.2M）。 */
+function formatTokenCompact(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0';
+  if (value < 1_000) return value.toString();
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(1)}K`;
+  return `${(value / 1_000_000).toFixed(2)}M`;
+}
 
 export function formatGoalExecutionHostFailureStatus(
   failure: GoalSnapshot['executionHostFailure']
@@ -62,8 +73,8 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const serviceTier = useServiceTier();
   const responseVerbosity = useResponseVerbosity();
   const communicationStyle = useCommunicationStyle();
-  const sessionCost = useSessionCost();
-  const promptCacheHitRate = usePromptCacheHitRate();
+  const promptCache: PromptCacheMetrics = usePromptCacheMetrics();
+  const costMetrics = useSessionCostMetrics();
   const providerRecovery = useProviderRecovery();
   const followUpQueue = useFollowUpQueue();
   const recoveredSteeringCount = useRecoveredSteeringCount();
@@ -276,15 +287,29 @@ export const ChatStatusBar: React.FC = React.memo(() => {
               </Text>
             )}
             <Text color="gray">·</Text>
-            <Text color={promptCacheHitRate === undefined ? 'gray' : 'cyan'}>
-              Cache {formatPromptCacheHitRate(promptCacheHitRate)}
+            <Text color={promptCache.hitRate === undefined ? 'gray' : 'cyan'}>
+              Cache {formatPromptCacheHitRate(promptCache.hitRate)}
+              {promptCache.hitRate !== undefined && (
+                <Text color="gray">
+                  {' '}
+                  (r {formatTokenCompact(promptCache.cacheReadTokens)} · w{' '}
+                  {formatTokenCompact(promptCache.cacheWriteTokens)})
+                </Text>
+              )}
             </Text>
-            {sessionCost > 0.001 && (
+            <Text color="gray">·</Text>
+            <Text color="gray">
+              {formatTokenCompact(costMetrics.inputTokens)} in /{' '}
+              {formatTokenCompact(costMetrics.outputTokens)} out
+            </Text>
+            {costMetrics.estimatedCostUsd > 0.001 && (
               <>
                 <Text color="gray">·</Text>
                 <Text color="green">
                   $
-                  {sessionCost < 0.01 ? sessionCost.toFixed(4) : sessionCost.toFixed(3)}
+                  {costMetrics.estimatedCostUsd < 0.01
+                    ? costMetrics.estimatedCostUsd.toFixed(4)
+                    : costMetrics.estimatedCostUsd.toFixed(3)}
                 </Text>
               </>
             )}
