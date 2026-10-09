@@ -152,8 +152,18 @@ import {
   type UserShellCommandRecord,
   type UserShellExecutor,
 } from '../../services/UserShellCommandService.js';
-import type { JsonObject, JsonValue } from '../../store/types.js';
-import { ensureStoreInitialized, getConfig } from '../../store/vanilla.js';
+import type {
+  JsonObject,
+  JsonValue,
+  RecentToolFailure,
+  ToolStatusSnapshot,
+} from '../../store/types.js';
+import {
+  ensureStoreInitialized,
+  getConfig,
+  getState,
+  sessionActions,
+} from '../../store/vanilla.js';
 import { FileAccessTracker } from '../../tools/builtin/file/FileAccessTracker.js';
 import { recoverWorkspacePatchTransactions } from '../../tools/builtin/file/PatchTransactionCoordinator.js';
 import { getBuiltinTools } from '../../tools/builtin/index.js';
@@ -170,7 +180,7 @@ import {
   filterBuiltinToolsForWorkspace,
 } from '../../tools/execution/WorkspaceToolPolicy.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
-import type { Tool, ToolResult } from '../../tools/types/index.js';
+import { type Tool, ToolErrorType, type ToolResult } from '../../tools/types/index.js';
 import { getCwd } from '../../utils/cwd.js';
 import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
@@ -407,6 +417,11 @@ export class SessionRuntime {
   private providerRecoveryGeneration?: ProviderRecoveryGeneration;
   private readonly turnActivity = new TurnActivityState();
   private turnActivityGeneration?: TurnActivityGeneration;
+
+  /** 最近工具失败（跨 turn，最新在前，bounded）。SessionRuntime 所有。 */
+  private recentToolFailures: RecentToolFailure[] = [];
+  /** 主 Agent executor 的工具目录；side conversation 不得替换该投影源。 */
+  private toolStatusRegistry?: ToolRegistry;
 
   private chatService?: IChatService;
   private executionEngine?: ExecutionEngine;
@@ -1089,7 +1104,7 @@ export class SessionRuntime {
       if (operation.signal.aborted) {
         throw new DOMException('Side conversation aborted', 'AbortError');
       }
-      toolExecutor = this.createToolExecutor({ permissionMode });
+      toolExecutor = this.createToolExecutor({ permissionMode }, false);
       const registry = toolExecutor.getRegistry();
       await registry.waitForMcpCatalogIdle(operation.signal);
       const preparation = [
@@ -2838,7 +2853,10 @@ export class SessionRuntime {
     this.selectedCommunicationStyle = nextCommunicationStyle;
   }
 
-  createToolExecutor(options: AgentOptions = {}): ToolExecutor {
+  createToolExecutor(
+    options: AgentOptions = {},
+    projectToolStatus = true
+  ): ToolExecutor {
     const registry = new ToolRegistry();
     registry.setMcpCatalogBarrier(this.mcpCatalogBarrier);
     const requiredPromptTool = 'ReadPromptArtifact';
@@ -2885,6 +2903,10 @@ export class SessionRuntime {
     }
     this.executorCatalogs.set(registry, { allowed, blocked });
 
+    if (projectToolStatus) {
+      this.toolStatusRegistry = registry;
+    }
+
     const permissions: PermissionConfig = {
       ...this.config.permissions,
       ...options.permissions,
@@ -2892,7 +2914,7 @@ export class SessionRuntime {
     const permissionMode =
       options.permissionMode ?? this.config.permissionMode ?? PermissionMode.DEFAULT;
 
-    return new ToolExecutor(registry, {
+    const executor = new ToolExecutor(registry, {
       permissionConfig: permissions,
       permissionMode,
       approvalStore: this.approvalStore,
@@ -2920,8 +2942,79 @@ export class SessionRuntime {
         : {}),
       onDispose: () => {
         this.executorCatalogs.delete(registry);
+        if (this.toolStatusRegistry === registry) {
+          this.toolStatusRegistry = undefined;
+        }
       },
     });
+
+    if (projectToolStatus) {
+      executor.on('executionCompleted', (event) => {
+        if (
+          this.toolStatusRegistry === registry &&
+          this.isReportableToolFailure(event.result)
+        ) {
+          this.recordToolFailure(event.toolName, event.result.error?.type);
+        }
+      });
+      executor.on('executionFailed', (event) => {
+        if (this.toolStatusRegistry === registry) {
+          this.recordToolFailure(
+            event.toolName,
+            this.classifyThrownToolError(event.error)
+          );
+        }
+      });
+      this.publishToolStatus();
+    }
+    return executor;
+  }
+
+  /** 记录一次工具执行失败并刷新投影（最新在前，bounded 5 条）。 */
+  private recordToolFailure(toolName: string, errorType?: string): void {
+    this.recentToolFailures = [
+      { toolName, at: Date.now(), errorType },
+      ...this.recentToolFailures,
+    ].slice(0, 5);
+    this.publishToolStatus();
+  }
+
+  /** 把 baseRegistry 计数 + 过滤差集 + 失败历史投影到 store。 */
+  private publishToolStatus(): void {
+    if (getState().session.sessionId !== this.sessionId) return;
+    const registry = this.toolStatusRegistry;
+    if (!registry) return;
+    const availableNames = new Set(registry.getAll().map((tool) => tool.name));
+    const snapshot: ToolStatusSnapshot = {
+      builtinCount: registry.getBuiltinTools().length,
+      mcpCount: registry.getMcpTools().length,
+      registeredCount: registry.getAll().length,
+      disabledNames: this.baseRegistry
+        .getAll()
+        .map((tool) => tool.name)
+        .filter((name) => !availableNames.has(name))
+        .slice(0, 12),
+      recentFailures: this.recentToolFailures.slice(),
+    };
+    sessionActions().setToolStatus(snapshot);
+  }
+
+  /** 判断工具结果是否为应展示的执行故障（排除权限拒绝、参数错误、用户取消）。 */
+  private isReportableToolFailure(result: ToolResult): boolean {
+    if (result.success) return false;
+    const type = result.error?.type;
+    if (type === ToolErrorType.PERMISSION_DENIED) return false;
+    if (type === ToolErrorType.VALIDATION_ERROR) return false;
+    if (result.metadata?.shouldExitLoop === true) return false;
+    return true;
+  }
+
+  /** 抛出的异常映射到 ToolErrorType（与 failExecution 的 timeout 判断一致）。 */
+  private classifyThrownToolError(error: Error): ToolErrorType {
+    if (error.name === 'TimeoutError' || error.message.includes('timeout')) {
+      return ToolErrorType.TIMEOUT_ERROR;
+    }
+    return ToolErrorType.EXECUTION_ERROR;
   }
 
   async dispose(): Promise<void> {
@@ -3522,6 +3615,7 @@ export class SessionRuntime {
         announce && hasProjectedChanges ? projected : undefined
       );
     }
+    this.publishToolStatus();
   }
 
   private applyMcpContentCatalog(change: McpContentCatalogChange): void {

@@ -38,6 +38,9 @@ const mockFollowUpQueue = vi.fn<
     | import('../../../../src/api/followUpQueueSchemas.js').FollowUpQueueSnapshot
     | null
 >(() => null);
+const mockToolStatus = vi.fn<
+  () => import('../../../../src/store/types.js').ToolStatusSnapshot | null
+>(() => null);
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) =>
     React.createElement('div', null, children),
@@ -61,6 +64,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useSessionCost: () => null,
   useSessionId: () => 'status-bar-session',
   useThinkingModeEnabled: () => false,
+  useToolStatus: () => mockToolStatus(),
   useTaskAttentionStatus: () => mockTaskAttentionStatus(),
   useTaskAttentionUnreadKeys: () => mockTaskAttentionUnreadKeys(),
   useReasoningEffort: () => 'off',
@@ -103,6 +107,7 @@ describe('ChatStatusBar', () => {
     mockTaskAttentionStatus.mockReturnValue('idle');
     mockTaskAttentionUnreadKeys.mockReturnValue([]);
     mockFollowUpQueue.mockReturnValue(null);
+    mockToolStatus.mockReturnValue(null);
   });
 
   it('应该使用当前会话的 active workspace 获取分支', async () => {
@@ -258,5 +263,49 @@ describe('ChatStatusBar', () => {
       })
     ).toBe('lineage:?:current-');
     expect(formatGoalTurnLineageStatus(undefined)).toBe('');
+  });
+
+  it('显示已注册工具数、禁用数与最近失败工具', async () => {
+    mockToolStatus.mockReturnValue({
+      registeredCount: 12,
+      builtinCount: 10,
+      mcpCount: 2,
+      disabledNames: ['Bash', 'Edit'],
+      recentFailures: [
+        {
+          toolName: 'Write',
+          at: 1_700_000_000_000,
+          errorType: 'execution_error',
+        },
+      ],
+    });
+    const { ChatStatusBar } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
+
+    expect(markup).toContain('Tools 12');
+    expect(markup).toContain('off 2');
+    expect(markup).toContain('fail Write');
+  });
+
+  it('无禁用与失败时只显示工具总数', async () => {
+    mockToolStatus.mockReturnValue({
+      registeredCount: 14,
+      builtinCount: 14,
+      mcpCount: 0,
+      disabledNames: [],
+      recentFailures: [],
+    });
+    const { ChatStatusBar } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
+
+    expect(markup).toContain('Tools 14');
+    expect(markup).not.toContain('off ');
+    expect(markup).not.toContain('fail ');
   });
 });

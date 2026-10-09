@@ -85,6 +85,9 @@ export const useTurnActivity = () =>
 export const useActionStationarity = () =>
   useBladeStore((state) => state.session.actionStationarity);
 
+/** 获取工具激活状态快照（注册数 / 被禁用 / 最近失败）。 */
+export const useToolStatus = () => useBladeStore((state) => state.session.toolStatus);
+
 /** 获取 Session Actions */
 export const useSessionActions = () => useBladeStore((state) => state.session.actions);
 

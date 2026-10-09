@@ -80,6 +80,29 @@ export interface TokenUsageUpdate extends Partial<TokenUsage> {
   costUsd?: number;
 }
 
+/** 最近一次工具执行失败（bounded，跨 turn，供 HUD 展示）。 */
+export interface RecentToolFailure {
+  toolName: string;
+  at: number;
+  /** ToolErrorType 字符串，如 execution_error / timeout_error。 */
+  errorType?: string;
+}
+
+/**
+ * 工具激活状态快照（运行时所有，store 只读投影）。
+ * 由 SessionRuntime 从 ToolRegistry + ToolExecutor 事件派生。
+ */
+export interface ToolStatusSnapshot {
+  /** 当前已注册、对本会话可见的工具总数（builtin + mcp）。 */
+  registeredCount: number;
+  builtinCount: number;
+  mcpCount: number;
+  /** 被 allowedTools/disallowedTools 过滤掉的工具名（bounded）。 */
+  disabledNames: string[];
+  /** 最近失败（bounded，最新在前）。 */
+  recentFailures: RecentToolFailure[];
+}
+
 export interface SessionState {
   sessionId: string;
   workspaceRoot: string;
@@ -110,6 +133,7 @@ export interface SessionState {
   providerRecovery: ProviderRecoveryProjection | null; // Runtime-owned Provider 恢复快照
   turnActivity: TurnActivityProjection | null; // Runtime-owned 当前回合活动快照
   actionStationarity: ActionStationarityEvent | null; // 连续工具调用无进展状态
+  toolStatus: ToolStatusSnapshot | null; // Runtime-owned 工具激活状态快照
 }
 
 export interface SessionActions {
@@ -154,6 +178,7 @@ export interface SessionActions {
   setProviderRecovery: (recovery: ProviderRecoveryProjection | null) => void;
   setTurnActivity: (activity: TurnActivityProjection | null) => void;
   setActionStationarity: (stationarity: ActionStationarityEvent | null) => void;
+  setToolStatus: (status: ToolStatusSnapshot | null) => void;
   // 事件溯源投影 actions (CQRS read-model)
   applyCommittedEvent: (event: SessionEvent) => void; // 折叠 committed 事件到投影
   applyStreamingDelta: (delta: EphemeralDelta) => void; // 叠加 ephemeral streaming delta

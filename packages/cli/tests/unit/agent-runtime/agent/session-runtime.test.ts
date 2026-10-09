@@ -216,6 +216,11 @@ const patchRecoveryMocks = vi.hoisted(() => ({
   recover: vi.fn(async () => 0),
 }));
 
+const storeMocks = vi.hoisted(() => ({
+  activeSessionId: undefined as string | undefined,
+  setToolStatus: vi.fn(),
+}));
+
 vi.mock('../../../../src/worktree/WorktreeManager.js', () => ({
   worktreeManager: worktreeMocks,
 }));
@@ -250,6 +255,11 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
   ensureStoreInitialized: vi.fn(async () => {
     /* noop */
   }),
+  getState: vi.fn(() => ({
+    session: {
+      sessionId: storeMocks.activeSessionId,
+    },
+  })),
   getAllModels: vi.fn(() => [{ id: 'model-1', provider: 'openai', model: 'gpt-4' }]),
   getConfig: vi.fn(() => ({
     permissionMode: 'default',
@@ -284,6 +294,9 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
       : undefined
   ),
   getThinkingModeEnabled: vi.fn(() => false),
+  sessionActions: vi.fn(() => ({
+    setToolStatus: storeMocks.setToolStatus,
+  })),
 }));
 
 vi.mock('../../../../src/config/index.js', async () => {
@@ -510,6 +523,7 @@ describe('SessionRuntime', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    storeMocks.activeSessionId = undefined;
     storageRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-session-runtime-'));
     vi.stubEnv('BLADE_STORAGE_ROOT', storageRoot);
   });
@@ -2532,6 +2546,115 @@ describe('SessionRuntime', () => {
       executor.dispose();
       await runtime.dispose();
     }
+  });
+
+  it('does not publish tool status from an inactive Session runtime', async () => {
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    vi.mocked(getBuiltinTools).mockResolvedValueOnce([
+      createNamedTestTool('Read', ToolKind.ReadOnly),
+    ]);
+    storeMocks.activeSessionId = 'active-session';
+    const runtime = await SessionRuntime.create({
+      sessionId: 'inactive-session',
+      workspaceRoot: storageRoot,
+    });
+
+    const executor = runtime.createToolExecutor();
+
+    expect(storeMocks.setToolStatus).not.toHaveBeenCalled();
+    executor.dispose();
+    await runtime.dispose();
+  });
+
+  it('keeps side conversations from replacing the primary tool status snapshot', async () => {
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    vi.mocked(getBuiltinTools).mockResolvedValueOnce([
+      createNamedTestTool('Read', ToolKind.ReadOnly),
+      createNamedTestTool('Write', ToolKind.Write),
+    ]);
+    storeMocks.activeSessionId = 'tool-status-side-conversation';
+    const runtime = await SessionRuntime.create({
+      sessionId: 'tool-status-side-conversation',
+      workspaceRoot: storageRoot,
+    });
+    const executor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.YOLO,
+      toolWhitelist: ['Read'],
+    });
+    const primarySnapshot = storeMocks.setToolStatus.mock.calls.at(-1)?.[0];
+    vi.mocked(buildSystemPrompt).mockResolvedValueOnce({
+      prompt: 'side conversation prompt',
+      sources: [],
+    });
+    vi.mocked(runtime.getChatService().chat).mockResolvedValueOnce({
+      content: 'side conversation answer',
+    });
+
+    await runtime.askSideQuestion('Inspect the active tools');
+
+    expect(storeMocks.setToolStatus.mock.calls.at(-1)?.[0]).toEqual(primarySnapshot);
+    expect(primarySnapshot).toMatchObject({
+      registeredCount: 1,
+      builtinCount: 1,
+      mcpCount: 0,
+      disabledNames: ['Write'],
+    });
+    executor.dispose();
+    await runtime.dispose();
+  });
+
+  it('refreshes filtered tool counts after an MCP catalog change', async () => {
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    vi.mocked(getBuiltinTools).mockResolvedValueOnce([
+      createNamedTestTool('Read', ToolKind.ReadOnly),
+      createNamedTestTool('Write', ToolKind.Write),
+    ]);
+    storeMocks.activeSessionId = 'tool-status-mcp-refresh';
+    const runtime = await SessionRuntime.create({
+      sessionId: 'tool-status-mcp-refresh',
+      workspaceRoot: storageRoot,
+    });
+    const mcpTool = createNamedTestTool('mcp__server__inspect', ToolKind.ReadOnly);
+    const executor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.YOLO,
+      toolWhitelist: ['Read', mcpTool.name],
+    });
+
+    const internals = runtime as unknown as {
+      applyMcpCatalog(
+        change: {
+          revision: number;
+          serverName: string;
+          reason: 'connection';
+          tools: Tool[];
+          added: string[];
+          removed: string[];
+          updated: string[];
+        },
+        announce: boolean
+      ): void;
+    };
+    internals.applyMcpCatalog(
+      {
+        revision: 1,
+        serverName: 'server',
+        reason: 'connection',
+        tools: [mcpTool],
+        added: [mcpTool.name],
+        removed: [],
+        updated: [],
+      },
+      true
+    );
+
+    expect(storeMocks.setToolStatus.mock.calls.at(-1)?.[0]).toMatchObject({
+      registeredCount: 2,
+      builtinCount: 1,
+      mcpCount: 1,
+      disabledNames: ['Write'],
+    });
+    executor.dispose();
+    await runtime.dispose();
   });
 
   it('keeps prompt artifact reads available through explicit tool filters', async () => {

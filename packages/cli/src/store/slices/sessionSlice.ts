@@ -101,6 +101,7 @@ const initialSessionState: SessionState = {
   providerRecovery: null,
   turnActivity: null,
   actionStationarity: null,
+  toolStatus: null,
 };
 
 /** 创建 Session Slice */
@@ -685,6 +686,13 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     setActionStationarity: (actionStationarity) => {
       set((state) => ({
         session: { ...state.session, actionStationarity },
+      }));
+    },
+
+    /** 设置工具激活状态快照（SessionRuntime 投影）。 */
+    setToolStatus: (toolStatus) => {
+      set((state) => ({
+        session: { ...state.session, toolStatus },
       }));
     },
 

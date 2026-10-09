@@ -28,6 +28,7 @@ import {
   useTaskAttentionStatus,
   useTaskAttentionUnreadKeys,
   useThinkingModeEnabled,
+  useToolStatus,
   useWorkspaceRoot,
 } from '../../store/selectors/index.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
@@ -80,6 +81,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const recoveredSteeringCount = useRecoveredSteeringCount();
   const taskAttentionStatus = useTaskAttentionStatus();
   const taskAttentionUnreadKeys = useTaskAttentionUnreadKeys();
+  const toolStatus = useToolStatus();
   const sessionId = useSessionId();
   const [goal, setGoal] = useState<GoalSnapshot | null>(null);
   const recoveryPresentation = formatProviderRecoveryPresentation(providerRecovery);
@@ -311,6 +313,25 @@ export const ChatStatusBar: React.FC = React.memo(() => {
                     ? costMetrics.estimatedCostUsd.toFixed(4)
                     : costMetrics.estimatedCostUsd.toFixed(3)}
                 </Text>
+              </>
+            )}
+
+            {toolStatus && (
+              <>
+                <Text color="gray">·</Text>
+                <Text color="cyan">Tools {toolStatus.registeredCount}</Text>
+              </>
+            )}
+            {toolStatus && toolStatus.disabledNames.length > 0 && (
+              <>
+                <Text color="gray">·</Text>
+                <Text color="yellow">off {toolStatus.disabledNames.length}</Text>
+              </>
+            )}
+            {toolStatus && toolStatus.recentFailures.length > 0 && (
+              <>
+                <Text color="gray">·</Text>
+                <Text color="red">fail {toolStatus.recentFailures[0]?.toolName}</Text>
               </>
             )}
 
