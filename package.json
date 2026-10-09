@@ -28,7 +28,7 @@
     "test:headless-core": "bun run --filter blade-code test:headless-core",
     "test:coverage": "bun run --filter blade-code test:coverage",
     "test:watch": "bun run --filter blade-code test:watch",
-    "lint": "bun run --filter blade-code lint && bun run --filter blade-vscode lint && bun run --filter blade-web lint",
+    "lint": "bun run format:check && bun run --filter blade-code lint && bun run --filter blade-vscode lint && bun run --filter blade-web lint",
     "lint:web": "bun run --filter blade-web lint",
     "lint:fix": "bun run --filter blade-code lint:fix",
     "format": "biome format --write packages",
