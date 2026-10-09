@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.11.10] - 2026-10-09
+
+### Added
+- Show the active tool count, filtered-off tool count, and most recent reportable tool failure in the TUI status bar.
+
+### Fixed
+- Scope tool-status projection to the active Session's primary executor, prevent side conversations from replacing it, and refresh filtered counts after MCP catalog changes.
+
+### Tests
+- Cover inactive Session isolation, side-conversation isolation, MCP catalog refreshes, and TUI tool-status rendering.
+
 ## [0.11.9] - 2026-10-09
 
 ### Added
