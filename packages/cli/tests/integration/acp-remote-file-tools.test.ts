@@ -34,7 +34,10 @@ import { FileLockManager } from '../../src/tools/execution/FileLockManager.js';
 import { ToolExecutor } from '../../src/tools/execution/ToolExecutor.js';
 import { createWorkspaceToolPolicy } from '../../src/tools/execution/WorkspaceToolPolicy.js';
 import { ToolRegistry } from '../../src/tools/registry/ToolRegistry.js';
-import type { Tool } from '../../src/tools/types/ToolTypes.js';
+import {
+  getToolResultModelImages,
+  type Tool,
+} from '../../src/tools/types/ToolTypes.js';
 import { ControlledFileClient } from '../support/acp/ControlledFileClient.js';
 import {
   createPairedAcpAppHarness,
@@ -972,16 +975,27 @@ describe('ACP remote Read builtin tool', () => {
     const binaryResult = await executeRead(binaryPath, sessionId);
     expect(binaryResult).toMatchObject({
       success: true,
-      llmContent: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'),
+      llmContent: '[Image file: local.png, image/png, 0.0 KB]',
       metadata: {
         file_path: binaryPath,
-        acp_fallback: true,
         encoding: 'base64',
         acp_mode: true,
         is_binary: true,
+        is_image: true,
+        image_mime: 'image/png',
         file_type: '.png',
       },
     });
+    expect(getToolResultModelImages(binaryResult)).toEqual([
+      {
+        type: 'image_url',
+        image_url: {
+          url: `data:image/png;base64,${Buffer.from([
+            0x89, 0x50, 0x4e, 0x47,
+          ]).toString('base64')}`,
+        },
+      },
+    ]);
 
     const unknownResult = await executeRead(unknownPath, sessionId);
     expect(unknownResult).toMatchObject({
