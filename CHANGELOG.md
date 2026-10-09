@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.8] - 2026-10-09
+
+### Added
+- Show cache-read and cache-write tokens, total input and output tokens, and estimated cost alongside the prompt-cache hit rate in the TUI status bar.
+
+### Tests
+- Cover the detailed cache, token, and cost status-bar projection, including the provider-without-cache-metrics fallback.
+- Verify the full test suite, lint, type checking, and production build without running paid real-API qualification.
+
 ## [0.11.7] - 2026-09-27
 
 ### Fixed
