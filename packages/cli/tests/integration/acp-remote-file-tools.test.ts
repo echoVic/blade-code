@@ -990,9 +990,9 @@ describe('ACP remote Read builtin tool', () => {
       {
         type: 'image_url',
         image_url: {
-          url: `data:image/png;base64,${Buffer.from([
-            0x89, 0x50, 0x4e, 0x47,
-          ]).toString('base64')}`,
+          url: `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString(
+            'base64'
+          )}`,
         },
       },
     ]);
