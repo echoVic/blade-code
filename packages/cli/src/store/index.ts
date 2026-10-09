@@ -4,6 +4,7 @@
  */
 
 import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import type { BladeStore } from './types.js';
 import { vanillaStore } from './vanilla.js';
 
@@ -24,7 +25,7 @@ import { vanillaStore } from './vanilla.js';
  * }));
  */
 export function useBladeStore<T>(selector: (state: BladeStore) => T): T {
-  return useStore(vanillaStore, selector);
+  return useStore(vanillaStore, useShallow(selector));
 }
 
 // 导出选择器

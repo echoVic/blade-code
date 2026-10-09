@@ -5,6 +5,9 @@
 ### Added
 - Show cache-read and cache-write tokens, total input and output tokens, and estimated cost alongside the prompt-cache hit rate in the TUI status bar.
 
+### Fixed
+- Shallow-cache Zustand selector results so derived status-bar metric objects cannot trigger an infinite React render loop in the real Ink TUI.
+
 ### Tests
 - Cover the detailed cache, token, and cost status-bar projection, including the provider-without-cache-metrics fallback.
 - Verify the full test suite, lint, type checking, and production build without running paid real-API qualification.
