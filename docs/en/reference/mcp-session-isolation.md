@@ -86,7 +86,7 @@ without a Parallel API key. The free endpoint is intended for exploration and li
 and has rate limits. Use `http` (Streamable HTTP) transport.
 
 After installing Blade (`npm install -g blade-code`), save the following as
-`parallel-search.mcp.json`. A [JSON example](/examples/parallel-search.mcp.json)
+`parallel-search.mcp.json`. A [JSON example](https://raw.githubusercontent.com/echoVic/blade-code/main/docs/examples/parallel-search.mcp.json)
 is also included in the repository:
 
 ```json

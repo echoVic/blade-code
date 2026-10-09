@@ -103,7 +103,7 @@ Session。
 免费端点适用于探索和轻量使用，有速率限制；使用 `http`（Streamable HTTP）传输。
 
 安装 Blade（`npm install -g blade-code`）后，将以下内容保存为 `parallel-search.mcp.json`。
-仓库中也提供了 [JSON 示例](../examples/parallel-search.mcp.json)：
+仓库中也提供了 [JSON 示例](https://raw.githubusercontent.com/echoVic/blade-code/main/docs/examples/parallel-search.mcp.json)：
 
 ```json
 {
