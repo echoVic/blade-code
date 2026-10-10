@@ -103,22 +103,22 @@ Blade/
 5. Update related bilingual user documentation when behavior is user-facing.
    Do not edit generated `docs/changelog.md` or `docs/en/changelog.md`.
 6. Commit release metadata as `chore: release v<version>`.
-7. On that exact commit, run every release gate:
+7. On that exact commit, run the pre-tag gate:
 
    ```bash
-   bun install --frozen-lockfile
-   bun run build
-   bun run test:all
-   bun run lint
-   bun run type-check
+   scripts/verify-release-candidate.sh <version>
    ```
 
-   `bun run lint` includes the repository-wide Biome format check. Package-only
-   lint commands are not an equivalent release gate. Paid real-API
-   qualification remains separate and must be run when the affected release
-   matrix requires it.
-8. Confirm the worktree is still clean and the npm version and remote tag do
-   not already exist.
+   The script codifies steps 7-8 of this checklist: it refuses a dirty
+   worktree, requires matching headings in both changelogs, blocks reuse of a
+   local or remote tag and of an existing npm version, and then runs
+   `bun install --frozen-lockfile`, `bun run build`, `bun run test:all`,
+   `bun run lint`, and `bun run type-check`. `bun run lint` includes the
+   repository-wide Biome format check, so package-only lint commands are not an
+   equivalent gate. Paid real-API qualification remains separate and must be
+   run when the affected release matrix requires it.
+8. The script also re-checks that the worktree is clean after the gate; abort
+   if any step fails before continuing to tag creation.
 9. Extract the exact English changelog section into a temporary notes file and
    create an annotated tag:
 

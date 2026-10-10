@@ -156,10 +156,27 @@ Blade/
 
 ## 🔄 发布流程
 
-1. **版本规划**：遵循语义化版本控制
-2. **代码审查**：所有 PR 需要代码审查
-3. **测试验证**：完整的测试流程
-4. **文档更新**：同步更新相关文档
+Blade Code 的详细发布流程以 [AGENTS.md](AGENTS.md#release-process) 为权威来源，
+下面是贡献者需要了解的核心约束：
+
+- **版本权威**：只有 `packages/cli/package.json` 的版本号会被 npm 识别为发布版本，
+  根目录 `package.json` 的版本仅用于 monorepo 元数据。
+- **一次一个版本**：每个独立功能或修复以单独的 patch 版本发布，并串行推送 tag，
+  避免 npm `latest` 竞态。
+- **双语变更日志**：`CHANGELOG.md`（英文，权威源）与 `CHANGELOG.zh.md`（中文，手工同步）
+  必须包含相同的版本标题和等价内容。
+- **预 tag 校验脚本**：在打 tag 之前，必须在候选 commit 上成功运行
+  [scripts/verify-release-candidate.sh](scripts/verify-release-candidate.sh)。
+  它会检查工作树是否干净、双语 changelog 是否齐备、tag/npm 版本是否冲突，
+  并依次执行 `bun install --frozen-lockfile`、`bun run build`、`bun run test:all`、
+  `bun run lint`、`bun run type-check`。
+- **OIDC 可信发布**：`.github/workflows/publish.yml` 使用 npm Trusted Publishing
+  通过 OIDC 发布，禁止使用长期 npm token，也不要新增 `npm dist-tag add` 步骤
+  （除非 Trusted Publisher 已显式授予 **Allow npm dist-tag**）。
+- **故障恢复**：若 `npm publish` 成功而后续步骤失败，不得改写 tag 或重复发布同一版本；
+  只补齐缺失的 GitHub Release，并在下一个 patch 版本中修复 workflow。
+
+完整的候选资格、tag 创建、推送、监控与发布后验证步骤，请参考 [AGENTS.md](AGENTS.md#release-process)。
 
 ## 📞 联系我们
 
