@@ -80,18 +80,129 @@ Blade/
 
 ## Release Process
 
-1. Bump version in `packages/cli/package.json`
-2. Update both changelogs with the new version's changes (what was added/changed/fixed):
-   - `CHANGELOG.md` (English, authoritative source consumed by npm/VersionChecker)
-   - `CHANGELOG.zh.md` (Chinese, kept in sync manually with the same version headings)
-3. Update related documentation if the feature affects user-facing behavior (docs/, README.md, AGENTS.md, etc.)
-4. Build and run full test suite: `bun run build && bun run test:all`
-5. Commit and tag: `git tag v<version>`
-6. Push tag: `git push origin v<version>`
-7. GitHub Actions (`publish.yml`) automatically publishes to npm and creates GitHub Release
-8. Verify: `npm view blade-code version`
+### Release Boundaries
 
-Each independent feature or fix must be released as a separate npm patch version.
+- `packages/cli/package.json` is the only authoritative npm version. The root
+  `package.json` version is private monorepo metadata.
+- Release each independent feature or fix as its own npm patch version.
+- Keep implementation, release metadata, and any qualification fix in separate
+  commits so the exact candidate is auditable.
+- Serialize releases. Do not push multiple new release tags in one batch:
+  npm assigns `latest` when each publish completes, so concurrent releases can
+  leave `latest` pointing at an older version.
+
+### Prepare and Qualify the Exact Candidate
+
+1. Start from a clean `main` synchronized with `origin/main`.
+2. Commit the implementation or fix before preparing release metadata.
+3. Bump `packages/cli/package.json`.
+4. Update both changelogs with the same version heading and equivalent content:
+   - `CHANGELOG.md` is the English authoritative source consumed by npm and
+     `VersionChecker`.
+   - `CHANGELOG.zh.md` is the manually synchronized Chinese source.
+5. Update related bilingual user documentation when behavior is user-facing.
+   Do not edit generated `docs/changelog.md` or `docs/en/changelog.md`.
+6. Commit release metadata as `chore: release v<version>`.
+7. On that exact commit, run every release gate:
+
+   ```bash
+   bun install --frozen-lockfile
+   bun run build
+   bun run test:all
+   bun run lint
+   bun run type-check
+   ```
+
+   `bun run lint` includes the repository-wide Biome format check. Package-only
+   lint commands are not an equivalent release gate. Paid real-API
+   qualification remains separate and must be run when the affected release
+   matrix requires it.
+8. Confirm the worktree is still clean and the npm version and remote tag do
+   not already exist.
+9. Extract the exact English changelog section into a temporary notes file and
+   create an annotated tag:
+
+   ```bash
+   git tag -a v<version> -F <release-notes-file>
+   git cat-file -t v<version>       # must print: tag
+   git rev-list -n 1 v<version>     # must equal the qualified candidate SHA
+   ```
+
+10. Push the branch and one release tag:
+
+    ```bash
+    git push origin main
+    git push origin v<version>
+    ```
+
+### Automated Publication
+
+- `.github/workflows/publish.yml` runs the full reusable CI workflow before
+  publishing.
+- The workflow validates that `v<version>` matches
+  `packages/cli/package.json`, builds again, upgrades npm, publishes with
+  Trusted Publishing (OIDC), and ensures a GitHub Release exists.
+- npm publishing must use `npm publish --access public --tag latest`.
+- Do not add a separate `npm dist-tag add` step unless the npm Trusted Publisher
+  is explicitly configured with **Allow npm dist-tag**. Without that permission
+  npm returns `E403` after a successful publish and prevents later workflow
+  steps, including GitHub Release creation.
+- Do not use legacy long-lived npm tokens or the old token helper scripts.
+- Publication is idempotent: an existing npm version is skipped and an existing
+  GitHub Release is retained.
+
+### Monitor and Recover
+
+Monitor the tag workflow until the `publish` job completes:
+
+```bash
+gh run list --workflow=publish.yml --limit=5
+gh run view <run-id> --json status,conclusion,jobs
+gh run view <run-id> --log-failed
+```
+
+If `npm publish` succeeds but a later step fails:
+
+1. Do not rewrite the public tag or attempt to republish the immutable npm
+   version.
+2. Verify `npm view blade-code@<version> version` and the `latest` dist-tag.
+3. Create only the missing GitHub Release from the matching `CHANGELOG.md`
+   section with `gh release create ... --verify-tag`.
+4. Fix the workflow in a separate patch release.
+
+If CI exposes a newly disclosed transitive vulnerability, update the smallest
+compatible dependency or lockfile entry, run `bun audit --audit-level=critical`,
+and qualify that fix as its own patch release.
+
+### Post-Release Verification
+
+1. Verify the immutable version, `latest`, GitHub Release, remote tag, and clean
+   worktree:
+
+   ```bash
+   npm view blade-code@<version> version
+   npm view blade-code dist-tags.latest
+   gh release view v<version>
+   git ls-remote --tags origin refs/tags/v<version>
+   git status --short --branch
+   ```
+
+2. npm metadata can appear before the tarball CDN is ready. If installation
+   returns tarball `404`, wait and retry; do not publish the version again.
+3. Finish with a clean-directory installation smoke test:
+
+   ```bash
+   tmpdir="$(mktemp -d)"
+   trap 'rm -rf "$tmpdir"' EXIT
+   cd "$tmpdir"
+   npm init -y >/dev/null 2>&1
+   npm install --ignore-scripts blade-code@latest
+   node -p "require('./node_modules/blade-code/package.json').version"
+   ./node_modules/.bin/blade --version
+   ```
+
+   The installed package version, CLI-reported version, and npm `latest`
+   dist-tag must all equal the released version.
 
 The docs site (`docs/`) is bilingual: Chinese is the default under the docs root
 and English lives under `docs/en/`. `docs/changelog.md` (zh) and
