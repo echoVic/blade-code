@@ -3,6 +3,7 @@
  * useShallow 优化返回对象/数组的选择器
  */
 
+import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { derivePromptCacheMetrics } from '../../api/promptCacheMetrics.js';
 import type { ModelConfig } from '../../config/types.js';
@@ -38,43 +39,45 @@ export const useSessionCost = () =>
 
 /** 获取完整的 cache 指标（hitRate + token 细分），供 HUD 展示。
  *  仅订阅 tokenUsage 字段，不订阅整个 store。 */
-export const usePromptCacheMetrics = () =>
-  useBladeStore((state) => {
-    const { totalInputTokens, cacheReadTokens, cacheWriteTokens } =
-      state.session.tokenUsage;
-    return derivePromptCacheMetrics({
-      totalInputTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-    });
-  });
-
-/** 仅命中百分比的轻量选择器（供只需显示 hitRate 的场景复用）。
- *  若你要同时显示 token 细分，请用 usePromptCacheMetrics 直接拉完整对象。 */
-export const usePromptCacheHitRate = () =>
-  useBladeStore((state) => {
-    const { totalInputTokens, cacheReadTokens, cacheWriteTokens } =
-      state.session.tokenUsage;
-    return derivePromptCacheMetrics({
-      totalInputTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-    }).hitRate;
-  });
+export const usePromptCacheMetrics = () => {
+  const tokenUsage = useBladeStore((state) => state.session.tokenUsage);
+  return useMemo(
+    () =>
+      derivePromptCacheMetrics({
+        totalInputTokens: tokenUsage.totalInputTokens,
+        cacheReadTokens: tokenUsage.cacheReadTokens,
+        cacheWriteTokens: tokenUsage.cacheWriteTokens,
+      }),
+    [
+      tokenUsage.totalInputTokens,
+      tokenUsage.cacheReadTokens,
+      tokenUsage.cacheWriteTokens,
+    ]
+  );
+};
 
 /** 获取会话 cost + token 级指标（输入/输出/total），供 HUD 一行展示。 */
-export const useSessionCostMetrics = () =>
-  useBladeStore((state) => {
-    const t = state.session.tokenUsage;
-    return {
-      estimatedCostUsd: t.estimatedCostUsd,
-      inputTokens: t.totalInputTokens,
-      outputTokens: t.totalOutputTokens,
-      totalTokens: t.totalTokens,
-      cacheReadTokens: t.cacheReadTokens,
-      cacheWriteTokens: t.cacheWriteTokens,
-    };
-  });
+export const useSessionCostMetrics = () => {
+  const tokenUsage = useBladeStore((state) => state.session.tokenUsage);
+  return useMemo(
+    () => ({
+      estimatedCostUsd: tokenUsage.estimatedCostUsd,
+      inputTokens: tokenUsage.totalInputTokens,
+      outputTokens: tokenUsage.totalOutputTokens,
+      totalTokens: tokenUsage.totalTokens,
+      cacheReadTokens: tokenUsage.cacheReadTokens,
+      cacheWriteTokens: tokenUsage.cacheWriteTokens,
+    }),
+    [
+      tokenUsage.estimatedCostUsd,
+      tokenUsage.totalInputTokens,
+      tokenUsage.totalOutputTokens,
+      tokenUsage.totalTokens,
+      tokenUsage.cacheReadTokens,
+      tokenUsage.cacheWriteTokens,
+    ]
+  );
+};
 
 export const useProviderRecovery = () =>
   useBladeStore((state) => state.session.providerRecovery);
@@ -85,7 +88,7 @@ export const useTurnActivity = () =>
 export const useActionStationarity = () =>
   useBladeStore((state) => state.session.actionStationarity);
 
-/** 获取工具激活状态快照（注册数 / 被禁用 / 最近失败）。 */
+/** 获取 Runtime 投影的工具激活状态快照（已注册数、禁用列表、最近失败）。 */
 export const useToolStatus = () => useBladeStore((state) => state.session.toolStatus);
 
 /** 获取 Session Actions */
