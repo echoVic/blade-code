@@ -90,10 +90,12 @@ The host performs complete validation before durable input:
 2. schema maximum size 64 KiB, 20 levels, 1000 nodes, 200 properties;
 3. Only self-contained `$ref` of `#`, `#/$defs/...`, and `#/definitions/...` are allowed;
 4. Final object maximum size 128 KiB;
-5. Both schema and object are validated by AJV on the host side, with no default value filling or field cleaning;
+5. Both schema and object are validated by AJV on the host side, with no default value filling or field cleaning (the only exception is the strict-sampling optional-field `null` normalization described below);
 6. Schema SHA-256 digest is returned with canonical metadata and protocol output.
 
 Blade uses the schema directly as the parameter schema for `StructuredOutput`, and sets pi-ai `constrainedSampling: { type: "json_schema", strict: "prefer" }`. Providers that support strict tool sampling constrain at the sampling stage; other providers use the same tool protocol with final adjudication by the host.
+
+Strict sampling rewrites every optional property as required-but-nullable, so providers that enforce the strict schema (such as DeepSeek and OpenAI) return `null` for omitted optional fields. Before AJV validation the host reverses only that rewrite: it removes a `null` value when the property is absent from the original schema's `required` list and the property's own schema rejects `null`. Explicitly nullable properties, required fields, and all other invalid values are left untouched for AJV to adjudicate. The normalization recurses through `properties` and single-schema `items`, and resolves `$ref` through the registered root schema, so strict providers omitting optional fields no longer consume corrective retries.
 
 ## Retry and Completion Semantics
 

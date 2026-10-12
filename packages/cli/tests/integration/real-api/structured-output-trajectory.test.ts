@@ -8,7 +8,9 @@ import { runHeadless } from '../../../src/commands/headless.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { Bus } from '../../../src/server/bus.js';
 import { SessionRoutes } from '../../../src/server/routes/session.js';
+import type { Message } from '../../../src/services/ChatServiceInterface.js';
 import { SessionService } from '../../../src/services/SessionService.js';
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../../src/services/StructuredOutputService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { createMockACPClient } from '../../support/mocks/mockACPClient.js';
 import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
@@ -38,10 +40,39 @@ const outputSchema = {
     },
     ok: { type: 'boolean', const: true },
     summary: { type: 'string', minLength: 3 },
+    // Optional and non-nullable: strict-sampling providers must emit it as null.
+    note: { type: 'string', minLength: 1 },
   },
   required: ['surface', 'ok', 'summary'],
   additionalProperties: false,
 };
+
+const OMIT_NOTE_INSTRUCTION = ' You have no note, so leave note empty as JSON null.';
+
+function containsNullValue(value: unknown): boolean {
+  if (value === null) return true;
+  if (Array.isArray(value)) return value.some(containsNullValue);
+  if (typeof value === 'object') return Object.values(value).some(containsNullValue);
+  return false;
+}
+
+function expectNoNullValues(output: unknown): void {
+  expect(containsNullValue(output)).toBe(false);
+  const note = (output as Record<string, unknown> | undefined)?.note;
+  expect(note === undefined || typeof note === 'string').toBe(true);
+}
+
+function expectAcceptedOnFirstSubmission(messages: readonly Message[]): void {
+  const results = messages.filter(
+    (message) => message.role === 'tool' && message.name === STRUCTURED_OUTPUT_TOOL_NAME
+  );
+  expect(results.length).toBeGreaterThan(0);
+  expect(
+    results
+      .map((message) => String(message.content))
+      .filter((content) => content.includes('Structured output validation failed'))
+  ).toEqual([]);
+}
 
 async function fixture(prefix: string) {
   const root = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -128,7 +159,8 @@ describeReal('turn-scoped structured output trajectory (real API)', () => {
             projectPath: test.workspace,
             content:
               'Return the requested structured result. Set surface to web, ok to true, ' +
-              'and provide a short summary.',
+              'and provide a short summary.' +
+              OMIT_NOTE_INSTRUCTION,
             outputSchema,
             permissionMode: 'yolo',
           }),
@@ -142,7 +174,12 @@ describeReal('turn-scoped structured output trajectory (real API)', () => {
           ok: true,
           summary: expect.any(String),
         });
+        expectNoNullValues(structured?.properties.output);
         const messages = await SessionService.loadSession(sessionId, test.workspace);
+        // StructuredOutput is hidden from client projections, so the durable
+        // transcript is the host evidence that the strict-sampling null for the
+        // optional note was accepted without consuming a corrective retry.
+        expectAcceptedOnFirstSubmission(messages);
         expect(messages.at(-1)?.metadata).toMatchObject({
           structuredOutput: {
             output: structured?.properties.output,
@@ -191,7 +228,8 @@ describeReal('turn-scoped structured output trajectory (real API)', () => {
               type: 'text',
               text:
                 'Return the requested structured result. Set surface to acp, ok to ' +
-                'true, and provide a short summary.',
+                'true, and provide a short summary.' +
+                OMIT_NOTE_INSTRUCTION,
             },
           ],
           _meta: { outputSchema },
@@ -202,6 +240,7 @@ describeReal('turn-scoped structured output trajectory (real API)', () => {
           ok: true,
           summary: expect.any(String),
         });
+        expectNoNullValues(response._meta?.structuredOutput);
         expect(response._meta?.outputSchemaDigest).toMatch(/^[a-f0-9]{64}$/);
         assertNoSecrets({ response, updates: client.sessionUpdates }, [claude.apiKey]);
       } finally {
@@ -217,6 +256,7 @@ describeReal('turn-scoped structured output trajectory (real API)', () => {
     async () => {
       if (!deepseek) throw new Error('DeepSeek qualification channel is unavailable');
       const test = await fixture('blade-structured-headless-');
+      const sessionId = `structured-headless-${Date.now()}`;
       const stdout: string[] = [];
       const stderr: string[] = [];
       try {
@@ -227,9 +267,11 @@ describeReal('turn-scoped structured output trajectory (real API)', () => {
           const exitCode = await runHeadless(
             {
               headless: true,
+              sessionId,
               message:
                 'Return the requested structured result. Set surface to headless, ' +
-                'ok to true, and provide a short summary.',
+                'ok to true, and provide a short summary.' +
+                OMIT_NOTE_INSTRUCTION,
               permissionMode: PermissionMode.YOLO,
               jsonSchema: JSON.stringify(outputSchema),
               outputFormat: 'text',
@@ -257,6 +299,12 @@ describeReal('turn-scoped structured output trajectory (real API)', () => {
           ok: true,
           summary: expect.any(String),
         });
+        expectNoNullValues(output);
+        // DeepSeek enforces strict tool schemas, so the optional note arrives as
+        // null. Headless resolves its workspace from Blade's cwd state rather
+        // than process.chdir, so locate the transcript by Session ID inside the
+        // isolated storage root.
+        expectAcceptedOnFirstSubmission(await SessionService.loadSession(sessionId));
         assertNoSecrets({ output: stdout, diagnostics: stderr }, [deepseek.apiKey]);
       } finally {
         await rm(test.root, { recursive: true, force: true });

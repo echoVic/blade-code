@@ -34,7 +34,7 @@ describe('StructuredOutputService', () => {
     });
   });
 
-  it('validates the submitted object on the host without cleaning it', () => {
+  it('validates the submitted object on the host without filling defaults', () => {
     const contract = createStructuredOutputContract(schema);
 
     expect(contract.validate({ summary: 'done', count: 2 })).toEqual({
@@ -46,6 +46,75 @@ describe('StructuredOutputService', () => {
     if (!invalid.success) {
       expect(invalid.message).toContain('must');
     }
+  });
+
+  it('accepts strict-sampling nulls for optional fields that reject null', () => {
+    const contract = createStructuredOutputContract({
+      type: 'object',
+      $defs: { severity: { type: 'string', enum: ['low', 'high'] } },
+      properties: {
+        summary: { type: 'string' },
+        risk: { type: 'string' },
+        severity: { $ref: '#/$defs/severity' },
+        'next step': { type: 'string' },
+        reviewer: { type: ['string', 'null'] },
+        findings: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string' },
+              line: { type: 'integer' },
+            },
+            required: ['path'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['summary'],
+      additionalProperties: false,
+    });
+
+    expect(
+      contract.validate({
+        summary: 'ok',
+        risk: null,
+        severity: null,
+        'next step': null,
+        reviewer: null,
+        findings: [{ path: 'src/a.ts', line: null }],
+      })
+    ).toEqual({
+      success: true,
+      output: {
+        summary: 'ok',
+        reviewer: null,
+        findings: [{ path: 'src/a.ts' }],
+      },
+    });
+  });
+
+  it('still rejects nulls for required fields and keeps invalid values invalid', () => {
+    const contract = createStructuredOutputContract({
+      type: 'object',
+      properties: {
+        summary: { type: 'string' },
+        risk: { type: 'string' },
+      },
+      required: ['summary'],
+      additionalProperties: false,
+    });
+
+    const requiredNull = contract.validate({ summary: null });
+    expect(requiredNull).toMatchObject({
+      success: false,
+      message: expect.stringContaining('/summary'),
+    });
+    const wrongType = contract.validate({ summary: 'ok', risk: 3 });
+    expect(wrongType).toMatchObject({
+      success: false,
+      message: expect.stringContaining('/risk'),
+    });
   });
 
   it('rejects non-object roots, external refs, invalid schemas, and oversized output', () => {

@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
 import type { JSONSchema7 } from 'json-schema';
+import {
+  type NullAcceptance,
+  normalizeStrictOptionalNulls,
+} from '../schema/strictOptionalNulls.js';
 import type { JsonObject, JsonValue } from '../store/types.js';
 import type { FunctionDeclaration } from '../tools/types/index.js';
 import type { Message } from './ChatServiceInterface.js';
@@ -13,6 +17,7 @@ export const MAX_STRUCTURED_OUTPUT_RETRIES = 2;
 const MAX_SCHEMA_DEPTH = 20;
 const MAX_SCHEMA_NODES = 1_000;
 const MAX_SCHEMA_PROPERTIES = 200;
+const OUTPUT_SCHEMA_KEY = 'blade:structured-output';
 
 export interface StructuredOutputContract {
   schema: JsonObject;
@@ -112,20 +117,54 @@ function validationMessage(errors: ErrorObject[] | null | undefined): string {
     .join('; ');
 }
 
-function compile(schema: JsonObject): ValidateFunction {
+function compile(schema: JsonObject): {
+  validator: ValidateFunction;
+  acceptsNull: NullAcceptance;
+} {
   const ajv = new Ajv({
     allErrors: true,
     strict: false,
     allowUnionTypes: true,
     validateFormats: false,
   });
+  let validator: ValidateFunction;
   try {
-    return ajv.compile(schema);
+    ajv.addSchema(schema, OUTPUT_SCHEMA_KEY);
+    const compiled = ajv.getSchema(OUTPUT_SCHEMA_KEY);
+    if (!compiled) throw new Error('schema did not compile');
+    validator = compiled;
   } catch (error) {
     throw new Error(
       `Invalid output schema: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+  const nullAcceptance = new Map<string, boolean>();
+  const acceptsNull: NullAcceptance = (_schema, path) => {
+    const pointer = jsonPointerFragment(path);
+    const cached = nullAcceptance.get(pointer);
+    if (cached !== undefined) return cached;
+    let accepts = true;
+    try {
+      // Resolve the property through the registered root so local $ref
+      // values keep their document context.
+      const propertyValidator = ajv.getSchema(`${OUTPUT_SCHEMA_KEY}#${pointer}`);
+      accepts = propertyValidator ? propertyValidator(null) === true : true;
+    } catch {
+      accepts = true;
+    }
+    nullAcceptance.set(pointer, accepts);
+    return accepts;
+  };
+  return { validator, acceptsNull };
+}
+
+function jsonPointerFragment(path: readonly string[]): string {
+  return path
+    .map(
+      (segment) =>
+        `/${encodeURIComponent(segment.replace(/~/g, '~0').replace(/\//g, '~1'))}`
+    )
+    .join('');
 }
 
 export function createStructuredOutputContract(
@@ -143,7 +182,7 @@ export function createStructuredOutputContract(
     throw new Error('Output schema root type must be "object"');
   }
   inspectSchema(schema);
-  const validator = compile(schema);
+  const { validator, acceptsNull } = compile(schema);
   const schemaDigest = createHash('sha256').update(serializedSchema).digest('hex');
 
   return {
@@ -163,7 +202,11 @@ export function createStructuredOutputContract(
     validate(value: unknown): StructuredOutputValidationResult {
       let output: JsonObject;
       try {
-        output = cloneJsonObject(value, 'Structured output');
+        output = normalizeStrictOptionalNulls(
+          cloneJsonObject(value, 'Structured output'),
+          schema,
+          acceptsNull
+        );
       } catch (error) {
         return {
           success: false,

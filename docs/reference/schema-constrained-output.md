@@ -97,12 +97,20 @@ ACP 使用扩展 metadata：
 2. schema 最大 64 KiB、20 层、1000 个节点、200 个 properties；
 3. 只允许 `#`、`#/$defs/...` 和 `#/definitions/...` self-contained `$ref`；
 4. 最终 object 最大 128 KiB；
-5. schema 和 object 均由 AJV 在宿主侧校验，不执行默认值填充或字段清理；
+5. schema 和 object 均由 AJV 在宿主侧校验，不执行默认值填充或字段清理（唯一例外是下文的
+   strict sampling 可选字段 `null` 归一化）；
 6. schema SHA-256 digest 随 canonical metadata 和协议输出返回。
 
 Blade 把 schema 直接作为 `StructuredOutput` 的 parameter schema，并设置 pi-ai
 `constrainedSampling: { type: "json_schema", strict: "prefer" }`。支持 strict tool
 sampling 的 provider 在采样阶段约束；其他 provider 使用同一工具协议并由宿主最终裁决。
+
+strict sampling 会把每个可选 property 改写为“必填但可为 null”，因此强制 strict schema
+的 provider（例如 DeepSeek 与 OpenAI）会对省略的可选字段返回 `null`。宿主在 AJV 校验前
+只撤销这一改写：当某个 property 不在原 schema 的 `required` 中、且该 property 自身的
+schema 不接受 `null` 时，删除它的 `null` 值；显式可为 null 的 property、必填字段以及其他
+非法值保持原样，仍由 AJV 裁决。该归一化按 `properties` 与单一 schema 的 `items` 递归，
+`$ref` 通过注册的根 schema 解析，因此 strict provider 省略可选字段不会消耗纠正重试次数。
 
 ## Retry 与完成语义
 
