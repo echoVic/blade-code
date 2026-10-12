@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.16] - 2026-10-12
+
+### 变更
+- 在真实 Provider 上实测 strict（约束解码）tool sampling 后，内置工具继续使用由宿主校验的非 strict 采样。DeepSeek 与 Claude 并不强制 strict schema；GPT-5.5 虽然强制，但会把非法值改写成错误的值（把相对路径改成虚构的绝对路径、把超出上限的 Bash timeout 600000 改成 600），而不是返回可纠正的错误。在 coding benchmark 上，strict 让 DeepSeek 的 token 增加 5–6%、成本增加 11–13%，质量没有提升；一次 GPT 运行还产生了 5 个空参数的 `Edit` 调用。内置工具的请求内容保持不变，只有 `StructuredOutput` 保留 `strict: "prefer"`。
+
+### 重构
+- 移除未被使用的工具选项 `strict`。7 个内置工具将其设为 `true`，但它从未进入任何 Provider 请求。
+
+### 测试
+- 断言没有内置工具请求约束采样。
+
+### 文档
+- 在决策文档中记录实测数据与重新评估条件，并在工具参考中说明参数校验与采样方式。
+
 ## [0.11.15] - 2026-10-12
 
 ### 新功能

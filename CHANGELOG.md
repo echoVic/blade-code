@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.16] - 2026-10-12
+
+### Changed
+- Keep builtin tools on host-validated, non-strict tool sampling after measuring strict (constrained-decoding) sampling against real Providers. DeepSeek and Claude did not enforce the strict schema, and GPT-5.5 enforced it by rewriting invalid values (a relative path into a fabricated absolute path, an over-limit Bash timeout of 600000 into 600) instead of returning a correctable error. On the coding benchmark, strict raised DeepSeek tokens by 5–6% and cost by 11–13% with no quality gain, and one GPT run produced five empty `Edit` calls. Builtin requests are unchanged on the wire; only `StructuredOutput` keeps `strict: "prefer"`.
+
+### Refactored
+- Remove the unused `strict` tool option. Seven builtin tools set it to `true`, but it never reached a Provider request.
+
+### Tests
+- Assert that no builtin tool requests constrained sampling.
+
+### Documentation
+- Record the measurements and revisit criteria in a decision document, and describe argument validation and sampling in the tool reference.
+
 ## [0.11.15] - 2026-10-12
 
 ### Added
