@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.13] - 2026-10-12
+
+### Fixed
+- Accept `null` for optional structured-output fields that strict tool sampling forces providers such as DeepSeek and OpenAI to emit, instead of rejecting the first valid submission and consuming corrective retries. Required fields, explicitly nullable fields, and other invalid values are still validated against the original schema.
+
+### Tests
+- Cover the strict-sampling round trip against pi-ai's strict schema conversion, local `$ref` and special-character property names, and assert in the real-API trajectory that the first structured-output submission is accepted.
+
 ## [0.11.12] - 2026-10-09
 
 ### Fixed

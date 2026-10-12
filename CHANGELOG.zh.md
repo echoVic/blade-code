@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.13] - 2026-10-12
+
+### 修复
+- strict tool sampling 会让 DeepSeek、OpenAI 等 provider 为结构化输出的可选字段返回 `null`；宿主现在接受这类 `null`，不再拒绝首次有效提交并消耗纠正重试次数。必填字段、显式可为 null 的字段以及其他非法值仍按原 schema 校验。
+
+### 测试
+- 覆盖与 pi-ai strict schema 转换的往返、本地 `$ref` 与特殊字符属性名，并在真实 API 轨迹中断言首次结构化输出提交即被接受。
+
 ## [0.11.12] - 2026-10-09
 
 ### 修复
