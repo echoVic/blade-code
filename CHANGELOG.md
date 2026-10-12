@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.14] - 2026-10-12
+
+### Fixed
+- Remove the `statusline-setup` builtin subagent inherited from Claude Code. Blade has no status line setting for it to configure, so it no longer appears in the Task tool's agent list or consumes prompt context.
+
+### Documentation
+- List the three general-purpose builtin subagents and link the host-driven `review`, `verification`, and `goal-verification` subagents to their reference pages.
+
 ## [0.11.13] - 2026-10-12
 
 ### Fixed

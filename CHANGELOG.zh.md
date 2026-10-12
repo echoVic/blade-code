@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.14] - 2026-10-12
+
+### 修复
+- 移除从 Claude Code 继承的 `statusline-setup` 内置子代理。Blade 没有可供它配置的状态栏设置，因此它不再出现在 Task 工具的代理列表中，也不再占用 prompt 上下文。
+
+### 文档
+- 列出 3 个通用内置子代理，并为宿主驱动的 `review`、`verification` 和 `goal-verification` 子代理补充参考文档链接。
+
 ## [0.11.13] - 2026-10-12
 
 ### 修复
