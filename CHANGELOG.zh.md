@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.15] - 2026-10-12
+
+### 新功能
+- `bun run benchmark:repo` 现在会记录主模型请求数、成本、Prompt Cache 命中率和工具调用质量（失败调用，以及参数不是合法 JSON、工具不存在、参数不符合 schema 的畸形调用），并记录每次运行的 Blade 版本、Provider 和 Provider 模型名。
+- 每次 benchmark 运行都会与同一模型的上一次运行对比；上次通过的任务本次失败、畸形工具调用率上升，或平均 token、模型请求数、成本增长超过 50% 时以非零状态退出。耗时、缓存命中、失败调用和读取数只报告不阻断，早期历史条目缺少的指标会被跳过。
+- Headless JSONL 的 `tool_result` 事件为执行前被拒绝的工具调用提供可选的 `error_code`（`invalid_tool_arguments`、`unknown_tool`、`invalid_tool_parameters`）。
+
+### 文档
+- 在测试与准出指南中说明 benchmark 指标、回归判定规则和畸形调用错误码。
+
 ## [0.11.14] - 2026-10-12
 
 ### 修复

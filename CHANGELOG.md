@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.15] - 2026-10-12
+
+### Added
+- `bun run benchmark:repo` now records primary model requests, cost, prompt cache hit rate, and tool-call quality (failed calls plus malformed calls with invalid JSON arguments, unknown tools, or schema-invalid parameters), together with the Blade version, Provider, and Provider model of each run.
+- Each benchmark run is compared with the latest earlier run of the same model and exits non-zero when a previously passing task fails, the malformed tool-call rate rises, or average tokens, model requests, or cost grow by more than 50%. Latency, cache hits, failed calls, and reads are reported without gating, and metrics missing from older history entries are skipped.
+- Headless JSONL `tool_result` events include an optional `error_code` (`invalid_tool_arguments`, `unknown_tool`, `invalid_tool_parameters`) for tool calls rejected before execution.
+
+### Documentation
+- Describe the benchmark metrics, regression policy, and malformed-call error codes in the testing and qualification guide.
+
 ## [0.11.14] - 2026-10-12
 
 ### Fixed
