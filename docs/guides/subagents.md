@@ -4,14 +4,18 @@ Subagent 是可定制的子代理，用于执行特定类型的任务。Task 工
 
 ## 内置 Subagents
 
-Blade 内置 4 个核心子代理：
+Blade 内置 3 个通用子代理：
 
 | 名称 | 用途 | 可用工具 |
 |------|------|----------|
 | `general-purpose` | 通用任务代理，用于复杂问题研究和多步骤任务 | 所有工具 |
 | `Explore` | 代码探索专家，快速搜索和分析代码库 | FindFiles, Glob, Grep, Read, WebFetch, WebSearch |
 | `Plan` | 软件架构师，设计实现计划和架构方案 | 所有工具 |
-| `statusline-setup` | 状态栏配置专家 | Read, Edit |
+
+另有 3 个由宿主流程驱动的只读专用子代理：`review`（[原生代码审查](../reference/native-code-review.md)）、
+`verification`（[独立完成验证](../reference/fresh-independent-verification.md)）和
+`goal-verification`（[Goal 完成验证](../reference/goal-completion-verification.md)）。
+其中 `verification` 与 `goal-verification` 为保留名称，不能被用户、项目或插件定义覆盖。
 
 ### general-purpose
 

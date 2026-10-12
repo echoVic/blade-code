@@ -163,6 +163,21 @@ Invalid agent.
     expect(registry.getSubagentsBySource().flag).toHaveLength(1);
   });
 
+  it('ships only Blade-owned builtin agents', () => {
+    registry.loadBuiltinAgents();
+
+    expect(registry.getAllNames()).toEqual([
+      'general-purpose',
+      'Explore',
+      'Plan',
+      'review',
+      'verification',
+      'goal-verification',
+    ]);
+    expect(registry.getSubagent('statusline-setup')).toBeUndefined();
+    expect(registry.getDescriptionsForPrompt()).not.toMatch(/Claude Code|status line/i);
+  });
+
   it.each(['verification', 'goal-verification'])(
     'reserves the built-in %s agent from every override source',
     (reservedName) => {
