@@ -32,9 +32,6 @@ export function createTool<T extends TSchema>(
     parallelism:
       config.parallelism ?? (config.isConcurrencySafe ? 'shared' : 'exclusive'),
 
-    // strict 字段（OpenAI Structured Outputs） 优先使用 config 中的显式设置，否则默认 false
-    strict: config.strict ?? false,
-
     description: config.description,
     version: config.version || '1.0.0',
     category: config.category,

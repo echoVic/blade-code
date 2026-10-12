@@ -26,6 +26,16 @@ Runtime 会直接提供当前注册表中已获准工具的完整 schema，不�
 示例、引用文本及结构化输出契约不走这条纠正路径。权限、技能工具限制和审批仍由
 原有执行管线决定。内部纠正消息会持久化供模型续接，但不显示为用户输入。
 
+## 参数校验与采样
+
+内置工具向 Provider 发送完整 JSON Schema，但不请求 strict（约束解码）tool sampling，
+参数统一由宿主按原 schema 校验。被拒绝的调用返回可纠正的错误和稳定的 `error.code`
+（`invalid_tool_arguments`、`unknown_tool`、`invalid_tool_parameters`），模型可据此
+重试。实测中多数 Provider 并不强制 strict schema；强制的 Provider 会把越界值改写成
+看似合法的值（例如把相对路径改成虚构的绝对路径、把超出上限的 timeout 改成 `600`），
+而不是返回错误，因此不默认开启。只有结构化输出保留工具 `StructuredOutput` 使用
+`strict: "prefer"`。
+
 ## 文件操作
 
 ACP text filesystem owner 统一按以下 capability matrix 判定：

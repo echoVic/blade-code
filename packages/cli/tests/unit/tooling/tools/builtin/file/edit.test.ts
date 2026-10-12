@@ -661,10 +661,6 @@ describe('EditTool', () => {
       expect(editTool.kind).toBe('write');
     });
 
-    it('应该启用 strict 模式', () => {
-      expect(editTool.strict).toBe(true);
-    });
-
     it('应该不支持并发', () => {
       expect(editTool.isConcurrencySafe).toBe(false);
       expect(editTool.isRetrySafe).toBe(false);

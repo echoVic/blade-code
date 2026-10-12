@@ -62,7 +62,6 @@ export const applyPatchTool = createTool({
   name: 'ApplyPatch',
   displayName: 'Apply Patch',
   kind: ToolKind.Write,
-  strict: true,
   isConcurrencySafe: true,
   parallelism: 'shared',
   schema: Type.Object({

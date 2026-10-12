@@ -441,8 +441,6 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   isRetrySafe?: boolean;
   /** 批内调度模式；shared 仍可由文件锁或 kind 配额进一步限流 */
   parallelism?: 'shared' | 'exclusive';
-  /** 是否启用 OpenAI Structured Outputs（可选，默认 false） */
-  strict?: boolean;
   /** TypeBox Schema 定义 */
   schema: TSchema;
   description: ToolDescription;
@@ -490,8 +488,6 @@ export interface Tool<TParams = unknown> {
   /** 瞬态异常后是否可安全重放 */
   readonly isRetrySafe?: boolean;
   readonly parallelism?: 'shared' | 'exclusive';
-  /** 是否启用 OpenAI Structured Outputs */
-  readonly strict: boolean;
   readonly description: ToolDescription;
   readonly version: string;
   readonly category?: string;

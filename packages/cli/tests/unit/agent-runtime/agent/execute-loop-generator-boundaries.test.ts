@@ -216,7 +216,6 @@ const readTool: Tool = {
   displayName: 'Read',
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true,
-  strict: false,
   description: {
     short: 'Read a file.',
   },

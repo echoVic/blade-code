@@ -21,7 +21,6 @@ function createMockTool(
     displayName: overrides.displayName ?? `Display ${name}`,
     kind: overrides.kind ?? ToolKind.ReadOnly,
     isConcurrencySafe: overrides.isConcurrencySafe ?? true,
-    strict: overrides.strict ?? false,
     description: overrides.description ?? { short: `${name} description` },
     version: overrides.version ?? '1.0.0',
     category: overrides.category ?? 'test-category',

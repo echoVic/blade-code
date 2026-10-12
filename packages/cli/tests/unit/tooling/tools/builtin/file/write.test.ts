@@ -539,10 +539,6 @@ describe('WriteTool', () => {
       expect(writeTool.kind).toBe('write');
     });
 
-    it('应该启用 strict 模式', () => {
-      expect(writeTool.strict).toBe(true);
-    });
-
     it('应该不支持并发', () => {
       expect(writeTool.isConcurrencySafe).toBe(false);
       expect(writeTool.isRetrySafe).toBe(false);

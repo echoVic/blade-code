@@ -44,7 +44,6 @@ export const writeTool = createTool({
   name: 'Write',
   displayName: 'File Write',
   kind: ToolKind.Write,
-  strict: true, // 启用 OpenAI Structured Outputs
   isConcurrencySafe: false, // 文件写入不支持并发
   parallelism: 'shared', // 不同路径并行；同路径由 FileLockManager 串行
   affectedPaths: (params) => [params.file_path],

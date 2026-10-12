@@ -23,7 +23,6 @@ export function createLspTool(manager: LspSessionManager) {
     name: 'LSP',
     displayName: 'Code Intelligence',
     kind: ToolKind.ReadOnly,
-    strict: true,
     isConcurrencySafe: true,
     isRetrySafe: true,
     parallelism: 'shared',

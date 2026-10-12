@@ -35,7 +35,6 @@ export function createWorktreeTools(options: WorktreeToolOptions) {
     displayName: 'Enter Worktree',
     kind: ToolKind.Execute,
     isConcurrencySafe: false,
-    strict: true,
     schema: Type.Object({
       name: Type.Optional(
         Type.String({
@@ -103,7 +102,6 @@ export function createWorktreeTools(options: WorktreeToolOptions) {
     displayName: 'Exit Worktree',
     kind: ToolKind.Execute,
     isConcurrencySafe: false,
-    strict: true,
     schema: Type.Object({
       action: StringEnum(['keep', 'remove'], {
         description:

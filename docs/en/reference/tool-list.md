@@ -16,6 +16,10 @@ Each loop invocation allows at most two corrections without extending an explici
 
 For an envelope naming a single explicitly requested available tool with no successful result in the current loop, the corrective round requests that native tool. Merely promising execution or exhausting the output budget fails explicitly. The constraint clears after handling its tool result or new user steering; multi-tool envelopes do not arbitrarily force one tool, and textual arguments are never executed directly.
 
+## Argument Validation and Sampling
+
+Builtin tools send their full JSON Schema to the Provider but do not request strict (constrained-decoding) tool sampling; the host validates arguments against the original schema. Rejected calls return a correctable error with a stable `error.code` (`invalid_tool_arguments`, `unknown_tool`, `invalid_tool_parameters`) so the model can retry. In measurements most Providers did not enforce strict schemas, and the Provider that did rewrote out-of-range values into plausible ones (for example, a relative path into a fabricated absolute path, or an over-limit timeout into `600`) instead of returning an error, so strict sampling is not enabled by default. Only the reserved `StructuredOutput` tool uses `strict: "prefer"`.
+
 ## File Operations
 
 ACP text-filesystem ownership follows one capability matrix:
