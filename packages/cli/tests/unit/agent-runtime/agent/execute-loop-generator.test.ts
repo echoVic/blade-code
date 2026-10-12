@@ -193,6 +193,7 @@ import type {
 import { markProviderReplayBoundary } from '../../../../src/services/pi/providerRetry.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 import { createTool } from '../../../../src/tools/core/createTool.js';
+import { TOOL_CALL_ERROR_CODES } from '../../../../src/tools/execution/ToolExecutionResults.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 import { TOOL_TURN_MAX_CALLS } from '../../../../src/tools/execution/ToolTurnAdmission.js';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
@@ -788,6 +789,56 @@ describe('executeLoopGenerator', () => {
         taskListId: 'agent-team-shared',
       })
     );
+  });
+
+  it('marks unparseable tool arguments with a stable malformed-call code', async () => {
+    const deps = createMockDeps();
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'tc-invalid-arguments',
+            type: 'function',
+            function: { name: 'Read', arguments: '{"path": package.json' },
+          },
+        ],
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'tool_calls',
+      })
+      .mockResolvedValueOnce({
+        content: 'Stopped.',
+        toolCalls: undefined,
+        usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
+        finishReason: 'stop',
+      });
+
+    const { events } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Read package.json.',
+        createMockContext(),
+        { stream: false },
+        undefined
+      )
+    );
+
+    expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+    expect(
+      events.find(
+        (event) =>
+          event.kind === 'tool_result' && event.toolCall.id === 'tc-invalid-arguments'
+      )
+    ).toMatchObject({
+      result: {
+        success: false,
+        error: {
+          type: ToolErrorType.VALIDATION_ERROR,
+          code: TOOL_CALL_ERROR_CODES.invalidArguments,
+        },
+      },
+    });
   });
 
   it('propagates the host turn ID to non-streaming tool execution', async () => {

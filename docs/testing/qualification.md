@@ -18,6 +18,25 @@ worktree。
 默认结果写入 `.blade/benchmarks/controlled-coding-v2-history.json`。该评测不是大型
 真实仓库基准，也不证明与其他 coding agent 的整体能力等价。
 
+每次运行还会记录：
+
+| 指标 | 含义 |
+|------|------|
+| 主模型请求数 | 上报 usage 的主循环请求；压缩与回顾等辅助请求不计入 |
+| 成本与缓存命中率 | 所有请求都有定价时才给出成本；Provider 未上报缓存时记为未上报 |
+| 工具调用质量 | 失败调用率，以及畸形调用率：参数不是合法 JSON（`invalid_tool_arguments`）、工具不存在（`unknown_tool`）、参数不符合 schema（`invalid_tool_parameters`） |
+
+历史条目同时记录 Blade 版本、Provider 和 Provider 模型名。存在同一模型的历史运行时，
+命令与上一次运行逐项对比；以下情况视为回归并以非零状态退出：
+
+- 上次通过的任务本次失败，或成功率下降；
+- 畸形工具调用率上升；
+- 平均 token、主模型请求数或成本较上次增加超过 50%。
+
+耗时、缓存命中率、失败调用率和读取文件数只报告不阻断：它们受网络、Provider 路由
+以及正常任务流程（例如修复前 `npm test` 失败）影响。早期历史条目缺少的指标会被跳过。
+Headless JSONL 的 `tool_result` 事件提供同一组 `error_code`，可用于自定义统计。
+
 ## 本地门禁
 
 在仓库根目录执行：

@@ -72,6 +72,7 @@ import {
   STRUCTURED_OUTPUT_TOOL_NAME,
 } from '../../services/StructuredOutputService.js';
 import type { JsonObject, JsonValue } from '../../store/types.js';
+import { TOOL_CALL_ERROR_CODES } from '../../tools/execution/ToolExecutionResults.js';
 import { ToolTurnAdmission } from '../../tools/execution/ToolTurnAdmission.js';
 import {
   getModelVisibleToolResultContent,
@@ -3950,6 +3951,7 @@ validates the object and may return a bounded corrective error.`;
                     llmContent: '',
                     error: {
                       type: ToolErrorType.VALIDATION_ERROR,
+                      code: TOOL_CALL_ERROR_CODES.invalidArguments,
                       message: `Invalid JSON object in tool arguments. Raw: ${toolCall.function.arguments.slice(0, 200)}`,
                     },
                     metadata: undefined,

@@ -6,7 +6,7 @@ import type {
   ToolResult,
 } from '../types/index.js';
 import { ToolErrorType, ToolKind } from '../types/index.js';
-import { createRejectedResult } from './ToolExecutionResults.js';
+import { createRejectedResult, TOOL_CALL_ERROR_CODES } from './ToolExecutionResults.js';
 
 export interface ValidatedToolCall {
   invocation: ToolInvocation<unknown>;
@@ -47,7 +47,10 @@ export function validateToolCall(
       `Parameter validation failed: ${
         error instanceof Error ? error.message : String(error)
       }`,
-      { errorType: ToolErrorType.VALIDATION_ERROR }
+      {
+        errorType: ToolErrorType.VALIDATION_ERROR,
+        errorCode: TOOL_CALL_ERROR_CODES.invalidParameters,
+      }
     );
   }
 }

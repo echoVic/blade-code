@@ -49,6 +49,7 @@ import {
   createCancellationResult,
   createInvalidAcpRemotePathResult,
   createRejectedResult,
+  TOOL_CALL_ERROR_CODES,
 } from './ToolExecutionResults.js';
 import { executeToolInvocation, formatToolResult } from './ToolInvocationRunner.js';
 import {
@@ -297,6 +298,7 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     if (!tool) {
       return createRejectedResult(`Tool "${toolName}" not found`, {
         errorType: ToolErrorType.VALIDATION_ERROR,
+        errorCode: TOOL_CALL_ERROR_CODES.unknownTool,
       });
     }
     const isBuiltin = this.registry.getBuiltinTools().includes(tool);

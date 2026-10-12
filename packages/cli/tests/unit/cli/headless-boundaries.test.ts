@@ -3,6 +3,8 @@ import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_USER_MESSAGE_TEXT_CHARS } from '../../../src/api/attachmentLimits.js';
 import { Bus } from '../../../src/server/bus.js';
+import { TOOL_CALL_ERROR_CODES } from '../../../src/tools/execution/ToolExecutionResults.js';
+import { ToolErrorType } from '../../../src/tools/types/index.js';
 import { comprehensiveLoopEvents } from '../../support/comprehensiveLoopEvents.js';
 
 const agentState = vi.hoisted(() => ({
@@ -778,6 +780,58 @@ describe('headless runner', () => {
     expect(stderrOutput).toContain('Read demo.ts');
     expect(stderrOutput).toContain('[task] [in_progress] Ship headless mode');
     expect(stderrOutput).toContain('[tokens] in=10 out=20 total=30 / 1000');
+  });
+
+  it('projects the stable tool error code into JSONL tool results', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const toolCall = {
+      id: 'tool-invalid',
+      type: 'function' as const,
+      function: { name: 'Read', arguments: JSON.stringify({ file_path: 42 }) },
+    };
+
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'tool_result',
+          toolCall,
+          result: {
+            success: false,
+            llmContent: 'Parameter validation failed: file_path: Expected string',
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              code: TOOL_CALL_ERROR_CODES.invalidParameters,
+              message: 'Parameter validation failed: file_path: Expected string',
+            },
+          },
+        },
+        { kind: 'stream_end' },
+      ])
+    );
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const { HeadlessJsonlEventSchema } = await import(
+      '../../../src/commands/headlessEvents.js'
+    );
+
+    const exitCode = await runHeadless(
+      { headless: true, message: 'inspect this repo', outputFormat: 'jsonl' },
+      { stdout, stderr }
+    );
+
+    expect(exitCode).toBe(0);
+    const toolResults = stdout.write.mock.calls
+      .map(([line]) => HeadlessJsonlEventSchema.parse(JSON.parse(String(line))))
+      .filter((event) => event.type === 'tool_result');
+    expect(toolResults).toEqual([
+      expect.objectContaining({
+        tool_name: 'Read',
+        success: false,
+        error_type: ToolErrorType.VALIDATION_ERROR,
+        error_code: TOOL_CALL_ERROR_CODES.invalidParameters,
+      }),
+    ]);
   });
 
   it('reuses resolved sessions and forwards tool filters to runtime-backed agents', async () => {

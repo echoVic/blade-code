@@ -13,10 +13,17 @@ import {
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  derivePromptCacheMetrics,
+  type PromptCacheUsage,
+} from '../api/promptCacheMetrics.js';
 import { ConfigManager } from '../config/ConfigManager.js';
+import { Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 import { getPiModelCatalog } from '../services/pi/PiModelCatalog.js';
 import { getModelApiKeyEnvironmentVariable } from '../services/pi/resolveModelConfig.js';
+import { TOOL_CALL_ERROR_CODES } from '../tools/execution/ToolExecutionResults.js';
 import { getCwd } from '../utils/cwd.js';
+import { getVersion } from '../utils/packageInfo.js';
 import {
   finalizeCommandAdmissionGate,
   releaseCommandAdmissionGate,
@@ -37,12 +44,25 @@ export interface BenchmarkVerification {
   checks: { scope: boolean; behavior: boolean; toolEvidence: boolean };
 }
 
+export interface BenchmarkToolCallMetrics {
+  total: number;
+  failed: number;
+  invalidArguments: number;
+  unknownTool: number;
+  invalidParameters: number;
+}
+
 export interface BenchmarkCaseMetrics {
   caseId: RealRepoBenchmarkCase['id'];
   label: string;
   durationMs: number;
   totalTokens: number;
+  /** Primary model requests that reported usage; compaction and recap are excluded. */
+  modelRequests: number;
+  promptCacheUsage: PromptCacheUsage;
+  costUsd?: number;
   readFilesCount: number;
+  toolCalls: BenchmarkToolCallMetrics;
   success: boolean;
   exitCode: number;
   verification: BenchmarkVerification;
@@ -52,21 +72,107 @@ export interface BenchmarkRunSummary {
   averageDurationMs: number;
   averageReadFilesCount: number;
   averageTotalTokens: number;
+  averageModelRequests: number;
+  averageCostUsd?: number;
+  promptCacheHitRate?: number;
   successRate: number;
+  toolCallCount: number;
+  failedToolCallRate: number;
+  malformedToolCallRate: number;
 }
 
 export interface BenchmarkHistoryEntry {
   timestamp: string;
   suite: 'controlled-coding-v2';
   model: string;
+  provider: string;
+  providerModel: string;
+  bladeVersion: string;
   summary: BenchmarkRunSummary;
   results: BenchmarkCaseMetrics[];
 }
 
+/** Runs are kept verbatim; earlier runs may lack later metrics and are parsed on use. */
 export interface BenchmarkHistory {
   version: 2;
-  runs: BenchmarkHistoryEntry[];
+  runs: Array<{ suite: 'controlled-coding-v2' }>;
 }
+
+/** Metrics added after the first v2 runs stay optional so those runs remain baselines. */
+const ComparableBenchmarkRunSchema = Runtime(
+  Type.Object({
+    timestamp: Type.String(),
+    model: Type.String(),
+    providerModel: Type.Optional(Type.String()),
+    bladeVersion: Type.Optional(Type.String()),
+    summary: Type.Object({
+      averageDurationMs: Type.Number(),
+      averageReadFilesCount: Type.Number(),
+      averageTotalTokens: Type.Number(),
+      successRate: Type.Number(),
+      averageModelRequests: Type.Optional(Type.Number()),
+      averageCostUsd: Type.Optional(Type.Number()),
+      promptCacheHitRate: Type.Optional(Type.Number()),
+      failedToolCallRate: Type.Optional(Type.Number()),
+      malformedToolCallRate: Type.Optional(Type.Number()),
+    }),
+    results: Type.Array(
+      Type.Object({
+        caseId: StringEnum(['analysis_only', 'narrow_fix', 'cross_module_fix']),
+        success: Type.Boolean(),
+      })
+    ),
+  })
+);
+
+/** The subset of a history run that regression comparison relies on. */
+export type ComparableBenchmarkRun = Static<typeof ComparableBenchmarkRunSchema>;
+
+export type BenchmarkComparedMetric = Exclude<
+  keyof BenchmarkRunSummary,
+  'toolCallCount'
+>;
+
+export interface BenchmarkMetricComparison {
+  metric: BenchmarkComparedMetric;
+  baseline: number;
+  current: number;
+  regressed: boolean;
+}
+
+export interface BenchmarkComparison {
+  baselineTimestamp: string;
+  baselineBladeVersion?: string;
+  baselineProviderModel?: string;
+  metrics: BenchmarkMetricComparison[];
+  regressedCases: RealRepoBenchmarkCase['id'][];
+  regressed: boolean;
+}
+
+/**
+ * Regression policy against the latest comparable run of the same model.
+ * Tolerances are relative to the baseline; efficiency metrics allow 50% so a
+ * single extra model turn is not reported as a regression. Metrics without a
+ * tolerance are reported only: network latency dominates duration, Provider
+ * routing decides cache hits, and failed tool calls include normal task flow
+ * such as `npm test` failing before the repair.
+ */
+const BENCHMARK_REGRESSION_POLICY: ReadonlyArray<{
+  metric: BenchmarkComparedMetric;
+  better: 'higher' | 'lower';
+  tolerance?: number;
+}> = [
+  { metric: 'successRate', better: 'higher', tolerance: 0 },
+  { metric: 'malformedToolCallRate', better: 'lower', tolerance: 0 },
+  { metric: 'averageTotalTokens', better: 'lower', tolerance: 0.5 },
+  { metric: 'averageModelRequests', better: 'lower', tolerance: 0.5 },
+  { metric: 'averageCostUsd', better: 'lower', tolerance: 0.5 },
+  { metric: 'promptCacheHitRate', better: 'higher' },
+  { metric: 'failedToolCallRate', better: 'lower' },
+  { metric: 'averageDurationMs', better: 'lower' },
+  { metric: 'averageReadFilesCount', better: 'lower' },
+];
+const REGRESSION_EPSILON = 1e-9;
 
 export const DEFAULT_REAL_REPO_BENCHMARK_CASES: readonly RealRepoBenchmarkCase[] = [
   {
@@ -410,6 +516,34 @@ function average(values: number[]): number {
     : 0;
 }
 
+function ratio(numerator: number, denominator: number): number {
+  return denominator > 0 ? numerator / denominator : 0;
+}
+
+function collectBenchmarkToolCallMetrics(
+  events: readonly HeadlessJsonlEvent[]
+): BenchmarkToolCallMetrics {
+  const metrics: BenchmarkToolCallMetrics = {
+    total: 0,
+    failed: 0,
+    invalidArguments: 0,
+    unknownTool: 0,
+    invalidParameters: 0,
+  };
+  for (const event of events) {
+    if (event.type !== 'tool_result') continue;
+    metrics.total++;
+    if (event.success === false) metrics.failed++;
+    if (event.error_code === TOOL_CALL_ERROR_CODES.invalidArguments)
+      metrics.invalidArguments++;
+    else if (event.error_code === TOOL_CALL_ERROR_CODES.unknownTool)
+      metrics.unknownTool++;
+    else if (event.error_code === TOOL_CALL_ERROR_CODES.invalidParameters)
+      metrics.invalidParameters++;
+  }
+  return metrics;
+}
+
 export function collectBenchmarkCaseMetrics(input: {
   benchmarkCase: RealRepoBenchmarkCase;
   durationMs: number;
@@ -418,10 +552,28 @@ export function collectBenchmarkCaseMetrics(input: {
   verification: BenchmarkVerification;
 }): BenchmarkCaseMetrics {
   const { benchmarkCase, durationMs, exitCode, events, verification } = input;
-  const totalTokens = events.reduce(
-    (total, event) => total + (event.type === 'token_usage' ? event.total_tokens : 0),
-    0
-  );
+  let totalTokens = 0;
+  let modelRequests = 0;
+  let usageEvents = 0;
+  let costUsd = 0;
+  let costKnown = true;
+  const promptCacheUsage: PromptCacheUsage = {
+    totalInputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  };
+  for (const event of events) {
+    if (event.type !== 'token_usage') continue;
+    usageEvents++;
+    totalTokens += event.total_tokens;
+    if (event.scope !== 'auxiliary') modelRequests++;
+    promptCacheUsage.totalInputTokens += event.input_tokens;
+    promptCacheUsage.cacheReadTokens += event.cache_read_tokens ?? 0;
+    promptCacheUsage.cacheWriteTokens += event.cache_write_tokens ?? 0;
+    // A partial sum would understate cost, so any unpriced request makes it unknown.
+    if (event.cost_usd === undefined) costKnown = false;
+    else costUsd += event.cost_usd;
+  }
   const readFiles = new Set(
     events
       .filter(
@@ -438,7 +590,11 @@ export function collectBenchmarkCaseMetrics(input: {
     label: benchmarkCase.label,
     durationMs,
     totalTokens,
+    modelRequests,
+    promptCacheUsage,
+    ...(usageEvents > 0 && costKnown ? { costUsd } : {}),
     readFilesCount: readFiles.size,
+    toolCalls: collectBenchmarkToolCallMetrics(events),
     success:
       exitCode === 0 &&
       !events.some((event) => event.type === 'error') &&
@@ -452,11 +608,108 @@ export function collectBenchmarkCaseMetrics(input: {
 export function summarizeBenchmarkRun(
   results: BenchmarkCaseMetrics[]
 ): BenchmarkRunSummary {
+  const toolCallCount = results.reduce(
+    (sum, result) => sum + result.toolCalls.total,
+    0
+  );
+  const failedToolCalls = results.reduce(
+    (sum, result) => sum + result.toolCalls.failed,
+    0
+  );
+  const malformedToolCalls = results.reduce(
+    (sum, result) =>
+      sum +
+      result.toolCalls.invalidArguments +
+      result.toolCalls.unknownTool +
+      result.toolCalls.invalidParameters,
+    0
+  );
+  const promptCache = derivePromptCacheMetrics(
+    results.reduce<PromptCacheUsage>(
+      (sum, result) => ({
+        totalInputTokens:
+          sum.totalInputTokens + result.promptCacheUsage.totalInputTokens,
+        cacheReadTokens: sum.cacheReadTokens + result.promptCacheUsage.cacheReadTokens,
+        cacheWriteTokens:
+          sum.cacheWriteTokens + result.promptCacheUsage.cacheWriteTokens,
+      }),
+      { totalInputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
+    )
+  );
+  const costs = results.flatMap((result) =>
+    result.costUsd === undefined ? [] : [result.costUsd]
+  );
   return {
     averageDurationMs: average(results.map((result) => result.durationMs)),
     averageReadFilesCount: average(results.map((result) => result.readFilesCount)),
     averageTotalTokens: average(results.map((result) => result.totalTokens)),
+    averageModelRequests: average(results.map((result) => result.modelRequests)),
+    ...(results.length > 0 && costs.length === results.length
+      ? { averageCostUsd: average(costs) }
+      : {}),
+    ...(promptCache.hitRate === undefined
+      ? {}
+      : { promptCacheHitRate: promptCache.hitRate }),
     successRate: average(results.map((result) => (result.success ? 1 : 0))),
+    toolCallCount,
+    failedToolCallRate: ratio(failedToolCalls, toolCallCount),
+    malformedToolCallRate: ratio(malformedToolCalls, toolCallCount),
+  };
+}
+
+/**
+ * Returns the latest earlier run of the same model. Metrics that an older run
+ * did not record are skipped by the comparison.
+ */
+export function findBenchmarkBaseline(
+  history: BenchmarkHistory,
+  model: string
+): ComparableBenchmarkRun | undefined {
+  for (let index = history.runs.length - 1; index >= 0; index--) {
+    const parsed = ComparableBenchmarkRunSchema.safeParse(history.runs[index]);
+    if (parsed.success && parsed.data.model === model) return parsed.data;
+  }
+  return undefined;
+}
+
+export function compareBenchmarkRuns(
+  baseline: ComparableBenchmarkRun,
+  current: {
+    summary: BenchmarkRunSummary;
+    results: ReadonlyArray<Pick<BenchmarkCaseMetrics, 'caseId' | 'success'>>;
+  }
+): BenchmarkComparison {
+  const metrics: BenchmarkMetricComparison[] = [];
+  for (const { metric, better, tolerance } of BENCHMARK_REGRESSION_POLICY) {
+    const baselineValue = baseline.summary[metric];
+    const currentValue = current.summary[metric];
+    if (baselineValue === undefined || currentValue === undefined) continue;
+    const allowance = tolerance === undefined ? 0 : Math.abs(baselineValue) * tolerance;
+    const regressed =
+      tolerance !== undefined &&
+      (better === 'higher'
+        ? currentValue < baselineValue - allowance - REGRESSION_EPSILON
+        : currentValue > baselineValue + allowance + REGRESSION_EPSILON);
+    metrics.push({ metric, baseline: baselineValue, current: currentValue, regressed });
+  }
+  const regressedCases = current.results
+    .filter(
+      (result) =>
+        !result.success &&
+        baseline.results.some(
+          (previous) => previous.caseId === result.caseId && previous.success
+        )
+    )
+    .map((result) => result.caseId);
+  return {
+    baselineTimestamp: baseline.timestamp,
+    ...(baseline.bladeVersion ? { baselineBladeVersion: baseline.bladeVersion } : {}),
+    ...(baseline.providerModel
+      ? { baselineProviderModel: baseline.providerModel }
+      : {}),
+    metrics,
+    regressedCases,
+    regressed: regressedCases.length > 0 || metrics.some((entry) => entry.regressed),
   };
 }
 
@@ -506,9 +759,10 @@ export async function runRealRepoBenchmark(
   historyPath: string;
   results: BenchmarkCaseMetrics[];
   summary: BenchmarkRunSummary;
+  comparison?: BenchmarkComparison;
 }> {
   const historyPath = options.historyPath ?? DEFAULT_BENCHMARK_HISTORY_PATH;
-  await readBenchmarkHistory(historyPath);
+  const history = await readBenchmarkHistory(historyPath);
   const cliEntry =
     options.cliEntry ?? path.resolve(import.meta.dirname, '../../dist/blade.js');
   await access(cliEntry);
@@ -658,17 +912,24 @@ export async function runRealRepoBenchmark(
     }
     if (controller.signal.aborted) throw new Error('Benchmark cancelled');
     const summary = summarizeBenchmarkRun(results);
-    await appendBenchmarkHistory(
-      {
-        timestamp: new Date().toISOString(),
-        suite: 'controlled-coding-v2',
-        model: selected.id,
-        summary,
-        results,
-      },
-      historyPath
-    );
-    return { historyPath, results, summary };
+    const entry: BenchmarkHistoryEntry = {
+      timestamp: new Date().toISOString(),
+      suite: 'controlled-coding-v2',
+      model: selected.id,
+      provider: selected.provider,
+      providerModel: selected.model,
+      bladeVersion: getVersion(),
+      summary,
+      results,
+    };
+    const baseline = findBenchmarkBaseline(history, selected.id);
+    await appendBenchmarkHistory(entry, historyPath);
+    return {
+      historyPath,
+      results,
+      summary,
+      ...(baseline ? { comparison: compareBenchmarkRuns(baseline, entry) } : {}),
+    };
   } finally {
     process.off('SIGINT', abort);
     process.off('SIGTERM', abort);

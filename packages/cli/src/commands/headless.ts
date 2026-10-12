@@ -673,6 +673,7 @@ function createEventWriter(
       result?: {
         success: boolean;
         errorType?: string;
+        errorCode?: string;
         errorMessage?: string;
         background?: HeadlessBackgroundHandoff;
       }
@@ -685,6 +686,7 @@ function createEventWriter(
           tool_kind: toolKind,
           success: result?.success,
           error_type: result?.errorType,
+          error_code: result?.errorCode,
           error_message: result?.errorMessage,
           background: result?.background,
         });
@@ -1993,6 +1995,7 @@ export async function runHeadless(
               {
                 success: event.result.success,
                 errorType: event.result.error?.type,
+                errorCode: event.result.error?.code,
                 errorMessage: event.result.error?.message,
                 background: projectBackgroundHandoff(event.result.metadata),
               }

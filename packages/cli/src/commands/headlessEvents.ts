@@ -110,6 +110,7 @@ const ToolResultEventSchema = event({
   tool_kind: Type.Optional(ToolKindSchema),
   success: Type.Optional(Type.Boolean()),
   error_type: Type.Optional(Type.String()),
+  error_code: Type.Optional(Type.String()),
   error_message: Type.Optional(Type.String()),
   background: Type.Optional(ToolBackgroundHandoffSchema),
 });

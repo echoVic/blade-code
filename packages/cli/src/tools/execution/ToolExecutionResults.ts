@@ -1,10 +1,18 @@
 import { ToolErrorType, type ToolResult } from '../types/index.js';
 
+/** Stable codes for model tool calls that never reached tool execution. */
+export const TOOL_CALL_ERROR_CODES = {
+  invalidArguments: 'invalid_tool_arguments',
+  unknownTool: 'unknown_tool',
+  invalidParameters: 'invalid_tool_parameters',
+} as const;
+
 interface RejectionOptions {
   shouldExitLoop?: boolean;
   llmContent?: string;
   summary?: string;
   errorType?: ToolErrorType;
+  errorCode?: string;
   abortedBeforeLaunch?: boolean;
 }
 
@@ -17,6 +25,7 @@ export function createRejectedResult(
     llmContent: options.llmContent ?? `Tool execution aborted: ${reason}`,
     error: {
       type: options.errorType ?? ToolErrorType.EXECUTION_ERROR,
+      ...(options.errorCode ? { code: options.errorCode } : {}),
       message: reason,
     },
     metadata: {

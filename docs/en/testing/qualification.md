@@ -22,6 +22,28 @@ Results default to `.blade/benchmarks/controlled-coding-v2-history.json`. This
 is not a large-repository benchmark and does not establish overall parity with
 other coding agents.
 
+Each run also records:
+
+| Metric | Meaning |
+|--------|---------|
+| Primary model requests | Main-loop requests that reported usage; auxiliary compaction and recap requests are excluded |
+| Cost and cache hit rate | Cost is reported only when every request is priced; cache use is unreported when the Provider does not report it |
+| Tool-call quality | The failed-call rate, and the malformed-call rate: arguments that are not valid JSON (`invalid_tool_arguments`), unknown tools (`unknown_tool`), and parameters that fail the schema (`invalid_tool_parameters`) |
+
+History entries also record the Blade version, Provider, and Provider model
+name. When the same model has an earlier run, the command compares each metric
+with the latest one and exits non-zero on a regression:
+
+- a task that passed last time now fails, or the success rate drops;
+- the malformed tool-call rate rises;
+- average tokens, primary model requests, or cost grow by more than 50%.
+
+Duration, cache hit rate, failed-call rate, and read-file count are reported
+without gating: network latency, Provider routing, and normal task flow (such as
+`npm test` failing before the repair) drive them. Metrics missing from older
+history entries are skipped. Headless JSONL `tool_result` events carry the same
+`error_code` values for custom analysis.
+
 ## Local Gate
 
 Run from the repository root:
