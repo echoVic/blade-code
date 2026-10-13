@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.18] - 2026-10-13
+
+### Fixed
+- Remove builtin Bash prefix allow rules that could approve appended writes, shell substitutions, or pipelines. Ordinary read-only queries now use the existing complete-command classifier; explicit user allow rules and YOLO keep their existing behavior.
+- Reject multiline and malformed commands from read-only classification, and require confirmation for executable sed expressions, `tree -o`, external Git diff/filter/pager options, and `ss -K`.
+
+### Tests
+- Reproduce automatic-approval bypasses with the real builtin Bash tool and PermissionResolver, verify ordinary reads and explicit authorization, and replace copied permission-mode logic with production-path tests.
+
+### Documentation
+- Correct bilingual rule examples and builtin configuration guidance to use actual tool signatures, describe complete-command approval, and clarify YOLO precedence.
+
 ## [0.11.17] - 2026-10-13
 
 ### Fixed
