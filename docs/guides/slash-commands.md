@@ -13,6 +13,7 @@ Slash 命令是 Blade 的快捷操作入口，输入 `/` 触发建议，`Tab` �
 | `/status` | - | 显示当前项目/配置状态 |
 | `/context` | - | 显示上下文使用情况 |
 | `/init` | - | 分析项目生成 BLADE.md |
+| `/init-verifiers` | - | 从项目配置生成验证 Skills |
 | `/model` | - | 模型管理 |
 | `/effort [level]` | - | 查看或切换当前 Session 的推理强度 |
 | `/speed [tier]` | `/fast [on\|off]` | 查看或切换当前 Session 的 Provider 服务等级 |
@@ -50,6 +51,22 @@ Slash 命令是 Blade 的快捷操作入口，输入 `/` 触发建议，`Tab` �
 
 - 如果 `BLADE.md` 不存在，会自动分析项目结构并生成
 - 如果已存在，会分析现有内容并提供改进建议
+
+### /init-verifiers
+
+```bash
+/init-verifiers
+```
+
+在当前 Agent 会话中分析项目实际脚本、配置和交互入口，生成
+`.blade/skills/verify-<scope>/SKILL.md`。按项目需要覆盖自动化检查、浏览器、
+HTTP 或 CLI/tmux，写明真实命令、工作目录、断言、证据和进程清理。
+已有同名技能会先读取再更新，不以未执行的检查声称通过。
+
+生成后通过 `/trust` 检查项目来源，并新建 Session 加载这些技能；仅刷新 `/skills`
+不会替换当前会话的资源快照。内置 `verification` 和 `goal-verification` 会读取快照中
+相关的项目 `verify-*` 技能，但仍受原有只读权限约束。需要浏览器、服务器启动或
+其他不支持的执行时，由主 Agent 提供证据，验证代理说明无法重跑的部分。
 
 ### /model
 

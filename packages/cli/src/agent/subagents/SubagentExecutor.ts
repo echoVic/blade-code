@@ -27,6 +27,7 @@ import {
   independentVerificationVerdictFromOutput,
 } from './builtinVerificationAgent.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
+import { projectVerificationSkillGuidance } from './verificationSkills.js';
 
 /** Subagent 执行器 职责： - 创建子 Agent 实例 - 配置工具白名单 - 执行任务并返回结果 - 将子代理对话流写入独立 JSONL 文件 */
 export class SubagentExecutor {
@@ -210,7 +211,12 @@ export class SubagentExecutor {
   }
 
   private getAppendSystemPrompt(): string | undefined {
-    const prompt = this.config.systemPrompt?.trim();
+    const prompt = [
+      this.config.systemPrompt?.trim(),
+      projectVerificationSkillGuidance(this.config.name, this.agentResources?.skills),
+    ]
+      .filter(Boolean)
+      .join('\n');
     return prompt || undefined;
   }
 }

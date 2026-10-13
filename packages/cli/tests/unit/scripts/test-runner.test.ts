@@ -273,6 +273,7 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       'tests/integration/real-api/structured-output-trajectory.test.ts',
       'tests/integration/real-api/task-list-team-trajectory.test.ts',
       'tests/integration/real-api/workspace-agent-resources-trajectory.test.ts',
+      'tests/integration/real-api/init-verifiers-trajectory.test.ts',
     ]);
   });
 
@@ -289,6 +290,7 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       'tests/integration/real-api/goal-mode-trajectory.test.ts',
       'tests/integration/real-api/browser-tool-trajectory.test.ts',
       'tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts',
+      'tests/integration/real-api/init-verifiers-trajectory.test.ts',
     ]);
     expect(testTypes.realApiQualification.env).toMatchObject({
       REAL_API_TEST: '1',

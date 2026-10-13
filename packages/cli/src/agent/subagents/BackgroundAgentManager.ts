@@ -62,6 +62,7 @@ import {
   subagentWorktreeLifecycle,
 } from './SubagentWorktreeLifecycle.js';
 import type { SubagentConfig, SubagentResult } from './types.js';
+import { projectVerificationSkillGuidance } from './verificationSkills.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -632,7 +633,12 @@ export class BackgroundAgentManager {
         worktree: lease.worktree,
       });
 
-      const appendSystemPrompt = config.systemPrompt?.trim();
+      const appendSystemPrompt = [
+        config.systemPrompt?.trim(),
+        projectVerificationSkillGuidance(config.name, agentResources?.skills),
+      ]
+        .filter(Boolean)
+        .join('\n');
       const modelId =
         config.model && config.model !== 'inherit' ? config.model : undefined;
       const effectivePermissionMode = config.permissionMode ?? permissionMode;

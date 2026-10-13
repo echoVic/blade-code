@@ -20,6 +20,7 @@ import goalCommand from './goal.js';
 import hooksCommand from './hooks.js';
 import ideCommand from './ide.js';
 import initCommand from './init.js';
+import initVerifiersCommand from './initVerifiers.js';
 import modelCommand from './model.js';
 import permissionsCommand from './permissions.js';
 import pluginsCommand from './plugins.js';
@@ -46,6 +47,7 @@ const slashCommands: SlashCommandRegistry = {
   ...builtinCommands,
   btw: btwCommand,
   init: initCommand,
+  'init-verifiers': initVerifiersCommand,
   theme: themeCommand,
   permissions: permissionsCommand,
   model: modelCommand,

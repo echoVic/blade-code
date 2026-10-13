@@ -101,7 +101,7 @@ Provider 测试。preflight 失败时不会产生 Provider 流量。
 
 ### 发布阻断矩阵
 
-`test:real-api:qualification` 由 `scripts/test-config.js` 中的固定白名单控制，共 9 个
+`test:real-api:qualification` 由 `scripts/test-config.js` 中的固定白名单控制，共 11 个
 测试文件：
 
 1. `agent-trajectory.test.ts`：生产 Agent 读取、修改和测试
@@ -113,6 +113,8 @@ Provider 测试。preflight 失败时不会产生 Provider 流量。
 7. `goal-mode-trajectory.test.ts`：Goal 创建、执行和完成
 8. `browser-tool-trajectory.test.ts`：Native Browser Tool
 9. `acp-remote-filesystem-trajectory.test.ts`：ACP remote filesystem
+10. `find-files-trajectory.test.ts`：文件发现
+11. `init-verifiers-trajectory.test.ts`：生成有效项目验证技能，新会话独立验证代理读取并执行
 
 发布矩阵设置 `REAL_API_TEST=1` 和 `REAL_API_RELEASE_MATRIX=1`，Vitest retry 固定为
 0，并强制使用 DeepSeek Flash/Pro。需要 Claude 或 GPT 的跨 Provider cell 在凭据
@@ -125,10 +127,10 @@ ToolExecutor 和 jsdom-only 覆盖都不能替代。
 ### 普通真实 API 集合
 
 `bun run test:real-api` 也使用显式 inventory，不再隐式扫描目录。当前 inventory 包含
-上述 9 个文件，以及：
+上述 11 个文件，以及：
 
-10. `goal-paused-usage-trajectory.test.ts`
-11. `workspace-agent-resources-trajectory.test.ts`
+12. `goal-paused-usage-trajectory.test.ts`
+13. `workspace-agent-resources-trajectory.test.ts`
 
 `goal-paused-usage` 的 40-cell 扩展矩阵只在
 `REAL_API_RELEASE_MATRIX=1` 时启用；`workspace-agent-resources` 总会运行内置

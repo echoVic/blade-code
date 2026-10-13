@@ -31,6 +31,7 @@ export const testTypes = {
       'tests/integration/real-api/structured-output-trajectory.test.ts',
       'tests/integration/real-api/task-list-team-trajectory.test.ts',
       'tests/integration/real-api/workspace-agent-resources-trajectory.test.ts',
+      'tests/integration/real-api/init-verifiers-trajectory.test.ts',
     ],
     env: {
       REAL_API_TEST: '1',
@@ -52,6 +53,7 @@ export const testTypes = {
       'tests/integration/real-api/goal-mode-trajectory.test.ts',
       'tests/integration/real-api/browser-tool-trajectory.test.ts',
       'tests/integration/real-api/acp-remote-filesystem-trajectory.test.ts',
+      'tests/integration/real-api/init-verifiers-trajectory.test.ts',
     ],
     env: {
       REAL_API_TEST: '1',

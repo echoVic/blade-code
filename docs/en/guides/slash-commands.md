@@ -13,6 +13,7 @@ Slash commands are Blade's shortcut entry point for quick actions. Type `/` to t
 | `/status` | - | Show the current project/config status |
 | `/context` | - | Show context usage |
 | `/init` | - | Analyze the project and generate BLADE.md |
+| `/init-verifiers` | - | Generate verification Skills from project configuration |
 | `/model` | - | Model management |
 | `/effort [level]` | - | View or switch the current Session's reasoning effort |
 | `/speed [tier]` | `/fast [on\|off]` | View or switch the current Session's Provider service tier |
@@ -50,6 +51,25 @@ Analyze the current project and generate or improve the `BLADE.md` config file:
 
 - If `BLADE.md` does not exist, the project structure is analyzed automatically and one is generated
 - If it already exists, the current content is analyzed and improvement suggestions are offered
+
+### /init-verifiers
+
+```bash
+/init-verifiers
+```
+
+The current Agent inspects actual scripts, configuration, and application entry
+points, then creates `.blade/skills/verify-<scope>/SKILL.md`. Relevant scopes can
+include automated checks, browser flows, HTTP, or CLI/tmux. Each skill records exact
+commands, working directories, assertions, evidence, and process cleanup. Existing
+matching skills are read before updating; unexecuted checks are never called passes.
+
+After generation, inspect project sources with `/trust` and create a new Session
+to load the skills. Refreshing `/skills` alone does not replace an active Session's
+resource snapshot. Builtin `verification` and `goal-verification` read relevant
+project `verify-*` skills from that snapshot while retaining their read-only
+permissions. The primary Agent supplies evidence for browser interaction, server
+startup, or unsupported execution; the verifier identifies checks it cannot rerun.
 
 ### /model
 

@@ -48,6 +48,11 @@ Verifier PASS 后发生任何 Edit、Write、ApplyPatch、NotebookEdit 或潜在
 - 后台执行、自定义 env、越界 cwd、`--fix`、snapshot update、管道、命令替换和文件
   重定向全部 fail closed；尾部 `2>&1` 仅合并 stderr/stdout，不写文件，因此允许。
 
+使用 `/init-verifiers` 可生成项目 `verify-*` Skills。验证子代理只接收受信 Session
+快照中的项目验证技能路径（最多 16 项，按名称排序），通过 Read 加载相关正文；
+不会自行扫描未信任来源。技能不能扩展权限；不支持的浏览器、HTTP、tmux 或启动
+操作必须明确报告未重跑，并说明所需的主 Agent 证据。
+
 ## 持久化与跨端投影
 
 每次 mutation 和 verifier verdict 都写入 durable tool metadata。Session 恢复按事件

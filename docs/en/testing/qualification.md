@@ -111,7 +111,7 @@ then paid Provider tests. A preflight failure cannot produce Provider traffic.
 ### Release-Blocking Matrix
 
 `test:real-api:qualification` is controlled by a fixed allowlist in
-`scripts/test-config.js`. It contains nine test files:
+`scripts/test-config.js`. It contains eleven test files:
 
 1. `agent-trajectory.test.ts`: production Agent read, edit, and test
 2. `structured-output-trajectory.test.ts`: structured output
@@ -122,6 +122,8 @@ then paid Provider tests. A preflight failure cannot produce Provider traffic.
 7. `goal-mode-trajectory.test.ts`: Goal creation, execution, and completion
 8. `browser-tool-trajectory.test.ts`: native Browser Tool
 9. `acp-remote-filesystem-trajectory.test.ts`: ACP remote filesystem
+10. `find-files-trajectory.test.ts`: file discovery
+11. `init-verifiers-trajectory.test.ts`: valid project skill generation and execution by a fresh independent verifier
 
 The release matrix sets `REAL_API_TEST=1` and
 `REAL_API_RELEASE_MATRIX=1`, fixes Vitest retry at zero, and requires DeepSeek
@@ -136,10 +138,10 @@ coverage are not substitutes.
 ### General Real API Inventory
 
 `bun run test:real-api` also uses an explicit inventory rather than scanning
-the directory. The current inventory contains the nine files above plus:
+the directory. The current inventory contains the eleven files above plus:
 
-10. `goal-paused-usage-trajectory.test.ts`
-11. `workspace-agent-resources-trajectory.test.ts`
+12. `goal-paused-usage-trajectory.test.ts`
+13. `workspace-agent-resources-trajectory.test.ts`
 
 The 40-cell `goal-paused-usage` extension is enabled only with
 `REAL_API_RELEASE_MATRIX=1`. `workspace-agent-resources` always runs its

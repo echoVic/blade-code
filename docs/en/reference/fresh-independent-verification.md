@@ -35,6 +35,12 @@ Any Edit, Write, ApplyPatch, NotebookEdit, or potentially writing Bash that occu
 - Local verifier Bash runs in a workspace read-only sandbox: the source directory is not writable, the network allowlist is empty, user home and Blade storage are not readable, the process inherits only minimal environment such as PATH/locale/CI, and does not inherit provider keys or Session env;
 - Background execution, custom env, out-of-bounds cwd, `--fix`, snapshot updates, pipes, command substitution, and file redirection all fail closed; trailing `2>&1` only merges stderr/stdout without writing files, so it is permitted.
 
+Use `/init-verifiers` to create project `verify-*` Skills. Verification subagents
+receive only project verification paths from the trusted Session snapshot (at most
+16, sorted by name), then Read the relevant bodies. They do not scan untrusted
+sources. Skills do not extend permissions. Unsupported browser, HTTP, tmux, or
+startup checks must be reported as not rerun, with required primary-Agent evidence.
+
 ## Persistence and Cross-Platform Projection
 
 Each mutation and verifier verdict is written to durable tool metadata. Session recovery reconstructs mutation revisions in event order; when new writes exist after an old PASS, re-verification is still required.
