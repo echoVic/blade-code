@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.11.22] - 2026-10-13
+
+### Added
+- Load project root `.mcp.json` behind Workspace Trust, using wrapped `mcpServers` definitions, existing environment interpolation, and per-workspace configuration resolution. Infer omitted transports from `command` or `url`; Blade config and settings override matching root servers.
+- Validate root server fields and lifecycle options, enforce a 1 MiB file limit, and ignore malformed sources with a bounded warning. Include root MCP definitions and inferred transports in the trust review.
+
+### Fixed
+- Use consistent MCP source merging during bootstrap and cross-workspace resolution so settings do not discard differently named config or root servers.
+
+### Tests
+- Cover trust blocking, transport inference, malformed fields, interpolation, source collisions, workspace isolation, and a real stdio connection.
+
+### Documentation
+- Document root configuration and trust requirements in both languages.
+
 ## [0.11.21] - 2026-10-13
 
 ### Added
