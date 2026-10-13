@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.19] - 2026-10-13
+
+### Added
+- Extend `blade doctor` with advisory checks for configured models, Workspace Trust, oversized project instructions and static-context budgets, Auto Memory index truncation, ripgrep availability, and known ineffective or shadowed permission rules.
+- Check MCP servers with owned clients, one connection attempt, at most four concurrent probes, and a 10-second connection deadline. Report tool counts and declaration bytes, warn above 25 KiB, and disconnect after each probe without calling tools or printing configuration secrets.
+
+### Tests
+- Verify diagnostics against real project files, trusted instruction budgets and MCP stdio transport, including cleanup of a server that never initializes.
+
+### Documentation
+- Describe diagnostic scope, MCP limits, and advisory-only exit-code behavior in both CLI references.
+
 ## [0.11.18] - 2026-10-13
 
 ### Fixed
