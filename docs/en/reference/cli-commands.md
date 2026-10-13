@@ -191,13 +191,27 @@ BLADE_SERVER_PASSWORD=secret blade serve --port 3000
 
 ### blade doctor
 
-Environment self-check, checks configuration loading, Node version, directory permissions, etc.
+Checks configuration loading, Node version, directory read/write access, and required dependencies.
 
 ```bash
 blade doctor
 ```
 
-Return code: 0 for success, 1 for failure.
+Advisory checks also cover configured models, Workspace Trust, project instruction
+file and static-context budgets, an Auto Memory index over 200 lines, ripgrep,
+and ineffective or shadowed permission rules. Rule diagnostics recognize known
+signature problems and tool-wide shadowing, rather than proving arbitrary glob
+reachability.
+
+MCP health checks connect once per configured server with at most four concurrent
+checks and a 10-second connection deadline, then disconnect. They report tool
+counts and declaration bytes, recommending ToolSearch when declarations exceed
+25 KiB. They do not call MCP tools or print server environment values or headers.
+Project MCP sources still require Workspace Trust. Use `/doctor` separately to
+check model API connectivity.
+
+Return code: 0 when the four required checks pass, 1 when one fails. Advisory
+warnings do not change the exit code.
 
 ### blade update
 

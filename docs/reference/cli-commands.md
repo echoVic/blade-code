@@ -204,13 +204,22 @@ BLADE_SERVER_PASSWORD=secret blade serve --port 3000
 
 ### blade doctor
 
-环境自检，检查配置加载、Node 版本、目录权限等。
+环境自检，检查配置加载、Node 版本、目录读写权限和必需依赖。
 
 ```bash
 blade doctor
 ```
 
-返回码：成功返回 0，失败返回 1。
+还会给出提醒：模型是否配置、Workspace Trust、项目指令文件和静态上下文预算、
+Auto Memory 索引超过 200 行、ripgrep 可用性，以及无法匹配或被高优先级规则遮蔽的
+权限规则。规则检查只识别已知格式问题和工具级遮蔽，不证明任意 glob 规则的可达性。
+
+MCP 健康检查对每个已配置服务器进行一次连接，最多同时检查 4 个服务器，
+连接限时 10 秒并在结束后断开；报告工具数和声明字节数，超过 25 KiB 时提醒
+使用 ToolSearch 按需激活。它不调用 MCP 工具，也不输出服务器环境变量或请求头。
+项目 MCP 来源仍受 Workspace Trust 控制。`/doctor` 可另行检查模型 API 连通性。
+
+返回码：上述四项必需检查通过返回 0，失败返回 1；新增提醒不会改变退出码。
 
 ### blade update
 

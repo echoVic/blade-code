@@ -3,7 +3,9 @@
 import type { CommandModule } from 'yargs';
 import type { DoctorOptions } from '../cli/types.js';
 import { ConfigManager } from '../config/index.js';
+import type { BladeConfig } from '../config/types.js';
 import { getCwd } from '../utils/cwd.js';
+import { collectDoctorDiagnostics } from './doctor/diagnostics.js';
 
 const MIN_NODE_VERSION = [22, 19, 0] as const;
 
@@ -57,11 +59,12 @@ export const doctorCommands: CommandModule<{}, DoctorOptions> = {
     console.log('Running Blade health check...\n');
 
     let issues = 0;
+    let config: BladeConfig | undefined;
 
     // 检查配置
     try {
       const configManager = ConfigManager.getInstance();
-      await configManager.initialize();
+      config = await configManager.initialize();
       console.log('[OK] Configuration: OK');
     } catch (error) {
       console.log('[FAIL] Configuration: FAILED');
@@ -103,10 +106,24 @@ export const doctorCommands: CommandModule<{}, DoctorOptions> = {
       issues++;
     }
 
+    let warnings = 0;
+    if (config) {
+      console.log('\nProject and runtime diagnostics:');
+      for (const diagnostic of await collectDoctorDiagnostics(config, getCwd())) {
+        if (diagnostic.level === 'warn') warnings++;
+        console.log(
+          `[${diagnostic.level === 'warn' ? 'WARN' : 'OK'}] ${diagnostic.name}: ${diagnostic.message}`
+        );
+      }
+    }
+
     // 总结
     console.log('\nHealth Check Summary:');
     if (issues === 0) {
       console.log('All checks passed! Blade is ready to use.');
+      if (warnings > 0) {
+        console.log(`${warnings} advisory warning(s); review the hints above.`);
+      }
     } else {
       console.log(
         `Warning: Found ${issues} issue(s). Please resolve them for optimal performance.`
