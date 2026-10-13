@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.11.17] - 2026-10-13
+
+### Fixed
+- Match `*` and `?` in permission rule tool names and accept hyphenated MCP names. Rules such as `Web*`, `mcp__github__*`, and `mcp__my-server__query(*)` now take effect, while tool-name wildcards retain their parameter constraints.
+
+### Tests
+- Cover wildcard deny rules against an allow-all rule, non-matching servers, and exact domain constraints.
+
+### Documentation
+- Document tool-name wildcards and hyphenated MCP permission rules in both languages.
+
 ## [0.11.16] - 2026-10-12
 
 ### Changed
