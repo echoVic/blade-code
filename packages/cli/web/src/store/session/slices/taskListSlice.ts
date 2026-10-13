@@ -1370,7 +1370,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
       let created: Session | undefined;
       let started = false;
       try {
-        created = await sessionService.createSession(projectPath, 'Code Review');
+        created = await sessionService.createSession(
+          projectPath,
+          input.mode === 'security' ? 'Security Review' : 'Code Review'
+        );
         const ref = sessionRefFromSession(created);
         if (isHistorySurfaceActive(get().historySurfaceSelection)) {
           await sessionService.deleteSession(ref).catch(() => undefined);
@@ -1379,6 +1382,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         }
         await sessionService.startCodeReview(ref, {
           kind: input.kind,
+          ...(input.mode ? { mode: input.mode } : {}),
           ...(input.ref ? { ref: input.ref } : {}),
           ...(input.instructions ? { instructions: input.instructions } : {}),
           ...(input.modelId ? { modelId: input.modelId } : {}),
@@ -1388,7 +1392,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
           ...created,
           taskStatus: 'running',
           taskStatusReason: t('taskHome.review.running'),
-          taskPromptSummary: `/review ${input.kind}${input.ref ? ` ${input.ref}` : ''}`,
+          taskPromptSummary: `/${input.mode === 'security' ? 'security-review' : 'review'} ${input.kind}${input.ref ? ` ${input.ref}` : ''}`,
         };
         set((state) => ({
           sessions: upsertSessionByRef(state.sessions, running),

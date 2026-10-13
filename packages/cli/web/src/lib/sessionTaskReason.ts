@@ -5,7 +5,9 @@ import { taskFailureMessageKey } from './taskFailure';
 type TaskReasonTranslator = (key: TranslationKey) => string;
 
 function isCodeReviewSession(session: Session): boolean {
-  return session.taskPromptSummary?.trimStart().startsWith('/review') === true;
+  return /^\/(?:review|security-review)(?:\s|$)/.test(
+    session.taskPromptSummary?.trimStart() ?? ''
+  );
 }
 
 export function sessionTaskReason(

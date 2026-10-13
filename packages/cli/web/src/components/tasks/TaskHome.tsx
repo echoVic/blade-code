@@ -30,6 +30,7 @@ import { BladeMark } from '@/components/layout/BladeMark';
 import { ProjectBindingDialog } from '@/components/layout/ProjectBindingDialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { type TranslationKey, useT } from '@/i18n';
+import { parseNativeReviewCommand } from '@/lib/nativeReviewCommand';
 import { sessionsForProject } from '@/lib/projectIdentity';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/AppStore';
@@ -215,26 +216,17 @@ export function TaskHome() {
     }) => {
       if (rejectHistorySurfaceAction(useSessionStore.getState())) return;
       const trimmed = payload.content.trim();
-      if (trimmed === '/review' || trimmed.startsWith('/review ')) {
+      const review = parseNativeReviewCommand(trimmed);
+      if (review) {
         if (payload.attachments.length > 0) {
           throw new Error(t('taskHome.review.attachmentsUnsupported'));
         }
         if (payload.outputSchema) {
           throw new Error(t('taskHome.review.outputSchemaUnsupported'));
         }
-        const parts = trimmed.split(/\s+/);
-        const kind = parts[1] || 'uncommitted';
-        if (
-          (kind !== 'uncommitted' && kind !== 'base' && kind !== 'commit') ||
-          (kind === 'uncommitted' && parts.length !== 2 && parts.length !== 1) ||
-          ((kind === 'base' || kind === 'commit') && parts.length !== 3)
-        ) {
-          throw new Error(t('taskHome.review.usage'));
-        }
         await startCodeReview({
           projectPath: targetProjectPath,
-          kind,
-          ...(parts[2] ? { ref: parts[2] } : {}),
+          ...review,
           modelId: payload.modelId ?? currentModelId ?? undefined,
         });
         return;
@@ -248,7 +240,10 @@ export function TaskHome() {
         return;
       }
       await dispatchTask({
-        prompt: payload.content,
+        prompt:
+          trimmed === '/init-verifiers'
+            ? (await import('@api/projectVerificationPrompt')).INIT_VERIFIERS_PROMPT
+            : payload.content,
         projectPath: targetProjectPath,
         isolation,
         permissionMode: currentMode,

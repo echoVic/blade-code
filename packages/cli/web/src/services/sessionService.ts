@@ -201,6 +201,7 @@ export interface TaskUpdateInput {
 export interface CodeReviewDispatchInput {
   projectPath?: string;
   kind: 'uncommitted' | 'base' | 'commit';
+  mode?: 'general' | 'security';
   ref?: string;
   instructions?: string;
   modelId?: string;
@@ -466,6 +467,7 @@ export const sessionService = {
     ref: SessionRef,
     input: {
       kind: 'uncommitted' | 'base' | 'commit';
+      mode?: 'general' | 'security';
       ref?: string;
       instructions?: string;
       modelId?: string;

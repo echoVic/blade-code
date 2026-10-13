@@ -45,4 +45,14 @@ describe('sessionTaskReason', () => {
       )
     ).toBe('代码评审失败');
   });
+
+  it('recognizes security reviews after durable recovery', () => {
+    setLocale('zh');
+    expect(
+      sessionTaskReason(
+        reviewSession({ taskPromptSummary: '/security-review uncommitted' }),
+        t
+      )
+    ).toBe('只读代码评审正在进行');
+  });
 });
