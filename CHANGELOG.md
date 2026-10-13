@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.23] - 2026-10-13
+
+### Added
+- Add `/security-review [uncommitted | base <ref> | commit <sha>]` using the native independent read-only reviewer. The service injects a security-only policy requiring exploitable flaws introduced by the target change, with attack-path, prerequisites, impact, and changed-line evidence.
+- Support security mode on the existing review HTTP endpoint and persist the review mode, Security Review title, and command across Session recovery.
+
+### Tests
+- Verify native command routing, exact target parsing, persistent mode and report rendering. Qualify a real-model review that detects a changed authorization bypass without modifying the workspace, and include it in the fixed real-API inventories.
+
+### Documentation
+- Document security review scope, evidence requirements, and existing read-only boundaries in both languages.
+
 ## [0.11.22] - 2026-10-13
 
 ### Added
