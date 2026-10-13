@@ -577,6 +577,7 @@
   "chat.turnActivity.turnBounded": "回合 {turn}/{maxTurns}",
   "chat.memoryConsolidation.saved": "已保存 {count} 条项目记忆",
   "chat.review.title": "代码评审",
+  "chat.review.securityTitle": "安全审查",
   "chat.review.target": "目标",
   "chat.review.target.uncommitted": "未提交改动",
   "chat.review.target.base": "相对 {ref} 的改动",

@@ -8,6 +8,7 @@
 
 ### Fixed
 - Route `/security-review` from Web Task Home to the native review API, retain security mode in optimistic task state, and expand `/init-verifiers` to the shared project generation instructions.
+- Retain the persisted security mode when rendering Web report cards, including the localized Security Review heading.
 
 ### Tests
 - Verify native command routing, exact target parsing, persistent mode and report rendering. Qualify a real-model review that detects a changed authorization bypass without modifying the workspace, and include it in the fixed real-API inventories.

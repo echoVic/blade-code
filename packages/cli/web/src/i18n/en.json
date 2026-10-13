@@ -577,6 +577,7 @@
   "chat.turnActivity.turnBounded": "turn {turn}/{maxTurns}",
   "chat.memoryConsolidation.saved": "Saved {count} project memories",
   "chat.review.title": "Code Review",
+  "chat.review.securityTitle": "Security Review",
   "chat.review.target": "Target",
   "chat.review.target.uncommitted": "Uncommitted changes",
   "chat.review.target.base": "Changes against {ref}",

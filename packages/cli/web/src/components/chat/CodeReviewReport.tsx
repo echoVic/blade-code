@@ -17,6 +17,7 @@ interface ReviewFinding {
 
 export interface CodeReviewReportData {
   status: ReviewStatus;
+  mode?: 'general' | 'security';
   target: {
     kind: 'uncommitted' | 'base' | 'commit';
     label: string;
@@ -112,6 +113,7 @@ export function parseCodeReviewReport(
   if (findings.some((finding) => finding === undefined)) return undefined;
   return {
     status: report.status as ReviewStatus,
+    ...(report.mode === 'security' ? { mode: 'security' } : {}),
     target: {
       kind: target.kind,
       label: target.label,
@@ -150,7 +152,11 @@ export function CodeReviewReport({ report }: { report: CodeReviewReportData }) {
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-surface-2))]/60 px-4 py-3">
         <div>
           <h3 className="text-[13px] font-semibold text-[hsl(var(--deck-ink))]">
-            {t('chat.review.title')}
+            {t(
+              report.mode === 'security'
+                ? 'chat.review.securityTitle'
+                : 'chat.review.title'
+            )}
           </h3>
           <p className="mt-0.5 font-mono text-[10.5px] text-[hsl(var(--deck-ink-faint))]">
             {t('chat.review.target')}: {targetLabel}
