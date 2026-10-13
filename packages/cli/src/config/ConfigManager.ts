@@ -26,6 +26,7 @@ import { normalizeMcpCallLifecycle } from '../mcp/McpCallLifecycle.js';
 import { normalizeMcpLoggingPolicy } from '../mcp/McpLogging.js';
 import { normalizeMcpSamplingPolicy } from '../mcp/McpSampling.js';
 import { normalizeMcpTaskPolicy } from '../mcp/McpTasks.js';
+import { loadProjectMcpConfig } from '../mcp/projectMcpConfig.js';
 import { WorkspaceTrustService } from '../security/WorkspaceTrustService.js';
 import { resolveModelAlias } from '../services/modelAlias.js';
 import {
@@ -189,6 +190,10 @@ export class ConfigManager {
           ...(baseConfig.enabledPlugins || {}),
           ...(settingsConfig.enabledPlugins || {}),
         },
+        mcpServers: await this.loadMcpServerLayers(
+          workspaceTrust.projectPath,
+          projectTrusted
+        ),
       };
       if (additionalSettings) {
         mergedConfig = this.mergeSettings(mergedConfig, additionalSettings);
@@ -520,8 +525,13 @@ export class ConfigManager {
     }
 
     const trust = await WorkspaceTrustService.getInstance().getStatus(workspaceRoot);
-    const projectTrusted = trust.state === 'trusted';
-    const projectRoot = trust.projectPath;
+    return this.loadMcpServerLayers(trust.projectPath, trust.state === 'trusted');
+  }
+
+  private async loadMcpServerLayers(
+    projectRoot: string,
+    projectTrusted: boolean
+  ): Promise<Record<string, McpServerConfig>> {
     let servers: Record<string, McpServerConfig> = {};
     const mergeFile = async (filePath: string) => {
       const layer = await this.loadJsonFile(filePath);
@@ -534,6 +544,7 @@ export class ConfigManager {
     await mergeFile(path.join(os.homedir(), '.blade', 'settings.json'));
 
     if (projectTrusted) {
+      servers = { ...servers, ...(await this.loadRootMcpServers(projectRoot)) };
       await mergeFile(path.join(projectRoot, '.blade', 'config.json'));
       await mergeFile(path.join(projectRoot, '.blade', 'settings.json'));
       await mergeFile(path.join(projectRoot, '.blade', 'settings.local.json'));
@@ -549,6 +560,17 @@ export class ConfigManager {
     const resolved = { mcpServers: servers } as BladeConfig;
     this.resolveEnvInterpolation(resolved);
     return resolved.mcpServers;
+  }
+
+  private async loadRootMcpServers(
+    projectRoot: string
+  ): Promise<Record<string, McpServerConfig>> {
+    try {
+      return await loadProjectMcpConfig(projectRoot);
+    } catch {
+      console.warn('[ConfigManager] Ignoring invalid project .mcp.json');
+      return {};
+    }
   }
 
   async loadWorkspaceLspServers(

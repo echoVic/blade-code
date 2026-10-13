@@ -5,6 +5,7 @@ Workspace Trust 是项目级安全边界。仓库可以携带模型 endpoint、M
 
 ## 默认阻断的项目来源
 
+- 根目录 `.mcp.json`
 - `.blade/config.json`
 - `.blade/settings.json`
 - `.blade/settings.local.json`

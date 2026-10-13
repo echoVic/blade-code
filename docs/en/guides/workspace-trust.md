@@ -5,6 +5,7 @@ environment variables, plugins, and model-invocable instruction resources; Blade
 
 ## Project Sources Blocked by Default
 
+- Root `.mcp.json`
 - `.blade/config.json`
 - `.blade/settings.json`
 - `.blade/settings.local.json`

@@ -6,6 +6,7 @@ import { Mutex } from 'async-mutex';
 import { LRUCache } from 'lru-cache';
 import writeFileAtomic from 'write-file-atomic';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
+import { redactSecrets } from './secrets.js';
 import {
   invalidateWorkspaceIdentityCache,
   resolveWorkspaceIdentity,
@@ -108,12 +109,19 @@ function summarizeMcpServers(value: unknown): WorkspaceTrustEffect[] {
     .slice(0, MAX_REVIEW_ENTRIES)
     .map(([name, raw]) => {
       const config = isRecord(raw) ? raw : {};
-      const type = typeof config.type === 'string' ? config.type : 'unknown';
       const command = typeof config.command === 'string' ? config.command : undefined;
+      const type =
+        typeof config.type === 'string'
+          ? config.type
+          : command
+            ? 'stdio'
+            : typeof config.url === 'string'
+              ? 'http'
+              : 'unknown';
       const args = stringArray(config.args);
       const target =
         type === 'stdio'
-          ? bounded([command, ...args].filter(Boolean).join(' '))
+          ? bounded(redactSecrets([command, ...args].filter(Boolean).join(' ')))
           : safeUrlTarget(config.url);
       return {
         kind: 'mcp' as const,
@@ -407,6 +415,7 @@ export class WorkspaceTrustService {
     const packageScripts = await this.reviewPackageScripts(projectPath);
     if (packageScripts) sources.push(packageScripts);
     for (const [relativePath, kind] of [
+      ['.mcp.json', 'config'],
       ['.blade/config.json', 'config'],
       ['.blade/settings.json', 'settings'],
       ['.blade/settings.local.json', 'settings'],

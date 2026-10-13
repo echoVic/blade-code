@@ -8,17 +8,33 @@ Blade 按 Session 解析和连接 MCP。进程级 Store 只是服务器启动项
 每个 `SessionRuntime` 使用 source project path 独立解析：
 
 1. 用户 `~/.blade/config.json` 和 `~/.blade/settings.json`
-2. 目标项目已通过 Workspace Trust 的 `.blade/config.json`
-3. 目标项目已通过 Workspace Trust 的 shared/local settings
-4. 用户级和目标项目已信任的 plugin MCP definitions
-5. ACP session 提供的 MCP servers
-6. CLI `--mcp-config`
+2. 目标项目已通过 Workspace Trust 的根目录 `.mcp.json`
+3. 目标项目已通过 Workspace Trust 的 `.blade/config.json`
+4. 目标项目已通过 Workspace Trust 的 shared/local settings
+5. 用户级和目标项目已信任的 plugin MCP definitions
+6. ACP session 提供的 MCP servers
+7. CLI `--mcp-config`
 
 同名服务器由靠后的来源覆盖。`--strict-mcp-config` 会忽略 workspace、plugin 和
 ACP 来源，只使用 CLI 显式配置。
 
 未信任项目的 MCP definitions 不进入解析结果。服务器从 project A 启动时，
 project B 的 Session 不会继承 A 的 MCP；B 的配置也不会写回全局 Store。
+
+根目录 `.mcp.json` 使用 `{"mcpServers": {...}}`，只加载服务器定义，不应用其他
+Blade 设置。省略 `type` 时，带 `command` 的服务器推断为 `stdio`，带 `url` 的
+服务器推断为 `http`；SSE 须显式指定。支持现有环境变量插值与相对 `cwd`。
+文件上限为 1 MiB，格式非法时忽略该来源并提醒。同名服务器由 `.blade` 配置覆盖，
+不同名称按层合并。
+
+```json
+{
+  "mcpServers": {
+    "local": { "command": "node", "args": ["scripts/mcp-server.mjs"] },
+    "remote": { "url": "https://mcp.example.com/rpc" }
+  }
+}
+```
 
 ## 连接生命周期
 

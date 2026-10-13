@@ -7,15 +7,32 @@ Blade resolves and connects MCP on a per-Session basis. The process-level Store 
 Each `SessionRuntime` resolves independently using the source project path:
 
 1. User `~/.blade/config.json` and `~/.blade/settings.json`
-2. Target project's Workspace Trust-passed `.blade/config.json`
-3. Target project's Workspace Trust-passed shared/local settings
-4. User-level and target project trusted plugin MCP definitions
-5. MCP servers provided by the ACP session
-6. CLI `--mcp-config`
+2. Target project's trusted root `.mcp.json`
+3. Target project's Workspace Trust-passed `.blade/config.json`
+4. Target project's Workspace Trust-passed shared/local settings
+5. User-level and target project trusted plugin MCP definitions
+6. MCP servers provided by the ACP session
+7. CLI `--mcp-config`
 
 Same-named servers are overridden by later sources. `--strict-mcp-config` ignores workspace, plugin, and ACP sources and uses only CLI-explicit configuration.
 
 MCP definitions from untrusted projects do not enter resolution results. When a server starts from project A, Sessions for project B do not inherit A's MCP; B's configuration is also not written back to the global Store.
+
+Root `.mcp.json` uses `{"mcpServers": {...}}` and loads only server definitions,
+not other Blade settings. If `type` is omitted, `command` implies `stdio` and
+`url` implies `http`; specify SSE explicitly. Existing environment interpolation
+and relative `cwd` are supported. The file is limited to 1 MiB. Invalid sources
+are ignored with a warning. Blade configuration overrides matching names, while
+different server names merge across layers.
+
+```json
+{
+  "mcpServers": {
+    "local": { "command": "node", "args": ["scripts/mcp-server.mjs"] },
+    "remote": { "url": "https://mcp.example.com/rpc" }
+  }
+}
+```
 
 ## Connection Lifecycle
 
