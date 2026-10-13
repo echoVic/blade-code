@@ -64,6 +64,11 @@ Tool(param1:value1, param2:value2)
 
 支持 `*` 和 `**` 通配符（使用 picomatch）：
 
+工具名也支持 `*`（任意字符）和 `?`（单个字符）。例如 `Web*` 匹配
+`WebFetch` 与 `WebSearch`，`mcp__github__*` 匹配 GitHub 服务器的所有 MCP
+工具，`mcp__my-server__query(*)` 匹配含连字符的服务器工具。工具名通配符
+不会取消括号内的参数约束，例如 `Web*(domain:example.com)` 只匹配该域名。
+
 ```json
 {
   "permissions": {

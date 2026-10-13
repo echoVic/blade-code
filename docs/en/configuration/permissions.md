@@ -64,6 +64,12 @@ Tool(param1:value1, param2:value2)
 
 Supports `*` and `**` wildcards (using picomatch):
 
+Tool names also support `*` (any characters) and `?` (one character). For example,
+`Web*` matches `WebFetch` and `WebSearch`, `mcp__github__*` matches every MCP tool
+from the GitHub server, and `mcp__my-server__query(*)` matches a tool whose server
+name contains a hyphen. Tool-name wildcards retain parameter constraints:
+`Web*(domain:example.com)` only matches that domain.
+
 ```json
 {
   "permissions": {

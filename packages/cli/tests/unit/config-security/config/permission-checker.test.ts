@@ -110,6 +110,65 @@ describe('PermissionChecker', () => {
   });
 
   describe('通配符匹配', () => {
+    it.each([
+      ['Web*', 'WebFetch'],
+      ['Web*', 'WebSearch'],
+      ['Rea?', 'Read'],
+      ['mcp__github__*', 'mcp__github__create_issue'],
+      ['mcp__my-server__*', 'mcp__my-server__query'],
+      ['mcp__my-server__query(*)', 'mcp__my-server__query'],
+    ])('应该拒绝匹配 %s 的工具 %s', (rule, toolName) => {
+      const denied = new PermissionChecker({
+        allow: ['*'],
+        ask: [],
+        deny: [rule],
+      });
+
+      expect(denied.check({ toolName, params: {} })).toMatchObject({
+        result: PermissionResult.DENY,
+        matchedRule: rule,
+      });
+    });
+
+    it.each(['Read', 'mcp__gitlab__create_issue', 'mcp__githubx__query'])(
+      '工具名通配符不应匹配其他工具 %s',
+      (toolName) => {
+        const denied = new PermissionChecker({
+          allow: [],
+          ask: [],
+          deny: ['Web*', 'mcp__github__*'],
+        });
+
+        expect(denied.check({ toolName, params: {} }).result).toBe(
+          PermissionResult.ASK
+        );
+      }
+    );
+
+    it('工具名通配符应保留精确参数约束', () => {
+      const denied = new PermissionChecker({
+        allow: [],
+        ask: [],
+        deny: ['Web*(domain:example.com)'],
+      });
+      const tool = createMockTool((params) => `domain:${String(params.domain)}`);
+
+      expect(
+        denied.check({
+          toolName: 'WebFetch',
+          params: { domain: 'example.com' },
+          tool,
+        }).result
+      ).toBe(PermissionResult.DENY);
+      expect(
+        denied.check({
+          toolName: 'WebFetch',
+          params: { domain: 'other.com' },
+          tool,
+        }).result
+      ).toBe(PermissionResult.ASK);
+    });
+
     it('应该匹配单星号通配符', () => {
       config.deny = ['Read(file_path:*.env)'];
       checker = new PermissionChecker(config);

@@ -233,7 +233,7 @@ export class PermissionChecker {
 
     // 3. 提取工具名和参数
     const sigToolName = this.extractToolName(signature);
-    const ruleToolName = this.extractToolName(rule);
+    const ruleToolName = this.extractToolName(rule, true);
 
     // 工具名不匹配则直接返回
     if (!sigToolName || !ruleToolName) {
@@ -241,7 +241,8 @@ export class PermissionChecker {
     }
 
     // 工具名使用 glob 匹配
-    if (ruleToolName.includes('*')) {
+    const wildcardToolName = /[*?]/.test(ruleToolName);
+    if (wildcardToolName) {
       if (!picomatch.isMatch(sigToolName, ruleToolName, { dot: true, bash: true })) {
         return null;
       }
@@ -251,14 +252,18 @@ export class PermissionChecker {
 
     // 3. 前缀匹配 (仅工具名)
     if (rule === ruleToolName) {
-      return 'prefix';
+      return wildcardToolName ? 'wildcard' : 'prefix';
     }
 
     // 4. 参数匹配 (包含通配符或 glob)
-    if (rule.includes('*')) {
+    if (/[*?]/.test(rule)) {
       // 提取参数部分进行匹配
       const sigParams = this.extractParams(signature);
       const ruleParams = this.extractParams(rule);
+
+      if (wildcardToolName && sigParams === ruleParams) {
+        return 'wildcard';
+      }
 
       // 如果规则参数为 * 或 (**),匹配任何参数
       if (ruleParams === '*' || ruleParams === '**') {
@@ -505,8 +510,10 @@ export class PermissionChecker {
   }
 
   /** 从签名中提取工具名称 */
-  private extractToolName(signature: string): string | null {
-    const match = signature.match(/^([A-Za-z0-9_]+)(\(|$)/);
+  private extractToolName(signature: string, allowWildcards = false): string | null {
+    const match = signature.match(
+      allowWildcards ? /^([A-Za-z0-9_*?-]+)(\(|$)/ : /^([A-Za-z0-9_-]+)(\(|$)/
+    );
     return match ? match[1] : null;
   }
 
