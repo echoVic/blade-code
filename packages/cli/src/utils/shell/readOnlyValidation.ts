@@ -12,6 +12,7 @@ import {
   stripSafeWrappers,
   tokenize,
 } from './commandNormalizer.js';
+import { isReadOnlySedArguments } from './sedReadOnly.js';
 
 // ============================================================
 // Type definitions
@@ -120,7 +121,7 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
         --cached --staged --no-index --word-diff --compact-summary
         --ignore-space-change -b --ignore-all-space -w
         --ignore-blank-lines --no-prefix -R --relative --histogram
-        --patience --minimal --check --ext-diff --binary --abbrev
+        --patience --minimal --check --binary --abbrev
         --full-index --break-rewrites -B --find-renames -M
         --find-copies -C
       `,
@@ -355,7 +356,7 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
     safeFlags: flags({
       none: `
         -t -s -e -p --batch --batch-check --batch-all-objects
-        --textconv --filters --allow-unknown-type --buffer
+        --allow-unknown-type --buffer
         --unordered
       `,
     }),
@@ -382,10 +383,10 @@ export const GIT_READ_ONLY_COMMANDS: Record<string, CommandConfig> = {
         --basic-regexp -P --perl-regexp -F --fixed-strings --cached
         --untracked --no-index --recurse-submodules -h --no-filename
         -H --full-name -z --break --heading -p --show-function -W
-        --function-context --open-files-in-pager
+        --function-context
       `,
       number: '--max-depth --threads -A -B -C --context',
-      string: '-e -f -O',
+      string: '-e -f',
     }),
   },
 
@@ -793,7 +794,7 @@ const COMMAND_ALLOWLIST: Record<string, CommandConfig> = {
         --dirsfirst -C --color -n --prune -J -X
       `,
       number: '-L',
-      string: '-I -P --charset -o -H',
+      string: '-I -P --charset -H',
     }),
   },
   date: {
@@ -830,16 +831,7 @@ const COMMAND_ALLOWLIST: Record<string, CommandConfig> = {
       none: '-n --quiet --silent -E -r --regexp-extended',
       string: '-e --expression',
     }),
-    isDangerousCallback: (_raw, args) => {
-      // sed is read-only only with -n (suppress output) and p/d/s patterns
-      // Reject -i (in-place edit) and w command
-      for (const arg of args) {
-        if (arg === '-i' || arg.startsWith('-i') || arg === '--in-place') return true;
-        // Check for w (write) command in sed expressions
-        if (/\bw\s/.test(arg) || /\bw$/.test(arg)) return true;
-      }
-      return false;
-    },
+    isDangerousCallback: (_raw, args) => !isReadOnlySedArguments(args),
   },
   base64: {
     safeFlags: flags({
@@ -878,7 +870,7 @@ const COMMAND_ALLOWLIST: Record<string, CommandConfig> = {
   },
   ss: {
     safeFlags: flags({
-      none: '-t -u -l -n -p -a -r -s -e -o -i -4 -6 -m -Z -K',
+      none: '-t -u -l -n -p -a -r -s -e -o -i -4 -6 -m -Z',
     }),
   },
   fd: {
@@ -1329,6 +1321,9 @@ export function isCommandReadOnly(command: string): boolean {
   // Strip trailing 2>&1 (safe stderr redirect)
   const cleaned = command.replace(/\s+2>&1\s*$/, '').trim();
   if (!cleaned) return false;
+  if (/[\r\n]/.test(cleaned)) return false;
+  const parts = splitCompoundCommand(cleaned);
+  if (!parts || parts.length !== 1) return false;
 
   // Reject unquoted variable expansion
   if (containsUnquotedExpansion(cleaned)) return false;
@@ -1379,6 +1374,7 @@ export function isCommandReadOnly(command: string): boolean {
 export function isReadOnlyBashCommand(command: string): boolean {
   const trimmed = command.trim();
   if (!trimmed) return false;
+  if (/[\r\n]/.test(trimmed)) return false;
 
   // Step 1: Try to split compound commands
   const parts = splitCompoundCommand(trimmed);

@@ -94,6 +94,37 @@ describe('isReadOnlyBashCommand', () => {
       'ls -la && git push',
     ]);
   });
+
+  it.each([
+    'ls\ntouch changed.txt',
+    'echo hello\nrm changed.txt',
+    'find . -name a\nrm changed.txt',
+    'docker ps\nrm changed.txt',
+    'ls\r\nrm changed.txt',
+    "echo 'unterminated",
+    'ls \\',
+    'tree -o changed.txt',
+    "sed -n 'e touch changed.txt' input.txt",
+    "sed '1e touch changed.txt' input.txt",
+    "sed 's/.*/touch changed.txt/e' input.txt",
+    'git diff --ext-diff',
+    'git cat-file --textconv HEAD:input.txt',
+    'git grep --open-files-in-pager pattern',
+    'ss -K',
+  ])('does not classify executable or malformed input as read-only: %s', (command) => {
+    expect(isReadOnlyBashCommand(command)).toBe(false);
+  });
+
+  it.each([
+    "sed -n '1,20p' input.txt",
+    "sed -n 's/error/warning/p' input.txt",
+    "sed -n '/execute/p' input.txt",
+    'tree -L 2',
+    'echo "a;b"',
+    "echo 'a && b'",
+  ])('retains safe literal expressions: %s', (command) => {
+    expect(isReadOnlyBashCommand(command)).toBe(true);
+  });
 });
 
 describe('validateFlags', () => {

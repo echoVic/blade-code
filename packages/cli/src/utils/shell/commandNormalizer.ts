@@ -286,6 +286,7 @@ export function splitCompoundCommand(command: string): string[] | null {
     parts.push(current.trim());
   }
 
+  if (inSingleQuote || inDoubleQuote || escaped) return null;
   return parts.length > 0 ? parts : null;
 }
 

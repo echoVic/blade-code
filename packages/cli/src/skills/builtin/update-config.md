@@ -225,14 +225,14 @@ ConfigTool({
   key: "permissions",
   value: {
     "allow": [
-      "Bash(git:*)",
-      "Bash(npm:*)",
-      "Bash(bun:*)",
+      "Bash(git *)",
+      "Bash(npm *)",
+      "Bash(bun *)",
       "Read(**/*.ts)"
     ],
     "ask": [],
     "deny": [
-      "Bash(rm -rf:*)"
+      "Bash(rm -rf *)"
     ]
   },
   scope: "project"
@@ -248,7 +248,7 @@ ConfigTool({
 | "从现在起 lint 每个文件" | PostToolUse hook（Edit/Write 后运行 lint）|
 | "每次提交前运行测试" | PreToolUse hook（Bash git commit 前运行 test）|
 | "当编辑 TS 文件时检查类型" | PostToolUse hook（Edit 后运行 tsc）|
-| "允许所有 git 命令" | permissions.allow 添加 `Bash(git:*)` |
+| "允许所有 git 命令" | permissions.allow 添加 `Bash(git *)` |
 | "设置调试模式" | debug = true |
 | "改成中文" | language = "zh-CN" |
 | "提高温度" | temperature 调整 |

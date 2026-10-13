@@ -26,6 +26,11 @@ Blade 提供四种权限模式。TUI 中的 `Shift+Tab` 在 `default`、`autoEdi
 
 适用场景：日常使用，平衡安全与效率。
 
+没有显式规则时，Bash 使用完整命令的只读分类器自动批准普通查询。
+命令追加写操作、包含管道、重定向、命令替换或换行时需要确认；
+`sed` 的执行/写入表达式和 `tree -o` 也需要确认。内置配置不再使用
+`Bash(ls *)`、`Bash(git log *)` 等前缀 allow 规则。
+
 ### AUTO_EDIT 模式
 
 ```
@@ -54,15 +59,22 @@ Blade 提供四种权限模式。TUI 中的 `Shift+Tab` 在 `default`、`autoEdi
 
 适用场景：高度可控的环境或演示场景。
 
+YOLO 会跳过普通 allow/ask/deny 规则。审计代理只读限制、路径安全检查和
+Hook 拒绝仍生效。
+
 ## 权限规则配置
 
 ### 规则格式
 
 ```
-Tool(param1:value1, param2:value2)
+Tool(content)
 ```
 
 支持 `*` 和 `**` 通配符（使用 picomatch）：
+
+括号内容由工具的权限签名决定：Read/Edit/Write 使用文件路径，
+Bash 使用原始命令文本，WebFetch 使用 `domain:hostname`。文件路径前
+不加 `file_path:`，Bash 命令前不加 `command:` 或 `git:`。
 
 工具名也支持 `*`（任意字符）和 `?`（单个字符）。例如 `Web*` 匹配
 `WebFetch` 与 `WebSearch`，`mcp__github__*` 匹配 GitHub 服务器的所有 MCP
@@ -74,13 +86,13 @@ Tool(param1:value1, param2:value2)
   "permissions": {
     "allow": [
       "Read",
-      "Read(file_path:**/*.ts)",
+      "Read(**/*.ts)",
       "Bash(git *)",
       "Bash(npm run *)"
     ],
     "deny": [
-      "Read(file_path:**/.env*)",
-      "Read(file_path:**/*.pem)",
+      "Read(**/.env*)",
+      "Read(**/*.pem)",
       "Bash(rm -rf *)",
       "Bash(sudo *)"
     ]
@@ -95,15 +107,15 @@ Tool(param1:value1, param2:value2)
 ```json
 {
   "allow": [
-    "Read(file_path:**/*.{ts,tsx,js,jsx,md,json})",
-    "Write(file_path:**/*.ts)",
-    "Edit(file_path:src/**/*)"
+    "Read(**/*.{ts,tsx,js,jsx,md,json})",
+    "Write(**/*.ts)",
+    "Edit(**/src/**)"
   ],
   "deny": [
-    "Read(file_path:**/.env*)",
-    "Read(file_path:**/*.pem)",
-    "Read(file_path:**/secrets/**)",
-    "Write(file_path:**/node_modules/**)"
+    "Read(**/.env*)",
+    "Read(**/*.pem)",
+    "Read(**/secrets/**)",
+    "Write(**/node_modules/**)"
   ]
 }
 ```
@@ -136,16 +148,19 @@ Tool(param1:value1, param2:value2)
 ```json
 {
   "allow": [
-    "WebFetch(url:https://api.github.com/**)",
-    "WebFetch(url:https://registry.npmjs.org/**)",
+    "WebFetch(domain:api.github.com)",
+    "WebFetch(domain:registry.npmjs.org)",
     "WebSearch"
   ],
   "deny": [
-    "WebFetch(url:http://**)",
-    "WebFetch(url:**/admin/**)"
+    "WebFetch(domain:internal.example.com)"
   ]
 }
 ```
+
+WebFetch 的规则仅约束域名，不能区分协议或 URL 路径。Bash 显式 allow
+规则匹配完整命令文本中的通配符，属于用户主动授予的命令范围；例如
+`Bash(git *)` 也允许 Git 写操作和追加命令。优先使用具体命令规则。
 
 ## 确认与持久化
 
@@ -165,7 +180,7 @@ Tool(param1:value1, param2:value2)
 
 ### 会话授权
 
-选择 `Session` 只会把抽象后的规则保存在当前 Session Runtime 内存中。Session
+选择 `Session` 只会把本次调用的精确签名保存在当前 Session Runtime 内存中。Session
 结束或 Runtime 释放后，该授权自动失效，不会写入项目文件。
 
 ### 项目授权
@@ -188,10 +203,11 @@ Tool(param1:value1, param2:value2)
 
 | 工具 | 抽象规则示例 |
 |------|-------------|
-| Bash | `Bash(command:npm *)` |
-| Edit/Write/ApplyPatch | `Edit(file_path:**/*.ts)` |
-| WebFetch | `WebFetch(url:https://api.github.com/**)` |
-| WebSearch | `WebSearch(query:*)` |
+| Bash | `Bash(npm run *)` |
+| Edit/Write | `Edit(**/*.ts)` |
+| ApplyPatch | `ApplyPatch`（工具级授权） |
+| WebFetch | `WebFetch(domain:api.github.com)` |
+| WebSearch | `WebSearch(search:*)` |
 | BrowserNavigate | `BrowserNavigate(http://127.0.0.1:3000)` |
 | BrowserInteract | `BrowserInteract(https://example.com:443)` |
 | BrowserPage | `BrowserPage(reset)` |
@@ -242,11 +258,11 @@ blade --max-turns 50
 ```json
 {
   "deny": [
-    "Read(file_path:**/.env*)",
-    "Read(file_path:**/*.pem)",
-    "Read(file_path:**/*.key)",
-    "Read(file_path:**/secrets/**)",
-    "Read(file_path:**/.git/config)"
+    "Read(**/.env*)",
+    "Read(**/*.pem)",
+    "Read(**/*.key)",
+    "Read(**/secrets/**)",
+    "Read(**/.git/config)"
   ]
 }
 ```

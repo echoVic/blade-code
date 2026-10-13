@@ -26,6 +26,12 @@ Blade provides four permission modes. In the TUI, `Shift+Tab` cycles between `de
 
 Use case: everyday usage, balancing safety and efficiency.
 
+Without an explicit rule, Bash uses a classifier for the complete command to
+auto-approve ordinary queries. Appended writes, pipes, redirection, command
+substitution, and multiline commands require confirmation, as do executable or
+file-writing `sed` expressions and `tree -o`. Builtin configuration no longer
+uses prefix allow rules such as `Bash(ls *)` or `Bash(git log *)`.
+
 ### AUTO_EDIT Mode
 
 ```
@@ -54,15 +60,22 @@ Use case: research phase, generating an implementation plan and exiting after us
 
 Use case: highly controlled environments or demo scenarios.
 
+YOLO skips ordinary allow/ask/deny rules. Audit-agent read-only restrictions,
+path safety checks, and Hook denials still apply.
+
 ## Permission Rule Configuration
 
 ### Rule Format
 
 ```
-Tool(param1:value1, param2:value2)
+Tool(content)
 ```
 
 Supports `*` and `**` wildcards (using picomatch):
+
+The tool defines the signature content: Read/Edit/Write use a file path, Bash
+uses the raw command text, and WebFetch uses `domain:hostname`. Do not prefix
+file paths with `file_path:` or Bash commands with `command:` or `git:`.
 
 Tool names also support `*` (any characters) and `?` (one character). For example,
 `Web*` matches `WebFetch` and `WebSearch`, `mcp__github__*` matches every MCP tool
@@ -75,13 +88,13 @@ name contains a hyphen. Tool-name wildcards retain parameter constraints:
   "permissions": {
     "allow": [
       "Read",
-      "Read(file_path:**/*.ts)",
+      "Read(**/*.ts)",
       "Bash(git *)",
       "Bash(npm run *)"
     ],
     "deny": [
-      "Read(file_path:**/.env*)",
-      "Read(file_path:**/*.pem)",
+      "Read(**/.env*)",
+      "Read(**/*.pem)",
       "Bash(rm -rf *)",
       "Bash(sudo *)"
     ]
@@ -96,15 +109,15 @@ name contains a hyphen. Tool-name wildcards retain parameter constraints:
 ```json
 {
   "allow": [
-    "Read(file_path:**/*.{ts,tsx,js,jsx,md,json})",
-    "Write(file_path:**/*.ts)",
-    "Edit(file_path:src/**/*)"
+    "Read(**/*.{ts,tsx,js,jsx,md,json})",
+    "Write(**/*.ts)",
+    "Edit(**/src/**)"
   ],
   "deny": [
-    "Read(file_path:**/.env*)",
-    "Read(file_path:**/*.pem)",
-    "Read(file_path:**/secrets/**)",
-    "Write(file_path:**/node_modules/**)"
+    "Read(**/.env*)",
+    "Read(**/*.pem)",
+    "Read(**/secrets/**)",
+    "Write(**/node_modules/**)"
   ]
 }
 ```
@@ -137,16 +150,20 @@ name contains a hyphen. Tool-name wildcards retain parameter constraints:
 ```json
 {
   "allow": [
-    "WebFetch(url:https://api.github.com/**)",
-    "WebFetch(url:https://registry.npmjs.org/**)",
+    "WebFetch(domain:api.github.com)",
+    "WebFetch(domain:registry.npmjs.org)",
     "WebSearch"
   ],
   "deny": [
-    "WebFetch(url:http://**)",
-    "WebFetch(url:**/admin/**)"
+    "WebFetch(domain:internal.example.com)"
   ]
 }
 ```
+
+WebFetch rules constrain the domain and cannot distinguish protocols or URL
+paths. Explicit Bash allow rules grant the command range selected by the user
+and match wildcards in the complete command text: `Bash(git *)` also permits
+Git writes and appended commands. Prefer specific command rules.
 
 ## Confirmation and Persistence
 
@@ -166,7 +183,7 @@ When a rule resolves to `ask`, a confirmation dialog pops up:
 
 ### Session Authorization
 
-Choosing `Session` only stores the abstracted rule in the current Session Runtime's memory. After the session
+Choosing `Session` only stores this invocation's exact signature in the current Session Runtime's memory. After the session
 ends or the Runtime is released, the authorization expires automatically and is not written to project files.
 
 ### Project Authorization
@@ -189,10 +206,11 @@ How rules are abstracted for different tools:
 
 | Tool | Abstracted Rule Example |
 |------|-------------------------|
-| Bash | `Bash(command:npm *)` |
-| Edit/Write/ApplyPatch | `Edit(file_path:**/*.ts)` |
-| WebFetch | `WebFetch(url:https://api.github.com/**)` |
-| WebSearch | `WebSearch(query:*)` |
+| Bash | `Bash(npm run *)` |
+| Edit/Write | `Edit(**/*.ts)` |
+| ApplyPatch | `ApplyPatch` (tool-wide authorization) |
+| WebFetch | `WebFetch(domain:api.github.com)` |
+| WebSearch | `WebSearch(search:*)` |
 | BrowserNavigate | `BrowserNavigate(http://127.0.0.1:3000)` |
 | BrowserInteract | `BrowserInteract(https://example.com:443)` |
 | BrowserPage | `BrowserPage(reset)` |
@@ -245,11 +263,11 @@ blade --max-turns 50
 ```json
 {
   "deny": [
-    "Read(file_path:**/.env*)",
-    "Read(file_path:**/*.pem)",
-    "Read(file_path:**/*.key)",
-    "Read(file_path:**/secrets/**)",
-    "Read(file_path:**/.git/config)"
+    "Read(**/.env*)",
+    "Read(**/*.pem)",
+    "Read(**/*.key)",
+    "Read(**/secrets/**)",
+    "Read(**/.git/config)"
   ]
 }
 ```

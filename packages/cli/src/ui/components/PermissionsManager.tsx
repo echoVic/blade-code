@@ -488,7 +488,7 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({ onClose 
         Permission rules are a tool name, optionally followed by a specifier in
         parentheses.
       </Text>
-      <Text color="gray">例如: WebFetch 或 Bash(ls:*)</Text>
+      <Text color="gray">例如: WebFetch 或 Bash(ls *)</Text>
       <Box marginTop={1}>
         <TextInput
           value={inputValue}
