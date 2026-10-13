@@ -231,6 +231,7 @@ export interface SlashCommandContext {
     run: (
       request: {
         kind: 'uncommitted' | 'base' | 'commit';
+        mode?: 'general' | 'security';
         ref?: string;
         instructions?: string;
       },

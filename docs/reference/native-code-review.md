@@ -20,6 +20,11 @@ reviewer 使用独立子会话、结构化 finding 协议和不可绕过的只�
 - HTTP：`POST /sessions/:sessionId/review`，请求必须携带 exact
   `projectPath` 和 target。
 
+`/security-review` 使用相同 target 语法和只读边界，仅报告本次改动引入且可证明
+可利用的安全问题。HTTP 请求可设置 `"mode": "security"`；省略 mode 为普通审查。
+安全策略由原生服务注入，报告标题为 Security Review，类型、命令和结果均持久化，
+恢复后保持一致。每项 finding 需要攻击路径、前提、影响和改动行证据。
+
 ## Target
 
 | 类型 | 范围 |

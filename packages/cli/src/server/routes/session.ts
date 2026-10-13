@@ -3394,6 +3394,7 @@ export const createSessionRouteController = (): SessionRouteController => {
               runtime,
               request: {
                 kind: parsed.data.kind,
+                ...(parsed.data.mode ? { mode: parsed.data.mode } : {}),
                 ...(parsed.data.ref ? { ref: parsed.data.ref } : {}),
                 ...(parsed.data.instructions
                   ? { instructions: parsed.data.instructions }

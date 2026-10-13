@@ -880,14 +880,18 @@ function parseRequestedRemoteDescriptor(
   }
 }
 
-function reviewPromptFromTarget(target: SessionReviewTargetInfo): string {
+function reviewPromptFromTarget(
+  target: SessionReviewTargetInfo,
+  mode?: 'general' | 'security'
+): string {
+  const command = mode === 'security' ? 'security-review' : 'review';
   if (target.kind === 'base') {
-    return `/review base ${target.baseSha ?? target.label}`;
+    return `/${command} base ${target.baseSha ?? target.label}`;
   }
   if (target.kind === 'commit') {
-    return `/review commit ${target.commitSha ?? target.label}`;
+    return `/${command} commit ${target.commitSha ?? target.label}`;
   }
-  return '/review uncommitted';
+  return `/${command} uncommitted`;
 }
 
 function isValidArchiveTimestamp(value: unknown): value is string {
@@ -4495,7 +4499,7 @@ export class SessionService {
           : undefined,
       taskPromptSummary: reviewOwnsTaskStatus
         ? latestReview
-          ? reviewPromptFromTarget(latestReview.start.target)
+          ? reviewPromptFromTarget(latestReview.start.target, latestReview.start.mode)
           : '/review uncommitted'
         : typeof durable.taskPromptSummary === 'string'
           ? durable.taskPromptSummary

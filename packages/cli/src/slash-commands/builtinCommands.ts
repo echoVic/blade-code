@@ -74,6 +74,7 @@ ${REMOTE_SAFE_SLASH_COMMAND_NAMES.map(
 **/init** - 分析当前项目并生成 BLADE.md 配置文件
 **/init-verifiers** - 从项目实际配置生成验证 Skills
 **/git** - Git 仓库查询和 AI 辅助 (status/log/diff/review/commit)
+**/security-review [uncommitted | base <ref> | commit <sha>]** - 审查本次改动引入的可利用安全问题
 **/agents** - 管理 subagent 配置（创建、编辑、删除）
 **/mcp** - 显示 MCP 服务器状态和可用工具
 **/help** - 显示此帮助信息

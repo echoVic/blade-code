@@ -28,6 +28,7 @@ import queueCommand from './queue.js';
 import reviewCommand from './review.js';
 import scheduleCommand from './schedule.js';
 import searchCommand from './search.js';
+import securityReviewCommand from './securityReview.js';
 import skillsCommand from './skills.js';
 import tasksCommand from './tasks.js';
 import teamCommand from './team.js';
@@ -62,6 +63,7 @@ const slashCommands: SlashCommandRegistry = {
   plugins: pluginsCommand,
   queue: queueCommand,
   review: reviewCommand,
+  'security-review': securityReviewCommand,
   schedule: scheduleCommand,
   trust: trustCommand,
 };

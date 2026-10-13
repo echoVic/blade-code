@@ -196,6 +196,7 @@ export interface SessionReviewTargetInfo {
 export interface SessionReviewStartInfo {
   reviewId: string;
   reviewerSessionId: string;
+  mode?: 'general' | 'security';
   target: SessionReviewTargetInfo;
   startedAt: string;
 }

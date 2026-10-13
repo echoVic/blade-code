@@ -18,6 +18,13 @@ Blade provides Session-native independent code review that no longer splices sta
 - ACP: execute the same reviewer via standard slash command;
 - HTTP: `POST /sessions/:sessionId/review`, request must carry exact `projectPath` and target.
 
+`/security-review` uses the same target syntax and read-only boundary, reporting
+only demonstrable, exploitable security flaws introduced by the change. HTTP
+requests may set `"mode": "security"`; omitted mode means general review. The
+native service injects the security policy. The Security Review title, mode,
+command, and results persist across Session recovery. Each finding must identify
+the attack path, prerequisites, impact, and changed-line evidence.
+
 ## Target
 
 | Type | Scope |

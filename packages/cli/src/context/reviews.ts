@@ -64,7 +64,7 @@ export function renderCodeReview(
   completion: SessionReviewCompletionInfo
 ): string {
   const lines = [
-    '## Code Review',
+    start.mode === 'security' ? '## Security Review' : '## Code Review',
     '',
     `Target: ${start.target.label}`,
     `Status: ${renderReviewStatus(completion.status)}`,
@@ -98,6 +98,7 @@ export function codeReviewMessageMetadata(
 ) {
   return {
     reviewId: start.reviewId,
+    ...(start.mode ? { mode: start.mode } : {}),
     phase: 'completed',
     status: completion.status,
     target: {

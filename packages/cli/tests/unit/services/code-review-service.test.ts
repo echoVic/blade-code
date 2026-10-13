@@ -146,6 +146,27 @@ describe('CodeReviewService', () => {
     await expect(run.completion).resolves.toMatchObject({ status: 'stale' });
   });
 
+  it('persists security review mode through report and Session recovery', async () => {
+    const run = await CodeReviewService.start({
+      sessionId,
+      projectPath: workspace,
+      runtime,
+      request: { kind: 'uncommitted', mode: 'security' },
+    });
+    await run.completion;
+    expect(executeReview.mock.calls[0]?.[0].prompt).toContain('security-only review');
+    const transcript = await readFile(getSessionFilePath(workspace, sessionId), 'utf8');
+    expect(transcript).toContain('/security-review uncommitted');
+    expect(transcript).toContain('## Security Review');
+    const [review] = await CodeReviewService.list(workspace, sessionId);
+    expect(review?.start.mode).toBe('security');
+    expect(
+      await SessionService.findSessionMetadata(sessionId, workspace)
+    ).toMatchObject({
+      taskPromptSummary: '/security-review uncommitted',
+    });
+  });
+
   it('allows only one active review and persists an abort terminal state', async () => {
     const controller = new AbortController();
     executeReview.mockImplementationOnce(async (context: { signal?: AbortSignal }) => {

@@ -27,6 +27,7 @@ import {
   type ResolvedCodeReviewTarget,
 } from './GitReviewTargetService.js';
 import { SessionService } from './SessionService.js';
+import { SECURITY_REVIEW_INSTRUCTIONS } from './securityReviewPolicy.js';
 
 export { renderCodeReview };
 
@@ -35,6 +36,7 @@ const MAX_REVIEW_FINDINGS = 50;
 const runningReviews = new Set<string>();
 
 export interface CodeReviewRequest extends CodeReviewTargetRequest {
+  mode?: 'general' | 'security';
   instructions?: string;
 }
 
@@ -57,7 +59,8 @@ function reviewKey(projectPath: string, sessionId: string): string {
 }
 
 function reviewPrompt(request: CodeReviewRequest): string {
-  return `/review ${request.kind}${
+  const command = request.mode === 'security' ? 'security-review' : 'review';
+  return `/${command} ${request.kind}${
     request.kind === 'uncommitted' ? '' : ` ${request.ref?.trim() ?? ''}`
   }`;
 }
@@ -269,6 +272,7 @@ export class CodeReviewService {
     const start: SessionReviewStartInfo = {
       reviewId,
       reviewerSessionId,
+      ...(request.mode === 'security' ? { mode: 'security' as const } : {}),
       target: target.info,
       startedAt,
     };
@@ -335,6 +339,7 @@ export class CodeReviewService {
         'Bash already starts in the review workspace. Never prefix a command with cd.',
         `Authoritative target digest: ${target.info.digest}`,
         `Changed file count: ${target.info.fileCount}`,
+        request.mode === 'security' ? SECURITY_REVIEW_INSTRUCTIONS : '',
         instructions ? `Additional review instructions:\n${instructions}` : '',
         'Inspect the diff and enough surrounding code to prove each finding.',
         'Return only JSON with keys overall_explanation and findings. Each finding',

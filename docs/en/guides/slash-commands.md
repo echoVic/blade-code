@@ -36,6 +36,7 @@ Slash commands are Blade's shortcut entry point for quick actions. Type `/` to t
 | `/compact` | - | Manually compact the context |
 | `/memory` | - | Manage project memory |
 | `/git` | `/g` | Git operations |
+| `/security-review` | - | Independent read-only security review |
 | `/login` | - | Log in to the OAuth service |
 | `/logout` | - | Log out of the OAuth service |
 
@@ -185,6 +186,21 @@ Review the current changes, the base branch, or a single commit in an isolated r
 The reviewer cannot write files, modify Git, or access the network; results are persisted in a structured form with P0-P3 findings, relative path,
 line range, and confidence. See
 [Native Read-Only Code Review](/en/reference/native-code-review.md).
+
+### /security-review
+
+```bash
+/security-review
+/security-review base main
+/security-review commit <sha>
+```
+
+Uses the native independent read-only reviewer to find demonstrable, exploitable
+security flaws introduced by the target change. Findings trace attacker input to
+a sensitive operation and state actual prerequisites, impact, and changed-line
+evidence. Ordinary code quality, hypothetical attacks, and pre-existing flaws are
+excluded. Reports retain P0-P3, confidence, and locations; security mode and its
+command persist in Session history. Empty findings do not prove comprehensive safety.
 
 ### /agents
 

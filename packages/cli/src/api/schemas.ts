@@ -906,6 +906,7 @@ export const CodeReviewRequestSchema = Runtime(
   Type.Object({
     projectPath: Type.String(),
     kind: StringEnum(['uncommitted', 'base', 'commit']),
+    mode: Type.Optional(StringEnum(['general', 'security'])),
     ref: Type.Optional(Type.String({ maxLength: 200 })),
     instructions: Type.Optional(Type.String({ maxLength: 4_000 })),
     modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),

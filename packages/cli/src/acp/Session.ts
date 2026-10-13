@@ -1049,6 +1049,7 @@ export class AcpSession {
                 run: async (
                   request: {
                     kind: 'uncommitted' | 'base' | 'commit';
+                    mode?: 'general' | 'security';
                     ref?: string;
                     instructions?: string;
                   },

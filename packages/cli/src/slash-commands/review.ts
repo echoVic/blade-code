@@ -1,25 +1,28 @@
 import type { SlashCommand, SlashCommandContext, SlashCommandResult } from './types.js';
 import { getUI } from './types.js';
 
-function parseTarget(args: string[]): {
+export function parseReviewTarget(
+  args: string[],
+  command = 'review'
+): {
   kind: 'uncommitted' | 'base' | 'commit';
   ref?: string;
 } {
   const kind = args[0]?.toLowerCase() || 'uncommitted';
   if (kind === 'uncommitted') {
     if (args.length > 1) {
-      throw new Error('Usage: /review uncommitted');
+      throw new Error(`Usage: /${command} uncommitted`);
     }
     return { kind };
   }
   if (kind === 'base' || kind === 'commit') {
     const ref = args[1]?.trim();
     if (!ref || args.length > 2) {
-      throw new Error(`Usage: /review ${kind} <ref>`);
+      throw new Error(`Usage: /${command} ${kind} <ref>`);
     }
     return { kind, ref };
   }
-  throw new Error('Usage: /review [uncommitted | base <ref> | commit <sha>]');
+  throw new Error(`Usage: /${command} [uncommitted | base <ref> | commit <sha>]`);
 }
 
 const reviewCommand: SlashCommand = {
@@ -38,9 +41,9 @@ const reviewCommand: SlashCommand = {
         error: '当前入口不支持原生代码审查',
       };
     }
-    let target: ReturnType<typeof parseTarget>;
+    let target: ReturnType<typeof parseReviewTarget>;
     try {
-      target = parseTarget(args);
+      target = parseReviewTarget(args);
     } catch (error) {
       return {
         success: false,

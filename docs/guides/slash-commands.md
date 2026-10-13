@@ -36,6 +36,7 @@ Slash 命令是 Blade 的快捷操作入口，输入 `/` 触发建议，`Tab` �
 | `/compact` | - | 手动压缩上下文 |
 | `/memory` | - | 管理项目记忆 |
 | `/git` | `/g` | Git 操作 |
+| `/security-review` | - | 独立只读安全审查 |
 | `/login` | - | 登录 OAuth 服务 |
 | `/logout` | - | 登出 OAuth 服务 |
 
@@ -183,6 +184,19 @@ Git 仓库查询和 AI 辅助：
 reviewer 不能写文件、修改 Git 或访问网络；结果以 P0-P3 finding、relative path、
 line range 和 confidence 结构化持久化。详见
 [Native Read-Only Code Review](../reference/native-code-review.md)。
+
+### /security-review
+
+```bash
+/security-review
+/security-review base main
+/security-review commit <sha>
+```
+
+复用原生独立只读 reviewer，聚焦目标改动引入、能够证明可利用的安全问题。
+每项结论需要攻击者输入到敏感操作的路径、实际前提、影响和改动行证据；
+不报告普通代码质量、假想攻击或已有缺陷。结果保留 P0-P3、置信度和位置，
+安全审查类型与命令写入会话历史。未发现问题返回空 findings，不代表全面安全证明。
 
 ### /agents
 
