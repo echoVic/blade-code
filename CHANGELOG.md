@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.20] - 2026-10-13
+
+### Fixed
+- Redact recognized credentials before serializing Logger file and console output, including structured sensitive fields, cyclic objects, and error messages. Apply the same protection to the independent stream debug log.
+- Share credential redaction across MCP connection, task, tool-error and logging projections and Session Markdown exports. Cover environment-style keys, Basic/Bearer authorization, private keys, GitHub tokens, and URL credentials or signed query values while preserving MCP URL omission and existing output bounds.
+
+### Tests
+- Verify emitted files and console arguments contain no test credentials, preserve ordinary context, and avoid invoking getters or custom serialization hooks. Run real MCP transport regressions.
+
+### Documentation
+- Describe supported credential formats and redaction limits in both CLI references.
+
 ## [0.11.19] - 2026-10-13
 
 ### Added
