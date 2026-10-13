@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.21] - 2026-10-13
+
+### Added
+- Add `/init-verifiers` to generate project `verify-*` Skills from actual scripts and application surfaces, with commands, assertions, evidence, and cleanup instructions.
+- Foreground and background verification agents discover relevant project verification skills from the trusted Session snapshot, without changing their read-only tools or execution permissions.
+
+### Tests
+- Qualify real-model skill generation, valid frontmatter, fresh Session discovery, and independent skill reading and test execution. Include the trajectory in both real-API inventories.
+
+### Documentation
+- Describe generation, Workspace Trust, new-Session activation, and audit limitations in bilingual command and verification references.
+
 ## [0.11.20] - 2026-10-13
 
 ### Fixed
