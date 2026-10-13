@@ -90,6 +90,6 @@ describe('MCP Tasks policy and projection', () => {
       sanitizeMcpTaskError(
         'Bearer raw-secret https://private.example/path sk-1234567890abcdef'
       )
-    ).toBe('Bearer [redacted] [redacted-url] [redacted]');
+    ).toBe('Bearer [redacted] [redacted-url] [redacted-key]');
   });
 });

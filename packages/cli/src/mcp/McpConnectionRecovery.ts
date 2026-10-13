@@ -1,4 +1,5 @@
 import type { McpServerConfig } from '../config/types.js';
+import { redactSecrets } from '../security/secrets.js';
 
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_INITIAL_DELAY_MS = 1_000;
@@ -143,10 +144,7 @@ export function getMcpRecoveryDelay(
 
 export function sanitizeMcpConnectionError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  const sanitized = message
-    .replace(/\bhttps?:\/\/[^\s"'`]+/gi, '[redacted-url]')
-    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
+  const sanitized = redactSecrets(message, { urls: 'omit' })
     .replace(/[\r\n\t]+/g, ' ')
     .trim();
   if (Buffer.byteLength(sanitized) <= MAX_MCP_CONNECTION_ERROR_BYTES) {

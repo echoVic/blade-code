@@ -1,4 +1,5 @@
 import type { Task } from '@modelcontextprotocol/sdk/types.js';
+import { redactSecrets } from '../security/secrets.js';
 import type { McpNormalizedToolResult } from './McpToolResult.js';
 
 export const MAX_MCP_TASKS_PER_SESSION = 32;
@@ -186,12 +187,7 @@ export function isMcpTaskTerminal(status: McpTaskStatus): boolean {
 export function sanitizeMcpTaskError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return boundedUtf8(
-    sanitizeText(
-      message
-        .replace(/\bhttps?:\/\/[^\s"'`]+/gi, '[redacted-url]')
-        .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
-        .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
-    ),
+    sanitizeText(redactSecrets(message, { urls: 'omit' })),
     MAX_MCP_TASK_STATUS_MESSAGE_BYTES
   );
 }

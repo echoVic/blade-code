@@ -33,6 +33,13 @@ blade --debug "!chat,!loop"
 
 Supported categories: `agent`, `ui`, `tool`, `service`, `config`, `context`, `execution`, `loop`, `chat`, `general`
 
+Log files, debug console output, and stream debug logs redact recognized keys,
+passwords, authorization headers, and sensitive object fields before output.
+URLs lose user information, query parameters, and fragments. MCP logs and errors
+continue to omit URLs entirely. Session Markdown exports share the credential rules.
+Recognition depends on known formats and field names; arbitrary secrets in prose
+may remain unrecognized.
+
 ### Output Options
 
 | Option | Alias | Description |

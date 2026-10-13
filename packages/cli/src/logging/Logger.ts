@@ -23,6 +23,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
+import { redactSecretValue } from '../security/secrets.js';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -260,7 +261,8 @@ export class Logger {
   }
 
   private log(level: LogLevel, ...args: unknown[]): void {
-    const message = args
+    const safeArgs = args.map(redactSecretValue);
+    const message = safeArgs
       .map((arg) => (typeof arg === 'object' ? JSON.stringify(arg) : String(arg)))
       .join(' ');
 
@@ -269,7 +271,7 @@ export class Logger {
     if (this.shouldLogToConsole(level)) {
       const levelName = LogLevel[level];
       const prefix = `[${this.category}] [${levelName}]`;
-      console.error(prefix, ...args);
+      console.error(prefix, ...safeArgs);
     }
   }
 

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { redactSecrets } from '../security/secrets.js';
 
 export const MAX_MCP_TOOL_RESULT_CONTENTS = 64;
 export const MAX_MCP_TOOL_TEXT_PART_BYTES = 1024 * 1024;
@@ -407,10 +408,7 @@ export async function normalizeMcpToolResult(
 export function sanitizeMcpToolError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const sanitized = stripUnsafeControls(
-    message
-      .replace(/\bhttps?:\/\/[^\s"'`]+/gi, '[redacted-url]')
-      .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
-      .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
+    redactSecrets(message, { urls: 'omit' })
   ).trim();
   return sliceUtf8(sanitized || 'MCP tool execution failed', MAX_MCP_TOOL_ERROR_BYTES);
 }

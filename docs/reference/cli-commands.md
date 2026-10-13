@@ -33,6 +33,11 @@ blade --debug "!chat,!loop"
 
 支持的分类：`agent`, `ui`, `tool`, `service`, `config`, `context`, `execution`, `loop`, `chat`, `general`
 
+日志文件、调试终端和流式调试日志在输出前统一脱敏：遮蔽已识别的密钥、
+密码、认证头和敏感对象字段；URL 移除用户信息、查询参数和片段。
+MCP 日志与错误继续完全遮蔽 URL。会话 Markdown 导出使用同一凭据规则。
+脱敏依赖已知格式与字段名，不保证识别任意自由文本中的秘密。
+
 ### 输出选项
 
 | 选项 | 别名 | 说明 |

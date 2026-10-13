@@ -7,6 +7,7 @@ import type {
   ServiceTierSelection,
 } from '../config/types.js';
 import type { SessionEvent, SessionPermissionMode } from '../context/types.js';
+import { isSecretKey, redactSecrets } from '../security/secrets.js';
 import type { JsonValue } from '../store/types.js';
 import { materializeSessionEvents } from './sessionRewind.js';
 import { userShellCommandRecordFromMetadata } from './UserShellCommandService.js';
@@ -17,16 +18,12 @@ export const MAX_ACP_INLINE_SESSION_EXPORT_BYTES = 1024 * 1024;
 
 const MAX_ACTIVITY_DEPTH = 8;
 const MAX_ACTIVITY_ENTRIES = 200;
-const SENSITIVE_KEY =
-  /(?:^|[_-])(?:api[_-]?key|authorization|bearer|cookie|credential|password|passwd|private[_-]?key|refresh[_-]?token|secret|session[_-]?token|token)(?:$|[_-])/i;
 const ABSOLUTE_PATH = /(?<![:/A-Za-z0-9._-])\/[^\s"'`<>]+/g;
 const WINDOWS_ABSOLUTE_PATH = /(?<![A-Za-z0-9._-])[A-Za-z]:[\\/][^\s"'`<>]+/g;
 const ANSI_ESCAPE = new RegExp(
   '\\u001b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\u0007]*(?:\\u0007|\\u001b\\\\))',
   'g'
 );
-const PRIVATE_KEY_BLOCK =
-  /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g;
 
 export interface SessionMarkdownMetadata {
   sessionId: string;
@@ -84,12 +81,6 @@ function redact(state: RedactionState, replacement: string): string {
   return replacement;
 }
 
-function isSensitiveKey(value: string): boolean {
-  return SENSITIVE_KEY.test(
-    value.replace(/[A-Z]/g, (character) => `_${character.toLowerCase()}`)
-  );
-}
-
 function stripUnsafeUnicode(value: string): string {
   return [...value]
     .filter((character) => {
@@ -111,19 +102,11 @@ function sanitizeCredentialText(value: string, state: RedactionState): string {
   let result = value.normalize('NFKC');
   const withoutAnsi = result.replace(ANSI_ESCAPE, '');
   if (withoutAnsi !== result) state.count += 1;
-  result = withoutAnsi;
-  result = result.replace(PRIVATE_KEY_BLOCK, () =>
-    redact(state, '[redacted-private-key]')
-  );
-  result = result
-    .replace(/\bBearer\s+[^\s"'`]+/gi, () => redact(state, 'Bearer [redacted]'))
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, () => redact(state, '[redacted-key]'))
-    .replace(/\bAKIA[0-9A-Z]{16}\b/g, () => redact(state, '[redacted-aws-key]'))
-    .replace(
-      /\b(api[_-]?key|access[_-]?token|authorization|cookie|password|passwd|refresh[_-]?token|secret|session[_-]?token)\b(\s*[:=]\s*)([^\s,;]+)/gi,
-      (_match, key: string, separator: string) =>
-        `${key}${separator}${redact(state, '[redacted]')}`
-    );
+  result = redactSecrets(withoutAnsi, {
+    onRedaction: () => {
+      state.count += 1;
+    },
+  });
   const withoutUnsafeUnicode = stripUnsafeUnicode(result);
   if (withoutUnsafeUnicode !== result) state.count += 1;
   return withoutUnsafeUnicode.replace(/\r\n?/g, '\n');
@@ -151,21 +134,6 @@ function sanitizeToolString(
     candidate.startsWith('./') ? candidate : redact(state, '[host-path]')
   );
   result = result.replace(WINDOWS_ABSOLUTE_PATH, () => redact(state, '[host-path]'));
-  result = result.replace(/\bhttps?:\/\/[^\s"'`]+/gi, (candidate) => {
-    try {
-      const url = new URL(candidate);
-      if (url.username || url.password || url.search || url.hash) {
-        state.count += 1;
-      }
-      url.username = '';
-      url.password = '';
-      url.search = '';
-      url.hash = '';
-      return url.toString();
-    } catch {
-      return redact(state, '[redacted-url]');
-    }
-  });
   return result;
 }
 
@@ -176,7 +144,7 @@ function sanitizeActivityValue(
   depth = 0,
   key?: string
 ): JsonValue {
-  if (key && isSensitiveKey(key)) {
+  if (key && isSecretKey(key)) {
     return redact(state, '[redacted]');
   }
   if (depth >= MAX_ACTIVITY_DEPTH) {

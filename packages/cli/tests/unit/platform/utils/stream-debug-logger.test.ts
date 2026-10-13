@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -28,5 +28,24 @@ describe('streamDebug', () => {
     vi.stubEnv('BLADE_STORAGE_ROOT', '/dev/null');
 
     expect(() => streamDebug('test', 'unavailable')).not.toThrow();
+  });
+
+  it('redacts stream messages and structured parameters', () => {
+    const storageRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-stream-secret-'));
+    vi.stubEnv('BLADE_STORAGE_ROOT', storageRoot);
+    try {
+      streamDebug('test', 'password=PRIVATE_MESSAGE', {
+        accessToken: 'PRIVATE_TOKEN',
+        count: 2,
+      });
+      const output = readFileSync(
+        path.join(storageRoot, 'logs', 'stream-debug.log'),
+        'utf8'
+      );
+      expect(output).not.toContain('PRIVATE');
+      expect(output).toContain('"count":2');
+    } finally {
+      rmSync(storageRoot, { recursive: true, force: true });
+    }
   });
 });

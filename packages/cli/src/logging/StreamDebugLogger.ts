@@ -3,6 +3,7 @@
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { redactSecrets, redactSecretValue } from '../security/secrets.js';
 
 let initializedLogFile: string | null = null;
 
@@ -32,8 +33,8 @@ export function streamDebug(
     const logFile = getLogFile();
     ensureLogFile(logFile);
     const timestamp = new Date().toISOString();
-    const dataStr = data ? ` | ${JSON.stringify(data)}` : '';
-    const line = `[${timestamp}] [${source}] ${message}${dataStr}\n`;
+    const dataStr = data ? ` | ${JSON.stringify(redactSecretValue(data))}` : '';
+    const line = `[${timestamp}] [${redactSecrets(source)}] ${redactSecrets(message)}${dataStr}\n`;
     appendFileSync(logFile, line);
   } catch {
     // Debug logging must not interrupt the agent loop.

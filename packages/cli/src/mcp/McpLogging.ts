@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServerConfig } from '../config/types.js';
+import { isSecretKey, redactSecrets } from '../security/secrets.js';
 
 export const MCP_LOG_LEVELS = [
   'debug',
@@ -216,7 +217,7 @@ function visitLogValue(value: unknown, depth: number, state: ProjectionState): u
     for (const [rawKey, entry] of entries.slice(0, MAX_LOG_OBJECT_KEYS)) {
       const key =
         boundedUtf8(sanitizeLogText(rawKey), MAX_LOG_KEY_BYTES) || '[empty-key]';
-      if (rawKey === '_meta' || SENSITIVE_LOG_KEY.test(rawKey)) {
+      if (rawKey === '_meta' || isSecretKey(rawKey) || SENSITIVE_LOG_KEY.test(rawKey)) {
         output[key] = '[redacted]';
       } else {
         output[key] = visitLogValue(entry, depth + 1, state);
@@ -229,10 +230,7 @@ function visitLogValue(value: unknown, depth: number, state: ProjectionState): u
 }
 
 function sanitizeLogText(value: string): string {
-  const redacted = value
-    .replace(/\bhttps?:\/\/[^\s"'`]+/gi, '[redacted-url]')
-    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted]');
+  const redacted = redactSecrets(value, { urls: 'omit' });
   return [...redacted]
     .filter((character) => {
       const code = character.charCodeAt(0);
