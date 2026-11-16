@@ -13,13 +13,13 @@
 
 </div>
 
----
+Blade Code is an open-source AI coding assistant: an interactive CLI in the terminal, a Web UI in the browser, and Headless JSONL for scripts and CI. It unifies 38+ model providers through [pi-ai](https://github.com/nicepkg/pi-ai) and ships built-in tools, browser automation and task orchestration.
 
-## 📸 Screenshots
+## Screenshots
 
 <div align="center">
   <img src="./assets/screenshots/startup.png" alt="Blade Code CLI" width="800" />
-  <p><em>CLI Terminal</em></p>
+  <p><em>CLI terminal</em></p>
 </div>
 
 <div align="center">
@@ -27,170 +27,99 @@
   <p><em>Web UI</em></p>
 </div>
 
----
+## Features
 
-## ✨ Key Features
+- 🤖 **Many models**: OpenAI, Anthropic, DeepSeek, Google, Bedrock and 38+ providers through pi-ai, with model metadata fetched dynamically.
+- 🌐 **Three modes**: CLI, Web UI and Headless JSONL, plus `blade --acp` for ACP clients such as Pilion.
+- 🧠 **Automatic memory**: project knowledge persists across sessions and learns build commands, code patterns and debugging lessons.
+- 🛠️ **20+ built-in tools**: file editing, code search, shell, Git and web fetch; native browser automation uses an isolated Chromium with ARIA snapshots and safe ref interactions.
+- 📋 **Tasks and orchestration**: Task delegation, Goal mode, Spec/Plan, Subagents and Agent Teams, with a multi-project board for dispatch and archiving.
+- 🔗 **Open extensions**: MCP, plugins, Skills and Hooks.
+- 🔒 **Safety and cost**: four permission modes (default / autoEdit / plan / yolo) plus tool allow- and blocklists; tokens, cache reads and writes, and estimated cost persist per session, and `/cost` shows them any time.
+- 🎨 **Modern UI**: React + Ink in the terminal, React + Vite on the web, with Thinking mode.
 
-- 🤖 **Unified Multi-Model Runtime** — Powered by [pi-ai](https://github.com/nicepkg/pi-ai), supports 38+ providers (OpenAI, Anthropic, DeepSeek, Google, Bedrock…) with auto-fetched model metadata
-- 🧠 **Auto Memory** — Persistent project knowledge across sessions; learns build commands, code patterns, and debugging insights
-- 🌐 **Three Runtime Modes** — CLI terminal / Web UI / Headless JSONL for flexible deployment
-- 📊 **Multi-project Task Board** — Bind projects, auto-dispatch work, resolve blockers, and archive accepted tasks
-- 🛠️ **20+ Built-in Tools** — File editing, code search, shell execution, git operations, web fetching, and more
-- 🌍 **Native Browser Automation** — Session-isolated Chromium with ARIA snapshots
-  and stale-safe ref interactions across CLI, Web, Headless, and ACP
-- 📋 **Structured Workflows** — Task delegation, Goal mode, Spec/Plan, Subagent orchestration
-- 🔗 **Extensible** — MCP protocol, plugin system, Skills, Hooks
-- 🔒 **Secure & Controllable** — Four permission modes (default/autoEdit/plan/yolo) + tool allow/deny lists
-- 💰 **Cost Observability** — Per-turn tokens, cache reads/writes, and estimated cost persist with the
-  session across aborts and reopens; watch live with `/cost`, replay turns in the Web Logs timeline,
-  stream `token_usage` from Headless JSONL, and see why prompt caches break
-- 🎨 **Modern UI** — React + Ink terminal / React + Vite web, with Thinking mode support
-
----
-
-## 🚀 Quick Start
+## Quick start
 
 ```bash
-# Try instantly (requires Node.js >= 22.19.0)
+# Try it (needs Node.js >= 22.19.0)
 npx blade-code
 
-# Global install
+# Or install globally
 npm install -g blade-code
 
-# Optional: install the pinned Chromium used by the Agent Browser
-blade browser install
-blade browser status
-
-# Start CLI
-blade
-
-# Start Web UI
-blade web
-
-# Headless mode (for CI / sandbox)
-blade --headless --output-format jsonl "analyze this repo"
+blade                          # interactive CLI
+blade web                      # Web UI
+blade --headless --output-format jsonl "analyse this repository"
+blade browser install          # optional Chromium for browser automation
 ```
 
-On first launch, a setup wizard guides you: **Pick Provider → Select Model → Enter API Key**.
+The first launch opens a setup wizard: choose a provider, a model, then enter the API key.
 
----
+## Configuration
 
-## ⚙️ Configuration
-
-Config file: `~/.blade/config.json` (global) or `.blade/config.json` (project-level).
+The config lives in `~/.blade/config.json` (global) or `.blade/config.json` (project).
 
 ```json
 {
   "currentModelId": "primary",
   "models": [
-    {
-      "id": "primary",
-      "provider": "deepseek",
-      "model": "deepseek-v4-pro"
-    }
+    { "id": "primary", "provider": "deepseek", "model": "deepseek-v4-pro" }
   ]
 }
 ```
 
-- **Credentials stored separately**: `~/.blade/auth.json` (mode `0600`), never committed to version control
-- **Model metadata** (contextWindow, maxTokens, pricing) fetched automatically from the pi-ai catalog
-- Provider Base URL only needed in `overrides.baseUrl` when using a custom proxy
+Credentials live separately in `~/.blade/auth.json` (mode `0600`) and never enter version control. Model metadata (contextWindow, maxTokens, pricing) comes from the pi-ai catalog; a custom `overrides.baseUrl` is only needed for a proxy.
 
----
+## Commands
 
-## 🧰 Commands
-
-| Command | Description |
-|---------|-------------|
+| Command | What it does |
+| --- | --- |
 | `blade` | Interactive CLI |
-| `blade web` | Web UI (browser) |
+| `blade web` | Web UI |
 | `blade serve` | Headless HTTP server |
-| `blade browser install` | Install the pinned Chromium used by Browser tools |
-| `blade browser status` | Check Playwright and Chromium runtime status |
-| `blade mcp` | Manage MCP servers |
-| `blade doctor` | Environment diagnostics |
-| `blade --headless "..."` | Full agent loop (non-interactive) |
-| `blade --print "..."` | Single-turn print mode |
+| `blade --headless "..."` | Full agent loop, non-interactive |
+| `blade --print "..."` | One-turn print mode |
+| `blade browser install` / `status` | Install / check the Chromium used by browser automation |
+| `blade mcp` / `blade doctor` | Manage MCP servers / diagnose the environment |
 
-**In-session commands**
+Inside a session: `/model add`, `/model switch`, `/cost`, `/compact`, `/btw`, `/memory list`, `/tasks` and `/goal`.
 
-| Command | Description |
-|---------|-------------|
-| `/model add` | Add a new model |
-| `/model switch` | Switch active model |
-| `/cost` | Show session cost |
-| `/compact` | Manually compact context |
-| `/memory list` | List memory files |
-| `/tasks` | View task list |
-| `/goal "..."` | Start Goal mode |
+## Development
 
----
-
-## 🏗️ Architecture
-
-```
-Blade/
-├── packages/cli/          # blade-code core (npm package)
-│   ├── src/
-│   │   ├── agent/         # Stateless Agent core + execution loop
-│   │   ├── services/pi/   # pi-ai runtime adapter layer
-│   │   ├── tools/         # Tool system (TypeBox schemas)
-│   │   ├── server/        # Web server (Hono)
-│   │   ├── context/       # Context compaction & token management
-│   │   ├── config/        # Configuration system
-│   │   ├── store/         # State management (Zustand)
-│   │   ├── ui/            # Terminal UI (React + Ink)
-│   │   └── schema/        # TypeBox runtime wrapper
-│   └── web/               # Web UI (React + Vite)
-└── docs/                  # User documentation (Docsify)
-```
-
----
-
-## 📖 Documentation
-
-- **[Online Docs](https://echovic.github.io/blade-doc/#/)**
-- **[Configuration Guide](docs/configuration/config-system.md)**
-- **[Quick Start](docs/getting-started/quick-start.md)**
-- **[Contributing Guide](CONTRIBUTING.md)**
-
----
-
-## 🌐 Use Blade in a browser
-
-[Pilion Browser](https://github.com/echoVic/pilion-browser) is a desktop browser that works as an ACP client. Choose **Blade** in its Agent panel: Pilion launches `blade --acp`, forwards whichever model API keys you have set (DeepSeek, Anthropic, OpenAI, Gemini, xAI, OpenRouter, …), and exposes its own tabs to Blade as MCP tools (`browser_snapshot`, `browser_screenshot`, navigate, click, type) with approval-before-action and human takeover. It installs `blade-code` on first use (requires Node.js ≥ 22.19.0). Installers for macOS, Windows and Linux are on the [Pilion releases page](https://github.com/echoVic/pilion-browser/releases).
-
----
-
-## 🤝 Contributing
+You need Node.js ≥ 22.19.0 and Bun.
 
 ```bash
 git clone https://github.com/echoVic/blade-code.git
-cd blade-code && bun install && bun run dev
+cd blade-code
+bun install
+bun run dev
 ```
 
----
+Run the same checks as CI before committing:
 
-## 💬 Community
+```bash
+bun run check        # biome
+bun run type-check
+bun run test
+```
 
-- WeChat: Add **VIc-Forever**, note "Blade"
-- [Discord](https://discord.gg/utXDVcv6)
-- [Issues](https://github.com/echoVic/blade-code/issues)
+`packages/cli` is the npm package (agent core, tools, web server, Ink UI), `packages/cli/web` is the Web UI, and `docs/` holds the user documentation. More conventions are in [CONTRIBUTING](CONTRIBUTING.md).
 
----
+## Documents
 
-## ⭐ Star History
+- [Online documentation](https://echovic.github.io/blade-doc/#/)
+- [Configuration guide](docs/configuration/config-system.md)
+- [Quick start](docs/getting-started/quick-start.md)
+- [Contributing](CONTRIBUTING.md)
 
-<a href="https://star-history.com/#echoVic/blade-code&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=echoVic/blade-code&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=echoVic/blade-code&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=echoVic/blade-code&type=Date" />
- </picture>
-</a>
+## Blade in the browser
 
----
+With [Pilion Browser](https://github.com/echoVic/pilion-browser) as the ACP client, choose **Blade** in its agent panel: Pilion starts `blade --acp`, forwards your configured API key and hands its tabs to Blade as MCP tools, with approval before actions and manual takeover. Packages are on [Pilion Releases](https://github.com/echoVic/pilion-browser/releases).
 
-## 📄 License
+## Community
+
+WeChat: add **VIc-Forever** with "Blade" · [Discord](https://discord.gg/utXDVcv6) · [Issues](https://github.com/echoVic/blade-code/issues)
+
+## License
 
 [MIT](LICENSE) — Made with ❤️ by [echoVic](https://github.com/echoVic)

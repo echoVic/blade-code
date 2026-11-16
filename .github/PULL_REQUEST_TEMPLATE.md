@@ -1,55 +1,36 @@
-## 描述
+<!--
+给 AI 代理 / For agents: 先读 README 的「开发」一节，按里面的检查命令跑一遍；每一节都要填，保持简短。
+Read the Development section of the README, run the checks it lists, fill in every section, and keep it short.
 
-<!-- 简要描述这个 PR 做了什么 -->
+不要删掉 AI 使用声明：写清工具名和准确的模型名。
+Never remove the AI disclosure: name your tool and your exact model.
+-->
 
-## 变更类型
+## 摘要 / Summary
 
-<!-- 请勾选适用的选项 -->
+<!-- 改了什么、为什么，几句话说完。关联 Issue：Fixes #123。
+     What changed and why, in a few sentences. Link the issue: Fixes #123. -->
 
-- [ ] 🐛 Bug 修复 (non-breaking change)
-- [ ] ✨ 新功能 (non-breaking change)
-- [ ] 💥 破坏性变更 (fix or feature that would cause existing functionality to not work as expected)
-- [ ] 📝 文档更新
-- [ ] 🔧 配置/构建变更
-- [ ] ♻️ 代码重构
-- [ ] 🧪 测试相关
+## 测试 / Testing
 
-## 关联 Issue
+<!-- 写实际跑过的命令和试过的平台。常用的有 bun run check、bun run type-check 和 bun run test；
+     改了 CLI、Web UI 或工具时，再手动走一遍对应流程。
+     List the commands you ran and the platforms you tried. The usual ones are bun run check,
+     bun run type-check and bun run test; walk the affected CLI, Web UI or tool flow by hand
+     after changing it. -->
 
-<!-- 如果有关联的 Issue，请链接 -->
+在以下平台测试过 / Tested on:
 
-Closes #
+- [ ] macOS
+- [ ] Windows
+- [ ] Linux
+- [ ] Web UI
+- [ ] 其他 / Other: （在此说明 / specify here）
 
-## 变更内容
+## AI 使用声明 / AI disclosure
 
-<!-- 详细描述你的变更 -->
+<!-- 必填。没有用 AI 就写「无」。 / Required. Write "None" when no AI was used. -->
 
--
--
--
-
-## 测试
-
-<!-- 描述你如何测试了这些变更 -->
-
-- [ ] 本地测试通过
-- [ ] 添加了相关测试用例
-- [ ] 所有现有测试通过 (`npm test`)
-
-## 检查清单
-
-<!-- 提交前请确认以下事项 -->
-
-- [ ] 我已阅读 [贡献指南](../CONTRIBUTING.md)
-- [ ] 代码风格符合项目规范 (`npm run check`)
-- [ ] 类型检查通过 (`npm run type-check`)
-- [ ] 提交信息符合 [Conventional Commits](https://www.conventionalcommits.org/) 规范
-- [ ] 已更新相关文档（如适用）
-
-## 截图/录屏
-
-<!-- 如果有 UI 变更，请附上截图或录屏 -->
-
-## 其他说明
-
-<!-- 任何其他需要说明的内容 -->
+- 工具与模型 / Tool and model: <!-- 准确的名称和版本 / exact name and version -->
+- 用在了 / Used for: <!-- 例如代码、测试、审查、这段描述 / such as the code, the tests, the review, this description -->
+- [ ] 有人逐行读过这次改动，并能解释清楚。 / A human read every line of this change and can explain it.
